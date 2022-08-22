@@ -212,14 +212,14 @@ range(1, 5) as string => '1..5'
 
 ### `arr(...)`
 
-Constructs a list of its arguments.
+Returns its arguments.
 ```
 arr(1, 2, 3) => {1, 2, 3}
 ```
 
 *Example*
 ```
-v == arr(1, 5, 11) ← Results in three comparisons against each element
+v == arr(1, 5, 11) ← Results in three comparisons, one against each element
 ```
 
 ### `split(str, sep, keep_empty=true)`
