@@ -321,8 +321,8 @@ Returns a bounding box `bbox` object.
 
 ### `linestring(<x, y>...)`
 
-Return a GeoJSON `linestring` object.
+Returns a GeoJSON `linestring` object.
 
 ### `polygon(<x, y>...)` NOT YET IMPLEMENTED
 
-Return a GeoJSON `polygon` object.
+Returns a GeoJSON `polygon` object.
