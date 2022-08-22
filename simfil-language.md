@@ -16,7 +16,7 @@ node, the right one (`b`), resulting in the value of node “b” of node “a�
 A wildcard expression `a..b` does the same but `b` must not be a direct sub-node
 of `a` but can occure anywhere bellow `a`. Note that this can match multiple nodes!
 The result of wildcard expressions depends on the current execution mode they are
-executed under (see #Modes).
+executed under (see (Modes)[#Modes]).
 
 The path `_` (underscore) represents the current node.
 The path `*` (asterisk) represents any direct child node.
@@ -116,13 +116,13 @@ Simfil supports the following scalar types: Null, Boolean, Integer, Real and Str
 All values but `null` and `false` are considered `true`, implicit bool conversion takes place for operators
 `and` and `or` only.
 
-Functions can return values of types other than the ones mentioned. See ##Functions for details.
+Functions can return values of types other than the ones mentioned. See [Functions](#Functions) for details.
 
 ## Type Casting
 
 Types values can be cast/interpreted to a different type using the `as` operator.
 The following types can be target types for a cast:
-* `bool` - See operator `?` and ##Types.
+* `bool` - See operator [`?`](#Operators) and [Types](#Types).
 * `int` - Converts the value to an integer. Returns 0 on failure.
 * `float` - Converts the value to a float. Returns 0 on failure.
 * `string` - Converts the value to a string. Boolean values are converted to either "true" or "false".
@@ -133,11 +133,11 @@ The following types can be target types for a cast:
 |---------------------|---------------------------------------------------------------------------------------------------------|
 | `[ a ]`             | Array/Object subscript, index expression can be of type `int` or `string`.                              |
 | `{ a }`             | Sub-Query (inside sub-query `_`  represents the value the query is applied to).                         |
-| `. b` or `a . b`    | Direct field access. For arrays, right-hand expression is evaluated for each child.                     |
+| `. b` or `a . b`    | Direct field access.                                                                                    |
 | `a as b`            | Cast a to type b (one of `bool`, `int`, `float` or `string`).                                           |
 | `a ?`               | Get boolean value of `a` (see ##Types).                                                                 |
 | `a exists`          | Returns `true` if the current node exists (the last path could be resolved).                            |
-| `a ...`             | Unpacks `a` to a list of values (see function `range` under ##Functions for example)                    |
+| `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions](#Functions) for example)         |
 | `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"` or `"string"`). |
 | `not a`             | Boolean not.                                                                                            |
 | `# a`               | Returns the length of a string value.                                                                   |
