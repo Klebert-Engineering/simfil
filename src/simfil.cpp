@@ -510,6 +510,8 @@ public:
         return left_->eval(ctx, val, [this, &res](auto ctx, auto v) {
             if (v.isa(ValueType::Undef))
                 return res(ctx, std::move(v));
+            if (v.isa(ValueType::Null) && !v.node)
+                return res(ctx, std::move(v));
 
             return right_->eval(ctx, v, [this, &res](auto ctx, auto vv) {
                 return res(ctx, std::move(vv));
