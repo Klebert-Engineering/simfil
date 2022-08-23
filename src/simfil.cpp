@@ -231,8 +231,8 @@ public:
 
     auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
     {
-        if (ctx.phase == Context::Phase::Compilation)
-            return res(ctx, Value::undef());
+        if (val.isa(ValueType::Undef))
+            return res(ctx, std::move(val));
 
         /* Special case: _ points to the current node */
         if (name_ == "_")
@@ -246,6 +246,8 @@ public:
             return res(ctx, Value::field(sub->value(), sub));
         }
 
+        if (ctx.phase == Context::Phase::Compilation)
+            return res(ctx, Value::undef());
         return res(ctx, Value::null());
     }
 
@@ -1133,8 +1135,8 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
 {
     auto parse(Parser& p, Token t) const -> ExprPtr override
     {
-        return std::make_unique<SubscriptExpr>(std::make_unique<FieldExpr>("_"),
-                                               p.parseTo(Token::RBRACK));
+        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::make_unique<FieldExpr>("_"),
+                                                                        p.parseTo(Token::RBRACK)));
     }
 
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
@@ -1144,8 +1146,8 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
                Expr::Type::VALUE,
                Expr::Type::SUBEXPR,
                Expr::Type::SUBSCRIPT);
-        return std::make_unique<SubscriptExpr>(std::move(left),
-                                               p.parseTo(Token::RBRACK));
+        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::move(left),
+                                                                        p.parseTo(Token::RBRACK)));
     }
 
     auto precedence() const -> int override
@@ -1166,8 +1168,8 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
     {
         /* Prefix sub-selects are transformed to a right side path expression,
          * with the current node on the left. As "standalone" sub-selects are not useful. */
-        return std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
-                                         p.parseTo(Token::RBRACE));
+        return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
+                                                                  p.parseTo(Token::RBRACE)));
     }
 
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
@@ -1177,8 +1179,8 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
                Expr::Type::VALUE,
                Expr::Type::SUBEXPR,
                Expr::Type::SUBSCRIPT);
-        return std::make_unique<SubExpr>(std::move(left),
-                                         p.parseTo(Token::RBRACE));
+        return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::move(left),
+                                                                  p.parseTo(Token::RBRACE)));
     }
 
     auto precedence() const -> int override

@@ -30,13 +30,17 @@ TEST_CASE("Wildcard", "[ast.wildcard]") {
     REQUIRE_AST("** == **", "(== ** **)"); /* Do not optimize away */
 }
 
-TEST_CASE("OperatorConst", "[ast.math-const]") {
+TEST_CASE("OperatorConst", "[ast.operator]") {
     /* Arithmetic */
     REQUIRE_AST("-1",  "-1");
     REQUIRE_AST("1+2", "3");
     REQUIRE_AST("1-2", "-1");
     REQUIRE_AST("2*2", "4");
     REQUIRE_AST("8/2", "4");
+    REQUIRE_AST("-a",  "(- a)");
+    REQUIRE_AST("a+2", "(+ a 2)");
+    REQUIRE_AST("2+a", "(+ 2 a)");
+    REQUIRE_AST("a+b", "(+ a b)");
 
     /* Division by zero */
     CHECK_THROWS(getASTString("1/0"));
@@ -87,30 +91,47 @@ TEST_CASE("OperatorConst", "[ast.math-const]") {
     REQUIRE_AST("true as string",  "\"true\"");
     REQUIRE_AST("false as string", "\"false\"");
     REQUIRE_AST("null as string",  "\"\"");
+    REQUIRE_AST("range(1,3) as string", "\"1..3\"");
 
     /* Unpack */
-    REQUIRE_AST("null ...", "null");
-    REQUIRE_AST("1 ...",    "1");
-    REQUIRE_AST("1.5 ...",  "1.500000");
-    REQUIRE_AST("'ab'...",  "\"ab\"");
-    REQUIRE_AST("a ...",    "(... a)");
+    REQUIRE_AST("null ...",         "null");
+    REQUIRE_AST("1 ...",            "1");
+    REQUIRE_AST("1.5 ...",          "1.500000");
+    REQUIRE_AST("'ab'...",          "\"ab\"");
+    REQUIRE_AST("a ...",            "(... a)");
+    REQUIRE_AST("range(1,3)...",    "{1 2 3}");
+
+    /* Call */
+    REQUIRE_AST("range(a,3)",    "(range a 3)");
+    REQUIRE_AST("range(1,a)",    "(range 1 a)");
+    REQUIRE_AST("range(a,b)",    "(range a b)");
+    REQUIRE_AST("range(a,b)...", "(... (range a b))");
+
+    /* Index */
+    REQUIRE_AST("'abc'[1]", "\"b\"");
+    REQUIRE_AST("a[1]",     "(index a 1)");
+    REQUIRE_AST("'abc'[a]", "(index \"abc\" a)");
+
+    /* Sub */
+    REQUIRE_AST("'abc'{_}", "\"abc\"");
+    REQUIRE_AST("1{1}",     "1");
+    REQUIRE_AST("a{1}",     "(sub a 1)");
+    REQUIRE_AST("1{a}",     "(sub 1 a)");
+    REQUIRE_AST("a{a}",     "(sub a a)");
 }
 
-TEST_CASE("OperatorAndOr", "[ast.math-and-or]") {
+TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
     /* Or */
     REQUIRE_AST("null or 1", "1");
     REQUIRE_AST("1 or null", "1");
     REQUIRE_AST("1 or 2",    "1");
+    REQUIRE_AST("a or b",    "(or a b)");
 
     /* And */
     REQUIRE_AST("null and 1", "null");
     REQUIRE_AST("1 and null", "null");
     REQUIRE_AST("1 and 2",    "2");
-}
-
-TEST_CASE("OperatorRuntime", "[ast.math-runtime]") {
-    REQUIRE_AST("-a",  "(- a)");
-    REQUIRE_AST("a+2", "(+ a 2)");
+    REQUIRE_AST("a and b",    "(and a b)");
 }
 
 TEST_CASE("ModeSetter", "[ast.mode-setter]") {
