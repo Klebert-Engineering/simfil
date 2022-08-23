@@ -849,7 +849,7 @@ public:
 
     auto toString() const -> std::string override
     {
-        return "(and "s + left_->toString() + " "s + right_->toString() + ")"s;
+        return "(or "s + left_->toString() + " "s + right_->toString() + ")"s;
     }
 
     ExprPtr left_, right_;
