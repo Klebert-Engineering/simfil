@@ -7,16 +7,16 @@ structured data built for use with GeoJSON.
 
 ### Paths
 
-Two traverse the document and evaluate nested nodes, simfil provides the
+To traverse the document and evaluate nested nodes, simfil provides the
 path operators `.` and `..`, the latter acting as a wildcard.
 
 The expression `a.b` evaluates the left side (`a`) and, if it matches the current
 node, the right one (`b`), resulting in the value of node “b” of node “a”.
 
 A wildcard expression `a..b` does the same but `b` must not be a direct sub-node
-of `a` but can occure anywhere bellow `a`. Note that this can match multiple nodes!
+of `a` but can occur anywhere bellow `a`. Note that this can match multiple nodes!
 The result of wildcard expressions depends on the current execution mode they are
-executed under (see #Modes).
+executed under (see (Modes)[#Modes]).
 
 The path `_` (underscore) represents the current node.
 The path `*` (asterisk) represents any direct child node.
@@ -24,7 +24,7 @@ The path `**` (double asterisk) represents any child (recursive) plus the curren
 
 ### Sub-Queries
 
-Sub-queries can be written as a brace-enclosed expression. Path modifications inside 
+Sub-queries can be written as a brace-enclosed expression. Path modifications inside
 a sub-query will not propagate to the outside. If the sub-query evaluates to a non-false result,
 the value of its left side expression will be returned.
 
@@ -52,7 +52,7 @@ Note that the current node in and after the sub-query is the same (`b` in the ex
 
 ### Arrays
 
-To check the existance of the string `"hello"` inside an array `b` you could write (note: `*` returns every direct child):
+To check the existence of the string `"hello"` inside an array `b` you could write (note: `*` returns every direct child):
 ```
 a.b.*{_ == "hello"}
 ```
@@ -70,7 +70,7 @@ Will return `true` if the query evaluates to non-false for at least one node.
 
 ### Each / All
 
-The mode `each` requires each node to match its query to return `true`. 
+The mode `each` requires each node to match its query to return `true`.
 ```
 each(a.**.b{c})
 ```
@@ -82,11 +82,11 @@ Considering the following document, the function will return `true`.
 {
   a {
     b {
-      c = true ← Ok: a.b.c = true
+      c = true ← OK: a.b.c = true
     },
     x {
       b {
-        c = true ← Ok: a.x.b.c = true
+        c = true ← OK: a.x.b.c = true
       }
     }
   },
@@ -99,7 +99,7 @@ Considering the following document, the function will return `true`.
 ### Count
 
 Count can be used to count matching nodes. The function evaluates to the number
-of non-false evaluations of its query. 
+of non-false evaluations of its query.
 
 ```
 count(a.b.**.c) ← Counts all non-false c bellow "a.b"
@@ -113,16 +113,16 @@ count(mylist.*)
 ## Types
 
 Simfil supports the following scalar types: Null, Boolean, Integer, Real and String.
-All values but `null` and `false` are considered `true`, implicit bool conversion takes place for operators
+All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
 
-Functions can return values of types other than the ones mentioned. See ##Functions for details.
+Functions can return values of types other than the ones mentioned. See [Functions](#Functions) for details.
 
 ## Type Casting
 
 Types values can be cast/interpreted to a different type using the `as` operator.
 The following types can be target types for a cast:
-* `bool` - See operator `?` and ##Types.
+* `bool` - See operator [`?`](#Operators) and [Types](#Types).
 * `int` - Converts the value to an integer. Returns 0 on failure.
 * `float` - Converts the value to a float. Returns 0 on failure.
 * `string` - Converts the value to a string. Boolean values are converted to either "true" or "false".
@@ -133,11 +133,11 @@ The following types can be target types for a cast:
 |---------------------|---------------------------------------------------------------------------------------------------------|
 | `[ a ]`             | Array/Object subscript, index expression can be of type `int` or `string`.                              |
 | `{ a }`             | Sub-Query (inside sub-query `_`  represents the value the query is applied to).                         |
-| `. b` or `a . b`    | Direct field access. For arrays, right-hand expression is evaluated for each child.                     |
+| `. b` or `a . b`    | Direct field access; returns the value of field `b` or `null`.                                          |
 | `a as b`            | Cast a to type b (one of `bool`, `int`, `float` or `string`).                                           |
 | `a ?`               | Get boolean value of `a` (see ##Types).                                                                 |
 | `a exists`          | Returns `true` if the current node exists (the last path could be resolved).                            |
-| `a ...`             | Unpacks `a` to a list of values (see function `range` under ##Functions for example)                    |
+| `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions](#Functions) for example)        |
 | `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"` or `"string"`). |
 | `not a`             | Boolean not.                                                                                            |
 | `# a`               | Returns the length of a string value.                                                                   |
@@ -150,12 +150,12 @@ The following types can be target types for a cast:
 | `a - b`             | Subtraction.                                                                                            |
 | `a << b` / `a >> b` | Bitwise left shift / bitwise right shift                                                                |
 | `a & b`             | Bitwise and.                                                                                            |
-| `a \| b`            | Bitwiso or.                                                                                             |
-| `a ^ b`             | Bitwise xor.                                                                                            |
+| `a \| b`            | Bitwise or.                                                                                             |
+| `a ^ b`             | Bitwise XOR.                                                                                            |
 | `a < b` / `a <= b`  | Less than / less than or equal to.                                                                      |
 | `a > b` / `a >= b`  | Greater than / greater than or equal to.                                                                |
 | `a == b` / `a != b` | Equal to / not equal to.                                                                                |
-| `a =~ b` / `a !~ b` | `a` matches regular expression `b` / `a` does not match regular expression `b`. Returns `a` true        |
+| `a =~ b` / `a !~ b` | `a` matches regular expression `b` / `a` does not match regular expression `b`. Returns `a` or `false`  |
 | `a or b`            | Logical or, returning the first non-false argument (like JavaScript).                                   |
 | `a and b`           | Logical and, returning the first false argument (like JavaScript).                                      |
 
@@ -180,7 +180,7 @@ The following types can be target types for a cast:
 
 ### `trace(expr, limit=<...>, name=<...>)`
 
-Counts ands measures all calls to its expression under the identifier `name` or the string
+Counts and measures all calls to its expression under the identifier `name` or the string
 representation of `expr`, if no name is given. Returnts the value of `expr`. Result values
 of `expr` are stored for debugging reasons; see `limit`.
 
@@ -212,14 +212,14 @@ range(1, 5) as string => '1..5'
 
 ### `arr(...)`
 
-Constructs a list of its arguments.
+Returns its arguments.
 ```
 arr(1, 2, 3) => {1, 2, 3}
 ```
 
 *Example*
 ```
-v == arr(1, 5, 11) ← Results in three comparisons against each element
+v == arr(1, 5, 11) ← Results in three comparisons, one against each element
 ```
 
 ### `split(str, sep, keep_empty=true)`
@@ -254,9 +254,9 @@ select(arr('a', 'b', 'c'), 0, 0) => 'a', 'b', 'c'
 ### `sum(values..., expr=$sum + $val, init=0)`
 
 Returns the sum of all values `values`. Uses the expression `expr` if given.
-Initial value of `$sum` is set to `init`. The result value of `expr` is stored 
+Initial value of `$sum` is set to `init`. The result value of `expr` is stored
 into `$sum`, which then gets returned by the function. The zero based index of the current
-element is accessable as `$idx`.
+element is accessible as `$idx`.
 
 Note: `$sum`, `$val` and `$idx` are pseudo-fields injected into the current context.
 
@@ -293,7 +293,7 @@ GeoJSON objects implement the following operators:
 bbox(0, 0, 10, 10) contains point(1, 1) => true
 
 -- Check whether the current feature intersects a bounding box
-geo(_) intresects bbox(11, 11, 12, 12)
+geo(_) intersects bbox(11, 11, 12, 12)
 ```
 
 ## Functions
@@ -321,8 +321,8 @@ Returns a bounding box `bbox` object.
 
 ### `linestring(<x, y>...)`
 
-Return a GeoJSON `linestring` object.
+Returns a GeoJSON `linestring` object.
 
 ### `polygon(<x, y>...)` NOT YET IMPLEMENTED
 
-Return a GeoJSON `polygon` object.
+Returns a GeoJSON `polygon` object.
