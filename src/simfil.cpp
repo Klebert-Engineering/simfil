@@ -508,13 +508,9 @@ public:
     {
         auto res = ResultFnCounter(std::move(ores), ctx);
 
-        if (ctx.phase == Context::Phase::Compilation)
-            return res(ctx, Value::undef());
-
         return left_->eval(ctx, val, [this, &res](auto ctx, auto v) {
-            /* Fail if left side failed */
-            if (!v.node)
-                return res(ctx, Value::null());
+            if (v.isa(ValueType::Undef))
+                return res(ctx, std::move(v));
 
             return right_->eval(ctx, v, [this, &res](auto ctx, auto vv) {
                 return res(ctx, std::move(vv));
@@ -1268,17 +1264,7 @@ class PathParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
-        expect(left,
-               Expr::Type::PATH,
-               Expr::Type::SUBEXPR,
-               Expr::Type::SUBSCRIPT);
-
         auto right = p.parsePrecedence(precedence());
-        expect(right,
-               Expr::Type::PATH,
-               Expr::Type::SUBEXPR,
-               Expr::Type::SUBSCRIPT);
-
         return std::make_unique<PathExpr>(std::move(left), std::move(right));
     }
 
