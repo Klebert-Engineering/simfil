@@ -416,9 +416,10 @@ public:
             return sub_->eval(ctx, lv, [this, &res, &lv](auto ctx, auto vv) {
                 auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
                 if (bv.isa(ValueType::Undef))
-                    return res(ctx, Value::undef());
+                    return Result::Continue;
+
                 if (bv.isa(ValueType::Bool) && bv.template as<ValueType::Bool>())
-                    return res(ctx, std::move(lv));
+                    return res(ctx, lv);
 
                 return Result::Continue;
             });
@@ -509,11 +510,18 @@ public:
 
         return left_->eval(ctx, val, [this, &res](auto ctx, auto v) {
             if (v.isa(ValueType::Undef))
-                return res(ctx, std::move(v));
-            if (v.isa(ValueType::Null) && !v.node)
-                return res(ctx, std::move(v));
+                return Result::Continue;
 
-            return right_->eval(ctx, v, [this, &res](auto ctx, auto vv) {
+            if (v.isa(ValueType::Null) && !v.node)
+                return Result::Continue;
+
+            return right_->eval(ctx, std::move(v), [this, &res](auto ctx, auto vv) {
+                if (vv.isa(ValueType::Undef))
+                    return Result::Continue;
+
+                if (vv.isa(ValueType::Null) && !vv.node)
+                    return Result::Continue;
+
                 return res(ctx, std::move(vv));
             });
         });
