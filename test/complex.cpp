@@ -75,6 +75,8 @@ TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
                             "68.900000|21.670000|137.800000|107.990000");
     REQUIRE_RESULT(invoice, "sum(account.order.*.product.*.(price * quantity))",
                             "336.360000");
+    REQUIRE_RESULT(invoice, "**.(price * quantity)",
+                            "68.900000|21.670000|137.800000|107.990000");
     REQUIRE_RESULT(invoice, "sum(**.(price * quantity))",
                             "336.360000");
 }

@@ -41,12 +41,22 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("a+2", "(+ a 2)");
     REQUIRE_AST("2+a", "(+ 2 a)");
     REQUIRE_AST("a+b", "(+ a b)");
+    REQUIRE_AST("1+null", "null");
+    REQUIRE_AST("null+1", "null");
+    REQUIRE_AST("1*null", "null");
+    REQUIRE_AST("null*1", "null");
+    REQUIRE_AST("1-null", "null");
+    REQUIRE_AST("null-1", "null");
+    REQUIRE_AST("1/null", "null");
+    REQUIRE_AST("null/1", "null");
 
     /* Division by zero */
     CHECK_THROWS(getASTString("1/0"));
-    CHECK_THROWS(getASTString("1/null"));
     CHECK_THROWS(getASTString("1%0"));
-    CHECK_THROWS(getASTString("1%null"));
+
+    /* String */
+    REQUIRE_AST("'a'+null", "null");
+    REQUIRE_AST("null+'a'", "null");
 
     /* Comparison */
     REQUIRE_AST("1==1", "true");
@@ -226,8 +236,10 @@ TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
     REQUIRE_RESULT("sub.**", "null|sub a|sub b|null|sub sub a|sub sub b");
     /*                        ^- sub           ^- sub.sub */
 
-    REQUIRE_RESULT("sub.* + sub.*", "sub asub a|sub asub b|sub a|sub bsub a|sub bsub b|sub b|sub a|sub b|0");
-    /*                                                                         null + '...' -^-----^     ^- null + null */
+    REQUIRE_RESULT("sub.* + sub.*", "sub asub a|sub asub b|null|sub bsub a|sub bsub b|null|null|null|null");
+    /*                                                     ^---------- null + '...' --^----^----^    ^- null + null */
+    REQUIRE_RESULT("(sub.* + sub.*)._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
+    REQUIRE_RESULT("sub.*.{_} + sub.*.{_}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
     REQUIRE_RESULT("count(*)", "2");
     REQUIRE_RESULT("count(**)", "27");
     REQUIRE_RESULT("count(** exists)", "47"); /* root + 46 */
