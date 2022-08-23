@@ -756,22 +756,22 @@ auto GeoFn::ident() const -> const FnInfo&
 {
     static const FnInfo info{
         "geo",
-        "Returns one or more GeoJSON geometry types built from the input node root.\n"
+        "Returns one or more GeoJSON geometry types built from the input node.\n"
         "The function searches for the field 'geometry' and/or 'type' to find its entry node.",
-        "geo(root) -> <null|point|linestring|polygon>"
+        "geo(root=_) -> <null|point|linestring|polygon>"
     };
     return info;
 }
 
 auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
 {
-    if (args.size() != 1)
-        throw ArgumentCountError(*this, 1, 1, args.size());
+    if (args.size() > 1)
+        throw ArgumentCountError(*this, 0, 1, args.size());
 
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
 
-    return args[0]->eval(ctx, val, [&res](auto ctx, auto v) {
+    auto eval = [&ctx, &res](Value v) {
         if (!v.node)
             return res(ctx, std::move(v));
 
@@ -898,7 +898,13 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
         }
 
         return Result::Continue;
-    });
+    };
+
+    if (!args.empty())
+        return args[0]->eval(ctx, std::move(val), [&res, &eval](auto ctx, auto v) {
+            return eval(std::move(v));
+        });
+    return eval(std::move(val));
 };
 
 PointFn PointFn::Fn;

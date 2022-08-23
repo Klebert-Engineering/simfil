@@ -331,44 +331,25 @@ TEST_CASE("Value Expansion", "[yaml.value-expansion]") {
     }
 
     SECTION("Compare value to lists") {
-        /*
-        BENCHMARK("10") {
-            REQUIRE_RESULT("each(range(1,10)... == 1)", "false");
-        };
-        BENCHMARK("100") {
-            REQUIRE_RESULT("each(range(1,100)... == 1)", "false");
-        };
-        BENCHMARK("1000") {
-            REQUIRE_RESULT("each(range(1,1000)... == 1)", "false");
-        };
-        BENCHMARK("10000") {
-            REQUIRE_RESULT("each(range(1,10000)... == 1)", "false");
-        };
-        */
-    }
-    SECTION("Compare two lists") {
-        /*
-        BENCHMARK("2 x 3") {
-            REQUIRE_RESULT("each(range(1,3)... == range(1,3)...)", "false");
-        };
-        BENCHMARK("2 x 10") {
-            REQUIRE_RESULT("each(range(1,10)... == range(1,10)...)", "false");
-        };
-        BENCHMARK("2 x 25") {
-            REQUIRE_RESULT("each(range(1,25)... == range(1,25)...)", "false");
-        };
-        */
+        REQUIRE_RESULT("each(range(1,10)... == 1)", "false");
+        REQUIRE_RESULT("each(range(1,100)... == 1)", "false");
+        REQUIRE_RESULT("each(range(1,1000)... == 1)", "false");
+        REQUIRE_RESULT("each(range(1,10000)... == 1)", "false");
     }
 }
 
 TEST_CASE("GeoJSON", "[geojson.geo]") {
     SECTION("Construct Geometry") {
+        REQUIRE_RESULT("typeof geo()",                       "null");
         REQUIRE_RESULT("typeof geo(_)",                      "null");
         REQUIRE_RESULT("typeof geo(geoPoint)",               "point");
         REQUIRE_RESULT("typeof geo(geoPoint.geometry)",      "point");
+        REQUIRE_RESULT("typeof geoPoint.geo()",              "point");
         REQUIRE_RESULT("typeof geo(geoLineString)",          "linestring");
         REQUIRE_RESULT("typeof geo(geoLineString.geometry)", "linestring");
+        REQUIRE_RESULT("typeof geoLineString.geo()",         "linestring");
         REQUIRE_RESULT("typeof geo(geoPolygon)",             "polygon");
         REQUIRE_RESULT("typeof geo(geoPolygon.geometry)",    "polygon");
+        REQUIRE_RESULT("typeof geoPolygon.geo()",            "polygon");
     }
 }
