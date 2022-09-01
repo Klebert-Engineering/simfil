@@ -64,6 +64,12 @@ struct InvalidOperandsError : std::exception
         return (*this)(x);                               \
     }                                                    \
 
+#define NULL_AS_NULL()                                   \
+    auto operator()(NullType) const                      \
+    {                                                    \
+        return Value::null();                            \
+    }                                                    \
+
 #define INT_AS_UINT()                           \
     auto operator()(int64_t v) const -> int64_t \
     {                                           \
@@ -119,7 +125,7 @@ struct OperatorBitInv
     DENY_OTHER()
     INT_AS_UINT()
     DECL_OPERATION(uint64_t, ~)
-    NULL_AS((int64_t)0)
+    NULL_AS_NULL()
 };
 
 struct OperatorLen
@@ -132,7 +138,7 @@ struct OperatorLen
         return static_cast<int64_t>(s.size());
     }
 
-    NULL_AS(std::string(""))
+    NULL_AS_NULL()
 };
 
 struct OperatorTypeof
@@ -264,6 +270,7 @@ struct OperatorAsString
 
 #undef DENY_OTHER
 #undef NULL_AS
+#undef NULL_AS_NULL
 #undef DECL_OPERATION
 #undef INT_AS_UINT
 
@@ -276,20 +283,20 @@ struct OperatorAsString
         return {};                                          \
     }
 
-#define NULL_AS(x)                                       \
+#define NULL_AS_NULL()                                       \
     template <class Right>                               \
     auto operator()(NullType, Right b) const             \
     {                                                    \
-        return (*this)(x, std::move(b));                 \
+        return Value::null();                            \
     }                                                    \
     template <class Left>                                \
     auto operator()(Left a, NullType) const              \
     {                                                    \
-        return (*this)(std::move(a), x);                 \
+        return Value::null();                            \
     }                                                    \
     auto operator()(NullType, NullType) const            \
     {                                                    \
-        return (*this)(x, x);                            \
+        return Value::null();                            \
     }
 
 #define INT_AS_UINT()                                       \
@@ -312,21 +319,21 @@ struct OperatorAdd
 {
     NAME("+")
     DENY_OTHER()
-    NULL_AS((int64_t)0)
+    NULL_AS_NULL()
     DECL_OPERATION(int64_t,     int64_t,     +)
     DECL_OPERATION(int64_t,     double,      +)
     DECL_OPERATION(double,      int64_t,     +)
     DECL_OPERATION(double,      double,      +)
     DECL_OPERATION(std::string, std::string, +)
 
-    auto operator()(const std::string& l, NullType) const -> std::string
+    auto operator()(const std::string& l, NullType) const -> Value
     {
-        return l;
+        return Value::null();
     }
 
-    auto operator()(NullType, const std::string& r) const -> std::string
+    auto operator()(NullType, const std::string& r) const -> Value
     {
-        return r;
+        return Value::null();
     }
 
     template <class Right>
@@ -346,7 +353,7 @@ struct OperatorSub
 {
     NAME("-")
     DENY_OTHER()
-    NULL_AS((int64_t)0)
+    NULL_AS_NULL()
     DECL_OPERATION(int64_t,     int64_t,     -)
     DECL_OPERATION(int64_t,     double,      -)
     DECL_OPERATION(double,      int64_t,     -)
@@ -357,7 +364,7 @@ struct OperatorMul
 {
     NAME("*")
     DENY_OTHER()
-    NULL_AS((int64_t)0)
+    NULL_AS_NULL()
     DECL_OPERATION(int64_t,     int64_t,     *)
     DECL_OPERATION(int64_t,     double,      *)
     DECL_OPERATION(double,      int64_t,     *)
@@ -368,7 +375,7 @@ struct OperatorDiv
 {
     NAME("/")
     DENY_OTHER()
-    NULL_AS((int64_t)0)
+    NULL_AS_NULL()
 
     auto operator()(int64_t l, int64_t r) const -> int64_t
     {
@@ -403,7 +410,7 @@ struct OperatorMod
 {
     NAME("%")
     DENY_OTHER()
-    NULL_AS((int64_t)0)
+    NULL_AS_NULL()
 
     auto operator()(int64_t l, int64_t r) const -> int64_t
     {
@@ -542,7 +549,7 @@ struct OperatorMatch
         return std::regex_match(s, re) ? Value::make(s) : Value::f();
     }
 
-    NULL_AS(""s)
+    NULL_AS_NULL()
 };
 
 struct OperatorNotMatch
@@ -556,7 +563,7 @@ struct OperatorNotMatch
         return std::regex_match(s, re) ? Value::f() : Value::make(s);
     }
 
-    NULL_AS(""s)
+    NULL_AS_NULL()
 };
 
 struct OperatorSubscript
@@ -571,11 +578,7 @@ struct OperatorSubscript
         return Value::null();
     }
 
-    template <class Right>
-    auto operator()(NullType, const Right&) const -> Value
-    {
-        return Value::null();
-    }
+    NULL_AS_NULL()
 };
 
 /* NOTE: And and Or are implemented as expressions, because of lazy evaluation. */
@@ -583,8 +586,8 @@ struct OperatorSubscript
 struct OperatorBitAnd
 {
     NAME("&")
-    NULL_AS((int64_t)0)
-    INT_AS_UINT();
+    NULL_AS_NULL()
+    INT_AS_UINT()
     DENY_OTHER()
     DECL_OPERATION(uint64_t,     uint64_t,     &)
 };
@@ -592,8 +595,8 @@ struct OperatorBitAnd
 struct OperatorBitOr
 {
     NAME("|")
-    NULL_AS((int64_t)0)
-    INT_AS_UINT();
+    NULL_AS_NULL()
+    INT_AS_UINT()
     DENY_OTHER()
     DECL_OPERATION(uint64_t,     uint64_t,     |)
 };
@@ -601,8 +604,8 @@ struct OperatorBitOr
 struct OperatorBitXor
 {
     NAME("^")
-    NULL_AS((int64_t)0)
-    INT_AS_UINT();
+    NULL_AS_NULL()
+    INT_AS_UINT()
     DENY_OTHER()
     DECL_OPERATION(uint64_t,     uint64_t,     ^)
 };
@@ -610,8 +613,8 @@ struct OperatorBitXor
 struct OperatorShl
 {
     NAME("<<")
-    NULL_AS((int64_t)0)
-    INT_AS_UINT();
+    NULL_AS_NULL()
+    INT_AS_UINT()
     DENY_OTHER()
     DECL_OPERATION(uint64_t,     uint64_t,     <<)
 };
@@ -619,8 +622,8 @@ struct OperatorShl
 struct OperatorShr
 {
     NAME(">>")
-    NULL_AS((int64_t)0)
-    INT_AS_UINT();
+    NULL_AS_NULL()
+    INT_AS_UINT()
     DENY_OTHER()
     DECL_OPERATION(uint64_t,     uint64_t,     >>)
 };
@@ -628,6 +631,7 @@ struct OperatorShr
 #undef DENY_OTHER
 #undef DECL_OPERATION
 #undef NULL_AS
+#undef NULL_AS_NULL
 #undef NAME
 #undef INT_AS_UINT
 

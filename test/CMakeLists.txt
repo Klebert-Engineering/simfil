@@ -11,8 +11,9 @@ if (NOT TARGET Catch2)
 endif()
 
 add_executable(test.simfil
-  simfil.cpp
   token.cpp
+  simfil.cpp
+  complex.cpp
   ext-geo.cpp)
 
 target_link_libraries(test.simfil

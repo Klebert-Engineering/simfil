@@ -47,7 +47,6 @@ enum Precedence {
     PATH        = 12, // a.b
     SUBEXPR     = 11, // a{b}
     SUBSCRIPT   = 10, // a[b]
-    //METHOD      = 10, // a:b()
     POST_UNARY  = 9,  // a?, a exists, a...
     UNARY       = 8,  // not, -, ~
     CAST        = 7,  // a as b
@@ -417,9 +416,10 @@ public:
             return sub_->eval(ctx, lv, [this, &res, &lv](auto ctx, auto vv) {
                 auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
                 if (bv.isa(ValueType::Undef))
-                    return res(ctx, Value::undef());
+                    return Result::Continue;
+
                 if (bv.isa(ValueType::Bool) && bv.template as<ValueType::Bool>())
-                    return res(ctx, std::move(lv));
+                    return res(ctx, lv);
 
                 return Result::Continue;
             });
@@ -508,15 +508,20 @@ public:
     {
         auto res = ResultFnCounter(std::move(ores), ctx);
 
-        if (ctx.phase == Context::Phase::Compilation)
-            return res(ctx, Value::undef());
-
         return left_->eval(ctx, val, [this, &res](auto ctx, auto v) {
-            /* Fail if left side failed */
-            if (!v.node)
-                return res(ctx, Value::null());
+            if (v.isa(ValueType::Undef))
+                return Result::Continue;
 
-            return right_->eval(ctx, v, [this, &res](auto ctx, auto vv) {
+            if (v.isa(ValueType::Null) && !v.node)
+                return Result::Continue;
+
+            return right_->eval(ctx, std::move(v), [this, &res](auto ctx, auto vv) {
+                if (vv.isa(ValueType::Undef))
+                    return Result::Continue;
+
+                if (vv.isa(ValueType::Null) && !vv.node)
+                    return Result::Continue;
+
                 return res(ctx, std::move(vv));
             });
         });
@@ -1225,40 +1230,6 @@ class WordParser : public PrefixParselet
     }
 };
 
-#if 0 /* Disabled */
-class MethodCallParser : public InfixParselet
-{
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
-    {
-        if (!p.match(Token::WORD))
-            throw std::runtime_error("Operator ':' expected function identifier; got "s + p.current().toString());
-
-        auto word = std::get<std::string>(p.current().value);
-        p.consume();
-
-        auto arguments = std::vector<ExprPtr>();
-        arguments.push_back(std::move(left));
-
-        /* For method calls with 1 argument, parentheses are optional! */
-        if (p.match(Token::LPAREN)) {
-            p.consume();
-
-            auto addArgs = p.parseList(Token::RPAREN);
-            arguments.insert(arguments.end(),
-                             std::make_move_iterator(addArgs.begin()),
-                             std::make_move_iterator(addArgs.end()));
-        }
-
-        return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
-    }
-
-    auto precedence() const -> int override
-    {
-        return Precedence::METHOD;
-    }
-};
-#endif
-
 /**
  * Parser for parsing '.' separated paths.
  *
@@ -1268,17 +1239,7 @@ class PathParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
-        expect(left,
-               Expr::Type::PATH,
-               Expr::Type::SUBEXPR,
-               Expr::Type::SUBSCRIPT);
-
         auto right = p.parsePrecedence(precedence());
-        expect(right,
-               Expr::Type::PATH,
-               Expr::Type::SUBEXPR,
-               Expr::Type::SUBSCRIPT);
-
         return std::make_unique<PathExpr>(std::move(left), std::move(right));
     }
 
@@ -1350,7 +1311,6 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     /* Ident/Function */
     p.prefixParsers[Token::WORD] = std::make_unique<WordParser>();
     p.prefixParsers[Token::SELF] = std::make_unique<WordParser>();
-    // p.infixParsers[Token::COLON] = std::make_unique<MethodCallParser>();
 
     /* Wildcards */
     p.prefixParsers[Token::WILDCARD] = std::make_unique<WordParser>();
