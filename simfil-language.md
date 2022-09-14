@@ -293,14 +293,14 @@ GeoJSON objects implement the following operators:
 bbox(0, 0, 10, 10) contains point(1, 1) => true
 
 -- Check whether the current feature intersects a bounding box
-geo(_) intersects bbox(11, 11, 12, 12)
+geo() intersects bbox(11, 11, 12, 12)
 ```
 
 ## Functions
 
-### `geo(obj)`
+### `geo([obj])`
 
-Returns the GeoJSON object at `obj`.
+Returns the GeoJSON object at `obj` (defaults to `_`).
 The following types are supported:
 - Point
 - LineString
