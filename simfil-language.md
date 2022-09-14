@@ -186,7 +186,7 @@ of `expr` are stored for debugging reasons; see `limit`.
 
 *Example*
 ```
-trace("total", a.**.b{trace("sub", c == "test")})
+trace(a.**.b{trace("sub", c == "test")})
 ```
 
 Arguments:
