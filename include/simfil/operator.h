@@ -30,7 +30,7 @@ struct InvalidOperands {
  */
 struct InvalidOperandsError : std::exception
 {
-    std::string_view operatorName;
+    std::string operatorName;
 
     explicit InvalidOperandsError(std::string_view opName)
         : operatorName(opName)
