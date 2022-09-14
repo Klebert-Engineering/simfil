@@ -8,12 +8,12 @@ structured data built for use with GeoJSON.
 ### Paths
 
 To traverse the document and evaluate nested nodes, simfil provides the
-path operators `.` and `..`, the latter acting as a wildcard.
+path operators `.`, `*` and `**`, the latter two acting as a wildcards (direct child or recursive).
 
 The expression `a.b` evaluates the left side (`a`) and, if it matches the current
 node, the right one (`b`), resulting in the value of node “b” of node “a”.
 
-A wildcard expression `a..b` does the same but `b` must not be a direct sub-node
+A wildcard expression `a.**.b` does the same but `b` must not be a direct sub-node
 of `a` but can occur anywhere bellow `a`. Note that this can match multiple nodes!
 The result of wildcard expressions depends on the current execution mode they are
 executed under (see (Modes)[#Modes]).
