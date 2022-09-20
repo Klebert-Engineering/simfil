@@ -233,6 +233,9 @@ public:
 /// reference each other via pointers. Because decks are used,
 /// the pointers stay valid as the decks grow.
 struct Model {
+    // Default ctor is allowed
+    Model() = default;
+
     // No copies allowed...
     Model(Model const&) = delete;
 
@@ -241,6 +244,12 @@ struct Model {
     std::deque<simfil::ArrayNode> arrays;
     std::deque<simfil::ScalarNode> scalars;
     std::deque<simfil::VertexNode> vertices;
+
+    inline ModelNode const* root() const {
+        if (objects.empty())
+            return nullptr;
+        return &objects[0];
+    }
 };
 
 }

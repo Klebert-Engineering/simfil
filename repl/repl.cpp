@@ -102,7 +102,7 @@ static std::string input(const char* prompt = "> ")
     return r;
 }
 
-static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const std::vector<std::unique_ptr<simfil::ModelNode>>& model)
+static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const std::vector<std::unique_ptr<simfil::Model>>& model)
 {
     std::vector<std::vector<simfil::Value>> result;
     result.resize(std::max<size_t>(1, model.size()));
@@ -127,7 +127,7 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
             while ((next = idx++) < model.size()) {
                 const auto& doc = model[next];
                 try {
-                    result[next] = simfil::eval(env, expr, doc.get());
+                    result[next] = simfil::eval(env, expr, doc->root());
                 } catch (...) {
                     return;
                 }
@@ -149,7 +149,7 @@ int main(int argc, char *argv[])
     rl_attempted_completion_function = command_completion;
 #endif
 
-    std::vector<std::unique_ptr<simfil::ModelNode>> model;
+    std::vector<std::unique_ptr<simfil::Model>> model;
 #if defined(SIMFIL_WITH_MODEL_JSON)
     for (auto arg = argv + 1; *arg; ++arg) {
         std::cout << "Parsing " << *arg << "\n";

@@ -11,7 +11,7 @@
 namespace simfil::json
 {
 
-std::unique_ptr<ModelNode> parse(std::istream& input);
-std::unique_ptr<ModelNode> parse(const std::string& input);
+std::unique_ptr<Model> parse(std::istream& input);
+std::unique_ptr<Model> parse(const std::string& input);
 
 }
