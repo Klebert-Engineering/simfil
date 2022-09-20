@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include <deque>
 
 namespace simfil
 {
@@ -109,7 +110,7 @@ public:
     auto get(const std::string& key) const -> const ModelNode*
     {
         if (auto i = nodes_.find(key); i != nodes_.end())
-            return i->second.get();
+            return i->second;
         return nullptr;
     }
 
@@ -122,7 +123,7 @@ public:
     {
         std::vector<const ModelNode*> nodes(nodes_.size(), nullptr);
         std::transform(nodes_.begin(), nodes_.end(), nodes.begin(), [](const auto& pair) {
-            return pair.second.get();
+            return pair.second;
         });
 
         return nodes;
@@ -143,7 +144,7 @@ public:
         return nodes_.size();
     }
 
-    std::map<std::string, std::unique_ptr<ModelNode>> nodes_;
+    std::map<std::string, ModelNode*> nodes_;
 };
 
 class ArrayNode : public ModelNode
@@ -167,18 +168,13 @@ public:
     auto get(int64_t idx) const -> const ModelNode*
     {
         if (0 <= idx && (size_t)idx <= nodes_.size())
-            return nodes_[idx].get();
+            return nodes_[idx];
         return nullptr;
     }
 
     auto children() const -> std::vector<const ModelNode*>
     {
-        std::vector<const ModelNode*> nodes(nodes_.size(), nullptr);
-        std::transform(nodes_.begin(), nodes_.end(), nodes.begin(), [](const auto& item) {
-            return item.get();
-        });
-
-        return nodes;
+       return {nodes_.begin(), nodes_.end()};
     }
 
     auto keys() const -> std::vector<std::string>
@@ -191,7 +187,60 @@ public:
         return nodes_.size();
     }
 
-    std::vector<std::unique_ptr<ModelNode>> nodes_;
+    std::vector<ModelNode*> nodes_;
+};
+
+class VertexNode : public ModelNode
+{
+public:
+    VertexNode() = default;
+    VertexNode(double lon, double lat) : lon(Value::make(lon)), lat(Value::make(lat)) {}
+
+    auto type() const -> ModelNode::Type override {return ModelNode::Type::Array; }
+
+    auto value() const -> Value override { return Value::null(); }
+
+    auto get(const std::string& key) const -> const ModelNode* override
+    {
+        if (key == "lon")
+            return &lon;
+        if (key == "lat")
+            return &lat;
+        return nullptr;
+    }
+
+    auto get(int64_t idx) const -> const ModelNode* override
+    {
+        switch (idx) {
+        case 0: return &lon;
+        case 1: return &lat;
+        default: return nullptr;
+        }
+    }
+
+    auto children() const -> std::vector<const ModelNode*> override { return {{&lon, &lat}}; }
+
+    auto keys() const -> std::vector<std::string> override { return {{"lon"s, "lat"s}}; }
+
+    auto size() const -> int64_t override { return 2; }
+
+    ScalarNode lon;
+    ScalarNode lat;
+};
+
+/// Efficient storage of SIMFIL model nodes. This way, a whole
+/// ModelNode tree can be cleaned up in constant time. The nodes
+/// reference each other via pointers. Because decks are used,
+/// the pointers stay valid as the decks grow.
+struct Model {
+    // No copies allowed...
+    Model(Model const&) = delete;
+
+    // The first object is the root node
+    std::deque<simfil::ObjectNode> objects;
+    std::deque<simfil::ArrayNode> arrays;
+    std::deque<simfil::ScalarNode> scalars;
+    std::deque<simfil::VertexNode> vertices;
 };
 
 }
