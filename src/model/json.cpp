@@ -41,16 +41,31 @@ static ModelNode* build(const json& j, Model& model)
 
     if (j.is_object()) {
         auto& r = model.objects.emplace_back();
+        std::vector<ObjectNode::Member> members;
+        members.reserve(j.size());
         for (auto&& [key, value] : j.items()) {
-            r.nodes_[model.strings->getOrInsert(key)] = build(value, model);
+            members.emplace_back(key, build(value, model));
+        }
+        if (!members.empty()) {
+            model.objectMembers.insert(model.objectMembers.end(), members.begin(), members.end());
+            r.size_ = members.size();
+            r.storage_ = &(model.objectMembers);
+            r.firstMemberIndex_ = model.objectMembers.size() - r.size_;
         }
         return &r;
     }
 
     if (j.is_array()) {
         auto& r = model.arrays.emplace_back();
+        std::vector<ModelNode*> members;
         for (const auto& value : j) {
-            r.nodes_.push_back(build(value, model));
+            members.emplace_back(build(value, model));
+        }
+        if (!members.empty()) {
+            model.arrayMembers.insert(model.arrayMembers.end(), members.begin(), members.end());
+            r.size_ = members.size();
+            r.storage_ = &(model.arrayMembers);
+            r.firstMemberIndex_ = model.arrayMembers.size() - r.size_;
         }
         return &r;
     }
@@ -58,18 +73,14 @@ static ModelNode* build(const json& j, Model& model)
     return make(Value::null(), model);
 }
 
-std::unique_ptr<Model> parse(std::istream& input)
+void parse(std::istream& input, ModelPtr const& model)
 {
-    auto model = std::make_unique<Model>();
-    build(json::parse(input), *model);
-    return model;
+    model->roots.push_back(build(json::parse(input), *model));
 }
 
-std::unique_ptr<Model> parse(const std::string& input)
+void parse(const std::string& input, ModelPtr const& model)
 {
-    auto model = std::make_unique<Model>();
-    build(json::parse(input), *model);
-    return model;
+    model->roots.push_back(build(json::parse(input), *model));
 }
 
 }
