@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
-#include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include <deque>
+#include <shared_mutex>
 
 namespace simfil
 {
@@ -31,10 +33,10 @@ public:
     virtual auto type() const -> Type = 0;
 
     /** Child access */
-    virtual auto get(const std::string&) const -> const ModelNode* = 0;
+    virtual auto get(const std::string_view &) const -> const ModelNode* = 0;
     virtual auto get(int64_t) const -> const ModelNode* = 0;
     virtual auto children() const -> std::vector<const ModelNode*> = 0;
-    virtual auto keys() const -> std::vector<std::string> = 0;
+    virtual auto keys() const -> std::vector<std::string_view> = 0;
     virtual auto size() const -> int64_t = 0;
 
     ModelNode() = default;
@@ -66,7 +68,7 @@ public:
         return Type::Scalar;
     }
 
-    auto get(const std::string&) const ->  const ModelNode* override
+    auto get(const std::string_view &) const ->  const ModelNode* override
     {
         return nullptr;
     }
@@ -81,7 +83,7 @@ public:
         return {};
     }
 
-    auto keys() const -> std::vector<std::string> override
+    auto keys() const -> std::vector<std::string_view> override
     {
         return {};
     }
@@ -107,7 +109,7 @@ public:
         return ModelNode::Type::Object;
     }
 
-    auto get(const std::string& key) const -> const ModelNode*
+    auto get(const std::string_view & key) const -> const ModelNode*
     {
         if (auto i = nodes_.find(key); i != nodes_.end())
             return i->second;
@@ -129,9 +131,9 @@ public:
         return nodes;
     }
 
-    auto keys() const -> std::vector<std::string>
+    auto keys() const -> std::vector<std::string_view>
     {
-        std::vector<std::string> names(nodes_.size(), std::string{});
+        std::vector<std::string_view> names(nodes_.size(), std::string{});
         std::transform(nodes_.begin(), nodes_.end(), names.begin(), [](const auto& pair) {
             return pair.first;
         });
@@ -144,7 +146,7 @@ public:
         return nodes_.size();
     }
 
-    std::map<std::string, ModelNode*> nodes_;
+    std::unordered_map<std::string_view, ModelNode*> nodes_;
 };
 
 class ArrayNode : public ModelNode
@@ -160,7 +162,7 @@ public:
         return ModelNode::Type::Array;
     }
 
-    auto get(const std::string&) const -> const ModelNode*
+    auto get(const std::string_view &) const -> const ModelNode*
     {
         return nullptr;
     }
@@ -177,7 +179,7 @@ public:
        return {nodes_.begin(), nodes_.end()};
     }
 
-    auto keys() const -> std::vector<std::string>
+    auto keys() const -> std::vector<std::string_view>
     {
         return {};
     }
@@ -200,7 +202,7 @@ public:
 
     auto value() const -> Value override { return Value::null(); }
 
-    auto get(const std::string& key) const -> const ModelNode* override
+    auto get(const std::string_view & key) const -> const ModelNode* override
     {
         if (key == "lon")
             return &lon;
@@ -220,7 +222,7 @@ public:
 
     auto children() const -> std::vector<const ModelNode*> override { return {{&lon, &lat}}; }
 
-    auto keys() const -> std::vector<std::string> override { return {{"lon"s, "lat"s}}; }
+    auto keys() const -> std::vector<std::string_view> override { return {{"lon"s, "lat"s}}; }
 
     auto size() const -> int64_t override { return 2; }
 
@@ -230,20 +232,70 @@ public:
 
 /// Efficient storage of SIMFIL model nodes. This way, a whole
 /// ModelNode tree can be cleaned up in constant time. The nodes
-/// reference each other via pointers. Because decks are used,
-/// the pointers stay valid as the decks grow.
-struct Model {
-    // Default ctor is allowed
-    Model() = default;
+/// reference each other via raw pointers. Because decks are used,
+/// the pointers stay valid as the containers grow.
+struct Model
+{
+    /// Fast and efficient string storage -
+    /// referenced by object keys and string values.
+    struct Strings
+    {
+    private:
+        std::unordered_set<std::string> strings_;
+        std::shared_mutex stringStoreMutex_;
 
-    // No copies allowed...
+    public:
+        /// Use this function to lookup a stored string, or insert it
+        /// if it doesn't exist yet. Unfortunately, we can't use string_view
+        /// as lookup type until C++ 20 is used:
+        ///   http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r2.html
+        std::string_view getOrInsert(std::string const& str)
+        {
+            {
+                std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
+                auto it = strings_.find(str);
+                if (it != strings_.end()) {
+                    return *it;
+                }
+            }
+            {
+                std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
+                auto [it, _] = strings_.emplace(str);
+                return *it;
+            }
+        }
+
+        /// Get the count of strings currently stored
+        size_t size() {
+            std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
+            return strings_.size();
+        }
+    };
+
+    /// No copies allowed...
     Model(Model const&) = delete;
 
-    // The first object is the root node
+    /// Default ctor with own string storage
+    Model() : strings(std::make_shared<Strings>()) {}
+
+    /// Ctor with shared string storage
+    explicit Model(std::shared_ptr<Strings> stringStore) : strings(std::move(stringStore)) {};
+
+    /// Objects referenced as ModelNode* -
+    ///  the first object is the root node.
     std::deque<simfil::ObjectNode> objects;
+
+    /// Arrays referenced as ModelNode*
     std::deque<simfil::ArrayNode> arrays;
+
+    /// Scalars referenced as ModelNode*
     std::deque<simfil::ScalarNode> scalars;
+
+    /// Vertices referenced as ModelNode*
     std::deque<simfil::VertexNode> vertices;
+
+    /// Strings referenced as string_view
+    std::shared_ptr<Strings> strings;
 
     inline ModelNode const* root() const {
         if (objects.empty())

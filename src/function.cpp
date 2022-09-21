@@ -51,7 +51,7 @@ public:
     Value value_;
     ScalarNode scalar;
     const ModelNode* base;
-    std::map<std::string, ModelNode*> overlayChildren;
+    std::map<std::string, ModelNode*, std::less<>> overlayChildren;
 
     OverlayNode(Context ctx, Value val)
         : ctx(ctx)
@@ -78,7 +78,7 @@ public:
         return base->type();
     }
 
-    auto get(const std::string& key) const -> const ModelNode* override
+    auto get(const std::string_view & key) const -> const ModelNode* override
     {
         if (auto iter = overlayChildren.find(key); iter != overlayChildren.end())
             return iter->second;
@@ -98,7 +98,7 @@ public:
         return c;
     }
 
-    auto keys() const -> std::vector<std::string> override
+    auto keys() const -> std::vector<std::string_view> override
     {
         auto k = base->keys();
         for (const auto& [kk, _] : overlayChildren)

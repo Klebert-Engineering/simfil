@@ -42,7 +42,7 @@ static ModelNode* build(const json& j, Model& model)
     if (j.is_object()) {
         auto& r = model.objects.emplace_back();
         for (auto&& [key, value] : j.items()) {
-            r.nodes_[key] = build(value, model);
+            r.nodes_[model.strings->getOrInsert(key)] = build(value, model);
         }
         return &r;
     }
