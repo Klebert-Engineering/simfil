@@ -11,6 +11,8 @@
 #include <unordered_set>
 #include <deque>
 #include <shared_mutex>
+#include <fstream>
+#include <sstream>
 
 namespace simfil
 {
@@ -230,6 +232,47 @@ public:
     ScalarNode lat;
 };
 
+class FeatureIdNode : public ModelNode
+{
+public:
+    FeatureIdNode() = default;
+    FeatureIdNode(
+        std::string_view const& prefix,
+        std::vector<std::pair<char const*, int64_t>> idPathElements
+    ) : prefix_(prefix), idPathElements_(std::move(idPathElements))
+    {}
+
+    auto type() const -> ModelNode::Type override {return ModelNode::Type::Scalar; }
+
+    auto value() const -> Value override {
+        std::stringstream result;
+        result << prefix_;
+        for (auto& [type, id] : idPathElements_) {
+            result <<  "." << type << "." << std::to_string(id);
+        }
+        return Value::make(result.str());
+    }
+
+    auto get(const std::string_view & key) const -> const ModelNode* override
+    {
+        return nullptr;
+    }
+
+    auto get(int64_t idx) const -> const ModelNode* override
+    {
+        return nullptr;
+    }
+
+    auto children() const -> std::vector<const ModelNode*> override { return {}; }
+
+    auto keys() const -> std::vector<std::string_view> override { return {}; }
+
+    auto size() const -> int64_t override { return 2; }
+
+    std::string_view prefix_;
+    std::vector<std::pair<char const*, int64_t>> idPathElements_;
+};
+
 /// Efficient storage of SIMFIL model nodes. This way, a whole
 /// ModelNode tree can be cleaned up in constant time. The nodes
 /// reference each other via raw pointers. Because decks are used,
@@ -242,9 +285,23 @@ struct Model
     {
     private:
         std::unordered_set<std::string> strings_;
+        std::atomic_int64_t byteSize_;
         std::shared_mutex stringStoreMutex_;
+        std::atomic_int64_t cacheHits_;
+        std::atomic_int64_t cacheMisses_;
 
     public:
+        ~Strings() {
+            std::ofstream output;
+            output.open(R"(C:\Users\Joseph\Desktop\stringcache.txt)");
+            for (auto const& s : strings_)
+                output << s << "\n";
+            auto beginClear = std::chrono::steady_clock::now();
+            strings_.clear();
+            auto endClear = std::chrono::steady_clock::now();
+            output << "Clearing  took " << std::chrono::duration_cast<std::chrono::seconds>(endClear - beginClear).count() << "s" << std::endl;
+        }
+
         /// Use this function to lookup a stored string, or insert it
         /// if it doesn't exist yet. Unfortunately, we can't use string_view
         /// as lookup type until C++ 20 is used:
@@ -255,20 +312,34 @@ struct Model
                 std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
                 auto it = strings_.find(str);
                 if (it != strings_.end()) {
+                    ++cacheHits_;
                     return *it;
                 }
             }
             {
                 std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
-                auto [it, _] = strings_.emplace(str);
+                auto [it, insertionTookPlace] = strings_.emplace(str);
+                if (insertionTookPlace) {
+                    ++cacheMisses_;
+                    byteSize_ += str.size();
+                }
                 return *it;
             }
         }
 
-        /// Get the count of strings currently stored
+        /// Get stats
         size_t size() {
             std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
             return strings_.size();
+        }
+        size_t bytes() {
+            return byteSize_;
+        }
+        size_t hits() {
+            return cacheHits_;
+        }
+        size_t misses() {
+            return cacheMisses_;
         }
     };
 
@@ -281,21 +352,23 @@ struct Model
     /// Ctor with shared string storage
     explicit Model(std::shared_ptr<Strings> stringStore) : strings(std::move(stringStore)) {};
 
-    /// Objects referenced as ModelNode* -
-    ///  the first object is the root node.
+    /// Objects - the first object is the root node.
     std::deque<simfil::ObjectNode> objects;
 
-    /// Arrays referenced as ModelNode*
+    /// Arrays
     std::deque<simfil::ArrayNode> arrays;
 
-    /// Scalars referenced as ModelNode*
+    /// Scalars
     std::deque<simfil::ScalarNode> scalars;
 
-    /// Vertices referenced as ModelNode*
+    /// Vertices
     std::deque<simfil::VertexNode> vertices;
 
-    /// Strings referenced as string_view
+    /// Strings
     std::shared_ptr<Strings> strings;
+
+    /// Feature Ids
+    std::deque<FeatureIdNode> featureIds;
 
     inline ModelNode const* root() const {
         if (objects.empty())
