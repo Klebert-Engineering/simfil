@@ -68,7 +68,7 @@ static auto joined_result(const ModelNode* model, std::string_view query)
 }
 
 #define REQUIRE_RESULT(model, query, result) \
-    REQUIRE(joined_result(model.get(), query) == result)
+    REQUIRE(joined_result(model->roots[0], query) == result)
 
 TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
     REQUIRE_RESULT(invoice, "account.order.*.product.*.(price * quantity)",

@@ -83,4 +83,11 @@ void parse(const std::string& input, ModelPtr const& model)
     model->roots.push_back(build(json::parse(input), *model));
 }
 
+ModelPtr parse(const std::string& input)
+{
+    auto model = std::make_shared<simfil::Model>();
+    model->roots.push_back(build(json::parse(input), *model));
+    return model;
+}
+
 }

@@ -216,7 +216,7 @@ static auto joined_result(std::string_view query)
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 
-    auto res = eval(env, *ast, model.get());
+    auto res = eval(env, *ast, model->roots[0]);
 
     std::string vals;
     for (const auto& vv : res) {
