@@ -8,12 +8,12 @@ structured data built for use with GeoJSON.
 ### Paths
 
 To traverse the document and evaluate nested nodes, simfil provides the
-path operators `.` and `..`, the latter acting as a wildcard.
+path operators `.`, `*` and `**`, the latter two acting as a wildcards (direct child or recursive).
 
 The expression `a.b` evaluates the left side (`a`) and, if it matches the current
 node, the right one (`b`), resulting in the value of node “b” of node “a”.
 
-A wildcard expression `a..b` does the same but `b` must not be a direct sub-node
+A wildcard expression `a.**.b` does the same but `b` must not be a direct sub-node
 of `a` but can occur anywhere bellow `a`. Note that this can match multiple nodes!
 The result of wildcard expressions depends on the current execution mode they are
 executed under (see (Modes)[#Modes]).
@@ -186,7 +186,7 @@ of `expr` are stored for debugging reasons; see `limit`.
 
 *Example*
 ```
-trace("total", a.**.b{trace("sub", c == "test")})
+trace(a.**.b{trace("sub", c == "test")})
 ```
 
 Arguments:
@@ -293,14 +293,14 @@ GeoJSON objects implement the following operators:
 bbox(0, 0, 10, 10) contains point(1, 1) => true
 
 -- Check whether the current feature intersects a bounding box
-geo(_) intersects bbox(11, 11, 12, 12)
+geo() intersects bbox(11, 11, 12, 12)
 ```
 
 ## Functions
 
-### `geo(obj)`
+### `geo([obj])`
 
-Returns the GeoJSON object at `obj`.
+Returns the GeoJSON object at `obj` (defaults to `_`).
 The following types are supported:
 - Point
 - LineString
