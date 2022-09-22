@@ -11,7 +11,7 @@
 #include <unordered_set>
 #include <deque>
 #include <shared_mutex>
-#include <fstream>
+#include <atomic>
 #include <sstream>
 
 namespace simfil
