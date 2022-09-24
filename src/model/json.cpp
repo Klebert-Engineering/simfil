@@ -44,7 +44,7 @@ static ModelNode* build(const json& j, Model& model)
         std::vector<ObjectNode::Member> members;
         members.reserve(j.size());
         for (auto&& [key, value] : j.items()) {
-            members.emplace_back(key, build(value, model));
+            members.emplace_back(model.strings->getOrInsert(key), build(value, model));
         }
         if (!members.empty()) {
             model.objectMembers.insert(model.objectMembers.end(), members.begin(), members.end());

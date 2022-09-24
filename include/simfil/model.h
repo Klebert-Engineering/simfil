@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <deque>
+#include <mutex>
 #include <shared_mutex>
 #include <atomic>
 #include <sstream>
