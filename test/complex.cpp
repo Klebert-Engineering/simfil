@@ -80,3 +80,9 @@ TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
     REQUIRE_RESULT(invoice, "sum(**.(price * quantity))",
                             "336.360000");
 }
+
+TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
+  REQUIRE_THROWS(joined_result(invoice->roots[0], "1 / (nonexisting as int)")); /* Division by zero */
+  REQUIRE_THROWS(joined_result(invoice->roots[0], "not nonexisting == 0"));     /* Invalid operands int and bool */
+  REQUIRE_THROWS(joined_result(invoice->roots[0], "not *.nonexisting == 0"));   /* Invalid operands int and bool */
+}
