@@ -136,7 +136,7 @@ auto ArrayNode::get(int64_t i) const -> const ModelNode*
 {
     if (!storage_)
         return {};
-    if (0 <= i && i <= size_)
+    if (0 <= i && i <= (int64_t)size_)
         return storage_->at(firstMemberIndex_ + i);
     return nullptr;
 }

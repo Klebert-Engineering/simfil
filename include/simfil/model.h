@@ -3,6 +3,7 @@
 #pragma once
 
 #include "value.h"
+#include "segmented-vector.h"
 
 #include <algorithm>
 #include <memory>
@@ -16,6 +17,8 @@
 
 namespace simfil
 {
+
+constexpr auto SegmentSize = 512;
 
 /** Simfil search model interface */
 class ModelNode
@@ -79,7 +82,7 @@ public:
     auto keys() const -> std::vector<std::string_view> override;
     auto size() const -> int64_t override;
 
-    std::deque<ObjectNode::Member>* storage_ = nullptr;
+    sfl::segmented_vector<ObjectNode::Member, SegmentSize>* storage_ = nullptr;
     size_t firstMemberIndex_ = 0;
     size_t size_ = 0;
 };
@@ -99,7 +102,7 @@ public:
     auto keys() const -> std::vector<std::string_view> override;
     auto size() const -> int64_t override;
 
-    std::deque<ArrayNode::Member>* storage_ = nullptr;
+    sfl::segmented_vector<ArrayNode::Member, SegmentSize>* storage_ = nullptr;
     size_t firstMemberIndex_ = 0;
     size_t size_ = 0;
 };
@@ -157,7 +160,7 @@ struct ModelPool {
      */
     struct Strings
     {
-        friend class ModelPool;
+        friend struct ModelPool;
 
     private:
         std::shared_mutex stringStoreMutex_;
@@ -193,30 +196,30 @@ struct ModelPool {
     std::vector<simfil::ModelNode*> roots;
 
     /// Objects
-    std::deque<simfil::ObjectNode> objects;
+    sfl::segmented_vector<simfil::ObjectNode, SegmentSize> objects;
 
     /// Arrays
-    std::deque<simfil::ArrayNode> arrays;
+    sfl::segmented_vector<simfil::ArrayNode, SegmentSize> arrays;
 
     /// Scalars
-    std::deque<simfil::ScalarNode> scalars;
+    sfl::segmented_vector<simfil::ScalarNode, SegmentSize> scalars;
 
     /// Vertices
-    std::deque<simfil::VertexNode> vertices;
+    sfl::segmented_vector<simfil::VertexNode, SegmentSize> vertices;
 
     /// Feature Ids
-    std::deque<FeatureIdNode> featureIds;
+    sfl::segmented_vector<FeatureIdNode, SegmentSize> featureIds;
 
     /// Strings
     std::shared_ptr<Strings> strings;
 
     /// Array member references - all member references
     /// for a single array appear consecutively.
-    std::deque<ArrayNode::Member> arrayMembers;
+    sfl::segmented_vector<ArrayNode::Member, SegmentSize> arrayMembers;
 
     /// Object member references - all member references
     /// for a single array appear consecutively.
-    std::deque<ObjectNode::Member> objectMembers;
+    sfl::segmented_vector<ObjectNode::Member, SegmentSize> objectMembers;
 
     /// Validate that all internal string/node references are valid
     /// Returns a list of found errors.
