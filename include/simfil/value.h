@@ -308,6 +308,11 @@ public:
         return visit(impl::ValueToString());
     }
 
+    /// Get the string_view of this Value if it has one.
+    std::string_view const* stringViewValue() {
+        return std::get_if<std::string_view>(&value);
+    }
+
     ValueType type;
     std::variant<
         std::monostate,

@@ -13,7 +13,6 @@
 #include <mutex>
 #include <shared_mutex>
 #include <atomic>
-#include <sstream>
 
 namespace simfil
 {
@@ -49,212 +48,81 @@ public:
     ModelNode& operator=(ModelNode&&) = default;
 };
 
-/** Scalar implementation */
+/** Scalar Node */
 class ScalarNode : public ModelNode
 {
 public:
-    ScalarNode()
-        : scalar(Value::null())
-    {}
-
-    ScalarNode(Value&& v)
-        : scalar(std::move(v))
-    {}
-
-    auto value() const -> Value override
-    {
-        return scalar;
-    }
-
-    auto type() const -> Type override
-    {
-        return Type::Scalar;
-    }
-
-    auto get(const std::string_view &) const ->  const ModelNode* override
-    {
-        return nullptr;
-    }
-
-    auto get(int64_t) const ->  const ModelNode* override
-    {
-        return nullptr;
-    }
-
-    auto children() const -> std::vector<const ModelNode*> override
-    {
-        return {};
-    }
-
-    auto keys() const -> std::vector<std::string_view> override
-    {
-        return {};
-    }
-
-    auto size() const -> int64_t override
-    {
-        return 0;
-    }
+    ScalarNode();
+    ScalarNode(Value&& v);
+    auto value() const -> Value override;
+    auto type() const -> Type override;
+    auto get(const std::string_view &) const ->  const ModelNode* override;
+    auto get(int64_t) const ->  const ModelNode* override;
+    auto children() const -> std::vector<const ModelNode*> override;
+    auto keys() const -> std::vector<std::string_view> override;
+    auto size() const -> int64_t override;
 
     Value scalar;
 };
 
+/** Object Node */
 class ObjectNode : public ModelNode
 {
 public:
     using Member = std::pair<std::string_view, ModelNode*>;
 
-    auto value() const -> Value
-    {
-        return Value::null();
-    }
-
-    auto type() const -> Type
-    {
-        return ModelNode::Type::Object;
-    }
-
-    auto get(const std::string_view & key) const -> const ModelNode*
-    {
-        if (!storage_)
-            return {};
-        for (int i = 0; i < size_; ++i)
-            if(storage_->at(firstMemberIndex_ + i).first == key)
-                return storage_->at(firstMemberIndex_ + i).second;
-        return nullptr;
-    }
-
-    auto get(int64_t) const -> const ModelNode*
-    {
-        return nullptr;
-    }
-
-    auto children() const -> std::vector<const ModelNode*>
-    {
-        if (!storage_)
-            return {};
-        std::vector<const ModelNode*> nodes;
-        nodes.reserve(size_);
-        for (int i = 0; i < size_; ++i)
-            nodes.push_back(storage_->at(firstMemberIndex_ + i).second);
-        return nodes;
-    }
-
-    auto keys() const -> std::vector<std::string_view>
-    {
-        if (!storage_)
-            return {};
-        std::vector<std::string_view> names;
-        names.reserve(size_);
-        for (int i = 0; i < size_; ++i)
-            names.push_back(storage_->at(firstMemberIndex_ + i).first);
-        return names;
-    }
-
-    auto size() const -> int64_t
-    {
-        return size_;
-    }
+    auto value() const -> Value override;
+    auto type() const -> Type override;
+    auto get(const std::string_view & key) const -> const ModelNode* override;
+    auto get(int64_t) const -> const ModelNode* override;
+    auto children() const -> std::vector<const ModelNode*> override;
+    auto keys() const -> std::vector<std::string_view> override;
+    auto size() const -> int64_t override;
 
     std::deque<ObjectNode::Member>* storage_ = nullptr;
     size_t firstMemberIndex_ = 0;
     size_t size_ = 0;
 };
 
+/** Array Node */
 class ArrayNode : public ModelNode
 {
 public:
     /// Array member nodes are referenced by index
     using Member = ModelNode*;
 
-    auto value() const -> Value
-    {
-        return Value::null();
-    }
-
-    auto type() const -> Type
-    {
-        return ModelNode::Type::Array;
-    }
-
-    auto get(const std::string_view &) const -> const ModelNode*
-    {
-        return nullptr;
-    }
-
-    auto get(int64_t i) const -> const ModelNode*
-    {
-        if (!storage_)
-            return {};
-        if (0 <= i && i <= size_)
-            return storage_->at(firstMemberIndex_ + i);
-        return nullptr;
-    }
-
-    auto children() const -> std::vector<const ModelNode*>
-    {
-        if (!storage_)
-            return {};
-        std::vector<const ModelNode*> result;
-        result.reserve(size_);
-        for (auto i = 0; i < size_; ++i)
-            result.push_back(storage_->at(firstMemberIndex_ + i));
-        return result;
-    }
-
-    auto keys() const -> std::vector<std::string_view>
-    {
-        return {};
-    }
-
-    auto size() const -> int64_t
-    {
-        return size_;
-    }
+    auto value() const -> Value override;
+    auto type() const -> Type override;
+    auto get(const std::string_view &) const -> const ModelNode* override;
+    auto get(int64_t i) const -> const ModelNode* override;
+    auto children() const -> std::vector<const ModelNode*> override;
+    auto keys() const -> std::vector<std::string_view> override;
+    auto size() const -> int64_t override;
 
     std::deque<ArrayNode::Member>* storage_ = nullptr;
     size_t firstMemberIndex_ = 0;
     size_t size_ = 0;
 };
 
+/** Vertex Node */
 class VertexNode : public ModelNode
 {
 public:
     VertexNode() = default;
-    VertexNode(double lon, double lat) : lon(Value::make(lon)), lat(Value::make(lat)) {}
-
-    auto type() const -> ModelNode::Type override {return ModelNode::Type::Array; }
-
-    auto value() const -> Value override { return Value::null(); }
-
-    auto get(const std::string_view & key) const -> const ModelNode* override
-    {
-        if (key == "lon")
-            return &lon;
-        if (key == "lat")
-            return &lat;
-        return nullptr;
-    }
-
-    auto get(int64_t idx) const -> const ModelNode* override
-    {
-        switch (idx) {
-        case 0: return &lon;
-        case 1: return &lat;
-        default: return nullptr;
-        }
-    }
-
-    auto children() const -> std::vector<const ModelNode*> override { return {{&lon, &lat}}; }
-
-    auto keys() const -> std::vector<std::string_view> override { return {{"lon"s, "lat"s}}; }
-
-    auto size() const -> int64_t override { return 2; }
+    VertexNode(double lon, double lat);
+    auto type() const -> ModelNode::Type override;
+    auto value() const -> Value override;
+    auto get(const std::string_view & key) const -> const ModelNode* override;
+    auto get(int64_t idx) const -> const ModelNode* override;
+    auto children() const -> std::vector<const ModelNode*> override;
+    auto keys() const -> std::vector<std::string_view> override;
+    auto size() const -> int64_t override;
 
     ScalarNode lon;
     ScalarNode lat;
 };
 
+/** FeatureId Node */
 class FeatureIdNode : public ModelNode
 {
 public:
@@ -262,35 +130,15 @@ public:
     FeatureIdNode(
         std::string_view const& prefix,
         std::vector<std::pair<char const*, int64_t>> idPathElements
-    ) : prefix_(prefix), idPathElements_(std::move(idPathElements))
-    {}
+    );
 
-    auto type() const -> ModelNode::Type override {return ModelNode::Type::Scalar; }
-
-    auto value() const -> Value override {
-        std::stringstream result;
-        result << prefix_;
-        for (auto& [type, id] : idPathElements_) {
-            result <<  "." << type << "." << std::to_string(id);
-        }
-        return Value::make(result.str());
-    }
-
-    auto get(const std::string_view & key) const -> const ModelNode* override
-    {
-        return nullptr;
-    }
-
-    auto get(int64_t idx) const -> const ModelNode* override
-    {
-        return nullptr;
-    }
-
-    auto children() const -> std::vector<const ModelNode*> override { return {}; }
-
-    auto keys() const -> std::vector<std::string_view> override { return {}; }
-
-    auto size() const -> int64_t override { return 2; }
+    auto type() const -> ModelNode::Type override;
+    auto value() const -> Value override;
+    auto get(const std::string_view & key) const -> const ModelNode* override;
+    auto get(int64_t idx) const -> const ModelNode* override;
+    auto children() const -> std::vector<const ModelNode*> override;
+    auto keys() const -> std::vector<std::string_view> override;
+    auto size() const -> int64_t override;
 
     std::string_view prefix_;
     std::vector<std::pair<char const*, int64_t>> idPathElements_;
@@ -302,17 +150,19 @@ public:
  * reference each other via deque indices. Because deques are used,
  * the pointers stay valid as the containers grow.
  */
-struct Model
-{
+struct ModelPool {
+
     /** Fast and efficient string storage -
      * referenced by object keys and string values.
      */
     struct Strings
     {
+        friend class ModelPool;
+
     private:
+        std::shared_mutex stringStoreMutex_;
         std::unordered_set<std::string> strings_;
         std::atomic_int64_t byteSize_;
-        std::shared_mutex stringStoreMutex_;
         std::atomic_int64_t cacheHits_;
         std::atomic_int64_t cacheMisses_;
 
@@ -321,51 +171,23 @@ struct Model
         /// if it doesn't exist yet. Unfortunately, we can't use string_view
         /// as lookup type until C++ 20 is used:
         ///   http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r2.html
-        std::string_view getOrInsert(std::string const& str)
-        {
-            {
-                std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
-                auto it = strings_.find(str);
-                if (it != strings_.end()) {
-                    ++cacheHits_;
-                    return *it;
-                }
-            }
-            {
-                std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
-                auto [it, insertionTookPlace] = strings_.emplace(str);
-                if (insertionTookPlace) {
-                    ++cacheMisses_;
-                    byteSize_ += str.size();
-                }
-                return *it;
-            }
-        }
+        std::string_view getOrInsert(std::string const& str);
 
         /// Get stats
-        size_t size() {
-            std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
-            return strings_.size();
-        }
-        size_t bytes() {
-            return byteSize_;
-        }
-        size_t hits() {
-            return cacheHits_;
-        }
-        size_t misses() {
-            return cacheMisses_;
-        }
+        size_t size();
+        size_t bytes();
+        size_t hits();
+        size_t misses();
     };
 
     /// No copies allowed...
-    Model(Model const&) = delete;
+    ModelPool(ModelPool const&) = delete;
 
     /// Default ctor with own string storage
-    Model() : strings(std::make_shared<Strings>()) {}
+    ModelPool();
 
     /// Ctor with shared string storage
-    explicit Model(std::shared_ptr<Strings> stringStore) : strings(std::move(stringStore)) {};
+    explicit ModelPool(std::shared_ptr<Strings> stringStore);
 
     /// Root nodes
     std::vector<simfil::ModelNode*> roots;
@@ -382,11 +204,11 @@ struct Model
     /// Vertices
     std::deque<simfil::VertexNode> vertices;
 
-    /// Strings
-    std::shared_ptr<Strings> strings;
-
     /// Feature Ids
     std::deque<FeatureIdNode> featureIds;
+
+    /// Strings
+    std::shared_ptr<Strings> strings;
 
     /// Array member references - all member references
     /// for a single array appear consecutively.
@@ -395,8 +217,18 @@ struct Model
     /// Object member references - all member references
     /// for a single array appear consecutively.
     std::deque<ObjectNode::Member> objectMembers;
+
+    /// Validate that all internal string/node references are valid
+    /// Returns a list of found errors.
+    std::vector<std::string> checkForErrors() const;
+
+    /// Check for errors, throw if there are any
+    void validate() const;
+
+    /// Clear all member containers (except Strings).
+    void clear();
 };
 
-using ModelPtr = std::shared_ptr<Model>;
+using ModelPoolPtr = std::shared_ptr<ModelPool>;
 
 }

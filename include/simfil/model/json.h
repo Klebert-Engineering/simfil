@@ -11,8 +11,8 @@
 namespace simfil::json
 {
 
-void parse(std::istream& input, ModelPtr const& model);
-void parse(const std::string& input, ModelPtr const& model);
-ModelPtr parse(const std::string& input);
+void parse(std::istream& input, ModelPoolPtr const& model);
+void parse(const std::string& input, ModelPoolPtr const& model);
+ModelPoolPtr parse(const std::string& input);
 
 }

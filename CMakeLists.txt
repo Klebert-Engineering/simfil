@@ -44,7 +44,8 @@ add_library(simfil STATIC
   src/token.cpp
   src/types.cpp
   src/ext-geo.cpp
-  src/simfil.cpp)
+  src/simfil.cpp
+  src/model.cpp)
 
 target_include_directories(simfil
   PUBLIC
