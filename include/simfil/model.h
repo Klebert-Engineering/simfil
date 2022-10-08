@@ -18,7 +18,8 @@
 namespace simfil
 {
 
-constexpr auto SegmentSize = 512;
+constexpr auto SegmentSize = 2048;
+constexpr auto MemberSegmentSize = SegmentSize*4;
 
 /** Simfil search model interface */
 class ModelNode
@@ -82,7 +83,7 @@ public:
     auto keys() const -> std::vector<std::string_view> override;
     auto size() const -> int64_t override;
 
-    sfl::segmented_vector<ObjectNode::Member, SegmentSize>* storage_ = nullptr;
+    sfl::segmented_vector<ObjectNode::Member, MemberSegmentSize>* storage_ = nullptr;
     size_t firstMemberIndex_ = 0;
     size_t size_ = 0;
 };
@@ -102,7 +103,7 @@ public:
     auto keys() const -> std::vector<std::string_view> override;
     auto size() const -> int64_t override;
 
-    sfl::segmented_vector<ArrayNode::Member, SegmentSize>* storage_ = nullptr;
+    sfl::segmented_vector<ArrayNode::Member, MemberSegmentSize>* storage_ = nullptr;
     size_t firstMemberIndex_ = 0;
     size_t size_ = 0;
 };
@@ -215,11 +216,11 @@ struct ModelPool {
 
     /// Array member references - all member references
     /// for a single array appear consecutively.
-    sfl::segmented_vector<ArrayNode::Member, SegmentSize> arrayMembers;
+    sfl::segmented_vector<ArrayNode::Member, MemberSegmentSize> arrayMembers;
 
     /// Object member references - all member references
     /// for a single array appear consecutively.
-    sfl::segmented_vector<ObjectNode::Member, SegmentSize> objectMembers;
+    sfl::segmented_vector<ObjectNode::Member, MemberSegmentSize> objectMembers;
 
     /// Validate that all internal string/node references are valid
     /// Returns a list of found errors.
