@@ -101,29 +101,34 @@ static auto expect(const ExprPtr& e, Type... types)
  * Helper for calling the result function if it has never been executed
  * at the time of destruction.
  */
-struct ResultFnCounter
+struct CountedResultFn
 {
     size_t calls = 0;
+    bool finished = false;
     ResultFn fn;
     Context nonctx;
 
-    ResultFnCounter(ResultFn fn, Context ctx)
+    CountedResultFn(ResultFn fn, Context ctx)
         : fn(std::move(fn))
         , nonctx(std::move(ctx))
     {}
 
-    ResultFnCounter(const ResultFnCounter&) = delete;
-    ResultFnCounter(ResultFnCounter&&) = delete;
+    CountedResultFn(const CountedResultFn&) = delete;
+    CountedResultFn(CountedResultFn&&) = delete;
 
     auto operator()(Context ctx, Value vv) -> Result
     {
+        assert(!finished);
         ++calls;
         return fn(std::move(ctx), std::move(vv));
     }
 
-    ~ResultFnCounter()
+    /* NOTE: You _must_ call finish before destruction! */
+    auto ensureCall()
     {
-        if (calls == 0) {
+        assert(!finished);
+        if (calls == 0 && !finished) {
+            finished = true;
             if (nonctx.phase == Context::Phase::Compilation)
                 fn(nonctx, Value::undef());
             else
@@ -148,7 +153,7 @@ public:
         if (ctx.phase == Context::Phase::Compilation)
             return ores(ctx, Value::undef());
 
-        auto res = ResultFnCounter(std::move(ores), ctx);
+        auto res = CountedResultFn(std::move(ores), ctx);
 
         std::function<Result(Value, int)> iterate = [&iterate, &res, &ctx](Value val, int depth) {
             if (!val.node)
@@ -165,7 +170,9 @@ public:
             return Result::Continue;
         };
 
-        return iterate(val, 0);
+        auto r = iterate(val, 0);
+        res.ensureCall();
+        return r;
     }
 
     auto toString() const -> std::string override
@@ -346,9 +353,9 @@ public:
 
     auto ieval(Context ctx, Value val, ResultFn ores) const -> Result override
     {
-        auto res = ResultFnCounter(std::move(ores), ctx);
+        auto res = CountedResultFn(std::move(ores), ctx);
 
-        return left_->eval(ctx, val, [this, &val, &res](auto ctx, Value lval) {
+        auto r = left_->eval(ctx, val, [this, &val, &res](auto ctx, Value lval) {
             return index_->eval(ctx, val, [this, &res, &lval](auto ctx, Value ival) {
                 /* Field subscript */
                 if (lval.node) {
@@ -378,6 +385,8 @@ public:
                 return Result::Continue;
             });
         });
+        res.ensureCall();
+        return r;
     }
 
     auto toString() const -> std::string override
@@ -410,9 +419,9 @@ public:
     auto ieval(Context ctx, Value val, ResultFn ores) const -> Result override
     {
         /* Do not return null unless we have _no_ matching value. */
-        auto res = ResultFnCounter(std::move(ores), ctx);
+        auto res = CountedResultFn(std::move(ores), ctx);
 
-        return left_->eval(ctx, val, [this, &res](auto ctx, auto lv) {
+        auto r = left_->eval(ctx, val, [this, &res](auto ctx, auto lv) {
             return sub_->eval(ctx, lv, [this, &res, &lv](auto ctx, auto vv) {
                 auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
                 if (bv.isa(ValueType::Undef))
@@ -424,6 +433,8 @@ public:
                 return Result::Continue;
             });
         });
+        res.ensureCall();
+        return r;
     }
 
     auto toString() const -> std::string override
@@ -506,9 +517,9 @@ public:
 
     auto ieval(Context ctx, Value val, ResultFn ores) const -> Result override
     {
-        auto res = ResultFnCounter(std::move(ores), ctx);
+        auto res = CountedResultFn(std::move(ores), ctx);
 
-        return left_->eval(ctx, val, [this, &res](auto ctx, auto v) {
+        auto r = left_->eval(ctx, val, [this, &res](auto ctx, auto v) {
             if (v.isa(ValueType::Undef))
                 return Result::Continue;
 
@@ -525,6 +536,8 @@ public:
                 return res(ctx, std::move(vv));
             });
         });
+        res.ensureCall();
+        return r;
     };
 
     auto toString() const -> std::string override

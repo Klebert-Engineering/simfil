@@ -102,17 +102,17 @@ static std::string input(const char* prompt = "> ")
     return r;
 }
 
-static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const std::vector<std::unique_ptr<simfil::ModelNode>>& model)
+static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const std::shared_ptr<simfil::ModelPool>& model)
 {
     std::vector<std::vector<simfil::Value>> result;
-    result.resize(std::max<size_t>(1, model.size()));
+    result.resize(std::max<size_t>(1, model->roots.size()));
 
-    if (model.empty()) {
+    if (model->roots.empty()) {
         result[0] = simfil::eval(env, expr, nullptr);
         return result;
     }
 
-    auto n_threads = std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), model.size()), 1);
+    auto n_threads = std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), model->roots.size()), 1);
     if (env.debug)
         n_threads = 1;
     if (!options.multi_threaded)
@@ -124,10 +124,10 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
     for (auto i = 0; i < n_threads; ++i) {
         threads.emplace_back(std::thread([&, i]() {
             size_t next;
-            while ((next = idx++) < model.size()) {
-                const auto& doc = model[next];
+            while ((next = idx++) < model->roots.size()) {
+                const auto* doc = model->roots[next];
                 try {
-                    result[next] = simfil::eval(env, expr, doc.get());
+                    result[next] = simfil::eval(env, expr, doc);
                 } catch (...) {
                     return;
                 }
@@ -149,12 +149,12 @@ int main(int argc, char *argv[])
     rl_attempted_completion_function = command_completion;
 #endif
 
-    std::vector<std::unique_ptr<simfil::ModelNode>> model;
+    auto model = std::make_shared<simfil::ModelPool>();
 #if defined(SIMFIL_WITH_MODEL_JSON)
     for (auto arg = argv + 1; *arg; ++arg) {
         std::cout << "Parsing " << *arg << "\n";
         auto f = std::ifstream(*arg);
-        model.push_back(simfil::json::parse(f));
+        simfil::json::parse(f, model);
     }
 #endif
 

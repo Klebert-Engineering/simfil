@@ -51,7 +51,7 @@ public:
     Value value_;
     ScalarNode scalar;
     const ModelNode* base;
-    std::map<std::string, ModelNode*> overlayChildren;
+    std::map<std::string, ModelNode*, std::less<>> overlayChildren;
 
     OverlayNode(Context ctx, Value val)
         : ctx(ctx)
@@ -78,7 +78,7 @@ public:
         return base->type();
     }
 
-    auto get(const std::string& key) const -> const ModelNode* override
+    auto get(const std::string_view & key) const -> const ModelNode* override
     {
         if (auto iter = overlayChildren.find(key); iter != overlayChildren.end())
             return iter->second;
@@ -98,7 +98,7 @@ public:
         return c;
     }
 
-    auto keys() const -> std::vector<std::string> override
+    auto keys() const -> std::vector<std::string_view> override
     {
         auto k = base->keys();
         for (const auto& [kk, _] : overlayChildren)
@@ -384,11 +384,11 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Res
     ctx.env->trace(sname, [&](auto& t) {
         t.totalus += std::chrono::duration_cast<std::chrono::microseconds>(duration);
         t.calls += 1;
-        if (ilimit < 0 || t.values.size() < ilimit)
+        if (ilimit < 0 || (int)t.values.size() < ilimit)
             t.values.insert(t.values.end(),
                             std::make_move_iterator(values.begin()),
                             std::make_move_iterator(values.end()));
-        if (ilimit >= 0 && t.values.size() > ilimit)
+        if (ilimit >= 0 && (int)t.values.size() > ilimit)
             t.values.resize(ilimit, Value::undef());
     });
 
@@ -477,7 +477,6 @@ auto SplitFn::ident() const -> const FnInfo&
 
 auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
 {
-    bool hasKeepEmpty;
     Value str = Value::undef();
     Value sep = Value::undef();
     Value keepEmpty = Value::undef();

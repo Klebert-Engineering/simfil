@@ -216,7 +216,7 @@ static auto joined_result(std::string_view query)
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 
-    auto res = eval(env, *ast, model.get());
+    auto res = eval(env, *ast, model->roots[0]);
 
     std::string vals;
     for (const auto& vv : res) {
@@ -364,4 +364,52 @@ TEST_CASE("GeoJSON", "[geojson.geo]") {
         REQUIRE_RESULT("typeof geo(geoPolygon.geometry)",    "polygon");
         REQUIRE_RESULT("typeof geoPolygon.geo()",            "polygon");
     }
+}
+
+TEST_CASE("Model Pool Validation", "[model.validation]") {
+    ModelPool pool;
+    std::string outsideString = "I am very bad";
+
+    // Recognize dangling string value
+    pool.scalars.emplace_back(simfil::Value::make(std::string_view(outsideString)));
+    REQUIRE_THROWS(pool.validate());
+
+    // Recognize dangling field name string view
+    pool.clear();
+    pool.objects.emplace_back();
+    pool.objectMembers.emplace_back(outsideString, &pool.objects.front());
+    REQUIRE_THROWS(pool.validate());
+
+    // Should be valid if the string is internalized
+    pool.objectMembers.front().first = pool.strings->getOrInsert(outsideString);
+    REQUIRE_NOTHROW(pool.validate());
+
+    // Recognize dangling object member pointer
+    pool.objects.clear();
+    REQUIRE_THROWS(pool.validate());
+
+    // Recognize out-of-bounds object member refs
+    pool.clear();
+    pool.objects.emplace_back();
+    pool.objects.back().size_ = 1;
+    REQUIRE_THROWS(pool.validate());
+
+    // Recognize dangling array member pointer
+    pool.clear();
+    pool.arrayMembers.emplace_back(nullptr);
+    REQUIRE_THROWS(pool.validate());
+
+    // Recognize out-of-bounds array member refs
+    pool.clear();
+    pool.arrays.emplace_back();
+    pool.arrays.back().size_ = 1;
+    REQUIRE_THROWS(pool.validate());
+
+    // An empty model should be valid
+    pool.clear();
+    REQUIRE_NOTHROW(pool.validate());
+
+    // An empty object should also be valid
+    pool.objects.emplace_back();
+    REQUIRE_NOTHROW(pool.validate());
 }

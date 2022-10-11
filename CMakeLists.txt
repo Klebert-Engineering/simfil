@@ -37,6 +37,7 @@ add_library(simfil STATIC
   include/simfil/value.h
   include/simfil/object.h
   include/simfil/simfil.h
+  include/simfil/segmented-vector.h
 
   src/environment.cpp
   src/function.cpp
@@ -44,7 +45,8 @@ add_library(simfil STATIC
   src/token.cpp
   src/types.cpp
   src/ext-geo.cpp
-  src/simfil.cpp)
+  src/simfil.cpp
+  src/model.cpp)
 
 target_include_directories(simfil
   PUBLIC
