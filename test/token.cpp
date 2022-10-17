@@ -108,6 +108,14 @@ TEST_CASE("Tokenize symbols", "[token.symbol]") {
     REQUIRE(getFirstType("typeof") == Token::Type::OP_TYPEOF);
 }
 
+TEST_CASE("Tokenize symbols", "[token.icase]") {
+    /* Test operator (and) for case insensitivity */
+    REQUIRE(getFirstType("and")     == Token::Type::OP_AND);
+    REQUIRE(getFirstType("AND")     == Token::Type::OP_AND);
+    REQUIRE(getFirstType("And")     == Token::Type::OP_AND);
+    REQUIRE(getFirstType("AnD")     == Token::Type::OP_AND);
+}
+
 TEST_CASE("Tokenize mixed", "[token.mixed]") {
     auto tokens = tokenize("1+.0 and true or 'test'");
     REQUIRE(tokens.size() == 7 + 1 /*EOF*/);

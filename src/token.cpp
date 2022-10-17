@@ -13,6 +13,20 @@
 #include <optional>
 #include <cstring>
 #include <unordered_map>
+#include <algorithm>
+
+namespace
+{
+
+std::string downcase(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](auto c) {
+        return tolower(c);
+    });
+    return s;
+}
+
+}
 
 namespace simfil
 {
@@ -170,16 +184,17 @@ void skipWhitespace(Scanner& s)
 std::optional<Token> scanWord(Scanner& s)
 {
     static const std::unordered_map<std::string, Token::Type> keyword_tab = {
-        {"_",     Token::SELF},
-        {"and",   Token::OP_AND},
-        {"or",    Token::OP_OR},
-        {"not",   Token::OP_NOT},
-        {"exists",Token::OP_EXISTS},
-        {"typeof",Token::OP_TYPEOF},
-        {"true",  Token::C_TRUE},
-        {"false", Token::C_FALSE},
-        {"null",  Token::C_NULL},
-        {"as",    Token::OP_CAST},
+        /* lowercase-op-name | token-type */
+        {"_",                  Token::SELF},
+        {"and",                Token::OP_AND},
+        {"or",                 Token::OP_OR},
+        {"not",                Token::OP_NOT},
+        {"exists",             Token::OP_EXISTS},
+        {"typeof",             Token::OP_TYPEOF},
+        {"true",               Token::C_TRUE},
+        {"false",              Token::C_FALSE},
+        {"null",               Token::C_NULL},
+        {"as",                 Token::OP_CAST},
     };
 
     const auto isWordStart = [](auto c) {
@@ -198,7 +213,7 @@ std::optional<Token> scanWord(Scanner& s)
             text.push_back(s.pop());
         } while (s && (isalnum(s.at(0)) || s.at(0) == '_' || s.at(0) == '\\'));
 
-        if (auto iter = keyword_tab.find(text); iter != keyword_tab.end())
+        if (auto iter = keyword_tab.find(downcase(text)); iter != keyword_tab.end())
             return Token(iter->second, begin, s.pos());
 
         return Token(Token::WORD, text, begin, s.pos());
