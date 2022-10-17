@@ -190,7 +190,7 @@ auto VertexNode::get(int64_t idx) const -> const ModelNode*
 
 auto VertexNode::children() const -> std::vector<const ModelNode*> { return {{&lon, &lat}}; }
 
-auto VertexNode::keys() const -> std::vector<std::string_view> { return {{"lon"s, "lat"s}}; }
+auto VertexNode::keys() const -> std::vector<std::string_view> { return {{"lon", "lat"}}; }
 
 auto VertexNode::size() const -> int64_t { return 2; }
 
