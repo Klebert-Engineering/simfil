@@ -5,6 +5,11 @@ structured data built for use with GeoJSON.
 
 ## Language Basics
 
+### Syntax
+
+The syntax of simfil is case-insensitive. This means that `any(...)`, `ANY(...)` and `Any(...)` all compile
+to the same function.
+
 ### Paths
 
 To traverse the document and evaluate nested nodes, simfil provides the
