@@ -375,8 +375,13 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Res
 
     auto start = std::chrono::steady_clock::now();
     auto result = args[0]->eval(ctx, val, [&, n = 0](auto ctx, auto vv) mutable {
-        if (ilimit < 0 || n++ <= ilimit)
-            values.push_back(vv);
+        if (ilimit < 0 || n++ <= ilimit) {
+            // Do not allow string view to leak into the trace result.
+            auto copy = vv;
+            if (auto sv = vv.stringViewValue())
+                copy = Value::make(std::string(*sv));
+            values.emplace_back(std::move(copy));
+        }
         return res(std::move(ctx), std::move(vv));
     });
     auto duration = std::chrono::steady_clock::now() - start;
