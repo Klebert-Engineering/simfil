@@ -170,6 +170,10 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
 
     REQUIRE_AST("trace(a.b)",         "(trace (. a b))");
     REQUIRE_AST("trace('test', a.b)", "(trace \"test\" (. a b))");
+
+    /* Test case-insensitivity */
+    REQUIRE_AST("TRACE(1)",      "(trace 1)");
+    REQUIRE_AST("Trace(1)",      "(trace 1)");
 }
 
 static const char* doc = R"json(
