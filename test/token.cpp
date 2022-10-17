@@ -101,6 +101,7 @@ TEST_CASE("Tokenize symbols", "[token.symbol]") {
     REQUIRE(getFirstType("+")      == Token::Type::OP_ADD);
     REQUIRE(getFirstType("=~")     == Token::Type::OP_MATCH);
     REQUIRE(getFirstType("==")     == Token::Type::OP_EQ);
+    REQUIRE(getFirstType("=")      == Token::Type::OP_EQ);
     REQUIRE(getFirstType("<")      == Token::Type::OP_LT);
     REQUIRE(getFirstType("< <")    == Token::Type::OP_LT);
     REQUIRE(getFirstType("<<")     == Token::Type::OP_LSHIFT);

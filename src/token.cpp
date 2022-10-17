@@ -366,6 +366,7 @@ std::optional<Token> scanSyntax(Scanner& s)
         {">", Token::OP_GT},
         {"==",Token::OP_EQ},
         {"!=",Token::OP_NOT_EQ},
+        {"=", Token::OP_EQ}, /* Alias for == */
     };
 
     auto begin = s.pos();
