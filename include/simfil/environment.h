@@ -52,7 +52,7 @@ public:
     /**
      * Query function by name.
      */
-    auto findFunction(const std::string&) const -> const Function*;
+    auto findFunction(std::string) const -> const Function*;
 
 public:
     std::unique_ptr<std::mutex> warnMtx;
@@ -61,6 +61,7 @@ public:
     std::unique_ptr<std::mutex> traceMtx;
     std::map<std::string, Trace> traces;
 
+    /* lower-case function ident -> function */
     std::map<std::string, const Function*> functions;
 
     Debug* debug = nullptr;

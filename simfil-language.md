@@ -5,6 +5,11 @@ structured data built for use with GeoJSON.
 
 ## Language Basics
 
+### Syntax
+
+The syntax of simfil is case-insensitive. This means that `any(...)`, `ANY(...)` and `Any(...)` all compile
+to the same function.
+
 ### Paths
 
 To traverse the document and evaluate nested nodes, simfil provides the
@@ -154,7 +159,7 @@ The following types can be target types for a cast:
 | `a ^ b`             | Bitwise XOR.                                                                                            |
 | `a < b` / `a <= b`  | Less than / less than or equal to.                                                                      |
 | `a > b` / `a >= b`  | Greater than / greater than or equal to.                                                                |
-| `a == b` / `a != b` | Equal to / not equal to.                                                                                |
+| `a == b` / `a != b` | Equal to / not equal to. `a = b` is an alias for `a == b`.                                              |
 | `a =~ b` / `a !~ b` | `a` matches regular expression `b` / `a` does not match regular expression `b`. Returns `a` or `false`  |
 | `a or b`            | Logical or, returning the first non-false argument (like JavaScript).                                   |
 | `a and b`           | Logical and, returning the first false argument (like JavaScript).                                      |
@@ -173,7 +178,7 @@ The following types can be target types for a cast:
 | `+`, `-`                               | 5          |
 | `<<`, `>>`, `&`, `\|`, `^`             | 4          |
 | `<`, `<=`, `>`, `>=`                   | 3          |
-| `==`, `!=`, `=~`, `!~`                 | 2          |
+| `==`/`=`, `!=`, `=~`, `!~`             | 2          |
 | `and`, `or`                            | 1          |
 
 ## Functions

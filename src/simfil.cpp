@@ -1234,6 +1234,11 @@ class WordParser : public PrefixParselet
         if (p.match(Token::LPAREN)) {
             p.consume();
 
+            /* Downcase function name */
+            std::transform(word.begin(), word.end(), word.begin(), [](auto c) {
+                return tolower(c);
+            });
+
             auto arguments = p.parseList(Token::RPAREN);
             return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
         }

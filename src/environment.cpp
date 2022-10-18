@@ -44,7 +44,7 @@ auto Environment::trace(const std::string& name, std::function<void(Trace&)> fn)
     fn(traces[name]);
 }
 
-auto Environment::findFunction(const std::string& name) const -> const Function*
+auto Environment::findFunction(std::string name) const -> const Function*
 {
     if (auto iter = functions.find(name); iter != functions.end())
         return iter->second;
