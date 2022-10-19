@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cassert>
 #include <functional>
+#include <optional>
 
 #include "object.h"
 
@@ -16,7 +17,30 @@ namespace simfil
 using namespace std::string_literals;
 
 class Value;
-class ModelNode;
+using StringId = uint16_t;
+
+/** Simfil search model interface */
+struct ModelNode
+{
+    enum Type
+    {
+        Scalar,
+        Array,
+        Object,
+    };
+
+    /** Node information */
+    std::function<Value()> value;
+    std::function<Type()> type;
+
+    /** Child access */
+    std::function<std::optional<ModelNode>(const StringId &)> getForName;
+    std::function<std::optional<ModelNode>(int64_t)> getForIndex;
+    std::function<std::vector<ModelNode>()> children;
+    std::function<std::vector<std::string>()> keys;
+
+    uint32_t size;
+};
 
 /**
  * Special type to represent undefined values.
@@ -230,25 +254,23 @@ public:
         return Value(ValueType4CType<std::decay_t<_CType>>::Type, std::forward<_CType>(value));
     }
 
-    static auto field(Value&& v, const ModelNode* node)
+    static auto field(Value&& v, const ModelNode& node)
     {
         return Value(v.type, std::move(v.value), node);
     }
 
     Value(ValueType type)
         : type(type)
-        , node(nullptr)
     {}
 
     template <class _Type>
     Value(ValueType type, _Type&& value)
         : type(type)
         , value(std::forward<_Type>(value))
-        , node(nullptr)
     {}
 
     template <class _Type>
-    Value(ValueType type, _Type&& value, const ModelNode* node)
+    Value(ValueType type, _Type&& value, const ModelNode& node)
         : type(type)
         , value(std::forward<_Type>(value))
         , node(node)
@@ -313,6 +335,21 @@ public:
         return std::get_if<std::string_view>(&value);
     }
 
+    /// Convert the Value to a generic ModelNode
+    ModelNode toModelNode() {
+        if (node)
+            return *node;
+        return {
+            [copy=*this]() { return copy; },              /* value */
+            []() { return ModelNode::Scalar; },           /* type */
+            [](StringId const&) { return std::nullopt; }, /* getForName */
+            [](int64_t const&) { return std::nullopt; },  /* getForIndex */
+            []() { return std::vector<ModelNode>(); },    /* children */
+            []() { return std::vector<std::string>(); },  /* keys */
+            0                                             /* size */
+        };
+    }
+
     ValueType type;
     std::variant<
         std::monostate,
@@ -322,7 +359,8 @@ public:
         std::string,
         std::string_view,
         Object> value;
-    const ModelNode* node = nullptr;
+
+    std::optional<ModelNode> node;
 };
 
 

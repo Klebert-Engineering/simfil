@@ -49,66 +49,58 @@ class OverlayNode : public ModelNode
 public:
     Context ctx;
     Value value_;
-    ScalarNode scalar;
-    const ModelNode* base;
-    std::map<std::string, ModelNode*, std::less<>> overlayChildren;
+    std::optional<ModelNode> scalar;
+    std::optional<ModelNode> base;
+    std::map<StringId, ModelNode> overlayChildren;
 
     OverlayNode(Context ctx, Value val)
         : ctx(ctx)
         , value_(std::move(val))
-        , scalar(Value::null())
+        , scalar(Value::null().toModelNode())
     {
         base = value_.node;
         if (!base)
-            base = &scalar;
+            base = scalar;
+
+        value = [this]() {
+            return base->value();
+        };
+
+        type = [this]() {
+            return base->type();
+        };
+
+        getForName = [this](StringId const& key) -> std::optional<ModelNode>
+        {
+            if (auto iter = overlayChildren.find(key); iter != overlayChildren.end())
+                return iter->second;
+            return base->getForName(key);
+        };
+
+        getForIndex = [this](int64_t idx) -> std::optional<ModelNode>
+        {
+            return base->getForIndex(idx);
+        };
+
+        children = [this]() -> std::vector<ModelNode>
+        {
+            auto c = base->children();
+            for (const auto& [_, cc] : overlayChildren)
+                c.push_back(cc);
+            return c;
+        };
+
+        keys = [this]() -> std::vector<std::string>
+        {
+            return base->keys();
+        };
+
+        size = base->size;
     }
 
-    auto add(std::string key, ModelNode* child) -> void
+    auto add(StringId const& key, ModelNode const& child) -> void
     {
         overlayChildren[key] = child;
-    }
-
-    auto value() const -> Value override
-    {
-        return base->value();
-    }
-
-    auto type() const -> Type override
-    {
-        return base->type();
-    }
-
-    auto get(const std::string_view & key) const -> const ModelNode* override
-    {
-        if (auto iter = overlayChildren.find(key); iter != overlayChildren.end())
-            return iter->second;
-        return base->get(key);
-    }
-
-    auto get(int64_t idx) const -> const ModelNode* override
-    {
-        return base->get(idx);
-    }
-
-    auto children() const -> std::vector<const ModelNode*> override
-    {
-        auto c = base->children();
-        for (const auto& [_, cc] : overlayChildren)
-            c.push_back(cc);
-        return c;
-    }
-
-    auto keys() const -> std::vector<std::string_view> override
-    {
-        auto k = base->keys();
-        for (const auto& [kk, _] : overlayChildren)
-            k.push_back(kk);
-        return k;
-    }
-
-    auto size() const -> int64_t override
-    {
-        return base->size();
     }
 };
 
@@ -585,14 +577,11 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
     (void)args[0]->eval(ctx, val, [&, n = 0](auto ctx, Value vv) mutable {
         if (subexpr) {
             OverlayNode ov(ctx, vv);
-            ScalarNode sumNode{Value(sum)};
-            ov.add("$sum", &sumNode);
-            ScalarNode valNode{Value(vv)};
-            ov.add("$val", &valNode);
-            ScalarNode idxNode{Value::make((int64_t)n++)};
-            ov.add("$idx", &idxNode);
+            ov.add(Strings::OverlaySum, Value(sum).toModelNode());
+            ov.add(Strings::OverlayValue, Value(vv).toModelNode());
+            ov.add(Strings::OverlayIndex, Value::make((int64_t)n++).toModelNode());
 
-            subexpr->eval(ctx, Value::field(ov.value(), &ov), [&sum](auto ctx, auto vv) {
+            subexpr->eval(ctx, Value::field(ov.value(), ov), [&sum](auto ctx, auto vv) {
                 sum = std::move(vv);
                 return Result::Continue;
             });

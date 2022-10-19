@@ -5,10 +5,14 @@
 namespace simfil
 {
 
-Environment::Environment()
+Environment::Environment(std::shared_ptr<Strings> stringCache)
     : warnMtx(std::make_unique<std::mutex>())
     , traceMtx(std::make_unique<std::mutex>())
+    , stringCache_(std::move(stringCache))
 {
+    if (!stringCache_)
+        throw std::runtime_error("The string cache must not be null.");
+
     functions["any"]    = &AnyFn::Fn;
     functions["each"]   = &EachFn::Fn;
     functions["all"]    = &EachFn::Fn;
@@ -28,6 +32,9 @@ Environment::Environment()
     functions["linestring"] = &geo::LineStringFn::Fn;
     //functions["polygon"]    = &geo::PolygonFn::Fn;
 }
+
+Environment::Environment(NewStringCache_) :
+    Environment(std::make_shared<Strings>()) {}
 
 Environment::~Environment()
 {}
@@ -49,6 +56,10 @@ auto Environment::findFunction(std::string name) const -> const Function*
     if (auto iter = functions.find(name); iter != functions.end())
         return iter->second;
     return nullptr;
+}
+
+auto Environment::stringCache() const -> std::shared_ptr<Strings> {
+    return stringCache_;
 }
 
 Context::Context(Environment* env, Context::Phase phase)

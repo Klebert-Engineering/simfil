@@ -6,7 +6,7 @@
 
 using namespace simfil;
 
-static const auto invoice = json::parse(R"json(
+static const auto invoice = *json::parse(R"json(
 {
 "account": {
   "name": "Demo",
@@ -50,9 +50,9 @@ static const auto invoice = json::parse(R"json(
 }
 )json");
 
-static auto joined_result(const ModelNode* model, std::string_view query)
+static auto joined_result(const ModelPool& model, std::string_view query)
 {
-    Environment env;
+    Environment env(model.strings);
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 
@@ -68,7 +68,7 @@ static auto joined_result(const ModelNode* model, std::string_view query)
 }
 
 #define REQUIRE_RESULT(model, query, result) \
-    REQUIRE(joined_result(model->roots[0], query) == result)
+    REQUIRE(joined_result(model, query) == (result))
 
 TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
     REQUIRE_RESULT(invoice, "account.order.*.product.*.(price * quantity)",
@@ -82,7 +82,7 @@ TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
 }
 
 TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
-    REQUIRE_THROWS(joined_result(invoice->roots[0], "1 / (nonexisting as int)")); /* Division by zero */
-    REQUIRE_THROWS(joined_result(invoice->roots[0], "not nonexisting == 0"));     /* Invalid operands int and bool */
-    REQUIRE_THROWS(joined_result(invoice->roots[0], "not *.nonexisting == 0"));   /* Invalid operands int and bool */
+    REQUIRE_THROWS(joined_result(invoice, "1 / (nonexisting as int)")); /* Division by zero */
+    REQUIRE_THROWS(joined_result(invoice, "not nonexisting == 0"));     /* Invalid operands int and bool */
+    REQUIRE_THROWS(joined_result(invoice, "not *.nonexisting == 0"));   /* Invalid operands int and bool */
 }

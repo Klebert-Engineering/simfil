@@ -37,7 +37,6 @@ add_library(simfil STATIC
   include/simfil/value.h
   include/simfil/object.h
   include/simfil/simfil.h
-  include/simfil/segmented-vector.h
 
   src/environment.cpp
   src/function.cpp

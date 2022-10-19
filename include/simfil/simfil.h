@@ -35,6 +35,6 @@ auto compile(Environment& env, std::string_view src, bool any = true) -> ExprPtr
  * Param:
  *   model  Root node of the data model to query in
  */
-auto eval(Environment& env, const Expr& ast, const ModelNode* mode) -> std::vector<Value>;
+auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t rootIndex=0) -> std::vector<Value>;
 
 }

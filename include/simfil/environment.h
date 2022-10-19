@@ -3,6 +3,7 @@
 #pragma once
 
 #include "simfil/value.h"
+#include "simfil/model.h"
 
 #include <map>
 #include <memory>
@@ -30,7 +31,26 @@ struct Trace
 struct Environment
 {
 public:
-    explicit Environment();
+    /**
+     * Construct a SIMFIL execution environment with a string cache,
+     * which is used to map field names to short integer IDs.
+     * @param stringCache The string cache used by this environment.
+     *  Must be the same cache that is also used by ModelPools which
+     *  are queried using this environment.
+     */
+    explicit Environment(std::shared_ptr<Strings> stringCache);
+
+    /**
+     * Constructor for instantiating an environment explicitly with
+     * a new string cache - make sure that your models use it!
+     *
+     * Call like this:
+     *   Environment myEnv(Environment::WithNewStringCache);
+     */
+    enum NewStringCache_ { WithNewStringCache };
+    explicit Environment(NewStringCache_);
+
+    /** Destructor */
     ~Environment();
 
     /**
@@ -54,6 +74,12 @@ public:
      */
     auto findFunction(std::string) const -> const Function*;
 
+    /**
+     * Obtain a strong reference to this environment's string cache.
+     * Guaranteed not-null.
+     */
+    auto stringCache() const -> std::shared_ptr<Strings>;
+
 public:
     std::unique_ptr<std::mutex> warnMtx;
     std::vector<std::pair<std::string, std::string>> warnings;
@@ -65,6 +91,7 @@ public:
     std::map<std::string, const Function*> functions;
 
     Debug* debug = nullptr;
+    std::shared_ptr<Strings> stringCache_;
 };
 
 /**
