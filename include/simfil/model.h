@@ -204,7 +204,9 @@ struct ModelPool {
     /// Add a vertex and get its new model node index.
     ModelNodeIndex addVertex(double const& lon, double const& lat);
 
-private:
+protected:
+    MemberRange addMembers(std::vector<Member> const&);
+
     struct {
         std::vector<ModelNodeIndex> root_;
         std::vector<MemberRange> object_;

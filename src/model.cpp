@@ -266,22 +266,14 @@ void ModelPool::addRoot(ModelNodeIndex const& rootIndex) {
 }
 
 ModelPool::ModelNodeIndex ModelPool::addObject(std::vector<Member> const& members) {
-    columns_.members_.reserve(columns_.members_.size() + members.size());
-    auto memberOffset = columns_.members_.size();
-    for (auto const& m : members)
-        columns_.members_.emplace_back(m);
     auto idx = columns_.object_.size();
-    columns_.object_.emplace_back(MemberRange{memberOffset, members.size()});
+    columns_.object_.emplace_back(addMembers(members));
     return {Objects, idx};
 }
 
 ModelPool::ModelNodeIndex ModelPool::addArray(std::vector<Member> const& members) {
-    columns_.members_.reserve(columns_.members_.size() + members.size());
-    auto memberOffset = columns_.members_.size();
-    for (auto const& m : members)
-        columns_.members_.emplace_back(m);
     auto idx = columns_.array_.size();
-    columns_.array_.emplace_back(MemberRange{memberOffset, members.size()});
+    columns_.array_.emplace_back(addMembers(members));
     return {Arrays, idx};
 }
 
@@ -318,6 +310,15 @@ ModelPool::ModelNodeIndex ModelPool::addVertex(double const& lon, double const& 
     auto idx = columns_.vertex_.size();
     columns_.vertex_.emplace_back(lon, lat);
     return {Vertices, idx};
+}
+
+ModelPool::MemberRange ModelPool::addMembers(std::vector<ModelPool::Member> const& members)
+{
+    columns_.members_.reserve(columns_.members_.size() + members.size());
+    auto memberOffset = columns_.members_.size();
+    for (auto const& m : members)
+        columns_.members_.emplace_back(m);
+    return MemberRange{memberOffset, members.size()};
 }
 
 /** Model Node impls for a scalar value. */
