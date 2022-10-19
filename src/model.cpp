@@ -46,7 +46,7 @@ StringId Strings::emplace(std::string const& str)
     }
     {
         std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
-        auto [it, insertionTookPlace] = idForString_.emplace(str, nextId_);
+        auto [it, insertionTookPlace] = idForString_.emplace(lowerCaseStr, nextId_);
         if (insertionTookPlace) {
             ++cacheMisses_;
             byteSize_ += (int64_t)str.size();
@@ -67,7 +67,7 @@ StringId Strings::get(std::string const& str)
         [](auto ch) { return std::tolower(ch); });
 
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
-    auto it = idForString_.find(str);
+    auto it = idForString_.find(lowerCaseStr);
     if (it != idForString_.end())
         return it->second;
 
@@ -106,7 +106,14 @@ size_t Strings::misses()
 }
 
 void Strings::addStaticKey(StringId k, std::string const& v) {
-    idForString_[v] = k;
+    auto lowerCaseStr = v;
+    std::transform(
+        lowerCaseStr.begin(),
+        lowerCaseStr.end(),
+        lowerCaseStr.begin(),
+        [](auto ch) { return std::tolower(ch); });
+
+    idForString_[lowerCaseStr] = k;
     stringForId_[k] = v;
 }
 
@@ -184,6 +191,7 @@ void ModelPool::clear()
     columns_.object_.shrink_to_fit();
     columns_.array_.clear();
     columns_.array_.shrink_to_fit();
+    columns_.i64_.clear();
     columns_.i64_.shrink_to_fit();
     columns_.vertex_.clear();
     columns_.vertex_.shrink_to_fit();
@@ -231,6 +239,9 @@ ModelNodePtr ModelPool::resolve(ModelNodeIndex const& i) const {
     }
     case Null: {
         return std::make_shared<ModelNodeBase>();
+    }
+    case Bool: {
+        return std::make_shared<ScalarModelNode>(i.uint16() != 0);
     }
     default:
         break;
@@ -316,8 +327,7 @@ ModelPool::MemberRange ModelPool::addMembers(std::vector<ModelPool::Member> cons
 {
     columns_.members_.reserve(columns_.members_.size() + members.size());
     auto memberOffset = columns_.members_.size();
-    for (auto const& m : members)
-        columns_.members_.emplace_back(m);
+    columns_.members_.insert(columns_.members_.end(), members.begin(), members.end());
     return MemberRange{memberOffset, members.size()};
 }
 

@@ -16,6 +16,8 @@
 
 #include <optional>
 
+#include "segmented-vector.h"
+
 namespace simfil
 {
 
@@ -66,6 +68,9 @@ public:
     size_t hits();
     size_t misses();
 
+    /// Add a static key-string mapping - Warning: Not thread-safe.
+    void addStaticKey(StringId k, std::string const& v);
+
 private:
     std::shared_mutex stringStoreMutex_;
     std::unordered_map<std::string, Id> idForString_;
@@ -74,9 +79,6 @@ private:
     std::atomic_int64_t byteSize_;
     std::atomic_int64_t cacheHits_;
     std::atomic_int64_t cacheMisses_;
-
-protected:
-    void addStaticKey(StringId k, std::string const& v);
 };
 
 /**
@@ -204,17 +206,22 @@ struct ModelPool {
     /// Add a vertex and get its new model node index.
     ModelNodeIndex addVertex(double const& lon, double const& lat);
 
-protected:
+    /// Add some members and get their occupied range
     MemberRange addMembers(std::vector<Member> const&);
 
+protected:
+
+    static constexpr auto ChunkSize = 4096;
+    static constexpr auto BigChunkSize = 8192;
+
     struct {
-        std::vector<ModelNodeIndex> root_;
-        std::vector<MemberRange> object_;
-        std::vector<MemberRange> array_;
-        std::vector<int64_t> i64_;
-        std::vector<double> double_;
-        std::vector<Member> members_;
-        std::vector<std::pair<double, double>> vertex_;
+        sfl::segmented_vector<ModelNodeIndex, BigChunkSize> root_;
+        sfl::segmented_vector<MemberRange, BigChunkSize> object_;
+        sfl::segmented_vector<MemberRange, BigChunkSize> array_;
+        sfl::segmented_vector<int64_t, BigChunkSize> i64_;
+        sfl::segmented_vector<double, BigChunkSize> double_;
+        sfl::segmented_vector<Member, BigChunkSize*2> members_;
+        sfl::segmented_vector<std::pair<double, double>, BigChunkSize> vertex_;
     } columns_;
 };
 
