@@ -1,5 +1,3 @@
-// Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
-
 #pragma once
 
 #include <variant>
@@ -19,6 +17,9 @@ using namespace std::string_literals;
 class Value;
 using StringId = uint16_t;
 
+struct ModelNode;
+using ModelNodePtr = std::shared_ptr<ModelNode>;
+
 /** Simfil search model interface */
 struct ModelNode
 {
@@ -29,17 +30,26 @@ struct ModelNode
         Object,
     };
 
-    /** Node information */
-    std::function<Value()> value;
-    std::function<Type()> type;
+    /// Get the node's scalar value if it has one
+    virtual Value value() const = 0;
 
-    /** Child access */
-    std::function<std::optional<ModelNode>(const StringId &)> getForName;
-    std::function<std::optional<ModelNode>(int64_t)> getForIndex;
-    std::function<std::vector<ModelNode>()> children;
-    std::function<std::vector<std::string>()> keys;
+    /// Get the node's abstract model type
+    virtual Type type() const = 0;
 
-    uint32_t size;
+    /// Get a child by name
+    virtual ModelNodePtr get(const StringId &) const = 0;
+
+    /// Get a child by index
+    virtual ModelNodePtr at(int64_t) const = 0;
+
+    /// Get an Object/Array model's children
+    virtual std::vector<ModelNodePtr> children() const = 0;
+
+    /// Get an Object model's field names
+    virtual std::vector<std::string> keys() const = 0;
+
+    /// Get the number of children
+    virtual uint32_t size() const = 0;
 };
 
 /**
@@ -254,7 +264,7 @@ public:
         return Value(ValueType4CType<std::decay_t<_CType>>::Type, std::forward<_CType>(value));
     }
 
-    static auto field(Value&& v, const ModelNode& node)
+    static auto field(Value&& v, const ModelNodePtr& node)
     {
         return Value(v.type, std::move(v.value), node);
     }
@@ -270,7 +280,7 @@ public:
     {}
 
     template <class _Type>
-    Value(ValueType type, _Type&& value, const ModelNode& node)
+    Value(ValueType type, _Type&& value, const ModelNodePtr& node)
         : type(type)
         , value(std::forward<_Type>(value))
         , node(node)
@@ -336,19 +346,7 @@ public:
     }
 
     /// Convert the Value to a generic ModelNode
-    ModelNode toModelNode() {
-        if (node)
-            return *node;
-        return {
-            [copy=*this]() { return copy; },              /* value */
-            []() { return ModelNode::Scalar; },           /* type */
-            [](StringId const&) { return std::nullopt; }, /* getForName */
-            [](int64_t const&) { return std::nullopt; },  /* getForIndex */
-            []() { return std::vector<ModelNode>(); },    /* children */
-            []() { return std::vector<std::string>(); },  /* keys */
-            0                                             /* size */
-        };
-    }
+    ModelNodePtr toModelNode();
 
     ValueType type;
     std::variant<
@@ -360,9 +358,21 @@ public:
         std::string_view,
         Object> value;
 
-    std::optional<ModelNode> node;
+    ModelNodePtr node;
 };
 
+/** Model node with default interface implementations.
+ (scalar, no children, null value). */
+struct ModelNodeBase : public ModelNode
+{
+    Value value() const override;
+    Type type() const override;
+    ModelNodePtr get(const StringId &) const override;
+    ModelNodePtr at(int64_t) const override;
+    std::vector<ModelNodePtr> children() const override;
+    std::vector<std::string> keys() const override;
+    uint32_t size() const override;
+};
 
 template <class Type>
 auto getNumeric(const Value& v) -> std::pair<bool, Type>

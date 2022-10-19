@@ -163,7 +163,7 @@ struct ModelPool {
     virtual std::vector<std::string> checkForErrors() const;
 
     /// Get a model-node for a specific column address
-    virtual ModelNode resolve(ModelNodeIndex const& i) const;
+    virtual ModelNodePtr resolve(ModelNodeIndex const& i) const;
 
     /// Clear all columns and roots
     virtual void clear();
@@ -178,7 +178,7 @@ struct ModelPool {
     size_t numRoots() const;
 
     /// Get specific root node
-    ModelNode root(size_t const& i) const;
+    ModelNodePtr root(size_t const& i) const;
 
     /// Designate a model node index as a root
     void addRoot(ModelNodeIndex const& rootIndex);
@@ -214,5 +214,67 @@ private:
 };
 
 using ModelPoolPtr = std::shared_ptr<ModelPool>;
+
+/** Model Node for a scalar value. */
+struct ScalarModelNode : public ModelNodeBase {
+    ScalarModelNode(int64_t const& i);
+    ScalarModelNode(double const& d);
+    ScalarModelNode(bool const& b);
+
+    Value value() const override;
+
+private:
+    Value value_;
+};
+
+/** Model Node for a string value. */
+struct StringModelNode : public ModelNodeBase {
+    StringModelNode(StringId strId, std::shared_ptr<Strings> stringPool);
+
+    Value value() const override;
+
+private:
+    StringId strId_;
+    std::shared_ptr<Strings> stringPool_;
+};
+
+/** Model Node for an array. */
+struct ArrayModelNode : public ModelNodeBase {
+    ArrayModelNode(ModelPool::MemberRange members, ModelPool const& modelPool);
+
+    Type type() const override;
+    ModelNodePtr at(int64_t) const override;
+    std::vector<ModelNodePtr> children() const override;
+    uint32_t size() const override;
+
+protected:
+    ModelPool::MemberRange members_;
+    ModelPool const& modelPool_;
+};
+
+/** Model Node for an object. */
+struct ObjectModelNode : public ArrayModelNode {
+    ObjectModelNode(ModelPool::MemberRange members, ModelPool const& modelPool);
+
+    Type type() const override;
+    ModelNodePtr get(const StringId &) const override;
+    std::vector<std::string> keys() const override;
+};
+
+/** Model Node for a vertex. */
+struct VertexModelNode : public ModelNodeBase {
+    VertexModelNode(std::pair<double, double> const& coords, ModelPool const& modelPool);
+
+    Type type() const override;
+    ModelNodePtr get(const StringId &) const override;
+    ModelNodePtr at(int64_t) const override;
+    std::vector<ModelNodePtr> children() const override;
+    std::vector<std::string> keys() const override;
+    uint32_t size() const override;
+
+private:
+    std::pair<double, double> const& coords_;
+    ModelPool const& modelPool_;
+};
 
 }

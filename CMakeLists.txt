@@ -45,7 +45,8 @@ add_library(simfil STATIC
   src/types.cpp
   src/ext-geo.cpp
   src/simfil.cpp
-  src/model.cpp)
+  src/model.cpp
+  src/value.cpp)
 
 target_include_directories(simfil
   PUBLIC

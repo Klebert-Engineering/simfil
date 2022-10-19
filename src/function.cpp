@@ -49,9 +49,9 @@ class OverlayNode : public ModelNode
 public:
     Context ctx;
     Value value_;
-    std::optional<ModelNode> scalar;
-    std::optional<ModelNode> base;
-    std::map<StringId, ModelNode> overlayChildren;
+    ModelNodePtr scalar;
+    ModelNodePtr base;
+    std::map<StringId, ModelNodePtr> overlayChildren;
 
     OverlayNode(Context ctx, Value val)
         : ctx(ctx)
@@ -61,46 +61,52 @@ public:
         base = value_.node;
         if (!base)
             base = scalar;
-
-        value = [this]() {
-            return base->value();
-        };
-
-        type = [this]() {
-            return base->type();
-        };
-
-        getForName = [this](StringId const& key) -> std::optional<ModelNode>
-        {
-            if (auto iter = overlayChildren.find(key); iter != overlayChildren.end())
-                return iter->second;
-            return base->getForName(key);
-        };
-
-        getForIndex = [this](int64_t idx) -> std::optional<ModelNode>
-        {
-            return base->getForIndex(idx);
-        };
-
-        children = [this]() -> std::vector<ModelNode>
-        {
-            auto c = base->children();
-            for (const auto& [_, cc] : overlayChildren)
-                c.push_back(cc);
-            return c;
-        };
-
-        keys = [this]() -> std::vector<std::string>
-        {
-            return base->keys();
-        };
-
-        size = base->size;
     }
 
-    auto add(StringId const& key, ModelNode const& child) -> void
+    auto add(StringId const& key, ModelNodePtr const& child) -> void
     {
         overlayChildren[key] = child;
+    }
+
+    Value value() const override
+    {
+        return base->value();
+    }
+
+    Type type() const override
+    {
+        return base->type();
+    }
+
+    ModelNodePtr get(const StringId & key) const override
+    {
+        auto iter = overlayChildren.find(key);
+        if (iter != overlayChildren.end())
+            return iter->second;
+        return base->get(key);
+    }
+
+    ModelNodePtr at(int64_t i) const override
+    {
+        return base->at(i);
+    }
+
+    std::vector<ModelNodePtr> children() const override
+    {
+        auto c = base->children();
+        for (const auto& [_, cc] : overlayChildren)
+            c.push_back(cc);
+        return c;
+    }
+
+    std::vector<std::string> keys() const override
+    {
+        return base->keys();
+    }
+
+    uint32_t size() const override
+    {
+        return base->size();
     }
 };
 
@@ -576,12 +582,12 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
 
     (void)args[0]->eval(ctx, val, [&, n = 0](auto ctx, Value vv) mutable {
         if (subexpr) {
-            OverlayNode ov(ctx, vv);
-            ov.add(Strings::OverlaySum, Value(sum).toModelNode());
-            ov.add(Strings::OverlayValue, Value(vv).toModelNode());
-            ov.add(Strings::OverlayIndex, Value::make((int64_t)n++).toModelNode());
+            auto ov = std::make_shared<OverlayNode>(ctx, vv);
+            ov->add(Strings::OverlaySum, Value(sum).toModelNode());
+            ov->add(Strings::OverlayValue, Value(vv).toModelNode());
+            ov->add(Strings::OverlayIndex, Value::make((int64_t)n++).toModelNode());
 
-            subexpr->eval(ctx, Value::field(ov.value(), ov), [&sum](auto ctx, auto vv) {
+            subexpr->eval(ctx, Value::field(ov->value(), ov), [&sum](auto ctx, auto vv) {
                 sum = std::move(vv);
                 return Result::Continue;
             });

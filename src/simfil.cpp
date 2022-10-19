@@ -163,7 +163,7 @@ public:
                 return Result::Stop;
 
             for (const auto& sub : val.node->children()) {
-                if (iterate(Value::field(sub.value(), sub), depth + 1) == Result::Stop)
+                if (iterate(Value::field(sub->value(), sub), depth + 1) == Result::Stop)
                     return Result::Stop;
             }
 
@@ -203,9 +203,9 @@ public:
         if (!val.node)
             return res(ctx, Value::null());
 
-        if (val.node->size > 0) {
+        if (val.node->size() > 0) {
             for (const auto& sub : val.node->children()) {
-                if (res(ctx, Value::field(sub.value(), sub)) == Result::Stop)
+                if (res(ctx, Value::field(sub->value(), sub)) == Result::Stop)
                     return Result::Stop;
             }
         } else {
@@ -252,8 +252,8 @@ public:
             return res(ctx, Value::null());
 
         /* Enter sub-node */
-        if (auto sub = val.node->getForName(nameStringId)) {
-            return res(ctx, Value::field(sub->value(), *sub));
+        if (auto sub = val.node->get(nameStringId)) {
+            return res(ctx, Value::field(sub->value(), sub));
         }
 
         if (ctx.phase == Context::Phase::Compilation)
@@ -363,22 +363,22 @@ public:
             return index_->eval(ctx, val, [this, &res, &lval](auto ctx, Value ival) {
                 /* Field subscript */
                 if (lval.node) {
-                    std::optional<ModelNode> node;
+                    ModelNodePtr node;
 
                     /* Array subscript */
                     if (ival.isa(ValueType::Int)) {
                         auto index = ival.as<ValueType::Int>();
-                        node = lval.node->getForIndex(index);
+                        node = lval.node->at(index);
                     }
                     /* String subscript */
                     else if (ival.isa(ValueType::String)) {
                         auto key = ival.as<ValueType::String>();
                         if (auto keyStrId = ctx.env->stringCache()->get(key))
-                            node = lval.node->getForName(keyStrId);
+                            node = lval.node->get(keyStrId);
                     }
 
                     if (node)
-                        return res(ctx, Value::field(node->value(), *node));
+                        return res(ctx, Value::field(node->value(), node));
                     else
                         ctx.env->warn("Invalid subscript index type "s + valueType2String(ival.type), this->toString());
                 } else {
@@ -576,7 +576,7 @@ public:
             return res(ctx, Value::f());
 
         return sub_->eval(ctx, val, [&res](auto ctx, auto v) {
-            return res(ctx, Value(ValueType::Bool, v.node.has_value()));
+            return res(ctx, Value(ValueType::Bool, v.node != nullptr));
         });
     }
 
@@ -890,7 +890,7 @@ static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
     std::deque<Value> values;
     auto stub = Context(env, Context::Phase::Compilation);
     (void)expr->eval(stub, Value::undef(), [&, n = 0](auto ctx, auto vv) mutable {
-        if (!vv.isa(ValueType::Undef) || vv.node.has_value()) {
+        if (!vv.isa(ValueType::Undef) || vv.node) {
             values.push_back(std::move(vv));
             return Result::Continue;
         }

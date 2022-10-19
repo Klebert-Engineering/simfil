@@ -13,175 +13,6 @@
 namespace simfil
 {
 
-namespace
-{
-
-template <typename T>
-ModelNode numberToModel(T val, ModelPool const& pool)
-{
-    return {
-        [val]() { return Value::make(val); },              /* value */
-        []() { return ModelNode::Scalar; },              /* type */
-        [](StringId const&) { return std::nullopt; }, /* getForName */
-        [](int64_t const&) { return std::nullopt; },     /* getForIndex */
-        []() { return std::vector<ModelNode>(); },       /* children */
-        []() { return std::vector<std::string>(); },     /* keys */
-        0                                                /* size */
-    };
-}
-
-ModelNode stringToModel(StringId val, ModelPool const& pool)
-{
-    return {
-        [val, &pool]()
-        {
-            if (auto str = pool.strings->resolve(val))
-                return Value::make(*str);
-            return Value::null();
-        },                                               /* value */
-        []() { return ModelNode::Scalar; },              /* type */
-        [](StringId const&) { return std::nullopt; }, /* getForName */
-        [](int64_t const&) { return std::nullopt; },     /* getForIndex */
-        []() { return std::vector<ModelNode>(); },       /* children */
-        []() { return std::vector<std::string>(); },     /* keys */
-        0                                                /* size */
-    };
-}
-
-ModelNode nullToModel()
-{
-    return {
-        []() { return Value::null(); },              /* value */
-        []() { return ModelNode::Scalar; },           /* type */
-        [](StringId const&) { return std::nullopt; }, /* getForName */
-        [](int64_t const&) { return std::nullopt; },  /* getForIndex */
-        []() { return std::vector<ModelNode>(); },    /* children */
-        []() { return std::vector<std::string>(); },  /* keys */
-        0                                             /* size */
-    };
-}
-
-ModelNode objectToModel(ModelPool::MemberRange const& members, ModelPool const& pool)
-{
-    return {
-        []() { return Value::null(); },     /* value */
-        []() { return ModelNode::Object; }, /* type */
-        [&](StringId const& field) -> std::optional<ModelNode>
-        {
-            std::optional<ModelNode> result;
-            pool.visitMembers(
-                members,
-                [&](ModelPool::Member const& m)
-                {
-                    if (m.name_ == field) {
-                        result = pool.resolve(m.nodeIndex_);
-                        return false;
-                    }
-                    return true;
-                });
-            return result;
-        },                                           /* getForName */
-        [](int64_t const&) { return std::nullopt; }, /* getForIndex */
-        [&]()
-        {
-            std::vector<ModelNode> result;
-            result.reserve(members.second);
-            pool.visitMembers(
-                members,
-                [&](ModelPool::Member const& m)
-                { result.emplace_back(pool.resolve(m.nodeIndex_)); return true; });
-            return result;
-        }, /* children */
-        [&]()
-        {
-            std::vector<std::string> result;
-            result.reserve(members.second);
-            pool.visitMembers(
-                members,
-                [&](ModelPool::Member const& m)
-                {
-                    if (auto s = pool.strings->resolve(m.name_))
-                        result.emplace_back(*s);
-                    return true;
-                });
-            return result;
-        },             /* keys */
-        members.second /* size */
-    };
-}
-
-ModelNode arrayToModel(ModelPool::MemberRange const& members, ModelPool const& pool)
-{
-    return {
-        []() { return Value::null(); },                        /* value */
-        []() { return ModelNode::Array; },                     /* type */
-        [](StringId const& field) { return std::nullopt; }, /* getForName */
-        [&](int64_t const& i)
-        {
-            std::optional<ModelNode> result;
-            if (i >= 0 && i < members.second)
-            {
-                pool.visitMembers(
-                    {members.first + i, 1},
-                    [&](ModelPool::Member const& m)
-                    {
-                        result = pool.resolve(m.nodeIndex_);
-                        return true;
-                    });
-            }
-            return result;
-        }, /* getForIndex */
-        [&]()
-        {
-            std::vector<ModelNode> result;
-            result.reserve(members.second);
-            pool.visitMembers(
-                members,
-                [&](ModelPool::Member const& m)
-                {
-                    result.emplace_back(pool.resolve(m.nodeIndex_));
-                    return true;
-                });
-            return result;
-        },                                            /* children */
-        [&]() { return std::vector<std::string>{}; }, /* keys */
-        members.second                                /* size */
-    };
-}
-
-ModelNode vertexToModel(std::pair<double, double> const& coords, ModelPool const& pool)
-{
-    return {
-        []() { return Value::null(); },    /* value */
-        []() { return ModelNode::Array; }, /* type */
-        [&](StringId const& field) -> std::optional<ModelNode>
-        {
-            switch (field) {
-            case Strings::Lon: return numberToModel(coords.first, pool);
-            case Strings::Lat: return numberToModel(coords.second, pool);
-            default: return std::nullopt;
-            }
-        }, /* getForName */
-        [&](int64_t const& i) -> std::optional<ModelNode>
-        {
-            if (i == 0)
-                return numberToModel(coords.first, pool);
-            if (i == 1)
-                return numberToModel(coords.second, pool);
-            return std::nullopt;
-        }, /* getForIndex */
-        [&]() -> std::vector<ModelNode> {
-            return {numberToModel(coords.first, pool), numberToModel(coords.second, pool)};
-        }, /* children */
-        [&]() -> std::vector<std::string> {
-            return {"lon", "lat"};
-        }, /* keys */
-        2  /* size */
-    };
-}
-
-}  // namespace
-
 /** String Pool implementation */
 
 Strings::Strings() {
@@ -359,7 +190,7 @@ void ModelPool::clear()
     columns_.members_.shrink_to_fit();
 }
 
-ModelNode ModelPool::resolve(ModelNodeIndex const& i) const {
+ModelNodePtr ModelPool::resolve(ModelNodeIndex const& i) const {
     auto get = [&i](auto const& vec) -> auto& {
         auto idx = i.index();
         if (idx >= vec.size())
@@ -370,35 +201,35 @@ ModelNode ModelPool::resolve(ModelNodeIndex const& i) const {
     switch (i.column()) {
     case Objects: {
         auto& memberRange = get(columns_.object_);
-        return objectToModel(memberRange, *this);
+        return std::make_shared<ObjectModelNode>(memberRange, *this);
     }
     case Arrays: {
         auto& memberRange = get(columns_.array_);
-        return arrayToModel(memberRange, *this);
+        return std::make_shared<ArrayModelNode>(memberRange, *this);
     }
     case Vertices: {
         auto& vert = get(columns_.vertex_);
-        return vertexToModel(vert, *this);
+        return std::make_shared<VertexModelNode>(vert, *this);
     }
     case UInt16: {
-        return numberToModel((int64_t)i.uint16(), *this);
+        return std::make_shared<ScalarModelNode>((int64_t)i.uint16());
     }
     case Int16: {
-        return numberToModel((int64_t)i.int16(), *this);
+        return std::make_shared<ScalarModelNode>((int64_t)i.int16());
     }
     case Int64: {
         auto& val = get(columns_.i64_);
-        return numberToModel(val, *this);
+        return std::make_shared<ScalarModelNode>(val);
     }
     case Double: {
         auto& val = get(columns_.double_);
-        return numberToModel(val, *this);
+        return std::make_shared<ScalarModelNode>(val);
     }
     case String: {
-        return stringToModel(i.uint16(), *this);
+        return std::make_shared<StringModelNode>(i.uint16(), strings);
     }
     case Null: {
-        return nullToModel();
+        return std::make_shared<ModelNodeBase>();
     }
     default:
         break;
@@ -423,7 +254,7 @@ size_t ModelPool::numRoots() const {
     return columns_.root_.size();
 }
 
-ModelNode ModelPool::root(size_t const& i) const {
+ModelNodePtr ModelPool::root(size_t const& i) const {
     if (i < 0 || i > columns_.root_.size())
         throw std::runtime_error("root index does not exist.");
     return resolve(columns_.root_[i]);
@@ -486,6 +317,171 @@ ModelPool::ModelNodeIndex ModelPool::addVertex(double const& lon, double const& 
     auto idx = columns_.vertex_.size();
     columns_.vertex_.emplace_back(lon, lat);
     return {Vertices, idx};
+}
+
+/** Model Node impls for a scalar value. */
+
+ScalarModelNode::ScalarModelNode(int64_t const& i) : value_(Value::make(i)) {}
+
+ScalarModelNode::ScalarModelNode(double const& d) : value_(Value::make(d)) {}
+
+ScalarModelNode::ScalarModelNode(bool const& b) : value_(Value::make(b)) {}
+
+Value ScalarModelNode::value() const
+{
+    return value_;
+}
+
+/** Model Node impls for a string value. */
+
+StringModelNode::StringModelNode(StringId strId, std::shared_ptr<Strings> stringPool)
+    : strId_(strId), stringPool_(std::move(stringPool))
+{
+}
+
+Value StringModelNode::value() const
+{
+    if (auto s = stringPool_->resolve(strId_))
+        return Value::make(*s);
+    throw std::runtime_error("Failed to resolve string id.");
+}
+
+/** Model Node impls for an array. */
+
+ArrayModelNode::ArrayModelNode(ModelPool::MemberRange members, ModelPool const& modelPool)
+    : members_(std::move(members)), modelPool_(modelPool)
+{
+}
+
+ModelNode::Type ArrayModelNode::type() const
+{
+    return ModelNode::Array;
+}
+
+ModelNodePtr ArrayModelNode::at(int64_t i) const
+{
+    ModelNodePtr result;
+    if (i >= 0 && i < members_.second)
+    {
+        modelPool_.visitMembers(
+            {members_.first + i, 1},
+            [&](ModelPool::Member const& m)
+            {
+                result = modelPool_.resolve(m.nodeIndex_);
+                return true;
+            });
+    }
+    return result;
+}
+
+std::vector<ModelNodePtr> ArrayModelNode::children() const
+{
+    std::vector<ModelNodePtr> result;
+    result.reserve(members_.second);
+    modelPool_.visitMembers(
+        members_,
+        [&](ModelPool::Member const& m)
+        {
+            result.emplace_back(modelPool_.resolve(m.nodeIndex_)); return true;
+        });
+    return result;
+}
+
+uint32_t ArrayModelNode::size() const
+{
+    return members_.second;
+}
+
+
+/** Model Node impls for an object. */
+
+ObjectModelNode::ObjectModelNode(ModelPool::MemberRange members, ModelPool const& modelPool)
+    : ArrayModelNode(std::move(members), modelPool)
+{
+}
+
+ModelNode::Type ObjectModelNode::type() const
+{
+    return ModelNode::Object;
+}
+
+ModelNodePtr ObjectModelNode::get(const StringId & field) const
+{
+    ModelNodePtr result;
+    modelPool_.visitMembers(
+        members_,
+        [&](ModelPool::Member const& m)
+        {
+            if (m.name_ == field) {
+                result = modelPool_.resolve(m.nodeIndex_);
+                return false;
+            }
+            return true;
+        });
+    return result;
+}
+
+std::vector<std::string> ObjectModelNode::keys() const
+{
+    std::vector<std::string> result;
+    result.reserve(members_.second);
+    modelPool_.visitMembers(
+        members_,
+        [&](ModelPool::Member const& m)
+        {
+            if (auto s = modelPool_.strings->resolve(m.name_))
+                result.emplace_back(*s);
+            return true;
+        });
+    return result;
+}
+
+/** Model Node impls for a vertex. */
+
+VertexModelNode::VertexModelNode(std::pair<double, double> const& coords, ModelPool const& modelPool)
+    : coords_(coords), modelPool_(modelPool)
+{
+}
+
+ModelNode::Type VertexModelNode::type() const
+{
+    return ModelNode::Object;
+}
+
+ModelNodePtr VertexModelNode::get(const StringId & sid) const
+{
+    switch(sid) {
+    case Strings::Lon: return std::make_shared<ScalarModelNode>(coords_.first);
+    case Strings::Lat: return std::make_shared<ScalarModelNode>(coords_.second);
+    default: return nullptr;
+    }
+}
+
+ModelNodePtr VertexModelNode::at(int64_t i) const
+{
+    switch(i) {
+    case 0: return std::make_shared<ScalarModelNode>(coords_.first);
+    case 1: return std::make_shared<ScalarModelNode>(coords_.second);
+    default: return nullptr;
+    }
+}
+
+std::vector<ModelNodePtr> VertexModelNode::children() const
+{
+    return {
+        std::make_shared<ScalarModelNode>(coords_.first),
+        std::make_shared<ScalarModelNode>(coords_.second)
+    };
+}
+
+std::vector<std::string> VertexModelNode::keys() const
+{
+    return {"lon", "lat"};
+}
+
+uint32_t VertexModelNode::size() const
+{
+    return 2;
 }
 
 }  // namespace simfil
