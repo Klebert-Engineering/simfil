@@ -224,6 +224,7 @@ struct ScalarModelNode : public ModelNodeBase
     ScalarModelNode(int64_t const& i);
     ScalarModelNode(double const& d);
     ScalarModelNode(bool const& b);
+    ScalarModelNode(std::string const& s);
 
     Value value() const override;
 
@@ -231,7 +232,7 @@ private:
     Value value_;
 };
 
-/** Model Node for a string value. */
+/** Model Node for a symbolic string value. */
 struct StringModelNode : public ModelNodeBase
 {
     StringModelNode(StringId strId, std::shared_ptr<Strings> stringPool);

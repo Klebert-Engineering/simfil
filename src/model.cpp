@@ -328,6 +328,8 @@ ScalarModelNode::ScalarModelNode(double const& d) : value_(Value::make(d)) {}
 
 ScalarModelNode::ScalarModelNode(bool const& b) : value_(Value::make(b)) {}
 
+ScalarModelNode::ScalarModelNode(std::string const& s) : value_(Value::make(s)) {}
+
 Value ScalarModelNode::value() const
 {
     return value_;
