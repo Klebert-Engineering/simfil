@@ -74,6 +74,9 @@ private:
     std::atomic_int64_t byteSize_;
     std::atomic_int64_t cacheHits_;
     std::atomic_int64_t cacheMisses_;
+
+protected:
+    void addStaticKey(StringId k, std::string const& v);
 };
 
 /**
@@ -216,7 +219,8 @@ private:
 using ModelPoolPtr = std::shared_ptr<ModelPool>;
 
 /** Model Node for a scalar value. */
-struct ScalarModelNode : public ModelNodeBase {
+struct ScalarModelNode : public ModelNodeBase
+{
     ScalarModelNode(int64_t const& i);
     ScalarModelNode(double const& d);
     ScalarModelNode(bool const& b);
@@ -228,7 +232,8 @@ private:
 };
 
 /** Model Node for a string value. */
-struct StringModelNode : public ModelNodeBase {
+struct StringModelNode : public ModelNodeBase
+{
     StringModelNode(StringId strId, std::shared_ptr<Strings> stringPool);
 
     Value value() const override;
@@ -239,7 +244,8 @@ private:
 };
 
 /** Model Node for an array. */
-struct ArrayModelNode : public ModelNodeBase {
+struct ArrayModelNode : public ModelNodeBase
+{
     ArrayModelNode(ModelPool::MemberRange members, ModelPool const& modelPool);
 
     Type type() const override;
@@ -253,7 +259,8 @@ protected:
 };
 
 /** Model Node for an object. */
-struct ObjectModelNode : public ArrayModelNode {
+struct ObjectModelNode : public ArrayModelNode
+{
     ObjectModelNode(ModelPool::MemberRange members, ModelPool const& modelPool);
 
     Type type() const override;
@@ -261,20 +268,35 @@ struct ObjectModelNode : public ArrayModelNode {
     std::vector<std::string> keys() const override;
 };
 
-/** Model Node for a vertex. */
-struct VertexModelNode : public ModelNodeBase {
-    VertexModelNode(std::pair<double, double> const& coords, ModelPool const& modelPool);
+/** Model Node for an object with extra procedural fields. */
+struct ProceduralObjectModelNode : public ObjectModelNode
+{
+    using Field = std::pair<StringId, std::function<ModelNodePtr()>>;
 
-    Type type() const override;
+    /// Construct a node with procedural fields
+    ProceduralObjectModelNode(
+        ModelPool::MemberRange members,
+        ModelPool const &modelPool);
+
     ModelNodePtr get(const StringId &) const override;
     ModelNodePtr at(int64_t) const override;
     std::vector<ModelNodePtr> children() const override;
     std::vector<std::string> keys() const override;
     uint32_t size() const override;
 
+protected:
+    std::vector<Field> fields_;
+};
+
+/** Model Node for a vertex. */
+struct VertexModelNode : public ProceduralObjectModelNode
+{
+    VertexModelNode(std::pair<double, double> const& coords, ModelPool const& modelPool);
+
+    Type type() const override;
+
 private:
     std::pair<double, double> const& coords_;
-    ModelPool const& modelPool_;
 };
 
 }

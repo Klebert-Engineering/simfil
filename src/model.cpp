@@ -16,10 +16,6 @@ namespace simfil
 /** String Pool implementation */
 
 Strings::Strings() {
-    auto addStaticKey = [this](auto const& k, auto const& v) {
-        idForString_[v] = k;
-        stringForId_[k] = v;
-    };
     addStaticKey(Empty, "");
     addStaticKey(Lon, "lon");
     addStaticKey(Lat, "lat");
@@ -107,6 +103,11 @@ size_t Strings::hits()
 size_t Strings::misses()
 {
     return cacheMisses_;
+}
+
+void Strings::addStaticKey(StringId k, std::string const& v) {
+    idForString_[v] = k;
+    stringForId_[k] = v;
 }
 
 /** Model Pool implementation */
@@ -436,52 +437,71 @@ std::vector<std::string> ObjectModelNode::keys() const
     return result;
 }
 
+
+/** Model Node impls for an object with extra procedural fields. */
+
+ProceduralObjectModelNode::ProceduralObjectModelNode(
+    ModelPool::MemberRange members,
+    ModelPool const& modelPool)
+    : ObjectModelNode(std::move(members), modelPool)
+{
+}
+
+ModelNodePtr ProceduralObjectModelNode::get(const StringId & key) const {
+    for (auto const& [k, vf] : fields_) {
+        if (key == k)
+            return vf();
+    }
+    return ObjectModelNode::get(key);
+}
+
+ModelNodePtr ProceduralObjectModelNode::at(int64_t i) const {
+    if (i < fields_.size() && i > 0) {
+        return fields_[i].second();
+    }
+    return ObjectModelNode::at(i - (int64_t)fields_.size());
+}
+
+std::vector<ModelNodePtr> ProceduralObjectModelNode::children() const {
+    auto result = ObjectModelNode::children();
+    for (auto const& [_, vf] : fields_) {
+        result.emplace_back(vf());
+    }
+    return result;
+}
+
+std::vector<std::string> ProceduralObjectModelNode::keys() const {
+    auto result = ObjectModelNode::keys();
+    for (auto const& [k, _]: fields_) {
+        if (auto s = modelPool_.strings->resolve(k))
+            result.emplace_back();
+        else
+            throw std::runtime_error("Could not resolve string key.");
+    }
+    return result;
+}
+
+uint32_t ProceduralObjectModelNode::size() const {
+    return ObjectModelNode::size() + fields_.size();
+}
+
 /** Model Node impls for a vertex. */
 
 VertexModelNode::VertexModelNode(std::pair<double, double> const& coords, ModelPool const& modelPool)
-    : coords_(coords), modelPool_(modelPool)
+    : ProceduralObjectModelNode({}, modelPool), coords_(coords)
 {
+    fields_.emplace_back(
+        Strings::Lon,
+        [this]() { return std::make_shared<ScalarModelNode>(coords_.first); });
+
+    fields_.emplace_back(
+        Strings::Lat,
+        [this]() { return std::make_shared<ScalarModelNode>(coords_.second); });
 }
 
 ModelNode::Type VertexModelNode::type() const
 {
-    return ModelNode::Object;
-}
-
-ModelNodePtr VertexModelNode::get(const StringId & sid) const
-{
-    switch(sid) {
-    case Strings::Lon: return std::make_shared<ScalarModelNode>(coords_.first);
-    case Strings::Lat: return std::make_shared<ScalarModelNode>(coords_.second);
-    default: return nullptr;
-    }
-}
-
-ModelNodePtr VertexModelNode::at(int64_t i) const
-{
-    switch(i) {
-    case 0: return std::make_shared<ScalarModelNode>(coords_.first);
-    case 1: return std::make_shared<ScalarModelNode>(coords_.second);
-    default: return nullptr;
-    }
-}
-
-std::vector<ModelNodePtr> VertexModelNode::children() const
-{
-    return {
-        std::make_shared<ScalarModelNode>(coords_.first),
-        std::make_shared<ScalarModelNode>(coords_.second)
-    };
-}
-
-std::vector<std::string> VertexModelNode::keys() const
-{
-    return {"lon", "lat"};
-}
-
-uint32_t VertexModelNode::size() const
-{
-    return 2;
+    return ModelNode::Array;
 }
 
 }  // namespace simfil

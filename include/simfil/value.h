@@ -6,6 +6,8 @@
 #include <cassert>
 #include <functional>
 #include <optional>
+#include <memory>
+#include <vector>
 
 #include "object.h"
 
