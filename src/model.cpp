@@ -469,7 +469,7 @@ ModelNodePtr ProceduralObjectModelNode::get(const StringId & key) const {
 }
 
 ModelNodePtr ProceduralObjectModelNode::at(int64_t i) const {
-    if (i < fields_.size() && i > 0) {
+    if (i < fields_.size() && i >= 0) {
         return fields_[i].second();
     }
     return ObjectModelNode::at(i - (int64_t)fields_.size());
