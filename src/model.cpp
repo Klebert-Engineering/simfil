@@ -10,6 +10,8 @@
 #include <vector>
 #include "stx/format.h"
 
+#include <sfl/segmented_vector.hpp>
+
 namespace simfil
 {
 
@@ -118,10 +120,31 @@ void Strings::addStaticKey(StringId k, std::string const& v) {
 }
 
 /** Model Pool implementation */
+struct ModelPool::Impl
+{
+    struct {
+        sfl::segmented_vector<ModelNodeIndex, BigChunkSize> root_;
+        sfl::segmented_vector<MemberRange, BigChunkSize> object_;
+        sfl::segmented_vector<MemberRange, BigChunkSize> array_;
+        sfl::segmented_vector<int64_t, BigChunkSize> i64_;
+        sfl::segmented_vector<double, BigChunkSize> double_;
+        sfl::segmented_vector<Member, BigChunkSize*2> members_;
+        sfl::segmented_vector<std::pair<double, double>, BigChunkSize> vertex_;
+    } columns_;
+};
 
-ModelPool::ModelPool() : strings(std::make_shared<Strings>()) {}
+ModelPool::ModelPool()
+    : strings(std::make_shared<Strings>())
+    , impl_(std::make_unique<ModelPool::Impl>())
+{}
 
-ModelPool::ModelPool(std::shared_ptr<Strings> stringStore) : strings(std::move(stringStore)){};
+ModelPool::ModelPool(std::shared_ptr<Strings> stringStore)
+    : strings(std::move(stringStore))
+    , impl_(std::make_unique<ModelPool::Impl>())
+{}
+
+ModelPool::~ModelPool()
+{}
 
 std::vector<std::string> ModelPool::checkForErrors() const
 {
@@ -141,8 +164,8 @@ std::vector<std::string> ModelPool::checkForErrors() const
     {
         if (range.second <= 0)
             return;
-        if (range.first >= columns_.members_.size() ||
-            range.second + range.first > columns_.members_.size())
+        if (range.first >= impl_->columns_.members_.size() ||
+            range.second + range.first > impl_->columns_.members_.size())
             errors.push_back(stx::format(
                 "Bad array/object member range: [{}-{})",
                 range.first,
@@ -158,16 +181,16 @@ std::vector<std::string> ModelPool::checkForErrors() const
     };
 
     // Check object members
-    for (auto const& member : columns_.members_) {
+    for (auto const& member : impl_->columns_.members_) {
         validateModelIndex(member.nodeIndex_);
         validateString(member.name_);
     }
-    for (auto const& memberRange : columns_.object_) {
+    for (auto const& memberRange : impl_->columns_.object_) {
         validateMemberRange(memberRange);
     }
 
     // Check array members
-    for (auto const& memberRange : columns_.array_) {
+    for (auto const& memberRange : impl_->columns_.array_) {
         validateMemberRange(memberRange);
     }
 
@@ -185,18 +208,19 @@ void ModelPool::validate() const
 
 void ModelPool::clear()
 {
-    columns_.root_.clear();
-    columns_.root_.shrink_to_fit();
-    columns_.object_.clear();
-    columns_.object_.shrink_to_fit();
-    columns_.array_.clear();
-    columns_.array_.shrink_to_fit();
-    columns_.i64_.clear();
-    columns_.i64_.shrink_to_fit();
-    columns_.vertex_.clear();
-    columns_.vertex_.shrink_to_fit();
-    columns_.members_.clear();
-    columns_.members_.shrink_to_fit();
+    auto& columns = impl_->columns_;
+    columns.root_.clear();
+    columns.root_.shrink_to_fit();
+    columns.object_.clear();
+    columns.object_.shrink_to_fit();
+    columns.array_.clear();
+    columns.array_.shrink_to_fit();
+    columns.i64_.clear();
+    columns.i64_.shrink_to_fit();
+    columns.vertex_.clear();
+    columns.vertex_.shrink_to_fit();
+    columns.members_.clear();
+    columns.members_.shrink_to_fit();
 }
 
 ModelNodePtr ModelPool::resolve(ModelNodeIndex const& i) const {
@@ -209,15 +233,15 @@ ModelNodePtr ModelPool::resolve(ModelNodeIndex const& i) const {
 
     switch (i.column()) {
     case Objects: {
-        auto& memberRange = get(columns_.object_);
+        auto& memberRange = get(impl_->columns_.object_);
         return std::make_shared<ObjectModelNode>(memberRange, *this);
     }
     case Arrays: {
-        auto& memberRange = get(columns_.array_);
+        auto& memberRange = get(impl_->columns_.array_);
         return std::make_shared<ArrayModelNode>(memberRange, *this);
     }
     case Vertices: {
-        auto& vert = get(columns_.vertex_);
+        auto& vert = get(impl_->columns_.vertex_);
         return std::make_shared<VertexModelNode>(vert, *this);
     }
     case UInt16: {
@@ -227,11 +251,11 @@ ModelNodePtr ModelPool::resolve(ModelNodeIndex const& i) const {
         return std::make_shared<ScalarModelNode>((int64_t)i.int16());
     }
     case Int64: {
-        auto& val = get(columns_.i64_);
+        auto& val = get(impl_->columns_.i64_);
         return std::make_shared<ScalarModelNode>(val);
     }
     case Double: {
-        auto& val = get(columns_.double_);
+        auto& val = get(impl_->columns_.double_);
         return std::make_shared<ScalarModelNode>(val);
     }
     case String: {
@@ -255,36 +279,36 @@ void ModelPool::visitMembers(MemberRange const& range, std::function<bool(Member
         return;
     for (auto i = 0; i < range.second; ++i) {
         auto idx = range.first + i;
-        if (idx >= columns_.members_.size())
+        if (idx >= impl_->columns_.members_.size())
             break;
-        if (!f(columns_.members_[range.first + i]))
+        if (!f(impl_->columns_.members_[range.first + i]))
             break;
     }
 }
 
 size_t ModelPool::numRoots() const {
-    return columns_.root_.size();
+    return impl_->columns_.root_.size();
 }
 
 ModelNodePtr ModelPool::root(size_t const& i) const {
-    if (i < 0 || i > columns_.root_.size())
+    if (i < 0 || i > impl_->columns_.root_.size())
         throw std::runtime_error("root index does not exist.");
-    return resolve(columns_.root_[i]);
+    return resolve(impl_->columns_.root_[i]);
 }
 
 void ModelPool::addRoot(ModelNodeIndex const& rootIndex) {
-    columns_.root_.emplace_back(rootIndex);
+    impl_->columns_.root_.emplace_back(rootIndex);
 }
 
 ModelPool::ModelNodeIndex ModelPool::addObject(std::vector<Member> const& members) {
-    auto idx = columns_.object_.size();
-    columns_.object_.emplace_back(addMembers(members));
+    auto idx = impl_->columns_.object_.size();
+    impl_->columns_.object_.emplace_back(addMembers(members));
     return {Objects, idx};
 }
 
 ModelPool::ModelNodeIndex ModelPool::addArray(std::vector<Member> const& members) {
-    auto idx = columns_.array_.size();
-    columns_.array_.emplace_back(addMembers(members));
+    auto idx = impl_->columns_.array_.size();
+    impl_->columns_.array_.emplace_back(addMembers(members));
     return {Arrays, idx};
 }
 
@@ -301,14 +325,14 @@ ModelPool::ModelNodeIndex ModelPool::addValue(int64_t const& value) {
         return {UInt16, (uint16_t)value};
     if (value > std::numeric_limits<uint16_t>::min() && value < 0)  // NOLINT
         return {Int16, (uint16_t)value};
-    auto idx = columns_.i64_.size();
-    columns_.i64_.emplace_back(value);
+    auto idx = impl_->columns_.i64_.size();
+    impl_->columns_.i64_.emplace_back(value);
     return {Int64, idx};
 }
 
 ModelPool::ModelNodeIndex ModelPool::addValue(double const& value) {
-    auto idx = columns_.double_.size();
-    columns_.double_.emplace_back(value);
+    auto idx = impl_->columns_.double_.size();
+    impl_->columns_.double_.emplace_back(value);
     return {Double, idx};
 }
 
@@ -318,16 +342,16 @@ ModelPool::ModelNodeIndex ModelPool::addValue(std::string const& value) {
 }
 
 ModelPool::ModelNodeIndex ModelPool::addVertex(double const& lon, double const& lat) {
-    auto idx = columns_.vertex_.size();
-    columns_.vertex_.emplace_back(lon, lat);
+    auto idx = impl_->columns_.vertex_.size();
+    impl_->columns_.vertex_.emplace_back(lon, lat);
     return {Vertices, idx};
 }
 
 ModelPool::MemberRange ModelPool::addMembers(std::vector<ModelPool::Member> const& members)
 {
-    columns_.members_.reserve(columns_.members_.size() + members.size());
-    auto memberOffset = columns_.members_.size();
-    columns_.members_.insert(columns_.members_.end(), members.begin(), members.end());
+    impl_->columns_.members_.reserve(impl_->columns_.members_.size() + members.size());
+    auto memberOffset = impl_->columns_.members_.size();
+    impl_->columns_.members_.insert(impl_->columns_.members_.end(), members.begin(), members.end());
     return MemberRange{memberOffset, members.size()};
 }
 

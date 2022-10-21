@@ -69,9 +69,8 @@ target_compile_features(simfil
     cxx_std_17)
 
 target_link_libraries(simfil
-  PUBLIC
-    sfl::sfl
   PRIVATE
+    sfl::sfl
     stx::stx)
 
 if (MSVC)

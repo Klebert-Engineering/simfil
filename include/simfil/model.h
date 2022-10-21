@@ -16,12 +16,11 @@
 
 #include <optional>
 
-#include <sfl/segmented_vector.hpp>
-
 namespace simfil
 {
 
-/** Fast and efficient case-insensitive string storage -
+/**
+ * Fast and efficient case-insensitive string storage -
  * referenced by object keys and string values.
  */
 struct Strings
@@ -85,8 +84,8 @@ private:
  * Efficient, extensible pool of SIMFIL model nodes based on
  * column stores for different node types.
  */
-struct ModelPool {
-
+struct ModelPool
+{
     /**
      * The pool consists of multiple ModelNode columns,
      *  each for a different data type. Each column
@@ -156,6 +155,7 @@ struct ModelPool {
 
     /// Default ctor with own string storage
     ModelPool();
+    ~ModelPool();
 
     /// Ctor with shared string storage
     explicit ModelPool(std::shared_ptr<Strings> stringStore);
@@ -210,19 +210,11 @@ struct ModelPool {
     MemberRange addMembers(std::vector<Member> const&);
 
 protected:
-
     static constexpr auto ChunkSize = 4096;
     static constexpr auto BigChunkSize = 8192;
 
-    struct {
-        sfl::segmented_vector<ModelNodeIndex, BigChunkSize> root_;
-        sfl::segmented_vector<MemberRange, BigChunkSize> object_;
-        sfl::segmented_vector<MemberRange, BigChunkSize> array_;
-        sfl::segmented_vector<int64_t, BigChunkSize> i64_;
-        sfl::segmented_vector<double, BigChunkSize> double_;
-        sfl::segmented_vector<Member, BigChunkSize*2> members_;
-        sfl::segmented_vector<std::pair<double, double>, BigChunkSize> vertex_;
-    } columns_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 using ModelPoolPtr = std::shared_ptr<ModelPool>;

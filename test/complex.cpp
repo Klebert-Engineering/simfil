@@ -6,7 +6,7 @@
 
 using namespace simfil;
 
-static const auto invoice = *json::parse(R"json(
+static const auto invoice = json::parse(R"json(
 {
 "account": {
   "name": "Demo",
@@ -50,13 +50,13 @@ static const auto invoice = *json::parse(R"json(
 }
 )json");
 
-static auto joined_result(const ModelPool& model, std::string_view query)
+static auto joined_result(const ModelPoolPtr& model, std::string_view query)
 {
-    Environment env(model.strings);
+    Environment env(model->strings);
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 
-    auto res = eval(env, *ast, model);
+    auto res = eval(env, *ast, *model);
 
     std::string vals;
     for (const auto& vv : res) {
