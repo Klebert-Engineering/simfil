@@ -16,7 +16,7 @@
 
 #include <optional>
 
-#include "segmented-vector.h"
+#include <sfl/segmented_vector.hpp>
 
 namespace simfil
 {
