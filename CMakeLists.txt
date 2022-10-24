@@ -11,6 +11,18 @@ if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
   set(MAIN_PROJECT ON)
 endif()
 
+if (NOT TARGET sfl)
+  FetchContent_Declare(sfl
+    GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
+    GIT_TAG        "master"
+    GIT_SHALLOW    ON)
+  FetchContent_MakeAvailable(sfl)
+  add_library(sfl INTERFACE)
+  FetchContent_GetProperties(sfl SOURCE_DIR sfl_source_dir)
+  target_include_directories(sfl INTERFACE "${sfl_source_dir}/include")
+  add_library(sfl::sfl ALIAS sfl)
+endif()
+
 if (NOT TARGET stx)
   FetchContent_Declare(stx
     GIT_REPOSITORY "https://github.com/Klebert-Engineering/stx.git"
@@ -37,7 +49,6 @@ add_library(simfil STATIC
   include/simfil/value.h
   include/simfil/object.h
   include/simfil/simfil.h
-  include/simfil/segmented-vector.h
 
   src/environment.cpp
   src/function.cpp
@@ -46,7 +57,8 @@ add_library(simfil STATIC
   src/types.cpp
   src/ext-geo.cpp
   src/simfil.cpp
-  src/model.cpp)
+  src/model.cpp
+  src/value.cpp)
 
 target_include_directories(simfil
   PUBLIC
@@ -58,6 +70,7 @@ target_compile_features(simfil
 
 target_link_libraries(simfil
   PRIVATE
+    sfl::sfl
     stx::stx)
 
 if (MSVC)

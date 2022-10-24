@@ -775,17 +775,17 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
         if (!v.node)
             return res(ctx, std::move(v));
 
-        if (auto geonode = v.node->get("geometry"))
+        if (auto geonode = v.node->get(Strings::Geometry))
             v.node = geonode;
 
         auto type = ""s;
-        if (auto typenode = v.node->get("type"))
+        if (auto typenode = v.node->get(Strings::Type))
             if (Value value = typenode->value(); value.isa(ValueType::String))
                 type = value.as<ValueType::String>();
 
-        if (auto coordnode = v.node->get("coordinates")) {
-            auto getPt = [&](const ModelNode* node, Point& pt) {
-                auto nx = node->get(0), ny = node->get(1);
+        if (auto coordnode = v.node->get(Strings::Coordinates)) {
+            auto getPt = [&](const ModelNode& node, Point& pt) {
+                auto nx = node.at(0), ny = node.at(1);
                 if (!nx || !ny)
                     return false;
 
@@ -804,7 +804,7 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
 
             if (type == "Point") {
                 Point pt;
-                if (!getPt(coordnode, pt))
+                if (!getPt(*coordnode, pt))
                     if (res(ctx, Value::null()) == Result::Stop)
                         return Result::Stop;
 
@@ -814,7 +814,7 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
             if (type == "MultiPoint") {
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     Point pt;
-                    if (!getPt(coordnode->get(i), pt))
+                    if (!getPt(*coordnode->at(i), pt))
                         if (res(ctx, Value::null()) == Result::Stop)
                             return Result::Stop;
 
@@ -827,7 +827,7 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
             if (type == "LineString") {
                 std::vector<Point> pts;
                 for (auto i = 0; i < coordnode->size(); ++i) {
-                    if (!getPt(coordnode->get(i), pts.emplace_back()))
+                    if (!getPt(*coordnode->at(i), pts.emplace_back()))
                         if (res(ctx, Value::null()) == Result::Stop)
                             return Result::Stop;
                 }
@@ -838,9 +838,9 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
             if (type == "MultiLineString") {
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     std::vector<Point> pts;
-                    auto subline = coordnode->get(i);
+                    auto subline = coordnode->at(i);
                     for (auto i = 0; i < subline->size(); ++i) {
-                        if (!getPt(subline->get(i), pts.emplace_back()))
+                        if (!getPt(*subline->at(i), pts.emplace_back()))
                             if (res(ctx, Value::null()) == Result::Stop)
                                 return Result::Stop;
                     }
@@ -856,9 +856,9 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
                 std::vector<LineString> polys;
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     std::vector<Point> pts;
-                    auto subline = coordnode->get(i);
+                    auto subline = coordnode->at(i);
                     for (auto i = 0; i < subline->size(); ++i) {
-                        if (!getPt(subline->get(i), pts.emplace_back()))
+                        if (!getPt(*subline->at(i), pts.emplace_back()))
                             if (res(ctx, Value::null()) == Result::Stop)
                                 return Result::Stop;
                     }
@@ -872,12 +872,12 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
             if (type == "MultiPolygon") {
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     std::vector<LineString> polys;
-                    auto subpoly = coordnode->get(i);
+                    auto subpoly = coordnode->at(i);
                     for (auto i = 0; i < subpoly->size(); ++i) {
                         std::vector<Point> pts;
-                        auto subline = subpoly->get(i);
+                        auto subline = subpoly->at(i);
                         for (auto i = 0; i < subline->size(); ++i) {
-                            if (!getPt(subline->get(i), pts.emplace_back()))
+                            if (!getPt(*subline->at(i), pts.emplace_back()))
                                 if (res(ctx, Value::null()) == Result::Stop)
                                     return Result::Stop;
                         }

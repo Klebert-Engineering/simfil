@@ -44,7 +44,7 @@ static void set_option(const std::string& option, bool& flag, std::string_view c
 
 static auto make_env()
 {
-    auto env = std::make_unique<simfil::Environment>();
+    auto env = std::make_unique<simfil::Environment>(simfil::Environment::WithNewStringCache);
     return env;
 }
 
@@ -105,14 +105,15 @@ static std::string input(const char* prompt = "> ")
 static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const std::shared_ptr<simfil::ModelPool>& model)
 {
     std::vector<std::vector<simfil::Value>> result;
-    result.resize(std::max<size_t>(1, model->roots.size()));
+    result.resize(std::max<size_t>(1, model->numRoots()));
 
-    if (model->roots.empty()) {
-        result[0] = simfil::eval(env, expr, nullptr);
+    if (!model->numRoots()) {
+        model->addRoot(model->addNull());
+        result[0] = simfil::eval(env, expr, *model);
         return result;
     }
 
-    auto n_threads = std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), model->roots.size()), 1);
+    auto n_threads = std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), model->numRoots()), 1);
     if (env.debug)
         n_threads = 1;
     if (!options.multi_threaded)
@@ -124,10 +125,9 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
     for (auto i = 0; i < n_threads; ++i) {
         threads.emplace_back(std::thread([&, i]() {
             size_t next;
-            while ((next = idx++) < model->roots.size()) {
-                const auto* doc = model->roots[next];
+            while ((next = idx++) < model->numRoots()) {
                 try {
-                    result[next] = simfil::eval(env, expr, doc);
+                    result[next] = simfil::eval(env, expr, *model, next);
                 } catch (...) {
                     return;
                 }
@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        simfil::Environment env;
+        simfil::Environment env(model->strings);
         simfil::ExprPtr expr;
         try {
             expr = simfil::compile(env, cmd, options.auto_any);
