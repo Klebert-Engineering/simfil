@@ -141,7 +141,6 @@ The following types can be target types for a cast:
 | `. b` or `a . b`    | Direct field access; returns the value of field `b` or `null`.                                          |
 | `a as b`            | Cast a to type b (one of `bool`, `int`, `float` or `string`).                                           |
 | `a ?`               | Get boolean value of `a` (see ##Types).                                                                 |
-| `a exists`          | Returns `true` if the current node exists (the last path could be resolved).                            |
 | `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions](#Functions) for example)        |
 | `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"` or `"string"`). |
 | `not a`             | Boolean not.                                                                                            |
@@ -171,7 +170,7 @@ The following types can be target types for a cast:
 | `.`                                    | 12         |
 | `{}`                                   | 11         |
 | `[]`                                   | 10         |
-| `?`, `exists`, `...`                   | 9          |
+| `?`, `...`                             | 9          |
 | `typeof`, `not`, `#`, `~`, `-` (unary) | 8          |
 | `as`                                   | 7          |
 | `*`, `/`, `%`                          | 6          |

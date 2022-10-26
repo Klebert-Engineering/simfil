@@ -61,7 +61,6 @@ struct Token
         OP_MATCH,       // =~
         OP_NOT_MATCH,   // !~
         /* Path */
-        OP_EXISTS,      // exists
         OP_TYPEOF,      // typeof
         /* Cast/Type */
         OP_CAST,        // as
