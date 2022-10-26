@@ -235,18 +235,15 @@ static auto joined_result(std::string_view query)
     REQUIRE(joined_result(query) == result)
 
 TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
-    REQUIRE_RESULT("sub.*", "sub a|sub b|null");
+    REQUIRE_RESULT("sub.*", "sub a|sub b|model");
     /*                                   ^- sub.sub */
-    REQUIRE_RESULT("sub.**", "null|sub a|sub b|null|sub sub a|sub sub b");
-    /*                        ^- sub           ^- sub.sub */
+    REQUIRE_RESULT("sub.**", "model|sub a|sub b|model|sub sub a|sub sub b");
+    /*                        ^- sub            ^- sub.sub */
 
-    REQUIRE_RESULT("sub.* + sub.*", "sub asub a|sub asub b|null|sub bsub a|sub bsub b|null|null|null|null");
-    /*                                                     ^---------- null + '...' --^----^----^    ^- null + null */
-    REQUIRE_RESULT("(sub.* + sub.*)._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
-    REQUIRE_RESULT("sub.*.{_} + sub.*.{_}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
-    REQUIRE_RESULT("count(*)", "2");
-    REQUIRE_RESULT("count(**)", "27");
-    REQUIRE_RESULT("count(** exists)", "47"); /* root + 46 */
+    REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
+    REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
+    REQUIRE_RESULT("count(*)", "8");
+    REQUIRE_RESULT("count(**)", "46");
     REQUIRE_RESULT("count(sub.**.a)", "2");
     REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "10");
     REQUIRE_RESULT("count(sub.**.{typeof _ == 'string'})", "4");
@@ -260,10 +257,10 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
     REQUIRE_RESULT("c[-1]","null"); /* Out of bounds */
     REQUIRE_RESULT("c[4]", "null"); /* Out of bounds */
 
-    REQUIRE_RESULT("c",    "null");
-    REQUIRE_RESULT("c._",  "null"); /* No implicit child traversal! */
+    REQUIRE_RESULT("c",    "model");
+    REQUIRE_RESULT("c._",  "model"); /* No implicit child traversal! */
     REQUIRE_RESULT("c.*",  "a|b|c");
-    REQUIRE_RESULT("c.**", "null|a|b|c");
+    REQUIRE_RESULT("c.**", "model|a|b|c");
 
     REQUIRE_RESULT("c[arr(0,2)]",      "a|c");
     REQUIRE_RESULT("c[range(0,2)...]", "a|b|c");
@@ -279,9 +276,9 @@ TEST_CASE("Single Values", "[yaml.single-values]") {
     REQUIRE_RESULT("a", "1");
     REQUIRE_RESULT("['a']", "1");
     REQUIRE_RESULT("b", "2");
-    REQUIRE_RESULT("sub", "null");
+    REQUIRE_RESULT("sub", "model");
     REQUIRE_RESULT("sub.a", "sub a");
-    REQUIRE_RESULT("sub.sub", "null");
+    REQUIRE_RESULT("sub.sub", "model");
     REQUIRE_RESULT("sub.sub.a", "sub sub a");
 }
 
@@ -327,7 +324,7 @@ TEST_CASE("Model Functions", "[yaml.mode-functions]") {
 TEST_CASE("Sub-Selects", "[yaml.sub-selects]") {
     SECTION("Filter out null values") {
         REQUIRE_RESULT("count(** as int)", "47"); /* Unfiltered */
-        REQUIRE_RESULT("count(**{typeof _ != 'null'})", "27"); /* Filtered */
+        REQUIRE_RESULT("count(**{typeof _ != 'null' and typeof _ != 'model'})", "27"); /* Filtered */
     }
     SECTION("Filter out all values") {
         REQUIRE_RESULT("**{false}", "null"); /* Non-Value returns single 'null' */

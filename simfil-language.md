@@ -117,7 +117,7 @@ count(mylist.*)
 
 ## Types
 
-Simfil supports the following scalar types: Null, Boolean, Integer, Real and String.
+Simfil supports the following scalar types: Null, Boolean, Integer, Real and String (and Model).
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
 

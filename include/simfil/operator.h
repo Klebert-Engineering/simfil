@@ -45,11 +45,11 @@ struct InvalidOperandsError : std::exception
 
 /* Unary Operators */
 
-#define DENY_OTHER()                                \
-    template <class Type>                           \
-    auto operator()(Type) const -> InvalidOperands  \
-    {                                               \
-        return {};                                  \
+#define DENY_OTHER()                                        \
+    template <class Type>                                   \
+    auto operator()(const Type&) const -> InvalidOperands   \
+    {                                                       \
+        return {};                                          \
     }
 
 #define DECL_OPERATION(type_a, op)                      \
@@ -138,6 +138,11 @@ struct OperatorLen
         return static_cast<int64_t>(s.size());
     }
 
+    auto operator()(const ModelNode& n) const
+    {
+        return static_cast<int64_t>(n.size());
+    }
+
     NULL_AS_NULL()
 };
 
@@ -168,6 +173,11 @@ struct OperatorTypeof
     auto operator()(const std::string&) const
     {
         return "string"s;
+    }
+
+    auto operator()(const ModelNode& v) const
+    {
+        return "model"s;
     }
 
     auto operator()(const Object& v) const
@@ -205,6 +215,11 @@ struct OperatorAsInt
         return (int64_t)0;
     }
 
+    auto operator()(const ModelNode&) const
+    {
+        return (int64_t)0;
+    }
+
     NULL_AS((int64_t)0)
 };
 
@@ -236,6 +251,11 @@ struct OperatorAsFloat
         return 0.0;
     }
 
+    auto operator()(const ModelNode&) const
+    {
+        return (int64_t)0.0;
+    }
+
     NULL_AS((double)0)
 };
 
@@ -251,6 +271,11 @@ struct OperatorAsString
     auto operator()(const std::string& v) const
     {
         return v;
+    }
+
+    auto operator()(const ModelNode& v) const
+    {
+        return ""s;
     }
 
     auto operator()(const Object& v) const
@@ -276,27 +301,27 @@ struct OperatorAsString
 
 /* Binary Operators */
 
-#define DENY_OTHER()                                        \
-    template <class Left, class Right>                      \
-    auto operator()(Left, Right) const -> InvalidOperands   \
-    {                                                       \
-        return {};                                          \
+#define DENY_OTHER()                                                    \
+    template <class Left, class Right>                                  \
+    auto operator()(const Left&, const Right&) const -> InvalidOperands \
+    {                                                                   \
+        return {};                                                      \
     }
 
-#define NULL_AS_NULL()                                       \
-    template <class Right>                               \
-    auto operator()(NullType, Right b) const             \
-    {                                                    \
-        return Value::null();                            \
-    }                                                    \
-    template <class Left>                                \
-    auto operator()(Left a, NullType) const              \
-    {                                                    \
-        return Value::null();                            \
-    }                                                    \
-    auto operator()(NullType, NullType) const            \
-    {                                                    \
-        return Value::null();                            \
+#define NULL_AS_NULL()                              \
+    template <class Right>                          \
+    auto operator()(NullType, const Right& b) const \
+    {                                               \
+        return Value::null();                       \
+    }                                               \
+    template <class Left>                           \
+    auto operator()(const Left& a, NullType) const  \
+    {                                               \
+        return Value::null();                       \
+    }                                               \
+    auto operator()(NullType, NullType) const       \
+    {                                               \
+        return Value::null();                       \
     }
 
 #define INT_AS_UINT()                                       \
@@ -332,6 +357,21 @@ struct OperatorAdd
     }
 
     auto operator()(NullType, const std::string& r) const -> Value
+    {
+        return Value::null();
+    }
+
+    auto operator()(const std::string& l, const ModelNode&) const -> Value
+    {
+        return Value::null();
+    }
+
+    auto operator()(const ModelNode& l, const ModelNode&) const -> Value
+    {
+        return Value::null();
+    }
+
+    auto operator()(const ModelNode&, const std::string& r) const -> Value
     {
         return Value::null();
     }
@@ -499,13 +539,13 @@ struct OperatorLtEq
     DECL_OPERATION(std::string, std::string, <=)
 
     template <class Right>
-    auto operator()(NullType, Right) const
+    auto operator()(NullType, const Right&) const
     {
         return false;
     }
 
     template <class Left>
-    auto operator()(Left, NullType) const
+    auto operator()(const Left&, NullType) const
     {
         return false;
     }

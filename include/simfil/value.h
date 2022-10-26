@@ -76,6 +76,7 @@ enum class ValueType
     Float,
     String,
     Object,
+    Model,
 };
 
 namespace impl
@@ -112,9 +113,14 @@ struct ValueToString
         return v;
     }
 
-    auto operator()(const Object& v) const
+    auto operator()(const Object&) const
     {
         return "<object>"s;
+    }
+
+    auto operator()(const ModelNode&) const
+    {
+        return "model"s;
     }
 };
 }
@@ -130,6 +136,7 @@ inline auto valueType2String(ValueType t) -> const char*
     case ValueType::Float:  return "float";
     case ValueType::String: return "string";
     case ValueType::Object: return "object";
+    case ValueType::Model:  return "model";
     default:
         assert(0 && "unreachable");
         return "unknown";
@@ -171,6 +178,11 @@ struct ValueType4CType<Object> {
     static constexpr ValueType Type = ValueType::Object;
 };
 
+template <>
+struct ValueType4CType<ModelNode> {
+    static constexpr ValueType Type = ValueType::Model;
+};
+
 template <ValueType>
 struct ValueTypeInfo;
 
@@ -202,6 +214,11 @@ struct ValueTypeInfo<ValueType::String> {
 template <>
 struct ValueTypeInfo<ValueType::Object> {
     using Type = Object;
+};
+
+template <>
+struct ValueTypeInfo<ValueType::Model> {
+    using Type = ModelNode;
 };
 
 template <ValueType _Type>
@@ -253,6 +270,11 @@ public:
     static auto undef() -> Value
     {
         return Value(ValueType::Undef);
+    }
+
+    static auto model() -> Value
+    {
+        return Value(ValueType::Model);
     }
 
     static auto strref(std::string_view sv) -> Value
@@ -326,6 +348,10 @@ public:
             return fn(this->template as<ValueType::String>());
         if (type == ValueType::Object)
             return fn(this->template as<ValueType::Object>());
+        if (type == ValueType::Model) {
+            if (node) return fn(*node);
+            else return fn(NullType{});
+        }
         return fn(UndefinedType{});
     }
 
