@@ -253,6 +253,7 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
     REQUIRE_RESULT("c[0]", "a");
     REQUIRE_RESULT("c[1]", "b");
     REQUIRE_RESULT("c[2]", "c");
+    REQUIRE_RESULT("#c",   "3");
 
     REQUIRE_RESULT("c[-1]","null"); /* Out of bounds */
     REQUIRE_RESULT("c[4]", "null"); /* Out of bounds */

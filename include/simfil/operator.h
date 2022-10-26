@@ -472,13 +472,13 @@ struct OperatorEq
     DECL_OPERATION(std::string, std::string, ==)
 
     template <class Right>
-    auto operator()(NullType, Right) const
+    auto operator()(NullType, const Right&) const
     {
         return false;
     }
 
     template <class Left>
-    auto operator()(Left, NullType) const
+    auto operator()(const Left&, NullType) const
     {
         return false;
     }
@@ -511,13 +511,13 @@ struct OperatorLt
     DECL_OPERATION(std::string, std::string, <)
 
     template <class Right>
-    auto operator()(NullType, Right) const
+    auto operator()(NullType, const Right&) const
     {
         return false;
     }
 
     template <class Left>
-    auto operator()(Left, NullType) const
+    auto operator()(const Left&, NullType) const
     {
         return false;
     }

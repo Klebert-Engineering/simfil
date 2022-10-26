@@ -144,7 +144,7 @@ The following types can be target types for a cast:
 | `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions](#Functions) for example)        |
 | `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"` or `"string"`). |
 | `not a`             | Boolean not.                                                                                            |
-| `# a`               | Returns the length of a string value.                                                                   |
+| `# a`               | Returns the length of a string or array value.                                                          |
 | `~ a`               | Bitwise not.                                                                                            |
 | `- a`               | Unary minus.                                                                                            |
 | `a * b`             | Multiplication.                                                                                         |
