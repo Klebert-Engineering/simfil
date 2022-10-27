@@ -91,7 +91,6 @@ auto Token::toString(Type t) -> std::string
     case Token::OP_LEN:       return "#";
     case Token::OP_MATCH:     return "=~";
     case Token::OP_NOT_MATCH: return "!~";
-    case Token::OP_EXISTS:    return "exists";
     case Token::OP_TYPEOF:    return "typeof";
     case Token::OP_CAST:      return "as";
     case Token::OP_UNPACK:    return "...";
@@ -189,7 +188,6 @@ std::optional<Token> scanWord(Scanner& s)
         {"and",                Token::OP_AND},
         {"or",                 Token::OP_OR},
         {"not",                Token::OP_NOT},
-        {"exists",             Token::OP_EXISTS},
         {"typeof",             Token::OP_TYPEOF},
         {"true",               Token::C_TRUE},
         {"false",              Token::C_FALSE},

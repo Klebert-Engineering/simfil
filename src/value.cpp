@@ -31,7 +31,7 @@ ModelNodePtr Value::toModelNode() {
 
 Value ModelNodeBase::value() const
 {
-    return Value::null();
+    return Value::model();
 }
 
 ModelNodeBase::Type ModelNodeBase::type() const

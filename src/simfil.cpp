@@ -554,43 +554,6 @@ public:
     ExprPtr left_, right_;
 };
 
-/**
- * Exists is a unary operator that requires context access and is
- * therefore implemented as its own expression.
- */
-class ExistsExpr : public Expr
-{
-public:
-    ExistsExpr(ExprPtr sub)
-        : sub_(std::move(sub))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
-    {
-        if (ctx.phase != Context::Phase::Evaluation)
-            return res(ctx, Value::undef());
-
-        if (!val.node)
-            return res(ctx, Value::f());
-
-        return sub_->eval(ctx, val, [&res](auto ctx, auto v) {
-            return res(ctx, Value(ValueType::Bool, v.node != nullptr));
-        });
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "(exists "s + sub_->toString() + ")"s;
-    }
-
-    ExprPtr sub_;
-};
-
 /** Calls `unpack` onto values of type Object. Forwards the value(s) otherwise.
  *
  * 1... => 1
@@ -1044,22 +1007,6 @@ class UnaryPostOpParser : public InfixParselet
 };
 
 /**
- * Parse exists operator.
- */
-class ExistsOpParser : public InfixParselet
-{
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
-    {
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<ExistsExpr>(std::move(left))), 0);
-    }
-
-    auto precedence() const -> int override
-    {
-        return Precedence::POST_UNARY;
-    }
-};
-
-/**
  * Parse unpack (...) operator.
  */
 class UnpackOpParser : public InfixParselet
@@ -1292,7 +1239,6 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     p.prefixParsers[Token::OP_LEN]    = std::make_unique<UnaryOpParser<OperatorLen>>();
     p.infixParsers[Token::OP_BOOL]    = std::make_unique<UnaryPostOpParser<OperatorBool>>();
     p.prefixParsers[Token::OP_TYPEOF] = std::make_unique<UnaryOpParser<OperatorTypeof>>();
-    p.infixParsers[Token::OP_EXISTS]  = std::make_unique<ExistsOpParser>();
     p.infixParsers[Token::OP_UNPACK]  = std::make_unique<UnpackOpParser>();
     p.infixParsers[Token::WORD]       = std::make_unique<WordOpParser>();
 
