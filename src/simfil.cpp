@@ -245,14 +245,16 @@ public:
         if (!val.node)
             return res(ctx, Value::null());
 
-        auto nameStringId = ctx.env->stringCache()->get(name_);
-        if (!nameStringId)
+        if (!nameId_)
+            nameId_ = ctx.env->stringCache()->get(name_);
+
+        if (!nameId_)
             /* If the field name is not in the string cache, then there
                is no field with that name. */
             return res(ctx, Value::null());
 
         /* Enter sub-node */
-        if (auto sub = val.node->get(nameStringId)) {
+        if (auto sub = val.node->get(nameId_)) {
             return res(ctx, Value::field(sub->value(), sub));
         }
 
@@ -267,6 +269,7 @@ public:
     }
 
     std::string name_;
+    mutable StringId nameId_ = {};
 };
 
 class MultiConstExpr : public Expr
