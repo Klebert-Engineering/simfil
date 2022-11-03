@@ -21,7 +21,7 @@ node, the right one (`b`), resulting in the value of node “b” of node “a�
 A wildcard expression `a.**.b` does the same but `b` must not be a direct sub-node
 of `a` but can occur anywhere bellow `a`. Note that this can match multiple nodes!
 The result of wildcard expressions depends on the current execution mode they are
-executed under (see (Modes)[#Modes]).
+executed under (see [Modes](#Modes) ).
 
 The path `_` (underscore) represents the current node.
 The path `*` (asterisk) represents any direct child node.
@@ -117,7 +117,8 @@ count(mylist.*)
 
 ## Types
 
-Simfil supports the following scalar types: Null, Boolean, Integer, Real and String (and Model).
+Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision) and `string`.
+Additionally, the `model` type represents compound object/array container nodes.
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
 
