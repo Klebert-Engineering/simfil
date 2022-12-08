@@ -130,6 +130,7 @@ struct ModelPool::Impl
         sfl::segmented_vector<double, BigChunkSize> double_;
         sfl::segmented_vector<Member, BigChunkSize*2> members_;
         sfl::segmented_vector<std::pair<double, double>, BigChunkSize> vertex_;
+        sfl::segmented_vector<std::tuple<double, double, float>, BigChunkSize> vertex3d_;
     } columns_;
 };
 
@@ -219,6 +220,8 @@ void ModelPool::clear()
     columns.i64_.shrink_to_fit();
     columns.vertex_.clear();
     columns.vertex_.shrink_to_fit();
+    columns.vertex3d_.clear();
+    columns.vertex3d_.shrink_to_fit();
     columns.members_.clear();
     columns.members_.shrink_to_fit();
 }
@@ -240,9 +243,13 @@ ModelNodePtr ModelPool::resolve(ModelNodeIndex const& i) const {
         auto& memberRange = get(impl_->columns_.array_);
         return std::make_shared<ArrayModelNode>(memberRange, *this);
     }
-    case Vertices: {
+    case Vertex: {
         auto& vert = get(impl_->columns_.vertex_);
         return std::make_shared<VertexModelNode>(vert, *this);
+    }
+    case Vertex3d: {
+        auto& vert = get(impl_->columns_.vertex3d_);
+        return std::make_shared<Vertex3dModelNode>(vert, *this);
     }
     case UInt16: {
         return std::make_shared<ScalarModelNode>((int64_t)i.uint16());
@@ -344,7 +351,13 @@ ModelPool::ModelNodeIndex ModelPool::addValue(std::string const& value) {
 ModelPool::ModelNodeIndex ModelPool::addVertex(double const& lon, double const& lat) {
     auto idx = impl_->columns_.vertex_.size();
     impl_->columns_.vertex_.emplace_back(lon, lat);
-    return {Vertices, idx};
+    return {Vertex, idx};
+}
+
+ModelPool::ModelNodeIndex ModelPool::addVertex3d(double const& lon, double const& lat, float const &elevation) {
+    auto idx = impl_->columns_.vertex3d_.size();
+    impl_->columns_.vertex3d_.emplace_back(lon, lat, elevation);
+    return {Vertex3d, idx};
 }
 
 ModelPool::MemberRange ModelPool::addMembers(std::vector<ModelPool::Member> const& members)
@@ -540,5 +553,29 @@ ModelNode::Type VertexModelNode::type() const
 {
     return ModelNode::Array;
 }
+
+/** Model Node impls for a 3d vertex. */
+
+Vertex3dModelNode::Vertex3dModelNode(std::tuple<double, double, float> const& coords, ModelPool const& modelPool)
+    : ProceduralObjectModelNode({}, modelPool), coords_(coords)
+{
+    fields_.emplace_back(
+        Strings::Lon,
+        [this]() { return std::make_shared<ScalarModelNode>(std::get<0>(coords_)); });
+
+    fields_.emplace_back(
+        Strings::Lat,
+        [this]() { return std::make_shared<ScalarModelNode>(std::get<1>(coords_)); });
+
+    fields_.emplace_back(
+        Strings::Elevation,
+        [this]() { return std::make_shared<ScalarModelNode>(std::get<2>(coords_)); });
+}
+
+ModelNode::Type Vertex3dModelNode::type() const
+{
+    return ModelNode::Array;
+}
+
 
 }  // namespace simfil
