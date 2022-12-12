@@ -27,6 +27,7 @@ Strings::Strings() {
     addStaticKey(Geometry, "geometry");
     addStaticKey(Type, "type");
     addStaticKey(Coordinates, "coordinates");
+    addStaticKey(Elevation, "elevation");
 }
 
 StringId Strings::emplace(std::string const& str)
@@ -130,7 +131,7 @@ struct ModelPool::Impl
         sfl::segmented_vector<double, BigChunkSize> double_;
         sfl::segmented_vector<Member, BigChunkSize*2> members_;
         sfl::segmented_vector<std::pair<double, double>, BigChunkSize> vertex_;
-        sfl::segmented_vector<std::tuple<double, double, float>, BigChunkSize> vertex3d_;
+        sfl::segmented_vector<simfil::Vertex3d, BigChunkSize> vertex3d_;
     } columns_;
 };
 
@@ -556,7 +557,7 @@ ModelNode::Type VertexModelNode::type() const
 
 /** Model Node impls for a 3d vertex. */
 
-Vertex3dModelNode::Vertex3dModelNode(std::tuple<double, double, float> const& coords, ModelPool const& modelPool)
+Vertex3dModelNode::Vertex3dModelNode(Vertex3d const& coords, ModelPool const& modelPool)
     : ProceduralObjectModelNode({}, modelPool), coords_(coords)
 {
     fields_.emplace_back(

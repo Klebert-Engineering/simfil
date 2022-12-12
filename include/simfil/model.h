@@ -19,6 +19,8 @@
 namespace simfil
 {
 
+using Vertex3d = std::tuple<double, double, float>;
+
 /**
  * Fast and efficient case-insensitive string storage -
  * referenced by object keys and string values.
@@ -309,12 +311,12 @@ private:
 /** Model Node for a 3d vertex. */
 struct Vertex3dModelNode : public ProceduralObjectModelNode
 {
-    Vertex3dModelNode(std::tuple<double, double, float> const& coords, ModelPool const& modelPool);
+    Vertex3dModelNode(Vertex3d const& coords, ModelPool const& modelPool);
 
     Type type() const override;
 
 private:
-    std::tuple<double, double, float> const& coords_;
+    Vertex3d const& coords_;
 };
 
 }
