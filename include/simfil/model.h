@@ -19,6 +19,8 @@
 namespace simfil
 {
 
+using Vertex3d = std::tuple<double, double, float>;
+
 /**
  * Fast and efficient case-insensitive string storage -
  * referenced by object keys and string values.
@@ -36,8 +38,9 @@ struct Strings
         Geometry = 6,
         Type = 7,
         Coordinates = 8,
+        Elevation = 9,
 
-        NextStaticId = 9,
+        NextStaticId = 10,
         FirstDynamicId = 128
     };
 
@@ -94,7 +97,8 @@ struct ModelPool
     enum ColumnId: uint8_t {
         Objects = 0,
         Arrays = 1,
-        Vertices = 3,
+        Vertex = 3,
+        Vertex3d = 4,
         UInt16 = 7,
         Int16 = 8,
         Int64 = 10,
@@ -206,6 +210,9 @@ struct ModelPool
     /// Add a vertex and get its new model node index.
     ModelNodeIndex addVertex(double const& lon, double const& lat);
 
+    /// Add a 3d vertex and get its new model node index.
+    ModelNodeIndex addVertex3d(double const& lon, double const& lat, float const &elevation);
+
     /// Add some members and get their occupied range
     MemberRange addMembers(std::vector<Member> const&);
 
@@ -299,6 +306,17 @@ struct VertexModelNode : public ProceduralObjectModelNode
 
 private:
     std::pair<double, double> const& coords_;
+};
+
+/** Model Node for a 3d vertex. */
+struct Vertex3dModelNode : public ProceduralObjectModelNode
+{
+    Vertex3dModelNode(Vertex3d const& coords, ModelPool const& modelPool);
+
+    Type type() const override;
+
+private:
+    Vertex3d const& coords_;
 };
 
 }
