@@ -32,15 +32,15 @@ jobs:
       working-directory: build/test
       run: |
         ctest --verbose
-    - name: Test Coverage
+    - name: Run Test Coverage
       working-directory: build
       run: |
-        cmake --build . --target coverage && tar cf coverage.tar coverage
+        cmake --build . --target coverage
     - name: Archive production artifacts
       uses: actions/upload-artifact@v3
       with:
         name: Test Coverage
-        path: build/test/coverage.tar
+        path: build/coverage
   build-windows:
     name: Windows
     runs-on: windows-latest

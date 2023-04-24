@@ -11,6 +11,12 @@ else()
   set(WITH_COVERAGE NO)
 endif()
 
+find_program(GCOVR_BIN gcovr)
+if (WITH_COVERAGE AND NOT GCOVR_BIN)
+  set(WITH_COVERAGE NO)
+  message(WARNING "Could not find gcovr binary. Disabling coverage report!")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/cmake-modules")
 
 # Do not build tests, if bundled
