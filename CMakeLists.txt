@@ -5,7 +5,7 @@ include(FetchContent)
 
 project(simfil)
 
-if (CMAKE_COMPILER_IS_GNUCXX)
+if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
   option(WITH_COVERAGE "Enable gcovr coverage" YES)
 else()
   set(WITH_COVERAGE NO)

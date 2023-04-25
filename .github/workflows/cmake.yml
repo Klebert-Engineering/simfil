@@ -16,14 +16,14 @@ jobs:
         submodules: true
     - name: Install dependencies
       run: |
-        sudo apt-get install gcovr
+        sudo apt-get install gcovr ninja-build
     - name: Setup
       run: |
         mkdir build
     - name: Configure
       working-directory: build
       run: |
-        cmake ..
+        cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=YES -GNinja ..
     - name: Build
       working-directory: build
       run: |
