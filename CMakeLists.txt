@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.14.0)
 enable_testing()
 
 include(FetchContent)
-
 project(simfil)
 
 if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")

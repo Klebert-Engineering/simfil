@@ -1,0 +1,4 @@
+---
+Checks: 'cppcoreguidelines-*,performance-*,-performance-move-const-arg,-performance-unnecessary-value-param'
+AnalyzeTemporaryDtors: false
+FormatStyle: google
