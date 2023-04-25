@@ -1,3 +1,17 @@
-#!/bin/sh
+#!/bin/env bash
+set -eu
+set -o pipefail
 
-find src repl include -iname "*.cpp" -or -iname "*.h" -exec clang-tidy -p . {} \;
+TMP_DIR=".clang-tidy-tmp"
+mkdir "$TMP_DIR" 2> /dev/null || true
+
+(
+    cd "$TMP_DIR"
+    cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=YES -DWITH_COVERAGE=NO .. > /dev/null
+)
+
+ls "$TMP_DIR"
+
+while read -r f; do
+    clang-tidy -p "$TMP_DIR" "${@}" "$f"
+done < <(find src repl include \( -iname "*.cpp" -or -iname "*.h" -or -iname "*.hpp" \))

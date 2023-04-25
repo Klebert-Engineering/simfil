@@ -32,6 +32,7 @@ jobs:
       working-directory: build/test
       run: |
         ctest --verbose
+
     - name: Run Test Coverage
       working-directory: build
       run: |
@@ -41,6 +42,7 @@ jobs:
       with:
         name: Test Coverage
         path: build/coverage
+
   build-windows:
     name: Windows
     runs-on: windows-latest

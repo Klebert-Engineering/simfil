@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build-linux:
+    name: Clang Tidy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: true
+    - name: Run Clang-Tidy
+      run: |
+        ./clang-tidy | tee tidy-output.txt
+    - name: Archive production artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: Clang Tidy
+        path: tidy-output.txt
