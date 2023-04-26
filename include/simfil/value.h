@@ -8,6 +8,7 @@
 #include <optional>
 #include <memory>
 #include <vector>
+#include <any>
 
 #include "object.h"
 
@@ -52,6 +53,9 @@ struct ModelNode
 
     /// Get the number of children
     virtual uint32_t size() const = 0;
+    
+    /// Extra data for the node
+    std::any data;
 };
 
 /**
