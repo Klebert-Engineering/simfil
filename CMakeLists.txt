@@ -5,6 +5,20 @@ include(FetchContent)
 
 project(simfil)
 
+if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  option(WITH_COVERAGE "Enable gcovr coverage" YES)
+else()
+  set(WITH_COVERAGE NO)
+endif()
+
+find_program(GCOVR_BIN gcovr)
+if (WITH_COVERAGE AND NOT GCOVR_BIN)
+  set(WITH_COVERAGE NO)
+  message(WARNING "Could not find gcovr binary. Disabling coverage report!")
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/cmake-modules")
+
 # Do not build tests, if bundled
 set(MAIN_PROJECT OFF)
 if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
@@ -33,6 +47,10 @@ endif()
 
 if (NOT DEFINED SIMFIL_WITH_MODEL_JSON)
   set(SIMFIL_WITH_MODEL_JSON YES)
+endif()
+
+if (WITH_COVERAGE)
+  include(CodeCoverage)
 endif()
 
 add_library(simfil STATIC
@@ -105,10 +123,22 @@ if (SIMFIL_WITH_MODEL_JSON)
       nlohmann_json::nlohmann_json)
 endif()
 
+if (WITH_COVERAGE)
+  append_coverage_compiler_flags_to_target(simfil)
+endif()
+
 add_library(simfil::simfil ALIAS simfil)
 
 add_subdirectory(repl)
 
 if (MAIN_PROJECT)
   add_subdirectory(test)
+
+  if (WITH_COVERAGE)
+    setup_target_for_coverage_gcovr_html(
+      NAME coverage
+      EXECUTABLE test.simfil
+      BASE_DIRECTORY "${CMAKE_SOURCE_DIR}/src"
+      EXCLUDE "*catch2*")
+  endif()
 endif()
