@@ -28,10 +28,17 @@ jobs:
       working-directory: build
       run: |
         cmake --build .
+
     - name: Run CTest
       working-directory: build/test
       run: |
-        ctest --verbose
+        ctest --verbose --output-junit result-junit.xml
+    - name: Publish Test Results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        files: |
+          build/test/*.xml
 
   build-windows:
     name: Windows
