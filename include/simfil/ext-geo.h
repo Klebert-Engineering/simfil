@@ -41,12 +41,12 @@ struct BBox
 
 struct LineString
 {
-    std::vector<Point> points;
+    std::vector<Point<double>> points;
 
     auto bbox() const -> BBox;
 
     auto intersects(const BBox&) const -> bool;
-    auto intersects(const Point&) const -> bool;
+    auto intersects(const Point<double>&) const -> bool;
     auto intersects(const LineString&) const -> bool;
     auto intersects(const Polygon&) const -> bool;
 
@@ -61,7 +61,7 @@ struct Polygon
     auto bbox() const -> BBox;
 
     auto contains(const BBox&) const -> bool;
-    auto contains(const Point&) const -> bool;
+    auto contains(const Point<double>&) const -> bool;
     auto contains(const LineString&) const -> bool;
 
     auto intersects(const BBox&) const -> bool;
@@ -137,7 +137,7 @@ public:
 /** Simfil Meta-Types */
 namespace meta
 {
-class PointType : public TypedMetaType<Point>
+class PointType : public TypedMetaType<Point<double>>
 {
 public:
     static PointType Type;
@@ -146,10 +146,10 @@ public:
 
     auto make(double x, double y) -> Value;
 
-    auto unaryOp(std::string_view op, const Point& p) const -> Value override;
-    auto binaryOp(std::string_view op, const Point& p, const Value& r) const -> Value override;
-    auto binaryOp(std::string_view op, const Value& l, const Point& r) const -> Value override;
-    auto unpack(const Point& p, std::function<bool(Value)> res) const -> void override;
+    auto unaryOp(std::string_view op, const Point<double>& p) const -> Value override;
+    auto binaryOp(std::string_view op, const Point<double>& p, const Value& r) const -> Value override;
+    auto binaryOp(std::string_view op, const Value& l, const Point<double>& r) const -> Value override;
+    auto unpack(const Point<double>& p, std::function<bool(Value)> res) const -> void override;
 };
 
 class BBoxType : public TypedMetaType<BBox>
@@ -175,7 +175,7 @@ public:
 
     LineStringType();
 
-    auto make(std::vector<Point> pts) -> Value;
+    auto make(std::vector<Point<double>> pts) -> Value;
 
     auto unaryOp(std::string_view op, const LineString& ls) const -> Value override;
     auto binaryOp(std::string_view op, const LineString& ls, const Value& r) const -> Value override;
