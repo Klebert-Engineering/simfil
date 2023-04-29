@@ -50,9 +50,9 @@ static const auto invoice = json::parse(R"json(
 }
 )json");
 
-static auto joined_result(const ModelPoolPtr& model, std::string_view query)
+static auto joined_result(const ModelPoolConstPtr& model, std::string_view query)
 {
-    Environment env(model->strings);
+    Environment env(model->fieldNames());
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 

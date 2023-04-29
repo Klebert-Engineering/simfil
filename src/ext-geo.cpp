@@ -775,16 +775,16 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
         if (!v.node)
             return res(ctx, std::move(v));
 
-        if (auto geonode = v.node->get(Strings::Geometry))
+        if (auto geonode = v.node->get(Fields::Geometry))
             v.node = geonode;
 
         auto type = ""s;
-        if (auto typenode = v.node->get(Strings::Type))
+        if (auto typenode = v.node->get(Fields::Type))
             if (Value value = typenode->value(); value.isa(ValueType::String))
                 type = value.as<ValueType::String>();
 
-        if (auto coordnode = v.node->get(Strings::Coordinates)) {
-            auto getPt = [&](const ModelNode& node, Point& pt) {
+        if (auto coordnode = v.node->get(Fields::Coordinates)) {
+            auto getPt = [&](const ModelNode& node, Point<double>& pt) {
                 auto nx = node.at(0), ny = node.at(1);
                 if (!nx || !ny)
                     return false;

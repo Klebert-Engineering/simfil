@@ -564,9 +564,12 @@ auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resu
                 return res(ctx, std::move(vv));
 
         if (vv.node)
-            for (auto&& k : vv.node->keys())
-                if (res(ctx, Value::make(std::move(k))) == Result::Stop)
-                    return Result::Stop;
+            for (auto&& fieldName : vv.node->fieldNames()) {
+                if (auto key = ctx.env->fieldNames_->resolve(fieldName)) {
+                    if (res(ctx, Value::strref(*key)) == Result::Stop)
+                        return Result::Stop;
+                }
+            }
         return Result::Continue;
     });
 

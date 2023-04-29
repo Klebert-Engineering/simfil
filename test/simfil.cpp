@@ -215,7 +215,7 @@ static auto model = simfil::json::parse(doc);
 
 static auto joined_result(std::string_view query)
 {
-    Environment env(model->strings);
+    Environment env(model->fieldNames());
 
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());

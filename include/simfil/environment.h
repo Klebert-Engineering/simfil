@@ -34,11 +34,11 @@ public:
     /**
      * Construct a SIMFIL execution environment with a string cache,
      * which is used to map field names to short integer IDs.
-     * @param stringCache The string cache used by this environment.
+     * @param fieldNames The string cache used by this environment.
      *  Must be the same cache that is also used by ModelPools which
      *  are queried using this environment.
      */
-    explicit Environment(std::shared_ptr<Strings> stringCache);
+    explicit Environment(std::shared_ptr<Fields> fieldNames);
 
     /**
      * Constructor for instantiating an environment explicitly with
@@ -78,7 +78,7 @@ public:
      * Obtain a strong reference to this environment's string cache.
      * Guaranteed not-null.
      */
-    auto stringCache() const -> std::shared_ptr<Strings>;
+    auto fieldNames() const -> std::shared_ptr<Fields>;
 
 public:
     std::unique_ptr<std::mutex> warnMtx;
@@ -91,7 +91,7 @@ public:
     std::map<std::string, const Function*> functions;
 
     Debug* debug = nullptr;
-    std::shared_ptr<Strings> stringCache_;
+    std::shared_ptr<Fields> fieldNames_;
 };
 
 /**

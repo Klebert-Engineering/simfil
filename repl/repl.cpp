@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        simfil::Environment env(model->strings);
+        simfil::Environment env(model->fieldNames());
         simfil::ExprPtr expr;
         try {
             expr = simfil::compile(env, cmd, options.auto_any);
