@@ -369,22 +369,18 @@ TEST_CASE("GeoJSON", "[geojson.geo]") {
 }
 
 TEST_CASE("Model Pool Validation", "[model.validation]") {
-    ModelPool pool;
-
-    // Recognize dangling field name id
-    pool.addObject({ModelPool::Member{666, pool.addObject({})}});
-    REQUIRE_THROWS(pool.validate());
+    auto pool = std::make_shared<ModelPool>();
 
     // Recognize dangling object member pointer
-    pool.clear();
-    pool.addObject({ModelPool::Member{pool.strings->emplace("good"), ModelPool::ModelNodeIndex(ModelPool::Objects, 666)}});
-    REQUIRE_THROWS(pool.validate());
+    pool->clear();
+    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    REQUIRE_THROWS(pool->validate());
 
     // An empty model should be valid
-    pool.clear();
-    REQUIRE_NOTHROW(pool.validate());
+    pool->clear();
+    REQUIRE_NOTHROW(pool->validate());
 
     // An empty object should also be valid
-    pool.addObject({ModelPool::Member{pool.strings->emplace("good"), pool.addObject({})}});
-    REQUIRE_NOTHROW(pool.validate());
+    pool->newObject()->addField("good", ModelNode::Ptr(pool->newObject()));
+    REQUIRE_NOTHROW(pool->validate());
 }
