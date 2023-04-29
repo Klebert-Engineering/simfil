@@ -58,15 +58,20 @@ add_library(simfil STATIC
   include/simfil/expression.h
   include/simfil/ext-geo.h
   include/simfil/function.h
-  include/simfil/model.h
   include/simfil/operator.h
   include/simfil/parser.h
   include/simfil/token.h
   include/simfil/typed-meta-type.h
   include/simfil/types.h
   include/simfil/value.h
-  include/simfil/object.h
+  include/simfil/transient.h
   include/simfil/simfil.h
+
+  include/simfil/model/arena.h
+  include/simfil/model/fields.h
+  include/simfil/model/point.h
+  include/simfil/model/model.h
+  include/simfil/model/nodes.h
 
   src/environment.cpp
   src/function.cpp
@@ -75,8 +80,12 @@ add_library(simfil STATIC
   src/types.cpp
   src/ext-geo.cpp
   src/simfil.cpp
-  src/model.cpp
-  src/value.cpp)
+  src/value.cpp
+
+  src/model/model.cpp
+  src/model/nodes.cpp
+  src/model/fields.cpp
+  src/model/json.cpp)
 
 target_include_directories(simfil
   PUBLIC
@@ -87,7 +96,7 @@ target_compile_features(simfil
     cxx_std_17)
 
 target_link_libraries(simfil
-  PRIVATE
+  PUBLIC
     sfl::sfl
     stx::stx)
 

@@ -11,7 +11,7 @@ namespace simfil
 using namespace std::string_literals;
 
 class Value;
-struct Object;
+struct TransientObject;
 
 struct MetaType
 {
@@ -32,24 +32,28 @@ struct MetaType
     virtual auto deinit(void*) const -> void = 0;
 
     /* Operators */
-    virtual auto unaryOp(std::string_view op, const Object&) const -> Value = 0;
-    virtual auto binaryOp(std::string_view op, const Object&, const Value&) const -> Value = 0;
-    virtual auto binaryOp(std::string_view op, const Value&, const Object&) const -> Value = 0;
+    virtual auto unaryOp(std::string_view op, const TransientObject&) const -> Value = 0;
+    virtual auto binaryOp(std::string_view op, const TransientObject&, const Value&) const -> Value = 0;
+    virtual auto binaryOp(std::string_view op, const Value&, const TransientObject&) const -> Value = 0;
 
     /* Unpack */
-    virtual auto unpack(const Object&, std::function<bool(Value)>) const -> void = 0; /* cb return false to stop! */
+    virtual auto unpack(const TransientObject&, std::function<bool(Value)>) const -> void = 0; /* cb return false to stop! */
 };
 
-struct Object
+/**
+ * Transient object, which may be created during the execution
+ * of a simfil statement, for example to represent geometry.
+ */
+struct TransientObject
 {
     const MetaType* meta = nullptr;
     void* data = nullptr;
 
-    Object(const Object& other)
+    TransientObject(const TransientObject& other)
         : meta(other.meta), data(meta->copy(other.data))
     {}
 
-    auto operator=(const Object& other)
+    auto operator=(const TransientObject& other)
     {
         meta->deinit(data);
         meta = other.meta;
@@ -57,7 +61,7 @@ struct Object
         return *this;
     }
 
-    Object(Object&& other)
+    TransientObject(TransientObject&& other)
         : meta(std::move(other.meta))
         , data(std::move(other.data))
     {
@@ -65,7 +69,7 @@ struct Object
         other.data = nullptr;
     }
 
-    auto operator=(Object&& other)
+    auto operator=(TransientObject&& other)
     {
         meta->deinit(data);
         meta = std::move(other.meta);
@@ -75,11 +79,11 @@ struct Object
         return *this;
     }
 
-    explicit Object(const MetaType* meta)
+    explicit TransientObject(const MetaType* meta)
         : meta(meta), data(meta->init())
     {}
 
-    ~Object()
+    ~TransientObject()
     {
         if (meta && data) {
             meta->deinit(data);

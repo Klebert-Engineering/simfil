@@ -6,7 +6,7 @@
 #error "Define SIMFIL_WITH_MODEL_JSON"
 #endif
 
-#include "simfil/model.h"
+#include "model.h"
 
 namespace simfil::json
 {

@@ -2,8 +2,9 @@
 
 #include "simfil/operator.h"
 #include "simfil/environment.h"
-#include "simfil/model.h"
+#include "simfil/model/model.h"
 #include "simfil/types.h"
+#include "simfil/overlay.h"
 #include "stx/string.h"
 #include "stx/format.h"
 
@@ -42,73 +43,6 @@ auto ArgumentTypeError::what() const noexcept -> const char*
 
 namespace
 {
-
-/** Node for injecting member fields */
-class OverlayNode : public ModelNode
-{
-public:
-    Context ctx;
-    Value value_;
-    ModelNodePtr scalar;
-    ModelNodePtr base;
-    std::map<StringId, ModelNodePtr> overlayChildren;
-
-    OverlayNode(Context ctx, Value val)
-        : ctx(ctx)
-        , value_(std::move(val))
-        , scalar(Value::null().toModelNode())
-    {
-        base = value_.node;
-        if (!base)
-            base = scalar;
-    }
-
-    auto add(StringId const& key, ModelNodePtr const& child) -> void
-    {
-        overlayChildren[key] = child;
-    }
-
-    Value value() const override
-    {
-        return base->value();
-    }
-
-    Type type() const override
-    {
-        return base->type();
-    }
-
-    ModelNodePtr get(const StringId & key) const override
-    {
-        auto iter = overlayChildren.find(key);
-        if (iter != overlayChildren.end())
-            return iter->second;
-        return base->get(key);
-    }
-
-    ModelNodePtr at(int64_t i) const override
-    {
-        return base->at(i);
-    }
-
-    std::vector<ModelNodePtr> children() const override
-    {
-        auto c = base->children();
-        for (const auto& [_, cc] : overlayChildren)
-            c.push_back(cc);
-        return c;
-    }
-
-    std::vector<std::string> keys() const override
-    {
-        return base->keys();
-    }
-
-    uint32_t size() const override
-    {
-        return base->size();
-    }
-};
 
 struct ArgParser
 {
@@ -582,10 +516,10 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
 
     (void)args[0]->eval(ctx, val, [&, n = 0](auto ctx, Value vv) mutable {
         if (subexpr) {
-            auto ov = std::make_shared<OverlayNode>(ctx, vv);
-            ov->add(Strings::OverlaySum, Value(sum).toModelNode());
-            ov->add(Strings::OverlayValue, Value(vv).toModelNode());
-            ov->add(Strings::OverlayIndex, Value::make((int64_t)n++).toModelNode());
+            auto ov = shared_model_ptr<OverlayNode>::make(ctx, vv);
+            ov->add(Fields::OverlaySum, ValueNode(sum));
+            ov->add(Fields::OverlayValue, ValueNode(vv));
+            ov->add(Fields::OverlayIndex, ValueNode(Value::make((int64_t)n++)));
 
             subexpr->eval(ctx, Value::field(ov->value(), ov), [&sum](auto ctx, auto vv) {
                 sum = std::move(vv);

@@ -20,14 +20,14 @@ struct TypedMetaType : MetaType
         : MetaType(std::move(ident))
     {}
 
-    auto get(Object& o) const -> Type*
+    auto get(TransientObject& o) const -> Type*
     {
         if (o.meta == this)
             return (Type*)o.data;
         return nullptr;
     }
 
-    auto get(const Object& o) const -> const Type*
+    auto get(const TransientObject& o) const -> const Type*
     {
         if (o.meta == this)
             return (const Type*)o.data;
@@ -49,22 +49,22 @@ struct TypedMetaType : MetaType
         delete (Type*)ptr;
     }
 
-    auto unaryOp(std::string_view op, const Object& obj) const -> Value
+    auto unaryOp(std::string_view op, const TransientObject& obj) const -> Value
     {
         return unaryOp(op, *(const Type*)obj.data);
     }
 
-    auto binaryOp(std::string_view op, const Object& obj, const Value& v) const -> Value
+    auto binaryOp(std::string_view op, const TransientObject& obj, const Value& v) const -> Value
     {
         return binaryOp(op, *(const Type*)obj.data, v);
     }
 
-    auto binaryOp(std::string_view op, const Value& v, const Object& obj) const -> Value
+    auto binaryOp(std::string_view op, const Value& v, const TransientObject& obj) const -> Value
     {
         return binaryOp(op, v, *(const Type*)obj.data);
     }
 
-    auto unpack(const Object& obj, std::function<bool(Value)> fn) const -> void
+    auto unpack(const TransientObject& obj, std::function<bool(Value)> fn) const -> void
     {
         return unpack(*(const Type*)obj.data, fn);
     }
@@ -80,7 +80,7 @@ struct TypedMetaType : MetaType
 };
 
 template <class Type, class Meta>
-auto getObject(const Object& obj, const Meta* meta) -> const Type*
+auto getObject(const TransientObject& obj, const Meta* meta) -> const Type*
 {
     if (obj.meta == meta)
         return (const Type*)obj.data;

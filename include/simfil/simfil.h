@@ -10,7 +10,7 @@
 #include "simfil/expression.h"
 #include "simfil/environment.h"
 #include "simfil/value.h"
-#include "simfil/model.h"
+#include "simfil/model/model.h"
 
 namespace simfil
 {

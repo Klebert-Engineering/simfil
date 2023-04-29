@@ -1,67 +1,24 @@
 #include "simfil/value.h"
+#include "simfil/model/model.h"
 
 namespace simfil
 {
 
-namespace {
-
-/** Model Node Impl. to wrap a scalar value during execution. */
-
-struct ValueModelNode : public ModelNodeBase {
-    Value value_;
-
-    Value value() const override {
-        return value_;
-    }
-
-    explicit ValueModelNode(Value v) : value_(std::move(v)) {}
-};
-
-}
-
-/** Value Impl. */
-
-ModelNodePtr Value::toModelNode() {
-    if (node)
-        return node;
-    return std::make_shared<ValueModelNode>(*this);
-}
-
-/** Model Node Base Impl. */
-
-Value ModelNodeBase::value() const
+ValueNode::ValueNode(Value v) :
+    ModelNodeBase(
+      std::make_shared<ModelPoolBase>(),
+      {ModelPoolBase::VirtualValue, 0})
 {
-    return Value::model();
+    data_ = std::move(v);
 }
 
-ModelNodeBase::Type ModelNodeBase::type() const
+ValueNode::ValueNode(ModelNode const& n)
+    : ModelNodeBase(n)
 {
-    return ModelNode::Scalar;
 }
 
-ModelNodePtr ModelNodeBase::get(const StringId &) const
-{
-    return nullptr;
-}
-
-ModelNodePtr ModelNodeBase::at(int64_t) const
-{
-    return nullptr;
-}
-
-std::vector<ModelNodePtr> ModelNodeBase::children() const
-{
-    return {};
-}
-
-std::vector<std::string> ModelNodeBase::keys() const
-{
-    return {};
-}
-
-uint32_t ModelNodeBase::size() const
-{
-    return 0;
+Value ValueNode::value() const {
+    return *std::any_cast<Value>(&data_);
 }
 
 }

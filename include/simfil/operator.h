@@ -180,7 +180,7 @@ struct OperatorTypeof
         return "model"s;
     }
 
-    auto operator()(const Object& v) const
+    auto operator()(const TransientObject& v) const
     {
         // Handled by MetaType::unaryOp
         return ""s;
@@ -278,7 +278,7 @@ struct OperatorAsString
         return ""s;
     }
 
-    auto operator()(const Object& v) const
+    auto operator()(const TransientObject& v) const
     {
         // Handled by MetaType::unaryOp
         return ""s;

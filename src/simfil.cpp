@@ -6,6 +6,7 @@
 #include "simfil/expression.h"
 #include "simfil/parser.h"
 #include "simfil/environment.h"
+#include "simfil/model/model.h"
 #include "stx/format.h"
 
 #include <algorithm>
@@ -162,8 +163,8 @@ public:
             if (res(ctx, val) == Result::Stop)
                 return Result::Stop;
 
-            for (const auto& sub : val.node->children()) {
-                if (iterate(Value::field(sub->value(), sub), depth + 1) == Result::Stop)
+            for (auto&& subNode : *val.node) {
+                if (iterate(Value::field(subNode->value(), subNode), depth + 1) == Result::Stop)
                     return Result::Stop;
             }
 
@@ -204,8 +205,8 @@ public:
             return res(ctx, Value::null());
 
         if (val.node->size() > 0) {
-            for (const auto& sub : val.node->children()) {
-                if (res(ctx, Value::field(sub->value(), sub)) == Result::Stop)
+            for (auto&& subNode : *val.node) {
+                if (res(ctx, Value::field(subNode->value(), subNode)) == Result::Stop)
                     return Result::Stop;
             }
         } else {
@@ -366,7 +367,7 @@ public:
             return index_->eval(ctx, val, [this, &res, &lval](auto ctx, Value ival) {
                 /* Field subscript */
                 if (lval.node) {
-                    ModelNodePtr node;
+                    ModelNode::Ptr node;
 
                     /* Array subscript */
                     if (ival.isa(ValueType::Int)) {

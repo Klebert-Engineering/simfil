@@ -3,7 +3,7 @@
 #include "simfil/typed-meta-type.h"
 #include "simfil/value.h"
 #include "simfil/operator.h"
-#include "simfil/model.h"
+#include "simfil/model/model.h"
 
 #include "stx/format.h"
 
@@ -433,7 +433,7 @@ PointType::PointType()
 
 auto PointType::make(double x, double y) -> Value
 {
-    auto obj = Object(&PointType::Type);
+    auto obj = TransientObject(&PointType::Type);
     auto pt = get(obj);
     pt->x = x;
     pt->y = y;
@@ -501,7 +501,7 @@ BBoxType::BBoxType()
 
 auto BBoxType::make(BBox o) -> Value
 {
-    auto obj = Object(&BBoxType::Type);
+    auto obj = TransientObject(&BBoxType::Type);
     auto bb = get(obj);
     *bb = o;
 
@@ -510,7 +510,7 @@ auto BBoxType::make(BBox o) -> Value
 
 auto BBoxType::make(double x1, double y1, double x2, double y2) -> Value
 {
-    auto obj = Object(&BBoxType::Type);
+    auto obj = TransientObject(&BBoxType::Type);
     auto bb = get(obj);
     bb->p1 = {x1, y1};
     bb->p2 = {x2, y2};
@@ -590,9 +590,9 @@ LineStringType::LineStringType()
     : TypedMetaType("linestring")
 {}
 
-auto LineStringType::make(std::vector<Point> pts) -> Value
+auto LineStringType::make(std::vector<Point<double>> pts) -> Value
 {
-    auto obj = Object(&LineStringType::Type);
+    auto obj = TransientObject(&LineStringType::Type);
     auto ls = get(obj);
     ls->points = std::move(pts);
 
@@ -663,7 +663,7 @@ PolygonType::PolygonType()
 
 auto PolygonType::make(LineString outer) -> Value
 {
-    auto obj = Object(&PolygonType::Type);
+    auto obj = TransientObject(&PolygonType::Type);
     auto pl = get(obj);
     pl->polys = {std::move(outer)};
 
@@ -672,7 +672,7 @@ auto PolygonType::make(LineString outer) -> Value
 
 auto PolygonType::make(std::vector<LineString> full) -> Value
 {
-    auto obj = Object(&PolygonType::Type);
+    auto obj = TransientObject(&PolygonType::Type);
     auto pl = get(obj);
     pl->polys = full;
 

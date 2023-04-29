@@ -2,6 +2,7 @@
 
 #include "function.h"
 #include "typed-meta-type.h"
+#include "model/point.h"
 
 /** Simfil GeoJSON Extension */
 namespace simfil::geo
@@ -12,31 +13,22 @@ static constexpr auto OP_NAME_WITHIN     = "within";
 static constexpr auto OP_NAME_CONTAINS   = "contains";
 static constexpr auto OP_NAME_INTERSECTS = "intersects";
 
+template<class Precision>
 struct Point;
+
 struct BBox;
 struct LineString;
 struct Polygon;
 
-struct Point
-{
-    double x = 0, y = 0;
-
-    auto angleTo(const Point&) const -> double;
-    auto distanceTo(const Point&) const -> double;
-
-    auto operator==(const Point&) const -> bool;
-    auto toString() const -> std::string;
-};
-
 struct BBox
 {
-    Point p1, p2;
+    Point<double> p1, p2;
 
     auto edges() const -> LineString;
     auto normalized() const -> BBox;
 
     auto contains(const BBox& b) const -> bool;
-    auto contains(const Point& p) const -> bool;
+    auto contains(const Point<double>& p) const -> bool;
     auto contains(const LineString& p) const -> bool;
     auto contains(const Polygon& p) const -> bool;
 

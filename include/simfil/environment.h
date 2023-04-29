@@ -3,7 +3,7 @@
 #pragma once
 
 #include "simfil/value.h"
-#include "simfil/model.h"
+#include "simfil/model/model.h"
 
 #include <map>
 #include <memory>
