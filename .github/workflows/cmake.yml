@@ -1,4 +1,4 @@
-name: CI
+name: Build
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
         submodules: true
     - name: Install dependencies
       run: |
-        sudo apt-get install gcovr ninja-build
+        sudo apt-get install gcovr ninja-build valgrind
     - name: Setup
       run: |
         mkdir build
@@ -32,6 +32,19 @@ jobs:
       working-directory: build/test
       run: |
         ctest --verbose
+
+    - name: Run Valgrind Memcheck
+      working-directory: build/test
+      run: |
+        valgrind --tool=memcheck ./test.simfil
+    - name: Run Valgrind Helgrind
+      working-directory: build/test
+      run: |
+        valgrind --tool=helgrind ./test.simfil
+    - name: Run Valgrind Cachegrind
+      working-directory: build/test
+      run: |
+        valgrind --tool=cachegrind ./test.simfil | tee cachegrind-out.txt
 
   build-windows:
     name: Windows
