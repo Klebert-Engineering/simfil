@@ -27,21 +27,6 @@ struct UndefinedType {};
  */
 struct NullType {};
 
-/**
- * Simfil value types
- */
-enum class ValueType
-{
-    Undef,
-    Null,
-    Bool,
-    Int,
-    Float,
-    String,
-    Object,
-    Model,
-};
-
 namespace impl
 {
 struct ValueToString
@@ -78,7 +63,7 @@ struct ValueToString
 
     auto operator()(const TransientObject&) const
     {
-        return "<object>"s;
+        return "<transient>"s;
     }
 
     auto operator()(const ModelNode&) const
@@ -98,8 +83,9 @@ inline auto valueType2String(ValueType t) -> const char*
     case ValueType::Int:    return "int";
     case ValueType::Float:  return "float";
     case ValueType::String: return "string";
+    case ValueType::TransientObject: return "transient";
     case ValueType::Object: return "object";
-    case ValueType::Model:  return "model";
+    case ValueType::Array:  return "array";
     default:
         assert(0 && "unreachable");
         return "unknown";
@@ -138,12 +124,12 @@ struct ValueType4CType<std::string_view> {
 
 template <>
 struct ValueType4CType<TransientObject> {
-    static constexpr ValueType Type = ValueType::Object;
+    static constexpr ValueType Type = ValueType::TransientObject;
 };
 
 template <>
 struct ValueType4CType<ModelNode> {
-    static constexpr ValueType Type = ValueType::Model;
+    static constexpr ValueType Type = ValueType::Object;
 };
 
 template <ValueType>
@@ -175,13 +161,18 @@ struct ValueTypeInfo<ValueType::String> {
 };
 
 template <>
-struct ValueTypeInfo<ValueType::Object> {
+struct ValueTypeInfo<ValueType::TransientObject> {
     using Type = TransientObject;
 };
 
 template <>
-struct ValueTypeInfo<ValueType::Model> {
-    using Type = ModelNode;
+struct ValueTypeInfo<ValueType::Object> {
+    using Type = ModelNode::Ptr;
+};
+
+template <>
+struct ValueTypeInfo<ValueType::Array> {
+    using Type = ModelNode::Ptr;
 };
 
 template <ValueType _Type>
@@ -237,7 +228,7 @@ public:
 
     static auto model() -> Value
     {
-        return Value(ValueType::Model);
+        return Value(ValueType::Object);
     }
 
     static auto strref(std::string_view sv) -> Value
@@ -253,7 +244,7 @@ public:
 
     static auto field(Value&& v, const ModelNode::Ptr& node)
     {
-        return Value(v.type, std::move(v.value), node);
+        return Value(node->type(), std::move(v.value), node);
     }
 
     Value(ValueType type)
@@ -309,9 +300,9 @@ public:
             return fn(this->template as<ValueType::Float>());
         if (type == ValueType::String)
             return fn(this->template as<ValueType::String>());
-        if (type == ValueType::Object)
-            return fn(this->template as<ValueType::Object>());
-        if (type == ValueType::Model) {
+        if (type == ValueType::TransientObject)
+            return fn(this->template as<ValueType::TransientObject>());
+        if (type == ValueType::Object || type == ValueType::Array) {
             if (node) return fn(*node);
             else return fn(NullType{});
         }
@@ -320,7 +311,7 @@ public:
 
     auto toString() const
     {
-        if (isa(ValueType::Object)) {
+        if (isa(ValueType::TransientObject)) {
             const auto& obj = std::get<TransientObject>(value);
             if (obj.meta) {
                 if (Value vv = obj.meta->unaryOp("string", obj); vv.isa(ValueType::String))
@@ -368,6 +359,7 @@ struct ValueNode : public ModelNodeBase
     ValueNode(Value);
     ValueNode(ModelNode const&);
     Value value() const override;
+    ValueType type() const override;
 };
 
 }

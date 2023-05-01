@@ -1,6 +1,7 @@
 #pragma once
 
 #include "stx/format.h"
+#include <cmath>
 
 namespace simfil
 {

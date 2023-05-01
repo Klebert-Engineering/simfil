@@ -19,8 +19,8 @@ Value ModelNode::value() const {
 }
 
 /// Get the node's abstract model type
-ModelNode::Type ModelNode::type() const {
-    ModelNode::Type result = ModelNode::Type::Scalar;
+ValueType ModelNode::type() const {
+    ValueType result = ValueType::Null;
     if (pool_)
         pool_->resolve(*this, [&](auto&& resolved) { result = resolved.type(); });
     return result;
@@ -75,9 +75,9 @@ Value ModelNodeBase::value() const
     return Value::null();
 }
 
-ModelNodeBase::Type ModelNodeBase::type() const
+ValueType ModelNodeBase::type() const
 {
-    return ModelNode::Type::Scalar;
+    return ValueType::Null;
 }
 
 ModelNode::Ptr ModelNodeBase::get(const FieldId&) const
@@ -106,12 +106,20 @@ template<> Value SmallScalarNode<int16_t>::value() const {
     return Value::make((int64_t)addr_.int16());
 }
 
+template<> ValueType SmallScalarNode<int16_t>::type() const {
+    return ValueType::Int;
+}
+
 template<> SmallScalarNode<int16_t>::SmallScalarNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
 
 template<> Value SmallScalarNode<uint16_t>::value() const {
     return Value::make((int64_t)addr_.uint16());
+}
+
+template<> ValueType SmallScalarNode<uint16_t>::type() const {
+    return ValueType::Int;
 }
 
 template<> SmallScalarNode<uint16_t>::SmallScalarNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
@@ -122,6 +130,10 @@ template<> Value SmallScalarNode<bool>::value() const {
     return Value::make((bool)addr_.uint16());
 }
 
+template<> ValueType SmallScalarNode<bool>::type() const {
+    return ValueType::Bool;
+}
+
 template<> SmallScalarNode<bool>::SmallScalarNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
@@ -130,6 +142,10 @@ template<> SmallScalarNode<bool>::SmallScalarNode(ModelPoolConstBasePtr p, Model
 
 Value StringNode::value() const {
     return Value::strref(str_);
+}
+
+ValueType StringNode::type() const {
+    return ValueType::String;
 }
 
 StringNode::StringNode(std::string_view s, ModelPoolConstBasePtr storage, ModelNodeAddress a)
@@ -143,12 +159,20 @@ template<> Value ScalarNode<int64_t>::value() const
     return Value::make(value_);
 }
 
+template<> ValueType ScalarNode<int64_t>::type() const {
+    return ValueType::Int;
+}
+
 template<> ScalarNode<int64_t>::ScalarNode(const long long& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(storage), a), value_(value) {}
 
 template<> Value ScalarNode<double>::value() const
 {
     return Value::make(value_);
+}
+
+template<> ValueType ScalarNode<double>::type() const {
+    return ValueType::Float;
 }
 
 template<> ScalarNode<double>::ScalarNode(const double& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
@@ -159,13 +183,15 @@ template<> ScalarNode<double>::ScalarNode(const double& value, ModelPoolConstBas
 Array::Array(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool), a), storage_(storage), members_(i) {}
 
-ModelNode::Type Array::type() const
+ValueType Array::type() const
 {
-    return ModelNode::Type::Array;
+    return ValueType::Array;
 }
 
 ModelNode::Ptr Array::at(int64_t i) const
 {
+    if (i < 0 || i >= storage_.size(members_))
+        return {};
     return ModelNode::Ptr::make(pool_, storage_.at(members_, i));
 }
 
@@ -187,17 +213,25 @@ Array& Array::append(ModelNode::Ptr const& value) {storage_.push_back(members_, 
 Object::Object(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool), a), storage_(storage), members_(i) {}
 
-ModelNode::Type Object::type() const
+// Value Object::value() const {
+//     return Value(type(), Value::undef(), *this);
+// }
+
+ValueType Object::type() const
 {
-    return ModelNode::Type::Object;
+    return ValueType::Object;
 }
 
 ModelNode::Ptr Object::at(int64_t i) const
 {
+    if (i < 0 || i >= storage_.size(members_))
+        return {};
     return ModelNode::Ptr::make(pool_, storage_.at(members_, i).node_);
 }
 
 FieldId Object::keyAt(int64_t i) const {
+    if (i < 0 || i >= storage_.size(members_))
+        return {};
     return storage_.at(members_, i).name_;
 }
 

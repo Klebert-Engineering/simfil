@@ -21,4 +21,8 @@ Value ValueNode::value() const {
     return *std::any_cast<Value>(&data_);
 }
 
+ValueType ValueNode::type() const {
+    return std::any_cast<Value>(&data_)->type;
+}
+
 }

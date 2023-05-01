@@ -90,8 +90,8 @@ auto getObject(const TransientObject& obj, const Meta* meta) -> const Type*
 template <class Type, class Meta>
 auto getObject(const Value& val, const Meta* meta) -> const Type*
 {
-    if (val.isa(ValueType::Object))
-        return getObject<Type>(val.as<ValueType::Object>(), meta);
+    if (val.isa(ValueType::TransientObject))
+        return getObject<Type>(val.as<ValueType::TransientObject>(), meta);
     return nullptr;
 }
 

@@ -418,7 +418,7 @@ auto PointType::make(double x, double y) -> Value
     pt->x = x;
     pt->y = y;
 
-    return Value(ValueType::Object, std::move(obj));
+    return Value(ValueType::TransientObject, std::move(obj));
 }
 
 auto PointType::unaryOp(std::string_view op, const Point<double>& self) const -> Value
@@ -485,7 +485,7 @@ auto BBoxType::make(BBox o) -> Value
     auto bb = get(obj);
     *bb = o;
 
-    return Value(ValueType::Object, std::move(obj));
+    return Value(ValueType::TransientObject, std::move(obj));
 }
 
 auto BBoxType::make(double x1, double y1, double x2, double y2) -> Value
@@ -495,7 +495,7 @@ auto BBoxType::make(double x1, double y1, double x2, double y2) -> Value
     bb->p1 = {x1, y1};
     bb->p2 = {x2, y2};
 
-    return Value(ValueType::Object, std::move(obj));
+    return Value(ValueType::TransientObject, std::move(obj));
 }
 
 auto BBoxType::unaryOp(std::string_view op, const BBox& self) const -> Value
@@ -576,7 +576,7 @@ auto LineStringType::make(std::vector<Point<double>> pts) -> Value
     auto ls = get(obj);
     ls->points = std::move(pts);
 
-    return Value(ValueType::Object, std::move(obj));
+    return Value(ValueType::TransientObject, std::move(obj));
 }
 
 auto LineStringType::unaryOp(std::string_view op, const LineString& self) const -> Value
@@ -647,7 +647,7 @@ auto PolygonType::make(LineString outer) -> Value
     auto pl = get(obj);
     pl->polys = {std::move(outer)};
 
-    return Value(ValueType::Object, std::move(obj));
+    return Value(ValueType::TransientObject, std::move(obj));
 }
 
 auto PolygonType::make(std::vector<LineString> full) -> Value
@@ -656,7 +656,7 @@ auto PolygonType::make(std::vector<LineString> full) -> Value
     auto pl = get(obj);
     pl->polys = full;
 
-    return Value(ValueType::Object, std::move(obj));
+    return Value(ValueType::TransientObject, std::move(obj));
 }
 
 auto PolygonType::unaryOp(std::string_view op, const Polygon& self) const -> Value
@@ -1025,7 +1025,7 @@ auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args
         (void)arg->eval(ctx, val, [&mode, &floats](auto, Value v) {
             /* Argument 0 determines the argument type: Point<double> or Float, Float */
             if (mode == None)
-                mode = v.isa(ValueType::Object) ? Points : Floats;
+                mode = v.isa(ValueType::TransientObject) ? Points : Floats;
 
             if (auto pt = getObject<Point<double>>(v, &meta::PointType::Type)) {
                 if (mode != Points)

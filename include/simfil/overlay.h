@@ -42,7 +42,7 @@ public:
         return dataPtr_->base_->value();
     }
 
-    Type type() const override
+    ValueType type() const override
     {
         return dataPtr_->base_->type();
     }

@@ -20,11 +20,27 @@ using ModelPoolConstPtr = std::shared_ptr<const ModelPool>;
 using ModelPoolPtr = std::shared_ptr<ModelPool>;
 
 /**
+ * Simfil value types
+ */
+enum class ValueType
+{
+    Undef,
+    Null,
+    Bool,
+    Int,
+    Float,
+    String,
+    TransientObject,
+    Object,
+    Array
+};
+
+/**
  * Why is shared_model_ptr's value on the stack?
  *
  * All ModelNode types are actually pointers into a ModelPool, via their
  * nested ModelNodeAddress. They keep the ModelPool which they reference
- * alive. The mapget::shared_model_ptr wrapper ensures that the user has
+ * alive. The shared_model_ptr wrapper ensures that the user has
  * a better sense of the object they are dealing with. Only mapget::shared_model_ptr
  * is allowed to copy ModelNodes - so e.g. `auto node = *nodePtr` is not possible.
  */
@@ -116,18 +132,11 @@ struct ModelNode
     friend class ModelPool;
     friend class ModelPoolBase;
 
-    enum class Type
-    {
-        Scalar,
-        Array,
-        Object,
-    };
-
     /// Get the node's scalar value if it has one
     [[nodiscard]] virtual Value value() const;
 
     /// Get the node's abstract model type
-    [[nodiscard]] virtual Type type() const;
+    [[nodiscard]] virtual ValueType type() const;
 
     /// Get a child by name
     [[nodiscard]] virtual Ptr get(FieldId const& f) const;
@@ -257,7 +266,7 @@ struct ModelNodeBase : public ModelNode
     friend class ModelPoolBase;
 
     [[nodiscard]] Value value() const override;
-    [[nodiscard]] Type type() const override;
+    [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
@@ -304,15 +313,19 @@ struct SmallScalarNode : public ModelNodeBase
 {
     friend class ModelPoolBase;
     [[nodiscard]] Value value() const override;
+    [[nodiscard]] ValueType type() const override;
 protected:
     SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
 };
 
 template<> [[nodiscard]] Value SmallScalarNode<int16_t>::value() const;
+template<> [[nodiscard]] ValueType SmallScalarNode<int16_t>::type() const;
 template<> SmallScalarNode<int16_t>::SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
 template<> [[nodiscard]] Value SmallScalarNode<uint16_t>::value() const;
+template<> [[nodiscard]] ValueType SmallScalarNode<uint16_t>::type() const;
 template<> SmallScalarNode<uint16_t>::SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
 template<> [[nodiscard]] Value SmallScalarNode<bool>::value() const;
+template<> [[nodiscard]] ValueType SmallScalarNode<bool>::type() const;
 template<> SmallScalarNode<bool>::SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
 
 
@@ -322,6 +335,7 @@ struct StringNode : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
     [[nodiscard]] Value value() const override;
+    [[nodiscard]] ValueType type() const override;
 protected:
     StringNode(std::string_view s, ModelPoolConstBasePtr storage, ModelNodeAddress);
 
@@ -343,14 +357,17 @@ struct ScalarNode : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
     [[nodiscard]] Value value() const override;
+    [[nodiscard]] ValueType type() const override;
 protected:
     ScalarNode(T const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
     T const& value_;
 };
 
 template<> [[nodiscard]] Value ScalarNode<int64_t>::value() const;
+template<> [[nodiscard]] ValueType ScalarNode<int64_t>::type() const;
 template<> ScalarNode<int64_t>::ScalarNode(int64_t const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
 template<> [[nodiscard]] Value ScalarNode<double>::value() const;
+template<> [[nodiscard]] ValueType ScalarNode<double>::type() const;
 template<> ScalarNode<double>::ScalarNode(double const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
 
 /** Model Node for an array. */
@@ -359,7 +376,7 @@ struct Array : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
 
-    [[nodiscard]] Type type() const override;
+    [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
 
@@ -386,7 +403,8 @@ struct Object : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
 
-    [[nodiscard]] Type type() const override;
+    // [[nodiscard]] Value value() const override;
+    [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
@@ -400,7 +418,7 @@ struct Object : public MandatoryModelPoolNodeBase
     Object& addField(std::string_view const& name, std::string_view const& value);
     Object& addField(std::string_view const& name, ModelNode::Ptr const& value={});
 
-    ModelNode::Ptr get(std::string_view const& fieldName) const;
+    [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
 
 protected:
     /**

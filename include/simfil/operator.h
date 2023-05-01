@@ -704,8 +704,8 @@ struct UnaryOperatorDispatcher
     static auto dispatch(const Value& value) -> Value
     {
         try {
-            if (value.isa(ValueType::Object)) {
-                const auto& obj = value.as<ValueType::Object>();
+            if (value.isa(ValueType::TransientObject)) {
+                const auto& obj = value.as<ValueType::TransientObject>();
                 return obj.meta->unaryOp(_Operator::name(), obj);
             }
 
@@ -762,17 +762,17 @@ struct BinaryOperatorDispatcher
     static auto dispatch(const Value& lhs, const Value& rhs) -> Value
     {
         try {
-            if (lhs.isa(ValueType::Object)) {
+            if (lhs.isa(ValueType::TransientObject)) {
                 if (rhs.isa(ValueType::Undef))
                     return Value::undef();
-                const auto& obj = lhs.as<ValueType::Object>();
+                const auto& obj = lhs.as<ValueType::TransientObject>();
                 return obj.meta->binaryOp(_Operator::name(), obj, rhs);
             }
 
-            if (rhs.isa(ValueType::Object)) {
+            if (rhs.isa(ValueType::TransientObject)) {
                 if (lhs.isa(ValueType::Undef))
                     return Value::undef();
-                const auto& obj = rhs.as<ValueType::Object>();
+                const auto& obj = rhs.as<ValueType::TransientObject>();
                 return obj.meta->binaryOp(_Operator::name(), lhs, obj);
             }
 

@@ -197,7 +197,7 @@ void ModelPool::resolve(
         break;
     }
     default:
-        break;
+        ModelPoolBase::resolve(n, cb);
     }
 }
 
@@ -229,12 +229,12 @@ shared_model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
 shared_model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
 {
     auto memberArrId = impl_->columns_.arrayMemberArrays_.newArray(initialFieldCapacity);
-    impl_->columns_.objects_.emplace_back(memberArrId);
+    impl_->columns_.arrays_.emplace_back(memberArrId);
     return Array(
         memberArrId,
         impl_->columns_.arrayMemberArrays_,
         shared_from_this(),
-        {Objects, (uint32_t)impl_->columns_.objects_.size()-1});
+        {Arrays, (uint32_t)impl_->columns_.arrays_.size()-1});
 }
 
 ModelNode::Ptr ModelPoolBase::newSmallValue(bool value)
@@ -256,7 +256,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 {
     if (value < 0 && value >= std::numeric_limits<int16_t>::min())
         return newSmallValue((int16_t)value);
-    else if (value > 0 && value <= std::numeric_limits<uint16_t>::max())
+    else if (value >= 0 && value <= std::numeric_limits<uint16_t>::max())
         return newSmallValue((uint16_t)value);
     impl_->columns_.i64_.emplace_back(value);
     return ModelNode(shared_from_this(), {Int64, (uint32_t)impl_->columns_.i64_.size()-1});
@@ -270,7 +270,10 @@ ModelNode::Ptr ModelPool::newValue(double const& value)
 
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 {
-    impl_->columns_.strings_.emplace_back(StringNode::Data{impl_->columns_.strings_.size(), value.size()});
+    impl_->columns_.strings_.emplace_back(StringNode::Data{
+        impl_->columns_.stringData_.size(),
+        value.size()
+    });
     impl_->columns_.stringData_ += value;
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
 }

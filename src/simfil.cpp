@@ -576,8 +576,8 @@ public:
     {
         auto anyval = false;
         auto r = sub_->eval(ctx, val, [&res, &anyval](auto ctx, Value v) {
-            if (v.isa(ValueType::Object)) {
-                const auto& obj = v.as<ValueType::Object>();
+            if (v.isa(ValueType::TransientObject)) {
+                const auto& obj = v.as<ValueType::TransientObject>();
                 auto r = Result::Continue;
                 obj.meta->unpack(obj, [&](Value vv) {
                     anyval = true;
@@ -695,8 +695,8 @@ public:
             if (val.isa(ValueType::Undef))
                 return res(ctx, std::move(val));
 
-            if (val.isa(ValueType::Object)) {
-                const auto& obj = val.as<ValueType::Object>();
+            if (val.isa(ValueType::TransientObject)) {
+                const auto& obj = val.as<ValueType::TransientObject>();
                 return res(ctx, obj.meta->unaryOp(ident_, obj));
             }
 
@@ -735,13 +735,13 @@ public:
                 if (lval.isa(ValueType::Undef) || rval.isa(ValueType::Undef))
                     return res(ctx, Value::undef());
 
-                if (lval.isa(ValueType::Object)) {
-                    const auto& obj = lval.template as<ValueType::Object>();
+                if (lval.isa(ValueType::TransientObject)) {
+                    const auto& obj = lval.template as<ValueType::TransientObject>();
                     return res(ctx, obj.meta->binaryOp(ident_, obj, rval));
                 }
 
-                if (rval.isa(ValueType::Object)) {
-                    const auto& obj = rval.template as<ValueType::Object>();
+                if (rval.isa(ValueType::TransientObject)) {
+                    const auto& obj = rval.template as<ValueType::TransientObject>();
                     return res(ctx, obj.meta->binaryOp(ident_, lval, obj));
                 }
 

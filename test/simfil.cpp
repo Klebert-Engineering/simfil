@@ -211,10 +211,9 @@ static const char* doc = R"json(
 }
 )json";
 
-static auto model = simfil::json::parse(doc);
-
 static auto joined_result(std::string_view query)
 {
+    auto model = simfil::json::parse(doc);
     Environment env(model->fieldNames());
 
     auto ast = compile(env, query, false);

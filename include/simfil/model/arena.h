@@ -44,7 +44,7 @@ public:
         data_.resize(offset + initialCapacity);
 
         auto index = static_cast<ArrayIndex>(heads_.size());
-        heads_.push_back({offset, initialCapacity, 0, -1, index});
+        heads_.push_back({offset, initialCapacity, 0, -1, -1});
 
         return index;
     }
@@ -95,12 +95,14 @@ public:
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
 
-        ElementType& element = data_[updatedLast.offset + updatedLast.size];
-        element = std::move(data);
-        ++updatedLast.size;
+        auto elementIt = data_.insert(
+            data_.begin() + updatedLast.offset + updatedLast.size,
+            data);
         ++heads_[a].size;
+        if (&heads_[a] != &updatedLast)
+            ++updatedLast.size;
 
-        return element;
+        return *elementIt;
     }
 
     /**
@@ -116,10 +118,12 @@ public:
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
 
-        auto elementIt =
-            data_.emplace(data_.begin() + updatedLast.offset + updatedLast.size, std::forward<Args>(args)...);
-        ++updatedLast.size;
+        auto elementIt = data_.emplace(
+            data_.begin() + updatedLast.offset + updatedLast.size,
+            std::forward<Args>(args)...);
         ++heads_[a].size;
+        if (&heads_[a] != &updatedLast)
+            ++updatedLast.size;
 
         return *elementIt;
     }
@@ -291,7 +295,7 @@ private:
             data_.resize(offset + newCapacity);
 
             auto newIndex = static_cast<ArrayIndex>(continuations_.size());
-            continuations_.push_back({offset, newCapacity, 0, -1, newIndex});
+            continuations_.push_back({offset, newCapacity, 0, -1, -1});
 
             last.next = newIndex;
             head.last = newIndex;

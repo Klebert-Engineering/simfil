@@ -17,7 +17,6 @@ namespace simfil
 
 class Expr;
 class Function;
-class ModelNode;
 struct Debug;
 
 /** Trace call stats. */
