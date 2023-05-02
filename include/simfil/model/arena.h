@@ -67,21 +67,17 @@ public:
      */
     ElementType& at(ArrayIndex const& a, size_t const& i)
     {
-        Chunk const& head = heads_[a];
-
-        ArrayIndex current = a;
+        Chunk const* current = &heads_[a];
         size_t remaining = i;
 
-        while (current != -1) {
-            Chunk const& chunk = (current == a) ? head : continuations_[current];
-            if (remaining < chunk.size) {
-                return data_[chunk.offset + remaining];
-            }
-            remaining -= chunk.size;
-            current = chunk.next;
+        while (true) {
+            if (remaining < current->size)
+                return data_[current->offset + remaining];
+            if (current->next == -1)
+                throw std::out_of_range("Index out of range");
+            remaining -= current->size;
+            current = &continuations_[current->next];
         }
-
-        throw std::out_of_range("Index out of range");
     }
 
     /**
@@ -94,15 +90,12 @@ public:
     ElementType& push_back(ArrayIndex const& a, ElementType const& data)
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
-
-        auto elementIt = data_.insert(
-            data_.begin() + updatedLast.offset + updatedLast.size,
-            data);
+        auto& elem = data_[updatedLast.offset + updatedLast.size];
+        elem = std::move(data);
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
-
-        return *elementIt;
+        return elem;
     }
 
     /**
@@ -117,15 +110,12 @@ public:
     ElementType& emplace_back(ArrayIndex const& a, Args&&... args)
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
-
-        auto elementIt = data_.emplace(
-            data_.begin() + updatedLast.offset + updatedLast.size,
-            std::forward<Args>(args)...);
+        auto& elem = data_[updatedLast.offset + updatedLast.size];
+        new (&elem) ElementType(std::forward<Args>(args)...);
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
-
-        return *elementIt;
+        return elem;
     }
 
     /**

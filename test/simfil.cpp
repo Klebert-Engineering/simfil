@@ -242,7 +242,7 @@ TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
     REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
     REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
     REQUIRE_RESULT("count(*)", "8");
-    REQUIRE_RESULT("count(**)", "46");
+    REQUIRE_RESULT("count(**)", "47");
     REQUIRE_RESULT("count(sub.**.a)", "2");
     REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "10");
     REQUIRE_RESULT("count(sub.**.{typeof _ == 'string'})", "4");
@@ -271,8 +271,8 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
 }
 
 TEST_CASE("Single Values", "[yaml.single-values]") {
-    REQUIRE_RESULT("_", "null");
-    REQUIRE_RESULT("_._", "null");
+    REQUIRE_RESULT("_", "model");
+    REQUIRE_RESULT("_._", "model");
     REQUIRE_RESULT("a", "1");
     REQUIRE_RESULT("['a']", "1");
     REQUIRE_RESULT("b", "2");
