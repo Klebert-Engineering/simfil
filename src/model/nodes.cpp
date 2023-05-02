@@ -163,7 +163,7 @@ template<> ValueType ScalarNode<int64_t>::type() const {
     return ValueType::Int;
 }
 
-template<> ScalarNode<int64_t>::ScalarNode(const long long& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
+template<> ScalarNode<int64_t>::ScalarNode(int64_t const& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(storage), a), value_(value) {}
 
 template<> Value ScalarNode<double>::value() const
