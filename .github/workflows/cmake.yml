@@ -1,4 +1,4 @@
-name: CI
+name: Build
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
         submodules: true
     - name: Install dependencies
       run: |
-        sudo apt-get install gcovr ninja-build
+        sudo apt-get install gcovr ninja-build valgrind
     - name: Setup
       run: |
         mkdir build
@@ -71,6 +71,19 @@ jobs:
         token: ${{ secrets.GIST_TOKEN }}
         gistURL: https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b
         file: badge.svg
+
+    - name: Run Valgrind Memcheck
+      working-directory: build/test
+      run: |
+        valgrind --tool=memcheck ./test.simfil
+    - name: Run Valgrind Helgrind
+      working-directory: build/test
+      run: |
+        valgrind --tool=helgrind ./test.simfil
+    - name: Run Valgrind Cachegrind
+      working-directory: build/test
+      run: |
+        valgrind --tool=cachegrind ./test.simfil | tee cachegrind-out.txt
 
   build-windows:
     name: Windows
