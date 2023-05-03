@@ -7,6 +7,8 @@
 #include "point.h"
 #include "fields.h"
 
+#include "sfl/small_vector.hpp"
+
 namespace simfil
 {
 
@@ -403,7 +405,6 @@ struct Object : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
 
-    // [[nodiscard]] Value value() const override;
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
@@ -439,6 +440,43 @@ protected:
 
     Storage& storage_;
     ArrayIndex members_;
+};
+
+/** Object with extra procedural fields */
+
+template<uint16_t MaxProceduralFields>
+class ProceduralObject : public Object
+{
+    [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
+        if (i < fields_.size())
+            return fields_[i].second();
+        return Object::at(i - fields_.size());
+    }
+
+    [[nodiscard]] uint32_t size() const override {
+        return fields_.size() + Object::size();
+    }
+
+    [[nodiscard]] ModelNode::Ptr get(const FieldId & field) const override {
+        for (auto const& [k, v] : fields_)
+            if (k == field)
+                return v();
+        return Object::get(field);
+    }
+
+    [[nodiscard]] FieldId keyAt(int64_t i) const override {
+        if (i < fields_.size())
+            return fields_[i].first;
+        return Object::keyAt(i - fields_.size());
+    }
+
+protected:
+    ProceduralObject(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress a)
+        : Object(i, storage, pool, a) {}
+
+    sfl::small_vector<
+        std::pair<FieldId, std::function<ModelNode::Ptr()>>,
+        MaxProceduralFields> fields_;
 };
 
 //     /**

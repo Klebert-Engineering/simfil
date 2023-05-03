@@ -213,10 +213,6 @@ Array& Array::append(ModelNode::Ptr const& value) {storage_.push_back(members_, 
 Object::Object(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool), a), storage_(storage), members_(i) {}
 
-// Value Object::value() const {
-//     return Value(type(), Value::undef(), *this);
-// }
-
 ValueType Object::type() const
 {
     return ValueType::Object;
