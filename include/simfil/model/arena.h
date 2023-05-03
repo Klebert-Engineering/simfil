@@ -3,8 +3,8 @@
 #pragma once
 
 #include <vector>
+#include <shared_mutex>
 #include <mutex>
-
 #include <sfl/segmented_vector.hpp>
 
 namespace simfil
@@ -26,7 +26,7 @@ using ArrayIndex = int32_t;
  * @tparam PageSize The number of elements that each segment in the
  *         segmented_vector can store.
  */
-template <class ElementType, size_t PageSize = 4096>
+template <class ElementType, size_t PageSize = 4096, size_t ChunkPageSize = 512>
 class ArrayArena
 {
 public:
@@ -36,16 +36,14 @@ public:
      * @param initialCapacity The initial capacity of the new array.
      * @return The index of the new array.
      */
-    ArrayIndex newArray(size_t initialCapacity)
+    ArrayIndex new_array(size_t initialCapacity)
     {
-        std::unique_lock<std::mutex> guard(lock_);
-
+        assert(initialCapacity > 0);
+        std::unique_lock guard(lock_);
         size_t offset = data_.size();
         data_.resize(offset + initialCapacity);
-
         auto index = static_cast<ArrayIndex>(heads_.size());
         heads_.push_back({offset, initialCapacity, 0, -1, -1});
-
         return index;
     }
 
@@ -55,7 +53,10 @@ public:
      * @param a The index of the array.
      * @return The size of the array.
      */
-    size_t size(ArrayIndex const& a) { return heads_[a].size; }
+    size_t size(ArrayIndex const& a) {
+        std::shared_lock guard(lock_);
+        return heads_[a].size;
+    }
 
     /**
      * Returns a reference to the element at the specified index in the array.
@@ -67,15 +68,15 @@ public:
      */
     ElementType& at(ArrayIndex const& a, size_t const& i)
     {
+        std::shared_lock guard(lock_);
         Chunk const* current = &heads_[a];
         size_t remaining = i;
-
         while (true) {
-            if (remaining < current->size)
+            if (remaining < current->capacity && remaining < current->size)
                 return data_[current->offset + remaining];
             if (current->next == -1)
                 throw std::out_of_range("Index out of range");
-            remaining -= current->size;
+            remaining -= current->capacity;
             current = &continuations_[current->next];
         }
     }
@@ -90,8 +91,9 @@ public:
     ElementType& push_back(ArrayIndex const& a, ElementType const& data)
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
+        std::shared_lock guard(lock_);
         auto& elem = data_[updatedLast.offset + updatedLast.size];
-        elem = std::move(data);
+        elem = data;
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
@@ -110,6 +112,7 @@ public:
     ElementType& emplace_back(ArrayIndex const& a, Args&&... args)
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
+        std::shared_lock guard(lock_);
         auto& elem = data_[updatedLast.offset + updatedLast.size];
         new (&elem) ElementType(std::forward<Args>(args)...);
         ++heads_[a].size;
@@ -125,7 +128,7 @@ public:
      * Make sure no other threads are accessing the ArrayArena while calling this method.
      */
     void clear() {
-        std::unique_lock<std::mutex> guard(lock_);
+        std::unique_lock guard(lock_);
         heads_.clear();
         continuations_.clear();
         data_.clear();
@@ -139,7 +142,7 @@ public:
      * Make sure no other threads are accessing the ArrayArena while calling this method.
      */
     void shrink_to_fit() {
-        std::unique_lock<std::mutex> guard(lock_);
+        std::unique_lock guard(lock_);
         heads_.shrink_to_fit();
         continuations_.shrink_to_fit();
         data_.shrink_to_fit();
@@ -148,31 +151,33 @@ public:
     // Iterator-related types and functions
     template<typename T, bool is_const>
     class ArrayIterator;
+    class ArrayRange;
     using iterator = ArrayIterator<ElementType, false>;
     using const_iterator = ArrayIterator<ElementType, true>;
 
     template<typename T, bool is_const>
     class ArrayIterator {
-        using ArrayRef = std::conditional_t<is_const, const ArrayArena&, ArrayArena&>;
+        using ArrayArenaRef = std::conditional_t<is_const, const ArrayArena&, ArrayArena&>;
         using ElementRef = std::conditional_t<is_const, const T&, T&>;
+        friend class ArrayRange;
 
     public:
-        ArrayIterator(ArrayRef arena, ArrayIndex array_index, size_t global_index)
-            : arena_(arena), array_index_(array_index), global_index_(global_index) {}
+        ArrayIterator(ArrayArenaRef arena, ArrayIndex array_index, size_t elem_index)
+            : arena_(arena), array_index_(array_index), elem_index_(elem_index) {}
 
         ElementRef operator*() {
-            return arena_.at(array_index_, global_index_);
+            return arena_.at(array_index_, elem_index_);
         }
 
         ArrayIterator& operator++() {
-            ++global_index_;
+            ++elem_index_;
             return *this;
         }
 
         bool operator==(const ArrayIterator& other) const {
             return &arena_ == &other.arena_ &&
                 array_index_ == other.array_index_ &&
-                global_index_ == other.global_index_;
+                elem_index_ == other.elem_index_;
         }
 
         bool operator!=(const ArrayIterator& other) const {
@@ -180,9 +185,9 @@ public:
         }
 
     private:
-        ArrayRef arena_;
+        ArrayArenaRef arena_;
         ArrayIndex array_index_;
-        size_t global_index_;
+        size_t elem_index_;
     };
 
     class ArrayRange
@@ -192,6 +197,8 @@ public:
 
         iterator begin() const { return begin_; }
         iterator end() const { return end_; }
+        [[nodiscard]] size_t size() const { return begin_.arena_.size(begin_.array_index_); }
+        auto& operator[] (size_t const& i) const { return begin_.arena_.at(begin_.array_index_, i); }
 
     private:
         iterator begin_;
@@ -255,12 +262,11 @@ private:
         ArrayIndex last = -1;  // The index of the last chunk in the sequence, or -1 if none.
     };
 
-    std::vector<ArrayArena::Chunk> heads_;          // A vector holding the head chunks of all arrays.
-    std::vector<ArrayArena::Chunk> continuations_;  // A vector holding the continuation chunks of all arrays.
-
+    sfl::segmented_vector<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
+    sfl::segmented_vector<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
     sfl::segmented_vector<ElementType, PageSize> data_;  // The underlying segmented_vector storing the array elements.
 
-    std::mutex lock_;  // Mutex for synchronizing access to the data structure during growth.
+    std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.
 
     /**
      * Ensures that the specified array has enough capacity to add one more element
@@ -274,24 +280,23 @@ private:
      */
     Chunk& ensure_capacity_and_get_last_chunk(ArrayIndex const& a)
     {
+        std::shared_lock read_guard(lock_);
         Chunk& head = heads_[a];
         Chunk& last = (head.last == -1) ? head : continuations_[head.last];
-
-        if (last.size == last.capacity) {
-            std::unique_lock<std::mutex> guard(lock_);
-
+        if (last.size < last.capacity)
+            return last;
+        read_guard.unlock();
+        {
+            std::unique_lock guard(lock_);
             size_t offset = data_.size();
             size_t newCapacity = last.capacity * 2;
             data_.resize(offset + newCapacity);
-
             auto newIndex = static_cast<ArrayIndex>(continuations_.size());
             continuations_.push_back({offset, newCapacity, 0, -1, -1});
-
             last.next = newIndex;
             head.last = newIndex;
+            return continuations_[newIndex];
         }
-
-        return (head.last == -1) ? head : continuations_[head.last];
     }
 };
 

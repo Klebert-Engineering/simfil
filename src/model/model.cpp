@@ -217,7 +217,7 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
 
 shared_model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
 {
-    auto memberArrId = impl_->columns_.objectMemberArrays_.newArray(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
     impl_->columns_.objects_.emplace_back(memberArrId);
     return Object(
         memberArrId,
@@ -228,7 +228,7 @@ shared_model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
 
 shared_model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
 {
-    auto memberArrId = impl_->columns_.arrayMemberArrays_.newArray(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
     impl_->columns_.arrays_.emplace_back(memberArrId);
     return Array(
         memberArrId,

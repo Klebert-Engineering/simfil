@@ -14,7 +14,8 @@ add_executable(test.simfil
   token.cpp
   simfil.cpp
   complex.cpp
-  ext-geo.cpp)
+  ext-geo.cpp
+  arena.cpp)
 
 target_link_libraries(test.simfil
   PUBLIC
