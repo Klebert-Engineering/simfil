@@ -180,8 +180,11 @@ template<> ScalarNode<double>::ScalarNode(const double& value, ModelPoolConstBas
 
 /** Model Node impls for an array. */
 
-Array::Array(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool), a), storage_(storage), members_(i) {}
+Array::Array(ArrayIndex i, ModelPoolConstBasePtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
+{
+    storage_ = &pool().arrayMemberStorage();
+}
 
 ValueType Array::type() const
 {
@@ -190,28 +193,31 @@ ValueType Array::type() const
 
 ModelNode::Ptr Array::at(int64_t i) const
 {
-    if (i < 0 || i >= storage_.size(members_))
+    if (i < 0 || i >= storage_->size(members_))
         return {};
-    return ModelNode::Ptr::make(pool_, storage_.at(members_, i));
+    return ModelNode::Ptr::make(pool_, storage_->at(members_, i));
 }
 
 uint32_t Array::size() const
 {
-    return storage_.size(members_);
+    return storage_->size(members_);
 }
 
-Array& Array::append(bool value) {storage_.push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(uint16_t value) {storage_.push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(int16_t value) {storage_.push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(int64_t const& value) {storage_.push_back(members_, pool().newValue(value)->addr()); return *this;}
-Array& Array::append(double const& value) {storage_.push_back(members_, pool().newValue(value)->addr()); return *this;}
-Array& Array::append(std::string_view const& value) {storage_.push_back(members_, pool().newValue(value)->addr()); return *this;}
-Array& Array::append(ModelNode::Ptr const& value) {storage_.push_back(members_, value->addr()); return *this;}
+Array& Array::append(bool value) {storage_->push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
+Array& Array::append(uint16_t value) {storage_->push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
+Array& Array::append(int16_t value) {storage_->push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
+Array& Array::append(int64_t const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
+Array& Array::append(double const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
+Array& Array::append(std::string_view const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
+Array& Array::append(ModelNode::Ptr const& value) {storage_->push_back(members_, value->addr()); return *this;}
 
 /** Model Node impls for an object. */
 
-Object::Object(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool), a), storage_(storage), members_(i) {}
+Object::Object(ArrayIndex i, ModelPoolConstBasePtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
+{
+    storage_ = &pool().objectMemberStorage();
+}
 
 ValueType Object::type() const
 {
@@ -220,25 +226,25 @@ ValueType Object::type() const
 
 ModelNode::Ptr Object::at(int64_t i) const
 {
-    if (i < 0 || i >= storage_.size(members_))
+    if (i < 0 || i >= storage_->size(members_))
         return {};
-    return ModelNode::Ptr::make(pool_, storage_.at(members_, i).node_);
+    return ModelNode::Ptr::make(pool_, storage_->at(members_, i).node_);
 }
 
 FieldId Object::keyAt(int64_t i) const {
-    if (i < 0 || i >= storage_.size(members_))
+    if (i < 0 || i >= storage_->size(members_))
         return {};
-    return storage_.at(members_, i).name_;
+    return storage_->at(members_, i).name_;
 }
 
 uint32_t Object::size() const
 {
-    return storage_.size(members_);
+    return storage_->size(members_);
 }
 
 ModelNode::Ptr Object::get(const FieldId & field) const
 {
-    for (auto const& member : storage_.range(members_)) {
+    for (auto const& member : storage_->range(members_)) {
         if (member.name_ == field) {
             return ModelNode::Ptr::make(pool_, member.node_);
         }
@@ -256,43 +262,43 @@ ModelNode::Ptr Object::get(std::string_view const& fieldName) const {
 
 Object& Object::addField(std::string_view const& name, bool value) {
     auto fieldId = pool().fieldNames()->emplace(name);
-    storage_.emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
+    storage_->emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, uint16_t value) {
     auto fieldId = pool().fieldNames()->emplace(name);
-    storage_.emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
+    storage_->emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, int16_t value) {
     auto fieldId = pool().fieldNames()->emplace(name);
-    storage_.emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
+    storage_->emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, int64_t const& value) {
     auto fieldId = pool().fieldNames()->emplace(name);
-    storage_.emplace_back(members_, fieldId, pool().newValue(value)->addr());
+    storage_->emplace_back(members_, fieldId, pool().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, double const& value) {
     auto fieldId = pool().fieldNames()->emplace(name);
-    storage_.emplace_back(members_, fieldId, pool().newValue(value)->addr());
+    storage_->emplace_back(members_, fieldId, pool().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, std::string_view const& value) {
     auto fieldId = pool().fieldNames()->emplace(name);
-    storage_.emplace_back(members_, fieldId, pool().newValue(value)->addr());
+    storage_->emplace_back(members_, fieldId, pool().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& value) {
     auto fieldId = pool().fieldNames()->emplace(name);
-    storage_.emplace_back(members_, fieldId, value->addr());
+    storage_->emplace_back(members_, fieldId, value->addr());
     return *this;
 }
 

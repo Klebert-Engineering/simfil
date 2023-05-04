@@ -170,12 +170,12 @@ void ModelPool::resolve(
     switch (n.addr_.column()) {
     case Objects: {
         auto& val = get(impl_->columns_.objects_);
-        cb(Object(val, impl_->columns_.objectMemberArrays_, shared_from_this(), n.addr_));
+        cb(Object(val, shared_from_this(), n.addr_));
         break;
     }
     case Arrays: {
         auto& val = get(impl_->columns_.arrays_);
-        cb(Array(val, impl_->columns_.arrayMemberArrays_, shared_from_this(), n.addr_));
+        cb(Array(val, shared_from_this(), n.addr_));
         break;
     }
     case Int64: {
@@ -221,7 +221,6 @@ shared_model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
     impl_->columns_.objects_.emplace_back(memberArrId);
     return Object(
         memberArrId,
-        impl_->columns_.objectMemberArrays_,
         shared_from_this(),
         {Objects, (uint32_t)impl_->columns_.objects_.size()-1});
 }
@@ -232,7 +231,6 @@ shared_model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
     impl_->columns_.arrays_.emplace_back(memberArrId);
     return Array(
         memberArrId,
-        impl_->columns_.arrayMemberArrays_,
         shared_from_this(),
         {Arrays, (uint32_t)impl_->columns_.arrays_.size()-1});
 }
@@ -283,7 +281,7 @@ shared_model_ptr<Object> ModelPool::resolve(ModelNode::Ptr const& n) const {
     if (n->addr_.column() != Objects)
         throw std::runtime_error("Cannot cast this node to an object.");
     auto& memberArrayIdx = impl_->columns_.objects_[n->addr_.index()];
-    return Object(memberArrayIdx, impl_->columns_.objectMemberArrays_, shared_from_this(), n->addr_);
+    return Object(memberArrayIdx, shared_from_this(), n->addr_);
 }
 
 template<>
@@ -292,12 +290,20 @@ shared_model_ptr<Array> ModelPool::resolve(ModelNode::Ptr const& n) const
     if (n->addr_.column() != Arrays)
         throw std::runtime_error("Cannot cast this node to an array.");
     auto& memberArrayIdx = impl_->columns_.arrays_[n->addr_.index()];
-    return Array(memberArrayIdx, impl_->columns_.arrayMemberArrays_, shared_from_this(), n->addr_);
+    return Array(memberArrayIdx, shared_from_this(), n->addr_);
 }
 
 std::shared_ptr<Fields> ModelPool::fieldNames() const
 {
     return impl_->fieldNames_;
+}
+
+Object::Storage& ModelPool::objectMemberStorage() {
+    return impl_->columns_.objectMemberArrays_;
+}
+
+Array::Storage& ModelPool::arrayMemberStorage() {
+    return impl_->columns_.arrayMemberArrays_;
 }
 
 }  // namespace simfil

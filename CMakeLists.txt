@@ -84,8 +84,7 @@ add_library(simfil STATIC
 
   src/model/model.cpp
   src/model/nodes.cpp
-  src/model/fields.cpp
-  src/model/json.cpp)
+  src/model/fields.cpp)
 
 target_include_directories(simfil
   PUBLIC

@@ -50,6 +50,9 @@ public:
  */
 class ModelPool : public ModelPoolBase
 {
+    friend class Object;
+    friend class Array;
+
 public:
     /**
      * The pool consists of multiple ModelNode columns,
@@ -124,6 +127,11 @@ public:
 protected:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+
+    /// Protected object/array member storage access,
+    /// so derived ModelPools can create Object/Array-derived nodes.
+    Object::Storage& objectMemberStorage();
+    Array::Storage& arrayMemberStorage();
 };
 
 /// Node-type-specific resolve-functions

@@ -393,9 +393,9 @@ struct Array : public MandatoryModelPoolNodeBase
 protected:
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
-    Array(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress);
+    Array(ArrayIndex i, ModelPoolConstBasePtr pool, ModelNodeAddress);
 
-    Storage& storage_;
+    Storage* storage_;
     ArrayIndex members_;
 };
 
@@ -436,9 +436,9 @@ protected:
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
-    Object(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress);
+    Object(ArrayIndex i, ModelPoolConstBasePtr pool, ModelNodeAddress);
 
-    Storage& storage_;
+    Storage* storage_;
     ArrayIndex members_;
 };
 
@@ -471,8 +471,8 @@ class ProceduralObject : public Object
     }
 
 protected:
-    ProceduralObject(ArrayIndex i, Storage& storage, ModelPoolConstBasePtr pool, ModelNodeAddress a)
-        : Object(i, storage, pool, a) {}
+    ProceduralObject(ArrayIndex i, ModelPoolConstBasePtr pool, ModelNodeAddress a)
+        : Object(i, pool, a) {}
 
     sfl::small_vector<
         std::pair<FieldId, std::function<ModelNode::Ptr()>>,
