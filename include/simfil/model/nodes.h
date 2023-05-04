@@ -401,7 +401,7 @@ template<typename T>
 struct ScalarNode : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
-    template<typename> friend class shared_model_ptr;
+    template<typename> friend struct shared_model_ptr;
 
     [[nodiscard]] Value value() const override;
     [[nodiscard]] ValueType type() const override;

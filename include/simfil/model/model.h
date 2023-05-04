@@ -53,8 +53,8 @@ public:
  */
 class ModelPool : public ModelPoolBase
 {
-    friend class Object;
-    friend class Array;
+    friend struct Object;
+    friend struct Array;
 
 public:
     /**

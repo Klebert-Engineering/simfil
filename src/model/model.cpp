@@ -292,8 +292,6 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
-ModelNode::Ptr newVertex(double const& x, double const& y, double const& z);
-
 ModelNode::Ptr ModelPool::newVertex(double const& x, double const& y, double const& z) {
     impl_->columns_.vertices_.emplace_back(geo::Point<double>{x, y, z});
     return ModelNode(shared_from_this(), {Vertex, (uint32_t)impl_->columns_.vertices_.size()-1});

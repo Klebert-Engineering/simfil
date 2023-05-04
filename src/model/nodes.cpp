@@ -210,14 +210,14 @@ ValueType Array::type() const
 
 ModelNode::Ptr Array::at(int64_t i) const
 {
-    if (i < 0 || i >= storage_->size(members_))
+    if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
     return ModelNode::Ptr::make(pool_, storage_->at(members_, i));
 }
 
 uint32_t Array::size() const
 {
-    return storage_->size(members_);
+    return (uint32_t)storage_->size(members_);
 }
 
 Array& Array::append(bool value) {storage_->push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
@@ -243,20 +243,20 @@ ValueType Object::type() const
 
 ModelNode::Ptr Object::at(int64_t i) const
 {
-    if (i < 0 || i >= storage_->size(members_))
+    if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
     return ModelNode::Ptr::make(pool_, storage_->at(members_, i).node_);
 }
 
 FieldId Object::keyAt(int64_t i) const {
-    if (i < 0 || i >= storage_->size(members_))
+    if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
     return storage_->at(members_, i).name_;
 }
 
 uint32_t Object::size() const
 {
-    return storage_->size(members_);
+    return (uint32_t)storage_->size(members_);
 }
 
 ModelNode::Ptr Object::get(const FieldId & field) const
@@ -343,7 +343,7 @@ ModelNode::Ptr VertexNode::get(const FieldId & field) const {
     if (field == Fields::Lon) return at(0);
     else if (field == Fields::Lat) return at(1);
     else if (field == Fields::Elevation) return at(2);
-    throw std::out_of_range("vertex: Out of range.");
+    else return {};
 }
 
 FieldId VertexNode::keyAt(int64_t i) const {
