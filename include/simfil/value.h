@@ -350,16 +350,4 @@ auto getNumeric(const Value& v) -> std::pair<bool, Type>
     return std::make_pair(false, Type{});
 }
 
-/**
- * We need the ability to represent an arbitrary value in a ModelNode -
- * this is mainly used for Overlay Nodes.
- */
-struct ValueNode : public ModelNodeBase
-{
-    ValueNode(Value);
-    ValueNode(ModelNode const&);
-    Value value() const override;
-    ValueType type() const override;
-};
-
 }

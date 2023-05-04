@@ -63,7 +63,7 @@ struct shared_model_ptr
     shared_model_ptr(shared_model_ptr<OtherT>&& other) : data_(other.data_) {};  // NOLINT
 
     template<typename OtherT>
-    shared_model_ptr& operator= (shared_model_ptr<OtherT> const& other) {data_ = other.data_;};
+    shared_model_ptr& operator= (shared_model_ptr<OtherT> const& other) {data_ = other.data_; return *this;};
 
     template<typename... Args>
     explicit shared_model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
@@ -130,7 +130,8 @@ struct ModelNodeAddress
 struct ModelNode
 {
     using Ptr = shared_model_ptr<ModelNode>;
-    friend struct shared_model_ptr<ModelNode>;
+
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend class ModelPoolBase;
 
@@ -280,6 +281,48 @@ protected:
 };
 
 /**
+ * Through the data_ member, a ModelNode can store an arbitrary value.
+ */
+template<typename T>
+struct ValueNode : public ModelNodeBase
+{
+    explicit ValueNode(T const& value, ModelPoolConstBasePtr const& pool = std::make_shared<ModelPoolBase>());
+    ValueNode(ModelNode const&);
+    Value value() const override;
+    ValueType type() const override;
+};
+
+#define DECLARE_VALUE_NODE_FUNCTIONS(ValT)                                     \
+  template <>                                                                  \
+  ValueNode<ValT>::ValueNode(ValT const &value,                                \
+                             ModelPoolConstBasePtr const &pool);               \
+  template <> ValueNode<ValT>::ValueNode(ModelNode const &);                   \
+  template <> [[nodiscard]] Value ValueNode<ValT>::value() const;              \
+  template <> [[nodiscard]] ValueType ValueNode<ValT>::type() const;
+
+#define DEFINE_VALUE_NODE_FUNCTIONS(ValT, ValTEnum, ColTEnum, ValueConversion) \
+  template <>                                                                  \
+  ValueNode<ValT>::ValueNode(                                                  \
+      ValT const &value,                                                       \
+      ModelPoolConstBasePtr const &pool)                                       \
+  : ModelNodeBase(pool, {ColTEnum, 0}) {                                       \
+    data_ = value;                                                             \
+  }                                                                            \
+  template <> ValueNode<ValT>::ValueNode(ModelNode const &n)                   \
+    : ModelNodeBase(n) {}                                                      \
+  template <> Value ValueNode<ValT>::value() const {                           \
+    return ValueConversion(*std::any_cast<ValT>(&data_));                      \
+  }                                                                            \
+  template <> ValueType ValueNode<ValT>::type() const {                        \
+    return ValTEnum;                                                           \
+  }
+
+DECLARE_VALUE_NODE_FUNCTIONS(int64_t)
+DECLARE_VALUE_NODE_FUNCTIONS(double)
+DECLARE_VALUE_NODE_FUNCTIONS(std::string)
+DECLARE_VALUE_NODE_FUNCTIONS(Value)
+
+/**
  * ModelNode base class which provides a pool() method that returns
  * a reference to a ModelPoolBase-derived pool type.
  * @tparam PoolType ModelPoolBase-derived type.
@@ -358,19 +401,24 @@ template<typename T>
 struct ScalarNode : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
+    template<typename> friend class shared_model_ptr;
+
     [[nodiscard]] Value value() const override;
     [[nodiscard]] ValueType type() const override;
+
 protected:
     ScalarNode(T const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
-    T const& value_;
+    ScalarNode(ModelNode const&);
 };
 
 template<> [[nodiscard]] Value ScalarNode<int64_t>::value() const;
 template<> [[nodiscard]] ValueType ScalarNode<int64_t>::type() const;
 template<> ScalarNode<int64_t>::ScalarNode(int64_t const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
+template<> ScalarNode<int64_t>::ScalarNode(ModelNode const&);
 template<> [[nodiscard]] Value ScalarNode<double>::value() const;
 template<> [[nodiscard]] ValueType ScalarNode<double>::type() const;
 template<> ScalarNode<double>::ScalarNode(double const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
+template<> ScalarNode<double>::ScalarNode(ModelNode const&);
 
 /** Model Node for an array. */
 
@@ -477,6 +525,24 @@ protected:
     sfl::small_vector<
         std::pair<FieldId, std::function<ModelNode::Ptr()>>,
         MaxProceduralFields> fields_;
+};
+
+/** Vertex Node */
+
+struct VertexNode : public MandatoryModelPoolNodeBase
+{
+    friend class ModelPool;
+
+    [[nodiscard]] ValueType type() const override;
+    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
+    [[nodiscard]] uint32_t size() const override;
+    [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
+    [[nodiscard]] FieldId keyAt(int64_t) const override;
+
+protected:
+    VertexNode(geo::Point<double> const& p, ModelPoolConstBasePtr pool, ModelNodeAddress a);
+
+    geo::Point<double> point_;
 };
 
 //     /**

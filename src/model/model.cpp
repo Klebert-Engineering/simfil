@@ -37,8 +37,17 @@ void ModelPoolBase::resolve(
         case VirtualOverlay:
             cb(OverlayNode(n));
             break;
+        case VirtualIntValue:
+            cb(ValueNode<int64_t>(n));
+            break;
+        case VirtualDoubleValue:
+            cb(ValueNode<double>(n));
+            break;
+        case VirtualStringValue:
+            cb(ValueNode<std::string>(n));
+            break;
         case VirtualValue:
-            cb(ValueNode(n));
+            cb(ValueNode<Value>(n));
             break;
         default:
             throw std::runtime_error(stx::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
@@ -69,6 +78,7 @@ struct ModelPool::Impl
         ArrayArena<Object::Field, detail::ColumnPageSize*2> objectMemberArrays_;
         ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2> arrayMemberArrays_;
 
+        sfl::segmented_vector<geo::Point<double>, detail::ColumnPageSize*2> vertices_;
         // sfl::segmented_vector<ArrayIndex, detail::ColumnPageSize> geom_;
         // ArrayArena<geo::Point<float>, detail::ColumnPageSize*2> vertexArrays_;
     } columns_;
@@ -150,6 +160,7 @@ void ModelPool::clear()
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
+    clear_and_shrink(columns.vertices_);
 }
 
 void ModelPool::resolve(
@@ -186,6 +197,11 @@ void ModelPool::resolve(
     case Double: {
         auto& val = get(impl_->columns_.double_);
         cb(ScalarNode<double>(val, shared_from_this(), n.addr_));
+        break;
+    }
+    case Vertex: {
+        auto& val = get(impl_->columns_.vertices_);
+        cb(VertexNode(val, shared_from_this(), n.addr_));
         break;
     }
     case String: {
@@ -274,6 +290,13 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     });
     impl_->columns_.stringData_ += value;
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
+}
+
+ModelNode::Ptr newVertex(double const& x, double const& y, double const& z);
+
+ModelNode::Ptr ModelPool::newVertex(double const& x, double const& y, double const& z) {
+    impl_->columns_.vertices_.emplace_back(geo::Point<double>{x, y, z});
+    return ModelNode(shared_from_this(), {Vertex, (uint32_t)impl_->columns_.vertices_.size()-1});
 }
 
 template<>

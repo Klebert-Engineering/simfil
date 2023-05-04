@@ -27,9 +27,12 @@ public:
         Int16,
         Bool,
         VirtualOverlay,
+        VirtualIntValue,
+        VirtualDoubleValue,
+        VirtualStringValue,
         VirtualValue,
 
-        FirstNontrivialColumnId = 6,
+        FirstNontrivialColumnId,
     };
 
     /// Get a callback with the actual class of the given node.
@@ -68,6 +71,7 @@ public:
         Int64,
         Double,
         String,
+        Vertex,
 
         FirstCustomColumnId = 128,
     };
@@ -116,6 +120,9 @@ public:
     ModelNode::Ptr newValue(int64_t const& value);
     ModelNode::Ptr newValue(double const& value);
     ModelNode::Ptr newValue(std::string_view const& value);
+
+    /// Add a vertex and get its new model node index.
+    ModelNode::Ptr newVertex(double const& x, double const& y, double const& z);
 
     /// Node-type-specific resolve-functions
     template<class NodeType>

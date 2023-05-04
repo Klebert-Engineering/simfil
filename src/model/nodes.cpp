@@ -100,6 +100,13 @@ uint32_t ModelNodeBase::size() const
     return 0;
 }
 
+/** Model Node impls. for arbitrary self-contained value storage. */
+
+DEFINE_VALUE_NODE_FUNCTIONS(int64_t, ValueType::Int, ModelPoolBase::VirtualIntValue, Value::make)
+DEFINE_VALUE_NODE_FUNCTIONS(double, ValueType::Float, ModelPoolBase::VirtualDoubleValue,  Value::make)
+DEFINE_VALUE_NODE_FUNCTIONS(std::string, ValueType::String, ModelPoolBase::VirtualStringValue, Value::make)
+DEFINE_VALUE_NODE_FUNCTIONS(Value, value().type, ModelPoolBase::VirtualValue, )
+
 /** Model Node impls. for SmallScalarNode */
 
 template<> Value SmallScalarNode<int16_t>::value() const {
@@ -156,7 +163,7 @@ StringNode::StringNode(std::string_view s, ModelPoolConstBasePtr storage, ModelN
 
 template<> Value ScalarNode<int64_t>::value() const
 {
-    return Value::make(value_);
+    return Value::make(*std::any_cast<int64_t>(&data_));
 }
 
 template<> ValueType ScalarNode<int64_t>::type() const {
@@ -164,11 +171,16 @@ template<> ValueType ScalarNode<int64_t>::type() const {
 }
 
 template<> ScalarNode<int64_t>::ScalarNode(int64_t const& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(storage), a), value_(value) {}
+    : MandatoryModelPoolNodeBase(std::move(storage), a)
+{
+    data_ = value;
+}
+
+template<> ScalarNode<int64_t>::ScalarNode(ModelNode const& n) : MandatoryModelPoolNodeBase(n) {}
 
 template<> Value ScalarNode<double>::value() const
 {
-    return Value::make(value_);
+    return Value::make(*std::any_cast<double>(&data_));
 }
 
 template<> ValueType ScalarNode<double>::type() const {
@@ -176,7 +188,12 @@ template<> ValueType ScalarNode<double>::type() const {
 }
 
 template<> ScalarNode<double>::ScalarNode(const double& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(storage), a), value_(value) {}
+    : MandatoryModelPoolNodeBase(std::move(storage), a)
+{
+    data_ = value;
+}
+
+template<> ScalarNode<double>::ScalarNode(ModelNode const& n) : MandatoryModelPoolNodeBase(n) {}
 
 /** Model Node impls for an array. */
 
@@ -300,6 +317,45 @@ Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& val
     auto fieldId = pool().fieldNames()->emplace(name);
     storage_->emplace_back(members_, fieldId, value->addr());
     return *this;
+}
+
+/** Model node impls for vertex. */
+
+ValueType VertexNode::type() const {
+    return ValueType::Array;
+}
+
+ModelNode::Ptr VertexNode::at(int64_t i) const {
+    if (i == 0)
+        return shared_model_ptr<ValueNode<double>>::make(point_.x, pool_);
+    else if (i == 1)
+        return shared_model_ptr<ValueNode<double>>::make(point_.y, pool_);
+    else if (i == 2)
+        return shared_model_ptr<ValueNode<double>>::make(point_.z, pool_);
+    throw std::out_of_range("vertex: Out of range.");
+}
+
+uint32_t VertexNode::size() const {
+    return 3;
+}
+
+ModelNode::Ptr VertexNode::get(const FieldId & field) const {
+    if (field == Fields::Lon) return at(0);
+    else if (field == Fields::Lat) return at(1);
+    else if (field == Fields::Elevation) return at(2);
+    throw std::out_of_range("vertex: Out of range.");
+}
+
+FieldId VertexNode::keyAt(int64_t i) const {
+    if (i == 0) return Fields::Lon;
+    else if (i == 1) return Fields::Lat;
+    else if (i == 2) return Fields::Elevation;
+    throw std::out_of_range("vertex: Out of range.");
+}
+
+VertexNode::VertexNode(geo::Point<double> const& p, ModelPoolConstBasePtr pool, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool), a), point_(p)
+{
 }
 
 }

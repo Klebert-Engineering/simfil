@@ -22,17 +22,17 @@ struct Fields
 {
     enum StaticFieldIds: FieldId {
         Empty = 0,
-        Lon = 1,
-        Lat = 2,
-        OverlaySum = 3,
-        OverlayValue = 4,
-        OverlayIndex = 5,
-        Geometry = 6,
-        Type = 7,
-        Coordinates = 8,
-        Elevation = 9,
+        Lon,
+        Lat,
+        OverlaySum,
+        OverlayValue,
+        OverlayIndex,
+        Geometry,
+        Type,
+        Coordinates,
+        Elevation,
 
-        NextStaticId = 10,
+        NextStaticId,
         FirstDynamicId = 128
     };
 
