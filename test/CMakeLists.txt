@@ -15,6 +15,7 @@ add_executable(test.simfil
   simfil.cpp
   complex.cpp
   ext-geo.cpp
+  performance.cpp
   arena.cpp)
 
 target_link_libraries(test.simfil
