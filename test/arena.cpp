@@ -128,6 +128,7 @@ TEST_CASE("ArrayArena multiple arrays", "[ArrayArena]") {
     }
 }
 
+#ifdef ARRAY_ARENA_THREAD_SAFE
 TEST_CASE("ArrayArena Concurrency", "[ArrayArena]") {
     ArrayArena<int> arena;
 
@@ -164,3 +165,4 @@ TEST_CASE("ArrayArena Concurrency", "[ArrayArena]") {
         }
     }
 }
+#endif

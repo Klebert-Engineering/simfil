@@ -7,6 +7,10 @@
 #include <mutex>
 #include <sfl/segmented_vector.hpp>
 
+// Undef this to test the array arena without read-write locking.
+// In practice, this did not show a significant penalty.
+#define ARRAY_ARENA_THREAD_SAFE
+
 namespace simfil
 {
 
@@ -26,7 +30,7 @@ using ArrayIndex = int32_t;
  * @tparam PageSize The number of elements that each segment in the
  *         segmented_vector can store.
  */
-template <class ElementType, size_t PageSize = 4096, size_t ChunkPageSize = 512>
+template <class ElementType, size_t PageSize = 4096, size_t ChunkPageSize = 4096, typename SizeType=uint32_t>
 class ArrayArena
 {
 public:
@@ -39,11 +43,13 @@ public:
     ArrayIndex new_array(size_t initialCapacity)
     {
         assert(initialCapacity > 0);
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::unique_lock guard(lock_);
+        #endif
         size_t offset = data_.size();
         data_.resize(offset + initialCapacity);
         auto index = static_cast<ArrayIndex>(heads_.size());
-        heads_.push_back({offset, initialCapacity, 0, -1, -1});
+        heads_.push_back({(SizeType)offset, (SizeType)initialCapacity, 0, -1, -1});
         return index;
     }
 
@@ -54,7 +60,9 @@ public:
      * @return The size of the array.
      */
     size_t size(ArrayIndex const& a) {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
+        #endif
         return heads_[a].size;
     }
 
@@ -68,7 +76,9 @@ public:
      */
     ElementType& at(ArrayIndex const& a, size_t const& i)
     {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
+        #endif
         Chunk const* current = &heads_[a];
         size_t remaining = i;
         while (true) {
@@ -91,7 +101,9 @@ public:
     ElementType& push_back(ArrayIndex const& a, ElementType const& data)
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
+        #endif
         auto& elem = data_[updatedLast.offset + updatedLast.size];
         elem = data;
         ++heads_[a].size;
@@ -112,7 +124,9 @@ public:
     ElementType& emplace_back(ArrayIndex const& a, Args&&... args)
     {
         Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
+        #endif
         auto& elem = data_[updatedLast.offset + updatedLast.size];
         new (&elem) ElementType(std::forward<Args>(args)...);
         ++heads_[a].size;
@@ -128,7 +142,9 @@ public:
      * Make sure no other threads are accessing the ArrayArena while calling this method.
      */
     void clear() {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::unique_lock guard(lock_);
+        #endif
         heads_.clear();
         continuations_.clear();
         data_.clear();
@@ -142,7 +158,9 @@ public:
      * Make sure no other threads are accessing the ArrayArena while calling this method.
      */
     void shrink_to_fit() {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::unique_lock guard(lock_);
+        #endif
         heads_.shrink_to_fit();
         continuations_.shrink_to_fit();
         data_.shrink_to_fit();
@@ -254,9 +272,10 @@ private:
     // Represents a chunk of an array in the arena.
     struct Chunk
     {
-        size_t offset = 0;      // The starting offset of the chunk in the segmented_vector.
-        size_t capacity = 0;    // The maximum number of elements the chunk can hold.
-        size_t size = 0;        // The current number of elements in the chunk.
+        SizeType offset = 0;      // The starting offset of the chunk in the segmented_vector.
+        SizeType capacity = 0;    // The maximum number of elements the chunk can hold.
+        SizeType size = 0;        // The current number of elements in the chunk,
+                                  // or the total number of elements of the whole array if this is a head chunk.
 
         ArrayIndex next = -1;  // The index of the next chunk in the sequence, or -1 if none.
         ArrayIndex last = -1;  // The index of the last chunk in the sequence, or -1 if none.
@@ -266,7 +285,9 @@ private:
     sfl::segmented_vector<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
     sfl::segmented_vector<ElementType, PageSize> data_;  // The underlying segmented_vector storing the array elements.
 
+    #ifdef ARRAY_ARENA_THREAD_SAFE
     std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.
+    #endif
 
     /**
      * Ensures that the specified array has enough capacity to add one more element
@@ -280,23 +301,25 @@ private:
      */
     Chunk& ensure_capacity_and_get_last_chunk(ArrayIndex const& a)
     {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock read_guard(lock_);
+        #endif
         Chunk& head = heads_[a];
         Chunk& last = (head.last == -1) ? head : continuations_[head.last];
         if (last.size < last.capacity)
             return last;
+        #ifdef ARRAY_ARENA_THREAD_SAFE
         read_guard.unlock();
-        {
-            std::unique_lock guard(lock_);
-            size_t offset = data_.size();
-            size_t newCapacity = last.capacity * 2;
-            data_.resize(offset + newCapacity);
-            auto newIndex = static_cast<ArrayIndex>(continuations_.size());
-            continuations_.push_back({offset, newCapacity, 0, -1, -1});
-            last.next = newIndex;
-            head.last = newIndex;
-            return continuations_[newIndex];
-        }
+        std::unique_lock guard(lock_);
+        #endif
+        size_t offset = data_.size();
+        size_t newCapacity = last.capacity * 2;
+        data_.resize(offset + newCapacity);
+        auto newIndex = static_cast<ArrayIndex>(continuations_.size());
+        continuations_.push_back({(SizeType)offset, (SizeType)newCapacity, 0, -1, -1});
+        last.next = newIndex;
+        head.last = newIndex;
+        return continuations_[newIndex];
     }
 };
 
