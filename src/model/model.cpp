@@ -307,7 +307,7 @@ shared_model_ptr<Geometry> ModelPool::newGeometry(Geometry::GeomType geomType, s
     return Geometry(
         impl_->columns_.geom_.back(),
         shared_from_this(),
-        {Geometries, (uint32_t)impl_->columns_.arrays_.size()-1});
+        {Geometries, (uint32_t)impl_->columns_.geom_.size()-1});
 }
 
 shared_model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {

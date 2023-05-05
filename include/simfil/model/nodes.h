@@ -1,7 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <any>
 
 #include "arena.h"
 #include "point.h"
@@ -253,7 +252,7 @@ protected:
     ModelNode(ModelNode const&) = default;
     ModelNode(ModelNode&&) = default;
     ModelNode& operator= (ModelNode const&) = default;
-    ModelNode(ModelConstPtr, ModelNodeAddress);
+    ModelNode(ModelConstPtr, ModelNodeAddress, ScalarValueType data={});
 
     /// Extra data for the node
     ScalarValueType data_;
@@ -285,7 +284,7 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] uint32_t size() const override;
 
 protected:
-    ModelNodeBase(ModelConstPtr, ModelNodeAddress={});  // NOLINT
+    ModelNodeBase(ModelConstPtr, ModelNodeAddress={}, ScalarValueType data={});  // NOLINT
     ModelNodeBase(ModelNode const&);  // NOLINT
 };
 
@@ -311,7 +310,8 @@ struct MandatoryDerivedModelPoolNodeBase : public ModelNodeBase
 protected:
     inline PoolType& pool() const {return *reinterpret_cast<PoolType*>(const_cast<Model*>(pool_.get()));}  // NOLINT
 
-    MandatoryDerivedModelPoolNodeBase(ModelConstPtr p, ModelNodeAddress a={}) : ModelNodeBase(p, a) {}  // NOLINT
+    MandatoryDerivedModelPoolNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
+        : ModelNodeBase(p, a, std::move(data)) {}
     MandatoryDerivedModelPoolNodeBase(ModelNode const& n) : ModelNodeBase(n) {}  // NOLINT
 };
 
@@ -487,14 +487,14 @@ struct Geometry : public MandatoryModelPoolNodeBase
     [[nodiscard]] FieldId keyAt(int64_t) const override;
 
     void append(geo::Point<double> const& p);
-    GeomType geomType() const;
+    [[nodiscard]] GeomType geomType() const;
 
 protected:
     struct Data {
         GeomType type = GeomType::Points;
 
         // Vertex array index, or negative requested initial
-        // capacity of no point is added yet.
+        // capacity, if no point is added yet.
         ArrayIndex vertexArray_ = -1;
 
         // Offset is set when vertexArray is allocated,

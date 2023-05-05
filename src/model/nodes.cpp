@@ -12,8 +12,8 @@ static std::string_view MultiPolygonStr("MultiPolygon");
 
 /// Create a ModelNode from a model pool which serves as its
 /// VFT, and a TreeNodeAddress.
-ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr)
-    : pool_(std::move(pool)), addr_(addr)
+ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data)
+    : pool_(std::move(pool)), addr_(addr), data_(std::move(data))
 {}
 
 /// Get the node's scalar value if it has one
@@ -66,8 +66,8 @@ uint32_t ModelNode::size() const {
 
 /** Model Node Base Impl. */
 
-ModelNodeBase::ModelNodeBase(ModelConstPtr pool, ModelNodeAddress addr)
-    : ModelNode(std::move(pool), addr)
+ModelNodeBase::ModelNodeBase(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data)
+    : ModelNode(std::move(pool), addr, std::move(data))
 {
 }
 
@@ -109,16 +109,12 @@ uint32_t ModelNodeBase::size() const
 /** Model Node impls. for arbitrary self-contained value storage. */
 
 ValueNode::ValueNode(ScalarValueType const& value)
-    : ModelNodeBase(std::make_shared<Model>(), Model::Scalar)
-{
-    data_ = value;
-}
+    : ModelNodeBase(std::make_shared<Model>(), Model::Scalar, value)
+{}
 
 ValueNode::ValueNode(const ScalarValueType& value, const ModelConstPtr& p)
-    : ModelNodeBase(p, Model::Scalar)
-{
-    data_ = value;
-}
+    : ModelNodeBase(p, Model::Scalar, value)
+{}
 
 ValueNode::ValueNode(ModelNode const& n) : ModelNodeBase(n) {}
 
