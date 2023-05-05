@@ -4,6 +4,12 @@
 namespace simfil
 {
 
+static std::string_view GeometryCollectionStr("GeometryCollection");
+static std::string_view MultiPointStr("MultiPoint");
+static std::string_view LineStringStr("LineString");
+static std::string_view PolygonStr("Polygon");
+static std::string_view MultiPolygonStr("MultiPolygon");
+
 /// Create a ModelNode from a model pool which serves as its
 /// VFT, and a TreeNodeAddress.
 ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr)
@@ -247,7 +253,7 @@ ModelNode::Ptr Object::get(std::string_view const& fieldName) const {
     return {};
 }
 
-Object& Object::addField(std::string_view const& name, bool value) {
+Object& Object::addBool(std::string_view const& name, bool value) {
     auto fieldId = pool().fieldNames()->emplace(name);
     storage_->emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
     return *this;
@@ -289,19 +295,153 @@ Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& val
     return *this;
 }
 
+/** Model node impls. for GeometryCollection */
+
+GeometryCollection::GeometryCollection(ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a)
+{
+}
+
+ValueType GeometryCollection::type() const {
+    return ValueType::Object;
+}
+
+ModelNode::Ptr GeometryCollection::at(int64_t i) const {
+    if (i == 0) return ValueNode(GeometryCollectionStr, pool_);
+    if (i == 1) return ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
+    throw std::out_of_range("geom collection: Out of range.");
+}
+
+uint32_t GeometryCollection::size() const {
+    return 2;
+}
+
+ModelNode::Ptr GeometryCollection::get(const FieldId& f) const {
+    if (f == Fields::Type) return at(0);
+    if (f == Fields::Geometries) return at(1);
+    return {};
+}
+
+FieldId GeometryCollection::keyAt(int64_t i) const {
+    if (i == 0) return Fields::Type;
+    if (i == 1) return Fields::Geometries;
+    throw std::out_of_range("geom collection: Out of range.");
+}
+
+shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType type, size_t initialCapacity) {
+    auto result = pool().newGeometry(type, initialCapacity);
+    pool().resolveArray(at(1))->append(ModelNode::Ptr(result));
+    return result;
+}
+
+/** ModelNode impls. for Geometry */
+
+Geometry::Geometry(Data& data, ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(data)
+{
+    storage_ = &pool().vertexBufferStorage();
+}
+
+ValueType Geometry::type() const {
+    return ValueType::Object;
+}
+
+ModelNode::Ptr Geometry::at(int64_t i) const {
+    if (i == 0) return ValueNode(
+        geomData_.type == GeomType::Points ? MultiPointStr :
+        geomData_.type == GeomType::Line ? LineStringStr :
+        geomData_.type == GeomType::Polygon ? PolygonStr :
+        geomData_.type == GeomType::Mesh ? MultiPolygonStr : "", pool_);
+    if (i == 1) return ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::PointBuffers, addr_.index()});
+    throw std::out_of_range("geom: Out of range.");
+}
+
+uint32_t Geometry::size() const {
+    return 2;
+}
+
+ModelNode::Ptr Geometry::get(const FieldId& f) const {
+    if (f == Fields::Type) return at(0);
+    if (f == Fields::Coordinates) return at(1);
+    return {};
+}
+
+FieldId Geometry::keyAt(int64_t i) const {
+    if (i == 0) return Fields::Type;
+    if (i == 1) return Fields::Coordinates;
+    throw std::out_of_range("geom: Out of range.");
+}
+
+void Geometry::append(geo::Point<double> const& p) {
+    if (geomData_.vertexArray_ < 0) {
+        auto initialCapacity = abs(geomData_.vertexArray_);
+        geomData_.vertexArray_ = storage_->new_array(initialCapacity);
+        geomData_.offset_ = p;
+        return;
+    }
+    storage_->emplace_back(
+        geomData_.vertexArray_,
+        geo::Point<float>{
+            static_cast<float>(p.x - geomData_.offset_.x),
+            static_cast<float>(p.y - geomData_.offset_.y),
+            static_cast<float>(p.z - geomData_.offset_.z)});
+}
+
+Geometry::GeomType Geometry::geomType() const {
+    return geomData_.type;
+}
+
+/** ModelNode impls. for VertexBufferNode */
+
+VertexBufferNode::VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool_, ModelNodeAddress const& a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(geomData)
+{
+    storage_ = &pool().vertexBufferStorage();
+}
+
+ValueType VertexBufferNode::type() const {
+    return ValueType::Array;
+}
+
+ModelNode::Ptr VertexBufferNode::at(int64_t i) const {
+    if (i < 0 || i > size())
+        throw std::out_of_range("vertex-buffer: Out of range.");
+    return ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::Points, addr_.index()}, i);
+}
+
+uint32_t VertexBufferNode::size() const {
+    if (geomData_.vertexArray_ < 0)
+        return 0;
+    return 1 + storage_->size(geomData_.vertexArray_);
+}
+
+ModelNode::Ptr VertexBufferNode::get(const FieldId &) const {
+    return {};
+}
+
+FieldId VertexBufferNode::keyAt(int64_t) const {
+    return {};
+}
+
 /** Model node impls for vertex. */
+
+VertexNode::VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData)
+    : MandatoryModelPoolNodeBase(baseNode)
+{
+    auto i = std::get<int64_t>(data_);
+    point_ = geomData.offset_;
+    if (i > 0)
+        point_ += pool().vertexBufferStorage().at(geomData.vertexArray_, i - 1);
+}
 
 ValueType VertexNode::type() const {
     return ValueType::Array;
 }
 
 ModelNode::Ptr VertexNode::at(int64_t i) const {
-    if (i == 0)
-        return shared_model_ptr<ValueNode>::make(point_.x, pool_);
-    else if (i == 1)
-        return shared_model_ptr<ValueNode>::make(point_.y, pool_);
-    else if (i == 2)
-        return shared_model_ptr<ValueNode>::make(point_.z, pool_);
+    if (i == 0) return shared_model_ptr<ValueNode>::make(point_.x, pool_);
+    if (i == 1) return shared_model_ptr<ValueNode>::make(point_.y, pool_);
+    if (i == 2) return shared_model_ptr<ValueNode>::make(point_.z, pool_);
     throw std::out_of_range("vertex: Out of range.");
 }
 
@@ -311,21 +451,16 @@ uint32_t VertexNode::size() const {
 
 ModelNode::Ptr VertexNode::get(const FieldId & field) const {
     if (field == Fields::Lon) return at(0);
-    else if (field == Fields::Lat) return at(1);
-    else if (field == Fields::Elevation) return at(2);
+    if (field == Fields::Lat) return at(1);
+    if (field == Fields::Elevation) return at(2);
     else return {};
 }
 
 FieldId VertexNode::keyAt(int64_t i) const {
     if (i == 0) return Fields::Lon;
-    else if (i == 1) return Fields::Lat;
-    else if (i == 2) return Fields::Elevation;
+    if (i == 1) return Fields::Lat;
+    if (i == 2) return Fields::Elevation;
     throw std::out_of_range("vertex: Out of range.");
-}
-
-VertexNode::VertexNode(geo::Point<double> const& p, ModelConstPtr pool, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool), a), point_(p)
-{
 }
 
 }

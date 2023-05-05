@@ -15,6 +15,7 @@ Fields::Fields() {
     addStaticKey(OverlayValue, "$val");
     addStaticKey(OverlayIndex, "$idx");
     addStaticKey(Geometry, "geometry");
+    addStaticKey(Geometries, "geometries");
     addStaticKey(Type, "type");
     addStaticKey(Coordinates, "coordinates");
     addStaticKey(Elevation, "elevation");

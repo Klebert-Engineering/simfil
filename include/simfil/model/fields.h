@@ -28,6 +28,7 @@ struct Fields
         OverlayValue,
         OverlayIndex,
         Geometry,
+        Geometries,
         Type,
         Coordinates,
         Elevation,

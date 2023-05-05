@@ -359,6 +359,7 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 struct Array : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
+    friend struct GeometryCollection;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -393,7 +394,7 @@ struct Object : public MandatoryModelPoolNodeBase
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
 
-    Object& addField(std::string_view const& name, bool value);
+    Object& addBool(std::string_view const& name, bool value);
     Object& addField(std::string_view const& name, uint16_t value);
     Object& addField(std::string_view const& name, int16_t value);
     Object& addField(std::string_view const& name, int64_t const& value);
@@ -461,6 +462,93 @@ protected:
         MaxProceduralFields> fields_;
 };
 
+/**
+ * Geometry object, which stores a point collection, a line-string,
+ * or a triangle mesh.
+ */
+
+struct Geometry : public MandatoryModelPoolNodeBase
+{
+    friend class ModelPool;
+    friend struct VertexNode;
+    friend struct VertexBufferNode;
+
+    enum class GeomType: uint8_t {
+        Points,
+        Line,
+        Polygon,
+        Mesh
+    };
+
+    [[nodiscard]] ValueType type() const override;
+    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
+    [[nodiscard]] uint32_t size() const override;
+    [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
+    [[nodiscard]] FieldId keyAt(int64_t) const override;
+
+    void append(geo::Point<double> const& p);
+    GeomType geomType() const;
+
+protected:
+    struct Data {
+        GeomType type = GeomType::Points;
+
+        // Vertex array index, or negative requested initial
+        // capacity of no point is added yet.
+        ArrayIndex vertexArray_ = -1;
+
+        // Offset is set when vertexArray is allocated,
+        // which happens when the first point is added.
+        geo::Point<double> offset_;
+    };
+
+    using Storage = ArrayArena<geo::Point<float>, detail::ColumnPageSize*2>;
+
+    Data& geomData_;
+    Storage* storage_;
+
+    Geometry(Data& data, ModelConstPtr pool, ModelNodeAddress a);
+};
+
+/** GeometryCollection node has `type` and `geometries` fields. */
+
+struct GeometryCollection : public MandatoryModelPoolNodeBase
+{
+    friend class ModelPool;
+    friend struct GeometryList;
+
+    [[nodiscard]] ValueType type() const override;
+    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
+    [[nodiscard]] uint32_t size() const override;
+    [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
+    [[nodiscard]] FieldId keyAt(int64_t) const override;
+
+    shared_model_ptr<Geometry> newGeometry(Geometry::GeomType type, size_t initialCapacity=4);
+
+protected:
+    using Storage = Array::Storage;
+    GeometryCollection(ModelConstPtr pool, ModelNodeAddress);
+};
+
+/** VertexBuffer Node */
+
+struct VertexBufferNode : public MandatoryModelPoolNodeBase
+{
+    friend class ModelPool;
+
+    [[nodiscard]] ValueType type() const override;
+    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
+    [[nodiscard]] uint32_t size() const override;
+    [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
+    [[nodiscard]] FieldId keyAt(int64_t) const override;
+
+protected:
+    VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool, ModelNodeAddress const& a);
+
+    Geometry::Data const& geomData_;
+    Geometry::Storage* storage_;
+};
+
 /** Vertex Node */
 
 struct VertexNode : public MandatoryModelPoolNodeBase
@@ -474,27 +562,10 @@ struct VertexNode : public MandatoryModelPoolNodeBase
     [[nodiscard]] FieldId keyAt(int64_t) const override;
 
 protected:
-    VertexNode(geo::Point<double> const& p, ModelConstPtr pool, ModelNodeAddress a);
+    VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData);
 
     geo::Point<double> point_;
 };
 
-//     /**
-// * Geometry object, which stores a point collection, a line-string,
-// * or a triangle mesh.
-//     */
-//    struct GeometryData {
-//        enum Type: uint8_t {
-//            Points,
-//            PolyLine,
-//            Triangles
-//        };
-//
-//        ArrayIndex vertexArray_ = -1;
-//
-//        // Offset is set when vertexArray is allocated,
-//        // which happens when the first point is added.
-//        geo::Point<double> offset_;
-//    };
 
 }

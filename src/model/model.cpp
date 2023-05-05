@@ -64,12 +64,11 @@ struct ModelPool::Impl
         std::string stringData_;
         sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
 
-        ArrayArena<Object::Field, detail::ColumnPageSize*2> objectMemberArrays_;
-        ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2> arrayMemberArrays_;
+        Object::Storage objectMemberArrays_;
+        Array::Storage arrayMemberArrays_;
 
-        sfl::segmented_vector<geo::Point<double>, detail::ColumnPageSize*2> vertices_;
-        // sfl::segmented_vector<ArrayIndex, detail::ColumnPageSize> geom_;
-        // ArrayArena<geo::Point<float>, detail::ColumnPageSize*2> vertexArrays_;
+        sfl::segmented_vector<Geometry::Data, detail::ColumnPageSize> geom_;
+        Geometry::Storage vertexBuffers_;
     } columns_;
 };
 
@@ -149,7 +148,8 @@ void ModelPool::clear()
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
-    clear_and_shrink(columns.vertices_);
+    clear_and_shrink(columns.geom_);
+    clear_and_shrink(columns.vertexBuffers_);
 }
 
 void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
@@ -186,17 +186,31 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
         cb(ValueNode(val, shared_from_this()));
         break;
     }
-    case Vertex: {
-        auto& val = get(impl_->columns_.vertices_);
-        cb(VertexNode(val, shared_from_this(), n.addr_));
-        break;
-    }
     case String: {
         auto& val = get(impl_->columns_.strings_);
         cb(ValueNode(
             // TODO: Make sure that the string view is not turned into a string here.
             std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
             shared_from_this()));
+        break;
+    }
+    case Points: {
+        auto& val = get(impl_->columns_.geom_);
+        cb(VertexNode(n, val));
+        break;
+    }
+    case PointBuffers: {
+        auto& val = get(impl_->columns_.geom_);
+        cb(VertexBufferNode(val, shared_from_this(), n.addr_));
+        break;
+    }
+    case Geometries: {
+        auto& val = get(impl_->columns_.geom_);
+        cb(Geometry(const_cast<Geometry::Data&>(val), shared_from_this(), n.addr_));
+        break;
+    }
+    case GeometryCollections: {
+        cb(GeometryCollection(shared_from_this(), n.addr_));
         break;
     }
     default: Model::resolve(n, cb);
@@ -278,26 +292,52 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
-ModelNode::Ptr ModelPool::newVertex(double const& x, double const& y, double const& z) {
-    impl_->columns_.vertices_.emplace_back(geo::Point<double>{x, y, z});
-    return ModelNode(shared_from_this(), {Vertex, (uint32_t)impl_->columns_.vertices_.size()-1});
+shared_model_ptr<GeometryCollection> ModelPool::newGeometryCollection(size_t initialCapacity)
+{
+    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialCapacity);
+    impl_->columns_.arrays_.emplace_back(memberArrId);
+    return GeometryCollection(
+        shared_from_this(),
+        {GeometryCollections, (uint32_t)impl_->columns_.arrays_.size()-1});
 }
 
-template<>
-shared_model_ptr<Object> ModelPool::resolve(ModelNode::Ptr const& n) const {
+shared_model_ptr<Geometry> ModelPool::newGeometry(Geometry::GeomType geomType, size_t initialCapacity)
+{
+    impl_->columns_.geom_.emplace_back(Geometry::Data{geomType, -(ArrayIndex)initialCapacity, {.0, .0, .0}});
+    return Geometry(
+        impl_->columns_.geom_.back(),
+        shared_from_this(),
+        {Geometries, (uint32_t)impl_->columns_.arrays_.size()-1});
+}
+
+shared_model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
     if (n->addr_.column() != Objects)
         throw std::runtime_error("Cannot cast this node to an object.");
     auto& memberArrayIdx = impl_->columns_.objects_[n->addr_.index()];
     return Object(memberArrayIdx, shared_from_this(), n->addr_);
 }
 
-template<>
-shared_model_ptr<Array> ModelPool::resolve(ModelNode::Ptr const& n) const
+shared_model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
 {
     if (n->addr_.column() != Arrays)
         throw std::runtime_error("Cannot cast this node to an array.");
     auto& memberArrayIdx = impl_->columns_.arrays_[n->addr_.index()];
     return Array(memberArrayIdx, shared_from_this(), n->addr_);
+}
+
+shared_model_ptr<GeometryCollection> ModelPool::resolveGeometryCollection(ModelNode::Ptr const& n) const
+{
+    if (n->addr_.column() != GeometryCollections)
+        throw std::runtime_error("Cannot cast this node to a GeometryCollection.");
+    return GeometryCollection(shared_from_this(), n->addr_);
+}
+
+shared_model_ptr<Geometry> ModelPool::resolveGeometry(ModelNode::Ptr const& n) const
+{
+    if (n->addr_.column() != Geometries)
+        throw std::runtime_error("Cannot cast this node to a Geometry.");
+    auto& geomData = impl_->columns_.geom_[n->addr_.index()];
+    return Geometry(geomData, shared_from_this(), n->addr_);
 }
 
 std::shared_ptr<Fields> ModelPool::fieldNames() const
@@ -311,6 +351,10 @@ Object::Storage& ModelPool::objectMemberStorage() {
 
 Array::Storage& ModelPool::arrayMemberStorage() {
     return impl_->columns_.arrayMemberArrays_;
+}
+
+Geometry::Storage& ModelPool::vertexBufferStorage() {
+    return impl_->columns_.vertexBuffers_;
 }
 
 }  // namespace simfil
