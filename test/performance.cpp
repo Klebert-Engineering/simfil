@@ -6,10 +6,20 @@
 #include <vector>
 #include <cstdint>
 
+#if __has_include(<valgrind/callgrind.h>)
+#    include <valgrind/callgrind.h>
+#else
+#    define RUNNING_ON_VALGRIND false
+#    define CALLGRIND_START_INSTRUMENTATION (void)0
+#    define CALLGRIND_STOP_INSTRUMENTATION (void)0
+#endif
+
+
 using namespace simfil;
 using FieldList = std::vector<std::pair<std::string,
     ModelPool::ModelNodeIndex>>;
 
+/* Generate array with `gen` items. */
 template <class _Gen>
 static auto generate_array(ModelPool& model, _Gen&& gen)
 {
@@ -22,6 +32,7 @@ static auto generate_array(ModelPool& model, _Gen&& gen)
     return model.addArray(items);
 }
 
+/* Generate array of `gen` with `n` items. */
 template <class _Gen>
 static auto generate_n(ModelPool& model, std::size_t n, _Gen&& gen)
 {
@@ -34,6 +45,7 @@ static auto generate_n(ModelPool& model, std::size_t n, _Gen&& gen)
     });
 }
 
+/* Generate object with <key, value> `gen` fields. */
 template <class _Gen>
 static auto generate_object(ModelPool& model, _Gen&& gen)
 {
@@ -44,17 +56,23 @@ static auto generate_object(ModelPool& model, _Gen&& gen)
     return model.addObject(members);
 }
 
+/* Generate single value. */
 template <class _Value>
 static auto generate_value(ModelPool& model, _Value&& value)
 {
     return model.addValue(std::forward<_Value>(value));
 }
 
+/* Generate random integer value. */
 static auto rand_num(ModelPool& model)
 {
     return generate_value<int64_t>(model, rand());
 }
 
+/* Generate object tree with depth `_Size`.
+ * - Leaf nodes are set to random integer values
+ * - Keys are "SUB_%d" with '%d' being the field index
+ */
 template <std::size_t _HeadSize, std::size_t... _Size>
 static auto generate_sub_tree_n(ModelPool& m)
 {
@@ -71,6 +89,7 @@ static auto generate_sub_tree_n(ModelPool& m)
     });
 }
 
+/* Generate `n` test model objects. */
 static auto generate_model(std::size_t n)
 {
     auto model = std::make_shared<simfil::ModelPool>();
@@ -90,13 +109,17 @@ static auto generate_model(std::size_t n)
     return model;
 }
 
-static auto joined_result(const ModelPool& model, std::string_view query)
+static auto result(const ModelPool& model, std::string_view query)
 {
     Environment env(model.strings);
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
+    return eval(env, *ast, model);
+}
 
-    auto res = eval(env, *ast, model);
+static auto joined_result(const ModelPool& model, std::string_view query)
+{
+    auto res = result(model, query);
 
     std::string vals;
     for (const auto& vv : res) {
@@ -107,18 +130,33 @@ static auto joined_result(const ModelPool& model, std::string_view query)
     return vals;
 }
 
-TEST_CASE("Big Model (500)", "[perf.big-model]") {
-    const auto model = generate_model(500);
+TEST_CASE("Small model performance queries", "[perf.big-model-benchmark]") {
+    if (RUNNING_ON_VALGRIND) {
+        SKIP("Skipping benchmarks when running under valgrind");
+    }
+
+    const auto model = generate_model(1000);
 
     BENCHMARK("Query typeof Recursive") {
-        return joined_result(*model, "count(typeof ** == 'notatype')").size(); /* Return something to prevent optimization */ 
+        return result(*model, "count(typeof ** == 'notatype')");
     };
 
     BENCHMARK("Query field id Recursive") {
-        return joined_result(*model, "count(**.id == 250)").size();
+        return result(*model, "count(**.id == 25)");
     };
 
     BENCHMARK("Query field id") {
-        return joined_result(*model, "count(id == 250)").size();
+        return result(*model, "count(*.id == 25)");
     };
+}
+
+#define REQUIRE_RESULT(query, result) \
+    REQUIRE(joined_result(*model, query) == (result))
+
+TEST_CASE("Big model queries", "[perf.big-model-queries]") {
+    const auto model = generate_model(1000);
+
+    REQUIRE_RESULT("count(typeof ** == 'notatype')", "0");
+    REQUIRE_RESULT("count(**.id == 250)", "1");
+    REQUIRE_RESULT("count(*.id == 250)", "1");
 }
