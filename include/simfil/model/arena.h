@@ -6,9 +6,15 @@
 #include <shared_mutex>
 #include <mutex>
 #include <sfl/segmented_vector.hpp>
+#include <cmath>
 
 // Define this to enable array arena read-write locking.
 // #define ARRAY_ARENA_THREAD_SAFE
+
+namespace bitsery::ext {
+    // Pre-declare bitsery ArrayArena serialization extension
+    struct ArrayArenaExt;
+}
 
 namespace simfil
 {
@@ -32,7 +38,12 @@ using ArrayIndex = int32_t;
 template <class ElementType, size_t PageSize = 4096, size_t ChunkPageSize = 4096, typename SizeType=uint32_t>
 class ArrayArena
 {
+    friend struct bitsery::ext::ArrayArenaExt;
+
 public:
+    using elementType = ElementType;
+    using sizeType = SizeType;
+
     /**
      * Creates a new array with the specified initial capacity.
      *
@@ -41,7 +52,6 @@ public:
      */
     ArrayIndex new_array(size_t initialCapacity)
     {
-        assert(initialCapacity > 0);
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::unique_lock guard(lock_);
         #endif
@@ -58,7 +68,7 @@ public:
      * @param a The index of the array.
      * @return The size of the array.
      */
-    size_t size(ArrayIndex const& a) {
+    [[nodiscard]] SizeType size(ArrayIndex const& a) const {
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
         #endif
@@ -73,21 +83,11 @@ public:
      * @return A reference to the element at the specified index.
      * @throws std::out_of_range if the index is out of the array bounds.
      */
-    ElementType& at(ArrayIndex const& a, size_t const& i)
-    {
-        #ifdef ARRAY_ARENA_THREAD_SAFE
-        std::shared_lock guard(lock_);
-        #endif
-        Chunk const* current = &heads_[a];
-        size_t remaining = i;
-        while (true) {
-            if (remaining < current->capacity && remaining < current->size)
-                return data_[current->offset + remaining];
-            if (current->next == -1)
-                throw std::out_of_range("Index out of range");
-            remaining -= current->capacity;
-            current = &continuations_[current->next];
-        }
+    ElementType& at(ArrayIndex const& a, size_t const& i) {
+        return at_impl<ElementType&>(*this, a, i);
+    }
+    ElementType const& at(ArrayIndex const& a, size_t const& i) const {
+        return at_impl<ElementType const&>(*this, a, i);
     }
 
     /**
@@ -215,7 +215,7 @@ public:
         iterator begin() const { return begin_; }
         iterator end() const { return end_; }
         [[nodiscard]] size_t size() const { return begin_.arena_.size(begin_.array_index_); }
-        auto& operator[] (size_t const& i) const { return begin_.arena_.at(begin_.array_index_, i); }
+        auto operator[] (size_t const& i) const { return begin_.arena_.at(begin_.array_index_, i); }
 
     private:
         iterator begin_;
@@ -313,7 +313,7 @@ private:
     sfl::segmented_vector<ElementType, PageSize> data_;  // The underlying segmented_vector storing the array elements.
 
     #ifdef ARRAY_ARENA_THREAD_SAFE
-    std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.
+    mutable std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.
     #endif
 
     /**
@@ -340,13 +340,36 @@ private:
         std::unique_lock guard(lock_);
         #endif
         size_t offset = data_.size();
-        size_t newCapacity = last.capacity * 2;
+        size_t newCapacity = std::max((SizeType)2, (SizeType)last.capacity * 2);
         data_.resize(offset + newCapacity);
+        if (head.capacity == 0) {
+            head.offset = (SizeType)offset;
+            head.capacity = newCapacity;
+            return head;
+        }
         auto newIndex = static_cast<ArrayIndex>(continuations_.size());
         continuations_.push_back({(SizeType)offset, (SizeType)newCapacity, 0, -1, -1});
         last.next = newIndex;
         head.last = newIndex;
         return continuations_[newIndex];
+    }
+
+    template <typename ElementTypeRef, typename Self>
+    static ElementTypeRef at_impl(Self& self, ArrayIndex const& a, size_t const& i)
+    {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
+        std::shared_lock guard(self.lock_);
+        #endif
+        typename Self::Chunk const* current = &self.heads_[a];
+        size_t remaining = i;
+        while (true) {
+            if (remaining < current->capacity && remaining < current->size)
+                return self.data_[current->offset + remaining];
+            if (current->next == -1)
+                throw std::out_of_range("Index out of range");
+            remaining -= current->capacity;
+            current = &self.continuations_[current->next];
+        }
     }
 };
 
