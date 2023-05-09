@@ -11,8 +11,8 @@ ModelNode::ModelNode(ModelPoolConstBasePtr pool, ModelNodeAddress addr)
 {}
 
 /// Get the node's scalar value if it has one
-Value ModelNode::value() const {
-    Value result{ValueType::Null};
+ScalarValueType ModelNode::value() const {
+    ScalarValueType result;
     if (pool_)
         pool_->resolve(*this, [&](auto&& resolved) { result = resolved.value(); });
     return result;
@@ -70,9 +70,9 @@ ModelNodeBase::ModelNodeBase(const ModelNode& n)
 {
 }
 
-Value ModelNodeBase::value() const
+ScalarValueType ModelNodeBase::value() const
 {
-    return Value::null();
+    return data_;
 }
 
 ValueType ModelNodeBase::type() const
@@ -102,15 +102,26 @@ uint32_t ModelNodeBase::size() const
 
 /** Model Node impls. for arbitrary self-contained value storage. */
 
-DEFINE_VALUE_NODE_FUNCTIONS(int64_t, ValueType::Int, ModelPoolBase::VirtualIntValue, Value::make)
-DEFINE_VALUE_NODE_FUNCTIONS(double, ValueType::Float, ModelPoolBase::VirtualDoubleValue,  Value::make)
-DEFINE_VALUE_NODE_FUNCTIONS(std::string, ValueType::String, ModelPoolBase::VirtualStringValue, Value::make)
-DEFINE_VALUE_NODE_FUNCTIONS(Value, value().type, ModelPoolBase::VirtualValue, )
+ValueNode::ValueNode(ScalarValueType const& value, ModelPoolConstBasePtr const& pool)
+    : ModelNodeBase(pool, ModelNodeAddress{ModelPoolBase::VirtualValue, 0})
+{
+    data_ = value;
+}
+
+ValueNode::ValueNode(ModelNode const& n) : ModelNodeBase(n) {}
+
+ValueType ValueNode::type() const {
+    ValueType result;
+    std::visit([&result](auto&& v){
+        result = ValueType4CType<std::decay_t<decltype(v)>>::Type;
+    }, data_);
+    return result;
+}
 
 /** Model Node impls. for SmallScalarNode */
 
-template<> Value SmallScalarNode<int16_t>::value() const {
-    return Value::make((int64_t)addr_.int16());
+template<> ScalarValueType SmallScalarNode<int16_t>::value() const {
+    return (int64_t)addr_.int16();
 }
 
 template<> ValueType SmallScalarNode<int16_t>::type() const {
@@ -121,8 +132,8 @@ template<> SmallScalarNode<int16_t>::SmallScalarNode(ModelPoolConstBasePtr p, Mo
     : ModelNodeBase(std::move(p), a)
 {}
 
-template<> Value SmallScalarNode<uint16_t>::value() const {
-    return Value::make((int64_t)addr_.uint16());
+template<> ScalarValueType SmallScalarNode<uint16_t>::value() const {
+    return (int64_t)addr_.uint16();
 }
 
 template<> ValueType SmallScalarNode<uint16_t>::type() const {
@@ -133,8 +144,8 @@ template<> SmallScalarNode<uint16_t>::SmallScalarNode(ModelPoolConstBasePtr p, M
     : ModelNodeBase(std::move(p), a)
 {}
 
-template<> Value SmallScalarNode<bool>::value() const {
-    return Value::make((bool)addr_.uint16());
+template<> ScalarValueType SmallScalarNode<bool>::value() const {
+    return (bool)addr_.uint16();
 }
 
 template<> ValueType SmallScalarNode<bool>::type() const {
@@ -147,8 +158,9 @@ template<> SmallScalarNode<bool>::SmallScalarNode(ModelPoolConstBasePtr p, Model
 
 /** ModelNode impls for StringNode */
 
-Value StringNode::value() const {
-    return Value::strref(str_);
+ScalarValueType StringNode::value() const {
+    // TODO: Make sure that the string view is not turned into a string here.
+    return str_;
 }
 
 ValueType StringNode::type() const {
@@ -161,11 +173,6 @@ StringNode::StringNode(std::string_view s, ModelPoolConstBasePtr storage, ModelN
 
 /** Model Node impls for a scalar value. */
 
-template<> Value ScalarNode<int64_t>::value() const
-{
-    return Value::make(*std::any_cast<int64_t>(&data_));
-}
-
 template<> ValueType ScalarNode<int64_t>::type() const {
     return ValueType::Int;
 }
@@ -177,11 +184,6 @@ template<> ScalarNode<int64_t>::ScalarNode(int64_t const& value, ModelPoolConstB
 }
 
 template<> ScalarNode<int64_t>::ScalarNode(ModelNode const& n) : MandatoryModelPoolNodeBase(n) {}
-
-template<> Value ScalarNode<double>::value() const
-{
-    return Value::make(*std::any_cast<double>(&data_));
-}
 
 template<> ValueType ScalarNode<double>::type() const {
     return ValueType::Float;
@@ -327,11 +329,11 @@ ValueType VertexNode::type() const {
 
 ModelNode::Ptr VertexNode::at(int64_t i) const {
     if (i == 0)
-        return shared_model_ptr<ValueNode<double>>::make(point_.x, pool_);
+        return shared_model_ptr<ValueNode>::make(point_.x, pool_);
     else if (i == 1)
-        return shared_model_ptr<ValueNode<double>>::make(point_.y, pool_);
+        return shared_model_ptr<ValueNode>::make(point_.y, pool_);
     else if (i == 2)
-        return shared_model_ptr<ValueNode<double>>::make(point_.z, pool_);
+        return shared_model_ptr<ValueNode>::make(point_.z, pool_);
     throw std::out_of_range("vertex: Out of range.");
 }
 

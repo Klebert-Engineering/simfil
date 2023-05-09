@@ -7,68 +7,31 @@
 namespace simfil
 {
 
+struct OverlayNodeStorage : public ModelPoolBase {
+    Value value_;
+    std::map<FieldId, Value> overlayChildren_;
+
+    explicit OverlayNodeStorage(Value const& val) : value_(val) {} // NOLINT
+
+    void resolve(
+        ModelNode const& n,
+        std::function<void(ModelNode&&)> const& cb) const override;
+};
+
 /** Node for injecting member fields */
-class OverlayNode : public ModelNodeBase
+
+class OverlayNode : public MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>
 {
 public:
-    struct OverlayNodeData {
-        Context ctx_;
-        Value value_;
-        ModelNode::Ptr base_;
-        std::map<FieldId, ModelNode::Ptr> overlayChildren_;
-    };
-
-    // Held inside the ModelNode::data member.
-    OverlayNodeData* dataPtr_;
-
-    OverlayNode(Context ctx, Value const& val)
-        : ModelNodeBase(std::make_shared<ModelPoolBase>(), {ModelPool::VirtualOverlay, 0})
-    {
-        data_ = OverlayNodeData{ctx, val, val.node};
-        dataPtr_ = std::any_cast<OverlayNodeData>(&data_);
-    }
-
-    OverlayNode(ModelNode const& n) : ModelNodeBase(n) {
-        dataPtr_ = std::any_cast<OverlayNodeData>(&data_);
-    }
-
-    auto add(FieldId const& key, ModelNode::Ptr const& child) -> void
-    {
-        dataPtr_->overlayChildren_[key] = child;
-    }
-
-    Value value() const override
-    {
-        return dataPtr_->base_->value();
-    }
-
-    ValueType type() const override
-    {
-        return dataPtr_->base_->type();
-    }
-
-    ModelNode::Ptr get(const FieldId& key) const override
-    {
-        auto iter = dataPtr_->overlayChildren_.find(key);
-        if (iter != dataPtr_->overlayChildren_.end())
-            return iter->second;
-        return dataPtr_->base_->get(key);
-    }
-
-    ModelNode::Ptr at(int64_t i) const override
-    {
-        return dataPtr_->base_->at(i);
-    }
-
-    FieldId keyAt(int64_t i) const override
-    {
-        return dataPtr_->base_->keyAt(i);
-    }
-
-    uint32_t size() const override
-    {
-        return dataPtr_->base_->size();
-    }
+    explicit OverlayNode(Value const& val);
+    explicit OverlayNode(ModelNode const& n);
+    auto set(FieldId const& key, Value const& child) -> void;
+    [[nodiscard]] ScalarValueType value() const override;
+    [[nodiscard]] ValueType type() const override;
+    [[nodiscard]] ModelNode::Ptr get(const FieldId& key) const override;
+    [[nodiscard]] ModelNode::Ptr at(int64_t i) const override;
+    [[nodiscard]] FieldId keyAt(int64_t i) const override;
+    [[nodiscard]] uint32_t size() const override;
 };
 
 }

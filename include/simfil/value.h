@@ -98,6 +98,11 @@ template <class>
 struct ValueType4CType;
 
 template <>
+struct ValueType4CType<std::monostate> {
+    static constexpr ValueType Type = ValueType::Null;
+};
+
+template <>
 struct ValueType4CType<bool> {
     static constexpr ValueType Type = ValueType::Bool;
 };
@@ -175,24 +180,21 @@ struct ValueTypeInfo<ValueType::Array> {
     using Type = ModelNode::Ptr;
 };
 
-template <ValueType _Type>
-struct VauleAs {};
-
-template <ValueType _Type>
+template <ValueType ArgType>
 struct ValueAs
 {
-    template <class _Variant>
-    static auto get(const _Variant& v) -> decltype(auto)
+    template <class VariantType>
+    static auto get(const VariantType& v) -> decltype(auto)
     {
-        return std::get<typename ValueTypeInfo<_Type>::Type>(v);
+        return std::get<typename ValueTypeInfo<ArgType>::Type>(v);
     }
 };
 
 template <>
 struct ValueAs<ValueType::String>
 {
-    template <class _Variant>
-    static auto get(const _Variant& v) -> std::string
+    template <class VariantType>
+    static auto get(const VariantType& v) -> std::string
     {
         if (auto str = std::get_if<std::string>(&v))
             return *str;
@@ -202,33 +204,32 @@ struct ValueAs<ValueType::String>
     }
 };
 
-
 class Value
 {
 public:
     static auto t() -> Value
     {
-        return Value(ValueType::Bool, true);
+        return {ValueType::Bool, true};
     }
 
     static auto f() -> Value
     {
-        return Value(ValueType::Bool, false);
+        return {ValueType::Bool, false};
     }
 
     static auto null() -> Value
     {
-        return Value(ValueType::Null);
+        return {ValueType::Null};
     }
 
     static auto undef() -> Value
     {
-        return Value(ValueType::Undef);
+        return {ValueType::Undef};
     }
 
     static auto model() -> Value
     {
-        return Value(ValueType::Object);
+        return {ValueType::Object};
     }
 
     static auto strref(std::string_view sv) -> Value
@@ -236,57 +237,64 @@ public:
         return Value::make(sv);
     }
 
-    template <class _CType>
-    static auto make(_CType&& value) -> Value
+    template <class CType>
+    static auto make(CType&& value) -> Value
     {
-        return Value(ValueType4CType<std::decay_t<_CType>>::Type, std::forward<_CType>(value));
+        return {ValueType4CType<std::decay_t<CType>>::Type, std::forward<CType>(value)};
     }
 
-    static auto field(Value&& v, const ModelNode::Ptr& node)
+    static auto field(const ModelNode& node) -> Value
     {
-        return Value(node->type(), std::move(v.value), node);
+        return {node.type(), node.value(), node};
     }
 
-    Value(ValueType type)
+    Value(ValueType type)  // NOLINT
         : type(type)
     {}
 
-    template <class _Type>
-    Value(ValueType type, _Type&& value)
+    template <class ArgType>
+    Value(ValueType type, ArgType&& value)
         : type(type)
-        , value(std::forward<_Type>(value))
+          , value(std::forward<ArgType>(value))
     {}
 
-    template <class _Type>
-    Value(ValueType type, _Type&& value, const ModelNode::Ptr& node)
-        : type(type)
-        , value(std::forward<_Type>(value))
-        , node(node)
-    {}
+    Value(ValueType type, ScalarValueType&& value_, ModelNode::Ptr node)
+        : type(type), node(std::move(node))
+    {
+        std::visit([this](auto&& v){value = v;}, value_);
+    }
+
+    Value(ScalarValueType&& value_)  // NOLINT
+    {
+        std::visit([this](auto&& v){
+            type = ValueType4CType<std::decay_t<decltype(v)>>::Type;
+            value = v;
+        }, value_);
+    }
 
     Value(const Value&) = default;
     Value(Value&&) = default;
     Value& operator=(const Value&) = default;
     Value& operator=(Value&&) = default;
 
-    auto isa(ValueType test) const
+    [[nodiscard]] auto isa(ValueType test) const
     {
         return type == test;
     }
 
-    template <ValueType _Type>
-    auto as() const -> decltype(auto)
+    template <ValueType ArgType>
+    [[nodiscard]] auto as() const -> decltype(auto)
     {
-        return ValueAs<_Type>::get(value);
+        return ValueAs<ArgType>::get(value);
     }
 
-    auto isBool(bool v) const
+    [[nodiscard]] auto isBool(bool v) const
     {
         return isa(ValueType::Bool) && this->as<ValueType::Bool>() == v;
     }
 
-    template <class _Visitor>
-    auto visit(_Visitor fn) const
+    template <class Visitor>
+    [[nodiscard]] auto visit(Visitor fn) const
     {
         if (type == ValueType::Undef)
             return fn(UndefinedType{});
@@ -309,7 +317,7 @@ public:
         return fn(UndefinedType{});
     }
 
-    auto toString() const
+    [[nodiscard]] auto toString() const
     {
         if (isa(ValueType::TransientObject)) {
             const auto& obj = std::get<TransientObject>(value);
@@ -320,6 +328,21 @@ public:
             }
         }
         return visit(impl::ValueToString());
+    }
+
+    [[nodiscard]] auto getScalar() {
+        struct {
+            void operator() (std::monostate const& v) {result = v;}
+            void operator() (bool const& v) {result = v;}
+            void operator() (int64_t const& v) {result = v;}
+            void operator() (double const& v) {result = v;}
+            void operator() (std::string const& v) {result = v;}
+            void operator() (std::string_view const& v) {result = v;}
+            void operator() (TransientObject const&) {}
+            ScalarValueType result;
+        } scalarVisitor;
+        std::visit(scalarVisitor, value);
+        return scalarVisitor.result;
     }
 
     /// Get the string_view of this Value if it has one.
@@ -340,14 +363,24 @@ public:
     ModelNode::Ptr node;
 };
 
-template <class Type>
-auto getNumeric(const Value& v) -> std::pair<bool, Type>
+template <typename ResultT, typename ValueT>
+auto getNumeric(const ValueT& v) -> std::pair<bool, ResultT>
 {
-    if (v.isa(ValueType::Int))
-        return std::make_pair(true, (Type)v.as<ValueType::Int>());
-    if (v.isa(ValueType::Float))
-        return std::make_pair(true, (Type)v.as<ValueType::Float>());
-    return std::make_pair(false, Type{});
+    if constexpr (std::is_same_v<std::decay_t<ValueT>, Value>) {
+        if (v.isa(ValueType::Int))
+            return {true, (ResultT)v.template as<ValueType::Int>()};
+        if (v.isa(ValueType::Float))
+            return {true, (ResultT)v.template as<ValueType::Float>()};
+    }
+    else {
+        if (std::holds_alternative<double>(v)) {
+            return {true, (ResultT)std::get<double>(v)};
+        }
+        else if (std::holds_alternative<int64_t>(v)) {
+            return {true, (ResultT)std::get<int64_t>(v)};
+        }
+    }
+    return {false, {}};
 }
 
 }

@@ -81,6 +81,7 @@ add_library(simfil STATIC
   src/ext-geo.cpp
   src/simfil.cpp
   src/value.cpp
+  src/overlay.cpp
 
   src/model/model.cpp
   src/model/nodes.cpp
