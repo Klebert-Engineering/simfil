@@ -516,13 +516,14 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
 
     (void)args[0]->eval(ctx, val, [&, n = 0](auto ctx, Value vv) mutable {
         if (subexpr) {
-            auto ov = shared_model_ptr<OverlayNode>::make(ctx, vv);
-            ov->add(Fields::OverlaySum, ValueNode(sum));
-            ov->add(Fields::OverlayValue, ValueNode(vv));
-            ov->add(Fields::OverlayIndex, ValueNode(Value::make((int64_t)n++)));
+            auto ov = shared_model_ptr<OverlayNode>::make(vv);
+            ov->set(Fields::OverlaySum, sum);
+            ov->set(Fields::OverlayValue, vv);
+            ov->set(Fields::OverlayIndex, Value::make((int64_t)n++));
 
-            subexpr->eval(ctx, Value::field(ov->value(), ov), [&sum](auto ctx, auto vv) {
-                sum = std::move(vv);
+            subexpr->eval(ctx, Value::field(*ov), [&ov, &sum](auto ctx, auto vv) {
+                ov->set(Fields::OverlaySum, vv);
+                sum = vv;
                 return Result::Continue;
             });
         } else {

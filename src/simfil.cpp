@@ -164,7 +164,7 @@ public:
                 return Result::Stop;
 
             for (auto&& subNode : *val.node) {
-                if (iterate(Value::field(subNode->value(), subNode), depth + 1) == Result::Stop)
+                if (iterate(Value::field(*subNode), depth + 1) == Result::Stop)
                     return Result::Stop;
             }
 
@@ -206,7 +206,7 @@ public:
 
         if (val.node->size() > 0) {
             for (auto&& subNode : *val.node) {
-                if (res(ctx, Value::field(subNode->value(), subNode)) == Result::Stop)
+                if (res(ctx, Value::field(*subNode)) == Result::Stop)
                     return Result::Stop;
             }
         } else {
@@ -256,7 +256,7 @@ public:
 
         /* Enter sub-node */
         if (auto sub = val.node->get(nameId_)) {
-            return res(ctx, Value::field(sub->value(), sub));
+            return res(ctx, Value::field(*sub));
         }
 
         if (ctx.phase == Context::Phase::Compilation)
@@ -382,7 +382,7 @@ public:
                     }
 
                     if (node)
-                        return res(ctx, Value::field(node->value(), node));
+                        return res(ctx, Value::field(*node));
                     else
                         ctx.env->warn("Invalid subscript index type "s + valueType2String(ival.type), this->toString());
                 } else {
@@ -1313,7 +1313,7 @@ auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t root
     Context ctx(&env);
 
     std::vector<Value> res;
-    ast.eval(ctx, Value::field(Value::null(), model.root(rootIndex)), [&res](auto ctx, auto vv) {
+    ast.eval(ctx, Value::field(*model.root(rootIndex)), [&res](auto ctx, auto vv) {
         res.push_back(std::move(vv));
         return Result::Continue;
     });

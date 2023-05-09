@@ -34,20 +34,8 @@ void ModelPoolBase::resolve(
         case Bool:
             cb(SmallScalarNode<bool>(shared_from_this(), n.addr_));
             break;
-        case VirtualOverlay:
-            cb(OverlayNode(n));
-            break;
-        case VirtualIntValue:
-            cb(ValueNode<int64_t>(n));
-            break;
-        case VirtualDoubleValue:
-            cb(ValueNode<double>(n));
-            break;
-        case VirtualStringValue:
-            cb(ValueNode<std::string>(n));
-            break;
         case VirtualValue:
-            cb(ValueNode<Value>(n));
+            cb(ValueNode(n));
             break;
         default:
             throw std::runtime_error(stx::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));

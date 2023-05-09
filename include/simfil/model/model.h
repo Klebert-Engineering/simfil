@@ -26,10 +26,6 @@ public:
         UInt16,
         Int16,
         Bool,
-        VirtualOverlay,
-        VirtualIntValue,
-        VirtualDoubleValue,
-        VirtualStringValue,
         VirtualValue,
 
         FirstNontrivialColumnId,
