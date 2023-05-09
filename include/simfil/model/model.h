@@ -7,7 +7,8 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
-
+#include <istream>
+#include <ostream>
 #include <optional>
 
 #include "nodes.h"
@@ -142,6 +143,10 @@ public:
 
     /// Access the field name storage
     std::shared_ptr<Fields> fieldNames() const;
+
+    /// Serialization
+    void write(std::ostream& outputStream);
+    void read(std::istream& inputStream);
 
 protected:
     struct Impl;
