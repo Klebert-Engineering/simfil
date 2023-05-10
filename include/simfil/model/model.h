@@ -16,9 +16,9 @@ namespace simfil
 {
 
 /**
- * Basic model pool which only serves as a VFT for trivial node types.
+ * Basic node model which only resolves trivial node types.
  */
-class ModelPoolBase : public std::enable_shared_from_this<ModelPoolBase>
+class Model : public std::enable_shared_from_this<Model>
 {
 public:
     enum TrivialColumnId: uint8_t {
@@ -31,11 +31,23 @@ public:
         FirstNontrivialColumnId,
     };
 
+    struct ResolveFn
+    {
+        virtual ~ResolveFn() = default;
+        virtual void operator() (ModelNode const& resolved) const = 0;
+    };
+
+    template<typename T>
+    struct Lambda : public ResolveFn
+    {
+        Lambda(T const& fn) : fn_(fn) {}  // NOLINT
+        void operator() (ModelNode const& resolved) const override {fn_(resolved);};
+        T fn_;
+    };
+
     /// Get a callback with the actual class of the given node.
-    /// This facilitates the Virtual Function Table role of the ModelPool.
-    virtual void resolve(
-        ModelNode const& n,
-        std::function<void(ModelNode&&)> const& cb) const;
+    /// This facilitates the Virtual Function Table role of the Model.
+    virtual void resolve(ModelNode const& n, ResolveFn const& cb) const;
 
     /// Add a small scalar value and get its model node view
     ModelNode::Ptr newSmallValue(bool value);
@@ -47,7 +59,7 @@ public:
  * Efficient, extensible pool of SIMFIL model nodes based on
  * column stores for different node types.
  */
-class ModelPool : public ModelPoolBase
+class ModelPool : public Model
 {
     friend struct Object;
     friend struct Array;
@@ -85,9 +97,7 @@ public:
 
     /// Get a callback with the actual class of the given node.
     /// This facilitates the Virtual Function Table role of the ModelPool.
-    void resolve(
-        ModelNode const& n,
-        std::function<void(ModelNode&&)> const& cb) const override;
+    void resolve(ModelNode const& n, ResolveFn const& cb) const override;
 
     /// Clear all columns and roots
     virtual void clear();

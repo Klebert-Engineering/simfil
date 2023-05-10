@@ -15,12 +15,8 @@
 namespace simfil
 {
 
-void ModelPoolBase::resolve(
-    const ModelNode& n,
-    const std::function<void(ModelNode&&)>& cb) const
+void Model::resolve(const ModelNode& n, const ResolveFn& cb) const
 {
-    if (!cb)
-        return;
     switch (n.addr_.column()) {
         case Null:
             cb(ModelNodeBase(shared_from_this()));
@@ -94,7 +90,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
 
     auto validateModelIndex = [&](ModelNodeAddress const& node) {
         try {
-            resolve(ModelNode(shared_from_this(), node), [](auto&&){});
+            resolve(ModelNode(shared_from_this(), node), Lambda([](auto&&){}));
         }
         catch (std::exception& e) {
             errors.emplace_back(e.what());
@@ -156,10 +152,8 @@ void ModelPool::clear()
     clear_and_shrink(columns.vertices_);
 }
 
-void ModelPool::resolve(
-    ModelNode const& n,
-    std::function<void(ModelNode&&)> const& cb
-) const {
+void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
+{
     auto get = [&n](auto const& vec) -> auto& {
         auto idx = n.addr_.index();
         if (idx >= vec.size())
@@ -205,8 +199,7 @@ void ModelPool::resolve(
             shared_from_this()));
         break;
     }
-    default:
-        ModelPoolBase::resolve(n, cb);
+    default: Model::resolve(n, cb);
     }
 }
 
@@ -244,17 +237,17 @@ shared_model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
         {Arrays, (uint32_t)impl_->columns_.arrays_.size()-1});
 }
 
-ModelNode::Ptr ModelPoolBase::newSmallValue(bool value)
+ModelNode::Ptr Model::newSmallValue(bool value)
 {
     return ModelNode(shared_from_this(), {Bool, (uint32_t)value});
 }
 
-ModelNode::Ptr ModelPoolBase::newSmallValue(int16_t value)
+ModelNode::Ptr Model::newSmallValue(int16_t value)
 {
     return ModelNode(shared_from_this(), {Int16, (uint32_t)value});
 }
 
-ModelNode::Ptr ModelPoolBase::newSmallValue(uint16_t value)
+ModelNode::Ptr Model::newSmallValue(uint16_t value)
 {
     return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
 }

@@ -7,15 +7,14 @@
 namespace simfil
 {
 
-struct OverlayNodeStorage : public ModelPoolBase {
+struct OverlayNodeStorage : public Model
+{
     Value value_;
     std::map<FieldId, Value> overlayChildren_;
 
     explicit OverlayNodeStorage(Value const& val) : value_(val) {} // NOLINT
 
-    void resolve(
-        ModelNode const& n,
-        std::function<void(ModelNode&&)> const& cb) const override;
+    void resolve(ModelNode const& n, ResolveFn const& cb) const override;
 };
 
 /** Node for injecting member fields */

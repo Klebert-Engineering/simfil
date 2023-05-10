@@ -6,7 +6,7 @@ namespace simfil
 
 /// Create a ModelNode from a model pool which serves as its
 /// VFT, and a TreeNodeAddress.
-ModelNode::ModelNode(ModelPoolConstBasePtr pool, ModelNodeAddress addr)
+ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr)
     : pool_(std::move(pool)), addr_(addr)
 {}
 
@@ -14,7 +14,7 @@ ModelNode::ModelNode(ModelPoolConstBasePtr pool, ModelNodeAddress addr)
 ScalarValueType ModelNode::value() const {
     ScalarValueType result;
     if (pool_)
-        pool_->resolve(*this, [&](auto&& resolved) { result = resolved.value(); });
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.value(); }));
     return result;
 }
 
@@ -22,7 +22,7 @@ ScalarValueType ModelNode::value() const {
 ValueType ModelNode::type() const {
     ValueType result = ValueType::Null;
     if (pool_)
-        pool_->resolve(*this, [&](auto&& resolved) { result = resolved.type(); });
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.type(); }));
     return result;
 }
 
@@ -30,7 +30,7 @@ ValueType ModelNode::type() const {
 ModelNode::Ptr ModelNode::get(const FieldId& field) const {
     ModelNode::Ptr result;
     if (pool_)
-        pool_->resolve(*this, [&](auto&& resolved) { result = resolved.get(field); });
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.get(field); }));
     return result;
 }
 
@@ -38,7 +38,7 @@ ModelNode::Ptr ModelNode::get(const FieldId& field) const {
 ModelNode::Ptr ModelNode::at(int64_t index) const {
     ModelNode::Ptr result;
     if (pool_)
-        pool_->resolve(*this, [&](auto&& resolved) { result = resolved.at(index); });
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.at(index); }));
     return result;
 }
 
@@ -46,7 +46,7 @@ ModelNode::Ptr ModelNode::at(int64_t index) const {
 FieldId ModelNode::keyAt(int64_t i) const {
     FieldId result = 0;
     if (pool_)
-        pool_->resolve(*this, [&](auto&& resolved) { result = resolved.keyAt(i); });
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.keyAt(i); }));
     return result;
 }
 
@@ -54,13 +54,13 @@ FieldId ModelNode::keyAt(int64_t i) const {
 uint32_t ModelNode::size() const {
     uint32_t result = 0;
     if (pool_)
-        pool_->resolve(*this, [&](auto&& resolved) { result = resolved.size(); });
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.size(); }));
     return result;
 }
 
 /** Model Node Base Impl. */
 
-ModelNodeBase::ModelNodeBase(ModelPoolConstBasePtr pool, ModelNodeAddress addr)
+ModelNodeBase::ModelNodeBase(ModelConstPtr pool, ModelNodeAddress addr)
     : ModelNode(std::move(pool), addr)
 {
 }
@@ -103,13 +103,13 @@ uint32_t ModelNodeBase::size() const
 /** Model Node impls. for arbitrary self-contained value storage. */
 
 ValueNode::ValueNode(ScalarValueType const& value)
-    : ModelNodeBase(std::make_shared<ModelPoolBase>(), ModelPoolBase::Scalar)
+    : ModelNodeBase(std::make_shared<Model>(), Model::Scalar)
 {
     data_ = value;
 }
 
-ValueNode::ValueNode(const ScalarValueType& value, const ModelPoolConstBasePtr& p)
-    : ModelNodeBase(p, ModelPoolBase::Scalar)
+ValueNode::ValueNode(const ScalarValueType& value, const ModelConstPtr& p)
+    : ModelNodeBase(p, Model::Scalar)
 {
     data_ = value;
 }
@@ -135,7 +135,7 @@ template<> ValueType SmallValueNode<int16_t>::type() const {
 }
 
 template<>
-SmallValueNode<int16_t>::SmallValueNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
+SmallValueNode<int16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
 
@@ -148,7 +148,7 @@ template<> ValueType SmallValueNode<uint16_t>::type() const {
 }
 
 template<>
-SmallValueNode<uint16_t>::SmallValueNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
+SmallValueNode<uint16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
 
@@ -161,13 +161,13 @@ template<> ValueType SmallValueNode<bool>::type() const {
 }
 
 template<>
-SmallValueNode<bool>::SmallValueNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
+SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
 
 /** Model Node impls for an array. */
 
-Array::Array(ArrayIndex i, ModelPoolConstBasePtr pool_, ModelNodeAddress a)
+Array::Array(ArrayIndex i, ModelConstPtr pool_, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
 {
     storage_ = &pool().arrayMemberStorage();
@@ -200,7 +200,7 @@ Array& Array::append(ModelNode::Ptr const& value) {storage_->push_back(members_,
 
 /** Model Node impls for an object. */
 
-Object::Object(ArrayIndex i, ModelPoolConstBasePtr pool_, ModelNodeAddress a)
+Object::Object(ArrayIndex i, ModelConstPtr pool_, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
 {
     storage_ = &pool().objectMemberStorage();
@@ -323,7 +323,7 @@ FieldId VertexNode::keyAt(int64_t i) const {
     throw std::out_of_range("vertex: Out of range.");
 }
 
-VertexNode::VertexNode(geo::Point<double> const& p, ModelPoolConstBasePtr pool, ModelNodeAddress a)
+VertexNode::VertexNode(geo::Point<double> const& p, ModelConstPtr pool, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool), a), point_(p)
 {
 }

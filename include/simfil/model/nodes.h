@@ -14,10 +14,10 @@ namespace simfil
 
 class Value;
 class ModelPool;
-class ModelPoolBase;
+class Model;
 struct ModelNode;
 
-using ModelPoolConstBasePtr = std::shared_ptr<const ModelPoolBase>;
+using ModelConstPtr = std::shared_ptr<const Model>;
 using ModelPoolConstPtr = std::shared_ptr<const ModelPool>;
 using ModelPoolPtr = std::shared_ptr<ModelPool>;
 
@@ -141,7 +141,7 @@ struct ModelNode
 
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
-    friend class ModelPoolBase;
+    friend class Model;
     friend class OverlayNode;
 
     /// Get the node's scalar value if it has one
@@ -253,13 +253,13 @@ protected:
     ModelNode(ModelNode const&) = default;
     ModelNode(ModelNode&&) = default;
     ModelNode& operator= (ModelNode const&) = default;
-    ModelNode(ModelPoolConstBasePtr, ModelNodeAddress);
+    ModelNode(ModelConstPtr, ModelNodeAddress);
 
     /// Extra data for the node
     ScalarValueType data_;
 
-    /// Reference to the model pool which owns this node
-    ModelPoolConstBasePtr pool_;
+    /// Reference to the model which controls this node
+    ModelConstPtr pool_;
 
     /// Address of the model pool node which this object references
     ModelNodeAddress addr_;
@@ -275,7 +275,7 @@ protected:
  */
 struct ModelNodeBase : public ModelNode
 {
-    friend class ModelPoolBase;
+    friend class Model;
 
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
@@ -285,7 +285,7 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] uint32_t size() const override;
 
 protected:
-    ModelNodeBase(ModelPoolConstBasePtr, ModelNodeAddress={});  // NOLINT
+    ModelNodeBase(ModelConstPtr, ModelNodeAddress={});  // NOLINT
     ModelNodeBase(ModelNode const&);  // NOLINT
 };
 
@@ -295,23 +295,23 @@ protected:
 struct ValueNode : public ModelNodeBase
 {
     explicit ValueNode(ScalarValueType const& value);
-    explicit ValueNode(ScalarValueType const& value, ModelPoolConstBasePtr const& p);
+    explicit ValueNode(ScalarValueType const& value, ModelConstPtr const& p);
     explicit ValueNode(ModelNode const&);
     [[nodiscard]] ValueType type() const override;
 };
 
 /**
  * ModelNode base class which provides a pool() method that returns
- * a reference to a ModelPoolBase-derived pool type.
- * @tparam PoolType ModelPoolBase-derived type.
+ * a reference to a Model-derived pool type.
+ * @tparam PoolType Model-derived type.
  */
 template<class PoolType>
 struct MandatoryDerivedModelPoolNodeBase : public ModelNodeBase
 {
 protected:
-    inline PoolType& pool() const {return *reinterpret_cast<PoolType*>(const_cast<ModelPoolBase*>(pool_.get()));}  // NOLINT
+    inline PoolType& pool() const {return *reinterpret_cast<PoolType*>(const_cast<Model*>(pool_.get()));}  // NOLINT
 
-    MandatoryDerivedModelPoolNodeBase(ModelPoolConstBasePtr p, ModelNodeAddress a={}) : ModelNodeBase(p, a) {}  // NOLINT
+    MandatoryDerivedModelPoolNodeBase(ModelConstPtr p, ModelNodeAddress a={}) : ModelNodeBase(p, a) {}  // NOLINT
     MandatoryDerivedModelPoolNodeBase(ModelNode const& n) : ModelNodeBase(n) {}  // NOLINT
 };
 
@@ -334,25 +334,25 @@ namespace detail
 template<typename T>
 struct SmallValueNode : public ModelNodeBase
 {
-    friend class ModelPoolBase;
+    friend class Model;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
 protected:
-    SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
+    SmallValueNode(ModelConstPtr, ModelNodeAddress);
 };
 
 template<> [[nodiscard]] ScalarValueType SmallValueNode<int16_t>::value() const;
 template<> [[nodiscard]] ValueType SmallValueNode<int16_t>::type() const;
 template<>
-SmallValueNode<int16_t>::SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
+SmallValueNode<int16_t>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 template<> [[nodiscard]] ScalarValueType SmallValueNode<uint16_t>::value() const;
 template<> [[nodiscard]] ValueType SmallValueNode<uint16_t>::type() const;
 template<>
-SmallValueNode<uint16_t>::SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
+SmallValueNode<uint16_t>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 template<> [[nodiscard]] ScalarValueType SmallValueNode<bool>::value() const;
 template<> [[nodiscard]] ValueType SmallValueNode<bool>::type() const;
 template<>
-SmallValueNode<bool>::SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
+SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 /** Model Node for an array. */
 
@@ -375,7 +375,7 @@ struct Array : public MandatoryModelPoolNodeBase
 protected:
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
-    Array(ArrayIndex i, ModelPoolConstBasePtr pool, ModelNodeAddress);
+    Array(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_;
     ArrayIndex members_;
@@ -418,7 +418,7 @@ protected:
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
-    Object(ArrayIndex i, ModelPoolConstBasePtr pool, ModelNodeAddress);
+    Object(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_;
     ArrayIndex members_;
@@ -453,7 +453,7 @@ class ProceduralObject : public Object
     }
 
 protected:
-    ProceduralObject(ArrayIndex i, ModelPoolConstBasePtr pool, ModelNodeAddress a)
+    ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a)
         : Object(i, pool, a) {}
 
     sfl::small_vector<
@@ -474,7 +474,7 @@ struct VertexNode : public MandatoryModelPoolNodeBase
     [[nodiscard]] FieldId keyAt(int64_t) const override;
 
 protected:
-    VertexNode(geo::Point<double> const& p, ModelPoolConstBasePtr pool, ModelNodeAddress a);
+    VertexNode(geo::Point<double> const& p, ModelConstPtr pool, ModelNodeAddress a);
 
     geo::Point<double> point_;
 };

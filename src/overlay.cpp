@@ -3,7 +3,7 @@
 namespace simfil
 {
 
-void OverlayNodeStorage::resolve(ModelNode const& n, std::function<void(ModelNode&&)> const& cb) const
+void OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
     cb(OverlayNode(n));
 }
