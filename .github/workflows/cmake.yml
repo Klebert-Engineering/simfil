@@ -84,6 +84,15 @@ jobs:
       working-directory: build/test
       run: |
         valgrind --tool=cachegrind ./test.simfil | tee cachegrind-out.txt
+    - name: Run Valgrind Callgrind
+      working-directory: build/test
+      run: |
+        valgrind --tool=callgrind --instr-atstart=no ./test.simfil
+    - name: Publish Callgrind Output
+      uses: actions/upload-artifact@v3
+      with:
+        name: Callgrind Output
+        path: build/test/callgrind.out.*
 
   build-windows:
     name: Windows
