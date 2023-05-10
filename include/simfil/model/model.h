@@ -21,7 +21,7 @@ namespace simfil
 class Model : public std::enable_shared_from_this<Model>
 {
 public:
-    enum TrivialColumnId: uint8_t {
+    enum TrivialColumnId : uint8_t {
         Null = 0,
         UInt16,
         Int16,
@@ -63,6 +63,9 @@ class ModelPool : public Model
 {
     friend struct Object;
     friend struct Array;
+    friend struct Geometry;
+    friend struct VertexBufferNode;
+    friend struct VertexNode;
 
 public:
     /**
@@ -70,16 +73,16 @@ public:
      *  each for a different data type. Each column
      *  is identified by a static column ID.
      */
-    enum ColumnId: uint8_t {
+    enum ColumnId : uint8_t {
         Objects = FirstNontrivialColumnId,
         Arrays,
-        Point,
-        Geom,
-        GeomCollection,
+        Points,
+        PointBuffers,
+        Geometries,
+        GeometryCollections,
         Int64,
         Double,
         String,
-        Vertex,
 
         FirstCustomColumnId = 128,
     };
@@ -116,23 +119,26 @@ public:
 
     /// Adopt members from the given vector and obtain a new object
     ///  model index which has these members.
-    shared_model_ptr<Object> newObject(size_t initialFieldCapacity=2);
+    shared_model_ptr<Object> newObject(size_t initialFieldCapacity = 2);
 
     /// Adopt members from the given vector and obtain a new array
     ///  model index which has these members.
-    shared_model_ptr<Array> newArray(size_t initialFieldCapacity=2);
+    shared_model_ptr<Array> newArray(size_t initialFieldCapacity = 2);
 
     /// Add a scalar value and get its new model node index.
     ModelNode::Ptr newValue(int64_t const& value);
     ModelNode::Ptr newValue(double const& value);
     ModelNode::Ptr newValue(std::string_view const& value);
 
-    /// Add a vertex and get its new model node index.
-    ModelNode::Ptr newVertex(double const& x, double const& y, double const& z);
+    /// Geometry(-Collection) factories
+    shared_model_ptr<GeometryCollection> newGeometryCollection(size_t initialCapacity = 1);
+    shared_model_ptr<Geometry> newGeometry(Geometry::GeomType geomType, size_t initialCapacity = 1);
 
     /// Node-type-specific resolve-functions
-    template<class NodeType>
-    shared_model_ptr<NodeType> resolve(ModelNode::Ptr const& n) const;
+    shared_model_ptr<Object> resolveObject(ModelNode::Ptr const& n) const;
+    shared_model_ptr<Array> resolveArray(ModelNode::Ptr const& n) const;
+    shared_model_ptr<GeometryCollection> resolveGeometryCollection(ModelNode::Ptr const& n) const;
+    shared_model_ptr<Geometry> resolveGeometry(ModelNode::Ptr const& n) const;
 
     /// Access the field name storage
     std::shared_ptr<Fields> fieldNames() const;
@@ -145,12 +151,7 @@ protected:
     /// so derived ModelPools can create Object/Array-derived nodes.
     Object::Storage& objectMemberStorage();
     Array::Storage& arrayMemberStorage();
+    Geometry::Storage& vertexBufferStorage();
 };
-
-/// Node-type-specific resolve-functions
-template<>
-shared_model_ptr<Object> ModelPool::resolve(ModelNode::Ptr const& n) const;
-template<>
-shared_model_ptr<Array> ModelPool::resolve(ModelNode::Ptr const& n) const;
 
 }

@@ -19,11 +19,13 @@ struct Point
         return x == o.x && y == o.y && z == o.z;
     }
 
-    auto operator+=(const Point& o) -> Point&
+    template <class OtherPrecision>
+    auto operator+=(const Point<OtherPrecision>& o) -> Point&
     {
         x += o.x;
         y += o.y;
         z += o.z;
+        return *this;
     }
 
     [[nodiscard]] auto toString() const -> std::string
@@ -31,12 +33,14 @@ struct Point
         return stx::format("[{},{}]", x, y);
     }
 
-    auto angleTo(const Point& o) const -> double
+    template <class OtherPrecision>
+    auto angleTo(const Point<OtherPrecision>& o) const -> double
     {
         return std::atan2(o.y - y, o.x - x);
     }
 
-    auto distanceTo(const Point& o) const -> double
+    template <class OtherPrecision>
+    auto distanceTo(const Point<OtherPrecision>& o) const -> double
     {
         return std::sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y));
     }
