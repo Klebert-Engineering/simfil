@@ -26,7 +26,7 @@ public:
         UInt16,
         Int16,
         Bool,
-        VirtualValue,
+        Scalar,
 
         FirstNontrivialColumnId,
     };

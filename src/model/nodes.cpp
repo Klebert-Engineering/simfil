@@ -102,8 +102,14 @@ uint32_t ModelNodeBase::size() const
 
 /** Model Node impls. for arbitrary self-contained value storage. */
 
-ValueNode::ValueNode(ScalarValueType const& value, ModelPoolConstBasePtr const& pool)
-    : ModelNodeBase(pool, ModelNodeAddress{ModelPoolBase::VirtualValue, 0})
+ValueNode::ValueNode(ScalarValueType const& value)
+    : ModelNodeBase(std::make_shared<ModelPoolBase>(), ModelPoolBase::Scalar)
+{
+    data_ = value;
+}
+
+ValueNode::ValueNode(const ScalarValueType& value, const ModelPoolConstBasePtr& p)
+    : ModelNodeBase(p, ModelPoolBase::Scalar)
 {
     data_ = value;
 }
@@ -118,84 +124,46 @@ ValueType ValueNode::type() const {
     return result;
 }
 
-/** Model Node impls. for SmallScalarNode */
+/** Model Node impls. for SmallValueNode */
 
-template<> ScalarValueType SmallScalarNode<int16_t>::value() const {
+template<> ScalarValueType SmallValueNode<int16_t>::value() const {
     return (int64_t)addr_.int16();
 }
 
-template<> ValueType SmallScalarNode<int16_t>::type() const {
+template<> ValueType SmallValueNode<int16_t>::type() const {
     return ValueType::Int;
 }
 
-template<> SmallScalarNode<int16_t>::SmallScalarNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
+template<>
+SmallValueNode<int16_t>::SmallValueNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
 
-template<> ScalarValueType SmallScalarNode<uint16_t>::value() const {
+template<> ScalarValueType SmallValueNode<uint16_t>::value() const {
     return (int64_t)addr_.uint16();
 }
 
-template<> ValueType SmallScalarNode<uint16_t>::type() const {
+template<> ValueType SmallValueNode<uint16_t>::type() const {
     return ValueType::Int;
 }
 
-template<> SmallScalarNode<uint16_t>::SmallScalarNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
+template<>
+SmallValueNode<uint16_t>::SmallValueNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
 
-template<> ScalarValueType SmallScalarNode<bool>::value() const {
+template<> ScalarValueType SmallValueNode<bool>::value() const {
     return (bool)addr_.uint16();
 }
 
-template<> ValueType SmallScalarNode<bool>::type() const {
+template<> ValueType SmallValueNode<bool>::type() const {
     return ValueType::Bool;
 }
 
-template<> SmallScalarNode<bool>::SmallScalarNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
+template<>
+SmallValueNode<bool>::SmallValueNode(ModelPoolConstBasePtr p, ModelNodeAddress a)
     : ModelNodeBase(std::move(p), a)
 {}
-
-/** ModelNode impls for StringNode */
-
-ScalarValueType StringNode::value() const {
-    // TODO: Make sure that the string view is not turned into a string here.
-    return str_;
-}
-
-ValueType StringNode::type() const {
-    return ValueType::String;
-}
-
-StringNode::StringNode(std::string_view s, ModelPoolConstBasePtr storage, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(storage), a), str_(s) {}
-
-
-/** Model Node impls for a scalar value. */
-
-template<> ValueType ScalarNode<int64_t>::type() const {
-    return ValueType::Int;
-}
-
-template<> ScalarNode<int64_t>::ScalarNode(int64_t const& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(storage), a)
-{
-    data_ = value;
-}
-
-template<> ScalarNode<int64_t>::ScalarNode(ModelNode const& n) : MandatoryModelPoolNodeBase(n) {}
-
-template<> ValueType ScalarNode<double>::type() const {
-    return ValueType::Float;
-}
-
-template<> ScalarNode<double>::ScalarNode(const double& value, ModelPoolConstBasePtr storage, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(storage), a)
-{
-    data_ = value;
-}
-
-template<> ScalarNode<double>::ScalarNode(ModelNode const& n) : MandatoryModelPoolNodeBase(n) {}
 
 /** Model Node impls for an array. */
 

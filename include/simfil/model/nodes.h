@@ -109,7 +109,7 @@ struct ModelNodeAddress
 
     uint32_t value_ = 0;
 
-    ModelNodeAddress(uint8_t const& col, uint32_t const& idx) {
+    ModelNodeAddress(uint8_t const& col, uint32_t const& idx = 0) {  // NOLINT
         value_ = (idx << 8) | col;
     }
 
@@ -294,7 +294,8 @@ protected:
  */
 struct ValueNode : public ModelNodeBase
 {
-    explicit ValueNode(ScalarValueType const& value, ModelPoolConstBasePtr const& pool = std::make_shared<ModelPoolBase>());
+    explicit ValueNode(ScalarValueType const& value);
+    explicit ValueNode(ScalarValueType const& value, ModelPoolConstBasePtr const& p);
     explicit ValueNode(ModelNode const&);
     [[nodiscard]] ValueType type() const override;
 };
@@ -331,68 +332,27 @@ namespace detail
  * The value is stored in the TreeNodeAddress.
  */
 template<typename T>
-struct SmallScalarNode : public ModelNodeBase
+struct SmallValueNode : public ModelNodeBase
 {
     friend class ModelPoolBase;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
 protected:
-    SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
+    SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
 };
 
-template<> [[nodiscard]] ScalarValueType SmallScalarNode<int16_t>::value() const;
-template<> [[nodiscard]] ValueType SmallScalarNode<int16_t>::type() const;
-template<> SmallScalarNode<int16_t>::SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
-template<> [[nodiscard]] ScalarValueType SmallScalarNode<uint16_t>::value() const;
-template<> [[nodiscard]] ValueType SmallScalarNode<uint16_t>::type() const;
-template<> SmallScalarNode<uint16_t>::SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
-template<> [[nodiscard]] ScalarValueType SmallScalarNode<bool>::value() const;
-template<> [[nodiscard]] ValueType SmallScalarNode<bool>::type() const;
-template<> SmallScalarNode<bool>::SmallScalarNode(ModelPoolConstBasePtr, ModelNodeAddress);
-
-
-/** Model Node for a string value. */
-
-struct StringNode : public MandatoryModelPoolNodeBase
-{
-    friend class ModelPool;
-    [[nodiscard]] ScalarValueType value() const override;
-    [[nodiscard]] ValueType type() const override;
-protected:
-    StringNode(std::string_view s, ModelPoolConstBasePtr storage, ModelNodeAddress);
-
-    /**
-     * String Data stored in ModelPool column.
-     */
-    struct Data {
-        size_t offset_ = 0;
-        size_t size_ = 0;
-    };
-
-    std::string_view str_;
-};
-
-/** Model Node for a scalar reference value. */
-
-template<typename T>
-struct ScalarNode : public MandatoryModelPoolNodeBase
-{
-    friend class ModelPool;
-    template<typename> friend struct shared_model_ptr;
-
-    [[nodiscard]] ValueType type() const override;
-
-protected:
-    ScalarNode(T const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
-    ScalarNode(ModelNode const&);
-};
-
-template<> [[nodiscard]] ValueType ScalarNode<int64_t>::type() const;
-template<> ScalarNode<int64_t>::ScalarNode(int64_t const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
-template<> ScalarNode<int64_t>::ScalarNode(ModelNode const&);
-template<> [[nodiscard]] ValueType ScalarNode<double>::type() const;
-template<> ScalarNode<double>::ScalarNode(double const& value, ModelPoolConstBasePtr storage, ModelNodeAddress);
-template<> ScalarNode<double>::ScalarNode(ModelNode const&);
+template<> [[nodiscard]] ScalarValueType SmallValueNode<int16_t>::value() const;
+template<> [[nodiscard]] ValueType SmallValueNode<int16_t>::type() const;
+template<>
+SmallValueNode<int16_t>::SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
+template<> [[nodiscard]] ScalarValueType SmallValueNode<uint16_t>::value() const;
+template<> [[nodiscard]] ValueType SmallValueNode<uint16_t>::type() const;
+template<>
+SmallValueNode<uint16_t>::SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
+template<> [[nodiscard]] ScalarValueType SmallValueNode<bool>::value() const;
+template<> [[nodiscard]] ValueType SmallValueNode<bool>::type() const;
+template<>
+SmallValueNode<bool>::SmallValueNode(ModelPoolConstBasePtr, ModelNodeAddress);
 
 /** Model Node for an array. */
 

@@ -26,15 +26,15 @@ void ModelPoolBase::resolve(
             cb(ModelNodeBase(shared_from_this()));
             break;
         case UInt16:
-            cb(SmallScalarNode<uint16_t>(shared_from_this(), n.addr_));
+            cb(SmallValueNode<uint16_t>(shared_from_this(), n.addr_));
             break;
         case Int16:
-            cb(SmallScalarNode<int16_t>(shared_from_this(), n.addr_));
+            cb(SmallValueNode<int16_t>(shared_from_this(), n.addr_));
             break;
         case Bool:
-            cb(SmallScalarNode<bool>(shared_from_this(), n.addr_));
+            cb(SmallValueNode<bool>(shared_from_this(), n.addr_));
             break;
-        case VirtualValue:
+        case Scalar:
             cb(ValueNode(n));
             break;
         default:
@@ -50,6 +50,11 @@ struct ModelPool::Impl
         columns_.stringData_.reserve(detail::ColumnPageSize*4);
     }
 
+    struct StringRange {
+        uint32_t offset_;
+        uint32_t length_;
+    };
+
     /// This model pool's field name store
     std::shared_ptr<Fields> fieldNames_;
 
@@ -61,7 +66,7 @@ struct ModelPool::Impl
         sfl::segmented_vector<double, detail::ColumnPageSize> double_;
 
         std::string stringData_;
-        sfl::segmented_vector<StringNode::Data, detail::ColumnPageSize> strings_;
+        sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
 
         ArrayArena<Object::Field, detail::ColumnPageSize*2> objectMemberArrays_;
         ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2> arrayMemberArrays_;
@@ -179,12 +184,12 @@ void ModelPool::resolve(
     }
     case Int64: {
         auto& val = get(impl_->columns_.i64_);
-        cb(ScalarNode<int64_t>(val, shared_from_this(), n.addr_));
+        cb(ValueNode(val, shared_from_this()));
         break;
     }
     case Double: {
         auto& val = get(impl_->columns_.double_);
-        cb(ScalarNode<double>(val, shared_from_this(), n.addr_));
+        cb(ValueNode(val, shared_from_this()));
         break;
     }
     case Vertex: {
@@ -194,10 +199,10 @@ void ModelPool::resolve(
     }
     case String: {
         auto& val = get(impl_->columns_.strings_);
-        cb(StringNode(
-            std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.size_),
-            shared_from_this(),
-            n.addr_));
+        cb(ValueNode(
+            // TODO: Make sure that the string view is not turned into a string here.
+            std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
+            shared_from_this()));
         break;
     }
     default:
@@ -272,9 +277,9 @@ ModelNode::Ptr ModelPool::newValue(double const& value)
 
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 {
-    impl_->columns_.strings_.emplace_back(StringNode::Data{
-        impl_->columns_.stringData_.size(),
-        value.size()
+    impl_->columns_.strings_.emplace_back(Impl::StringRange{
+        (uint32_t)impl_->columns_.stringData_.size(),
+        (uint32_t)value.size()
     });
     impl_->columns_.stringData_ += value;
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
