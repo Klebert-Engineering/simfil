@@ -145,8 +145,8 @@ public:
     std::shared_ptr<Fields> fieldNames() const;
 
     /// Serialization
-    void write(std::ostream& outputStream);
-    void read(std::istream& inputStream);
+    virtual void write(std::ostream& outputStream);
+    virtual void read(std::istream& inputStream);
 
 protected:
     struct Impl;

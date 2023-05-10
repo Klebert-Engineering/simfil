@@ -93,36 +93,48 @@ TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
 TEST_CASE("Serialization", "[yaml.complex.serialization]") {
     auto model = json::parse(invoice);
 
-    std::stringstream serializedModel;
-    model->write(serializedModel);
+    SECTION("Test Model write/read")
+    {
+        std::stringstream stream;
+        model->write(stream);
 
-    auto buf = serializedModel.str();
-    std::cout << "Serialized model: " << buf.size() << " bytes:" <<  std::endl;
-    for (auto chIdx = 0; chIdx < buf.size(); ++chIdx)
-        std::cout << "- at " << chIdx << ": " << (uint32_t)(uint8_t)buf[chIdx] << std::endl;
+        auto recoveredModel = std::make_shared<ModelPool>();
+        recoveredModel->read(stream);
 
-
-    auto recoveredModel = std::make_shared<ModelPool>();
-    recoveredModel->read(serializedModel);
-
-    std::function<void(ModelNode::Ptr,ModelNode::Ptr)> require_equals = [&] (auto l, auto r) {
-        REQUIRE(l->type() == r->type());
-        switch(l->type()) {
-        case ValueType::Object:
-        case ValueType::Array: {
-            REQUIRE(l->size() == r->size());
-            for (auto i = 0; i < l->size(); ++i) {
-                if (l->type() == ValueType::Object)
-                    REQUIRE(l->keyAt(i) == r->keyAt(i));
-                require_equals(l->at(i), r->at(i));
+        std::function<void(ModelNode::Ptr, ModelNode::Ptr)> require_equals = [&](auto l, auto r)
+        {
+            REQUIRE(l->type() == r->type());
+            switch (l->type()) {
+            case ValueType::Object:
+            case ValueType::Array: {
+                REQUIRE(l->size() == r->size());
+                for (auto i = 0; i < l->size(); ++i) {
+                    if (l->type() == ValueType::Object)
+                        REQUIRE(l->keyAt(i) == r->keyAt(i));
+                    require_equals(l->at(i), r->at(i));
+                }
+                break;
             }
-            break;
-        }
-        default:
-            REQUIRE(l->value() == r->value());
-        }
-    };
+            default: REQUIRE(l->value() == r->value());
+            }
+        };
 
-    REQUIRE(model->numRoots() == recoveredModel->numRoots());
-    require_equals(model->root(0), recoveredModel->root(0));
+        REQUIRE(model->numRoots() == recoveredModel->numRoots());
+        require_equals(model->root(0), recoveredModel->root(0));
+    }
+
+    SECTION("Test Fields write/read")
+    {
+        std::stringstream stream;
+        model->fieldNames()->write(stream);
+
+        auto recoveredFields = std::make_shared<Fields>();
+        recoveredFields->read(stream);
+
+        REQUIRE(model->fieldNames()->size() == recoveredFields->size());
+        REQUIRE(model->fieldNames()->highest() == recoveredFields->highest());
+        REQUIRE(model->fieldNames()->bytes() == recoveredFields->bytes());
+        for (FieldId fieldId = 0; fieldId <= recoveredFields->highest(); ++fieldId)
+            REQUIRE(model->fieldNames()->resolve(fieldId) == recoveredFields->resolve(fieldId));
+    }
 }

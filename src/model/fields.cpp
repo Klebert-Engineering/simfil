@@ -1,6 +1,11 @@
 #include "simfil/model/fields.h"
 
 #include <algorithm>
+#include <bitsery/bitsery.h>
+#include <bitsery/adapter/stream.h>
+#include <bitsery/traits/string.h>
+#include <stx/format.h>
+#include <cmath>
 
 namespace simfil
 {
@@ -46,9 +51,9 @@ FieldId Fields::emplace(std::string_view const& str)
         std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
         auto [it, insertionTookPlace] = idForString_.emplace(lowerCaseStr, nextId_);
         if (insertionTookPlace) {
-            ++cacheMisses_;
+            stringForId_.emplace(nextId_, str);
             byteSize_ += (int64_t)str.size();
-            stringForId_[nextId_] = str;
+            ++cacheMisses_;
             ++nextId_;
         }
         return it->second;
@@ -82,23 +87,27 @@ std::optional<std::string_view> Fields::resolve(FieldId const& id)
     return std::nullopt;
 }
 
-size_t Fields::size()
+FieldId Fields::highest() const {
+    return nextId_ - 1;
+}
+
+size_t Fields::size() const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     return idForString_.size();
 }
 
-size_t Fields::bytes()
+size_t Fields::bytes() const
 {
     return byteSize_;
 }
 
-size_t Fields::hits()
+size_t Fields::hits() const
 {
     return cacheHits_;
 }
 
-size_t Fields::misses()
+size_t Fields::misses() const
 {
     return cacheMisses_;
 }
@@ -113,6 +122,73 @@ void Fields::addStaticKey(FieldId k, std::string const& v) {
 
     idForString_[lowerCaseStr] = k;
     stringForId_[k] = v;
+}
+
+void Fields::write(std::ostream& outputStream, FieldId offset) const  // NOLINT
+{
+    std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
+    bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
+
+    // Calculate how many fields will be sent
+    FieldId sendFieldCount = 0;
+    for (FieldId fieldId = offset; fieldId <= highest(); ++fieldId) {
+        auto it = stringForId_.find(fieldId);
+        if (it != stringForId_.end())
+            ++sendFieldCount;
+    }
+    s.value2b(sendFieldCount);
+
+    // Send the field key-name pairs
+    for (FieldId fieldId = offset; fieldId <= highest(); ++fieldId) {
+        auto it = stringForId_.find(fieldId);
+        if (it != stringForId_.end()) {
+            s.value2b(fieldId);
+            // Don't support field names longer than 64kB.
+            s.text1b(it->second, std::numeric_limits<uint16_t>::max());
+        }
+    }
+}
+
+void Fields::read(std::istream& inputStream)
+{
+    std::shared_lock stringStoreWriteAccess_(stringStoreMutex_);
+    bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
+
+    // Determine how many fields are to be received
+    FieldId rcvFieldCount{};
+    s.value2b(rcvFieldCount);
+
+    // Read fields
+    for (auto i = 0; i < rcvFieldCount; ++i)
+    {
+        // Read field key
+        FieldId fieldId{};
+        s.value2b(fieldId);
+
+        // Don't support field names longer than 64kB.
+        std::string fieldName;
+        s.text1b(fieldName, std::numeric_limits<uint16_t>::max());
+        auto lowerCaseFieldName = std::string(fieldName);
+
+        // Insert field name into pool
+        std::transform(
+            lowerCaseFieldName.begin(),
+            lowerCaseFieldName.end(),
+            lowerCaseFieldName.begin(),
+            [](auto ch) { return std::tolower(ch); });
+        auto [it, insertionTookPlace] = idForString_.emplace(lowerCaseFieldName, fieldId);
+        if (insertionTookPlace) {
+            stringForId_.emplace(fieldId, fieldName);
+            byteSize_ += (int64_t)fieldName.size();
+            nextId_ = std::max((FieldId)nextId_, (FieldId)(fieldId + 1));
+        }
+    }
+
+    if (!s.adapter().isCompletedSuccessfully()) {
+        throw std::runtime_error(stx::format(
+            "Failed to read ModelPool: Error {}",
+            static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
+    }
 }
 
 }

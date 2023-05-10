@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
-#include <unordered_map>
 #include <vector>
 #include "stx/format.h"
 #include "simfil/model/bitsery-traits.h"
@@ -14,7 +13,6 @@
 #include <sfl/segmented_vector.hpp>
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/stream.h>
-#include <bitsery/traits/vector.h>
 #include <bitsery/traits/string.h>
 
 namespace simfil
