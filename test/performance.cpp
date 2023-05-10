@@ -158,7 +158,9 @@ TEST_CASE("Small model performance queries", "[perf.big-model-benchmark]") {
 TEST_CASE("Big model queries", "[perf.big-model-queries]") {
     const auto model = generate_model(1000);
 
+    CALLGRIND_START_INSTRUMENTATION;
     REQUIRE_RESULT("count(typeof ** == 'notatype')", "0");
     REQUIRE_RESULT("count(**.id == 250)", "1");
     REQUIRE_RESULT("count(*.id == 250)", "1");
+    CALLGRIND_STOP_INSTRUMENTATION;
 }
