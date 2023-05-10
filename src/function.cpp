@@ -1,5 +1,6 @@
 #include "simfil/function.h"
 
+#include "simfil/result.h"
 #include "simfil/operator.h"
 #include "simfil/environment.h"
 #include "simfil/model/model.h"
@@ -70,7 +71,7 @@ struct ArgParser
             throw std::runtime_error(fname + ": missing argument "s + name);
 
         auto subctx = ctx;
-        args[idx]->eval(subctx, value, [&, n = 0](auto, auto vv) mutable {
+        args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable {
             if (++n > 1)
                 throw std::runtime_error(fname + ": argument "s + name + " must return a single value"s);
 
@@ -86,7 +87,7 @@ struct ArgParser
             outValue = std::move(vv);
 
             return Result::Continue;
-        });
+        }));
 
         ++idx;
         return *this;
@@ -101,7 +102,7 @@ struct ArgParser
         }
 
         auto subctx = ctx;
-        args[idx]->eval(subctx, value, [&, n = 0](auto, auto vv) mutable {
+        args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable {
             if (++n > 1)
                 throw std::runtime_error(fname + ": argument "s + name + " must return a single value"s);
 
@@ -117,7 +118,7 @@ struct ArgParser
             outValue = std::move(vv);
             if (set) *set = true;
             return Result::Continue;
-        });
+        }));
 
         ++idx;
         return *this;
@@ -153,7 +154,7 @@ auto AnyFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
         throw std::runtime_error("any(...) expects one argument; got "s + std::to_string(args.size()));
@@ -163,7 +164,7 @@ auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
     auto undef = false;  /* At least one value is undef */
 
     for (const auto& arg : args) {
-        arg->eval(ctx, val, [&](auto, auto vv) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, Value vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -173,7 +174,7 @@ auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
 
             result = result || boolify(std::move(vv));
             return result ? Result::Stop : Result::Continue;
-        });
+        }));
 
         if (result || undef)
             break;
@@ -198,7 +199,7 @@ auto EachFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
         throw std::runtime_error("each(...) expects one argument; got "s + std::to_string(args.size()));
@@ -208,7 +209,7 @@ auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resu
     auto undef = false; /* At least one value is undef */
 
     for (const auto& arg : args) {
-        arg->eval(ctx, val, [&](auto, auto vv) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, Value vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -217,7 +218,7 @@ auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resu
             }
             result = result && boolify(std::move(vv));
             return result ? Result::Continue : Result::Stop;
-        });
+        }));
 
         if (!result || undef)
             break;
@@ -242,7 +243,7 @@ auto CountFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
         throw std::runtime_error("count(...) expects one argument; got "s + std::to_string(args.size()));
@@ -252,7 +253,7 @@ auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Res
     int64_t count = 0;
 
     for (const auto& arg : args) {
-        arg->eval(ctx, val, [&](auto, auto vv) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, Value vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -261,7 +262,7 @@ auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Res
             }
             count += boolify(std::move(vv)) ? 1 : 0;
             return Result::Continue;
-        });
+        }));
 
         if (undef)
             break;
@@ -286,7 +287,7 @@ auto TraceFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     Value name  = Value::undef();
     Value limit = Value::undef();
@@ -306,7 +307,7 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Res
     auto values = std::vector<Value>();
 
     auto start = std::chrono::steady_clock::now();
-    auto result = args[0]->eval(ctx, val, [&, n = 0](auto ctx, auto vv) mutable {
+    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         if (ilimit < 0 || n++ <= ilimit) {
             // Do not allow string view to leak into the trace result.
             auto copy = vv;
@@ -315,7 +316,7 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Res
             values.emplace_back(std::move(copy));
         }
         return res(std::move(ctx), std::move(vv));
-    });
+    }));
     auto duration = std::chrono::steady_clock::now() - start;
 
     ctx.env->trace(sname, [&](auto& t) {
@@ -347,7 +348,7 @@ auto RangeFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() != 2)
         throw std::runtime_error("range(begin, end) expects 2 arguments; got "s + std::to_string(args.size()));
@@ -383,15 +384,15 @@ auto ArrFn::ident() const -> const FnInfo&
 }
 
 
-auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.empty())
         return res(ctx, Value::null());
 
     for (const auto& arg : args) {
-        if (arg->eval(ctx, val, [&res](auto ctx, auto vv) {
+        if (arg->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value vv) {
             return res(ctx, std::move(vv));
-        }) == Result::Stop)
+        })) == Result::Stop)
             return Result::Stop;
     }
 
@@ -412,7 +413,7 @@ auto SplitFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     Value str = Value::undef();
     Value sep = Value::undef();
@@ -451,7 +452,7 @@ auto SelectFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     Value idx = Value::undef();
     Value cnt = Value::undef();
@@ -470,7 +471,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Re
     if (icnt <= 0)
         icnt = std::numeric_limits<int>::max();
 
-    auto result = args[0]->eval(ctx, val, [&, n = -1](auto ctx, auto vv) mutable {
+    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = -1](Context ctx, Value vv) mutable {
         ++n;
         if (ctx.phase == Context::Phase::Compilation)
             if (vv.isa(ValueType::Undef))
@@ -480,7 +481,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Re
         if (n >= iidx)
             return res(ctx, std::move(vv));
         return Result::Continue;
-    });
+    }));
 
     return result;
 }
@@ -499,7 +500,7 @@ auto SumFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1 || args.size() > 3)
         throw std::runtime_error("sum: Expected at least 1 argument; got "s + std::to_string(args.size()));
@@ -509,23 +510,23 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
     const Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
     const Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
     if (initval)
-        (void)initval->eval(ctx, val, [&](auto ctx, auto vv) {
+        (void)initval->eval(ctx, val, LambdaResultFn([&](Context ctx, Value vv) {
             sum = std::move(vv);
             return Result::Continue;
-        });
+        }));
 
-    (void)args[0]->eval(ctx, val, [&, n = 0](auto ctx, Value vv) mutable {
+    (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         if (subexpr) {
             auto ov = shared_model_ptr<OverlayNode>::make(vv);
             ov->set(Fields::OverlaySum, sum);
             ov->set(Fields::OverlayValue, vv);
             ov->set(Fields::OverlayIndex, Value::make((int64_t)n++));
 
-            subexpr->eval(ctx, Value::field(*ov), [&ov, &sum](auto ctx, auto vv) {
+            subexpr->eval(ctx, Value::field(*ov), LambdaResultFn([&ov, &sum](auto ctx, auto vv) {
                 ov->set(Fields::OverlaySum, vv);
                 sum = vv;
                 return Result::Continue;
-            });
+            }));
         } else {
             if (sum.isa(ValueType::Null)) {
                 sum = std::move(vv);
@@ -535,7 +536,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
         }
 
         return Result::Continue;
-    });
+    }));
 
     return res(std::move(ctx), sum);
 }
@@ -554,12 +555,12 @@ auto KeysFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() != 1)
         throw std::runtime_error("keys: Expected 1 argument; got "s + std::to_string(args.size()));
 
-    auto result = args[0]->eval(ctx, val, [&res](auto ctx, Value vv) {
+    auto result = args[0]->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value vv) {
         if (ctx.phase == Context::Phase::Compilation)
             if (vv.isa(ValueType::Undef))
                 return res(ctx, std::move(vv));
@@ -572,7 +573,7 @@ auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resu
                 }
             }
         return Result::Continue;
-    });
+    }));
 
     return result;
 }
