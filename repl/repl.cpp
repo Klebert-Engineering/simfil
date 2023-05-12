@@ -2,6 +2,7 @@
 #include "simfil/expression.h"
 #include "simfil/value.h"
 #include "simfil/model/model.h"
+#include "simfil/intrusive_ptr.h"
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
 #  include "simfil/model/json.h"
@@ -102,7 +103,7 @@ static std::string input(const char* prompt = "> ")
     return r;
 }
 
-static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const std::shared_ptr<simfil::ModelPool>& model)
+static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const simfil::intrusive_ptr<simfil::ModelPool>& model)
 {
     std::vector<std::vector<simfil::Value>> result;
     result.resize(std::max<size_t>(1, model->numRoots()));
@@ -149,7 +150,7 @@ int main(int argc, char *argv[])
     rl_attempted_completion_function = command_completion;
 #endif
 
-    auto model = std::make_shared<simfil::ModelPool>();
+    auto model = simfil::make_intrusive<simfil::ModelPool>();
 #if defined(SIMFIL_WITH_MODEL_JSON)
     for (auto arg = argv + 1; *arg; ++arg) {
         std::cout << "Parsing " << *arg << "\n";

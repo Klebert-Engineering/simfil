@@ -59,7 +59,7 @@ void parse(const std::string& input, ModelPoolPtr const& model)
 
 ModelPoolPtr parse(const std::string& input)
 {
-    auto model = std::make_shared<simfil::ModelPool>();
+    auto model = make_intrusive<simfil::ModelPool>();
     model->addRoot(build(json::parse(input), *model));
     model->validate();
     return model;

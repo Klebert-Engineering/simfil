@@ -90,7 +90,7 @@ static auto generate_sub_tree_n(ModelPoolPtr& m) -> ModelNode::Ptr
 /* Generate `n` test model objects. */
 static auto generate_model(std::size_t n)
 {
-    auto model = std::make_shared<simfil::ModelPool>();
+    auto model = make_intrusive<simfil::ModelPool>();
     model->addRoot(generate_n(model, n, [&, i = 0u](auto& m) mutable {
         ++i;
         return generate_object(m, [&](auto& m) {

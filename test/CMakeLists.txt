@@ -16,6 +16,7 @@ add_executable(test.simfil
   complex.cpp
   ext-geo.cpp
   performance.cpp
+  intrusive_ptr.cpp
   arena.cpp)
 
 target_link_libraries(test.simfil

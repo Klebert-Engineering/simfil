@@ -48,7 +48,7 @@ TEST_CASE("Polygon", "[geo.polygon]") {
 TEST_CASE("GeometryCollection", "[geom_collection]") {
 
     SECTION("Construct GeometryCollection") {
-        auto model_pool = std::make_shared<ModelPool>();
+        auto model_pool = make_intrusive<ModelPool>();
         auto geometry_collection = model_pool->newGeometryCollection();
 
         REQUIRE(geometry_collection->type() == ValueType::Object);
@@ -56,7 +56,7 @@ TEST_CASE("GeometryCollection", "[geom_collection]") {
     }
 
     SECTION("Construct Geometry and Add to GeometryCollection") {
-        auto model_pool = std::make_shared<ModelPool>();
+        auto model_pool = make_intrusive<ModelPool>();
         auto geometry_collection = model_pool->newGeometryCollection();
         auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
 
@@ -70,7 +70,7 @@ TEST_CASE("GeometryCollection", "[geom_collection]") {
 }
 
 TEST_CASE("Spatial Operators", "[spatial_ops]") {
-    auto model_pool = std::make_shared<ModelPool>();
+    auto model_pool = make_intrusive<ModelPool>();
 
     // Create a GeometryCollection with a Point
     auto geometry_collection = model_pool->newGeometryCollection();
@@ -110,7 +110,7 @@ TEST_CASE("Spatial Operators", "[spatial_ops]") {
 }
 
 TEST_CASE("GeometryCollection Multiple Geometries", "[geom_collection_multiple]") {
-    auto model_pool = std::make_shared<ModelPool>();
+    auto model_pool = make_intrusive<ModelPool>();
 
     // Points
     BigPoint a{2, 3}, b{1, 1}, c{4, 4}, d{0, 0}, e{5, 0}, f{2.5, 5};

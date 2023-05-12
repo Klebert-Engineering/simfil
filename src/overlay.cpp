@@ -1,4 +1,5 @@
 #include "simfil/overlay.h"
+#include "simfil/intrusive_ptr.h"
 
 namespace simfil
 {
@@ -8,11 +9,11 @@ void OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
     cb(OverlayNode(n));
 }
 
-OverlayNode::OverlayNode(Value const& val)
+OverlayNode::OverlayNode(Value const &val)
     : MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>(
-          std::make_shared<OverlayNodeStorage>(val),
-          {ModelPool::Objects, 0})
-{}
+          make_intrusive<OverlayNodeStorage>(val),
+          {ModelPool::Objects, 0}) {
+}
 
 OverlayNode::OverlayNode(ModelNode const& n)
     : MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>(n)

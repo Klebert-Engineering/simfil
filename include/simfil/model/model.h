@@ -3,6 +3,7 @@
 #pragma once
 
 #include "simfil/value.h"
+#include "simfil/intrusive_ptr.h"
 
 #include <algorithm>
 #include <memory>
@@ -18,7 +19,7 @@ namespace simfil
 /**
  * Basic node model which only resolves trivial node types.
  */
-class Model : public std::enable_shared_from_this<Model>
+class Model : public ref_counted<Model>
 {
 public:
     enum TrivialColumnId : uint8_t {

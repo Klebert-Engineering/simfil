@@ -16,6 +16,12 @@ ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType 
     : pool_(std::move(pool)), addr_(addr), data_(std::move(data))
 {}
 
+ModelNode::ModelNode() = default;
+ModelNode::ModelNode(ModelNode const&) = default;
+ModelNode::ModelNode(ModelNode&&) = default;
+ModelNode& ModelNode::operator= (ModelNode const&) = default;
+ModelNode::~ModelNode() = default;
+
 /// Get the node's scalar value if it has one
 ScalarValueType ModelNode::value() const {
     ScalarValueType result;
@@ -109,7 +115,7 @@ uint32_t ModelNodeBase::size() const
 /** Model Node impls. for arbitrary self-contained value storage. */
 
 ValueNode::ValueNode(ScalarValueType const& value)
-    : ModelNodeBase(std::make_shared<Model>(), Model::Scalar, value)
+    : ModelNodeBase(make_intrusive<Model>(), Model::Scalar, value)
 {}
 
 ValueNode::ValueNode(const ScalarValueType& value, const ModelConstPtr& p)

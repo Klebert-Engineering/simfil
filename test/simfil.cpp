@@ -368,7 +368,7 @@ TEST_CASE("GeoJSON", "[geojson.geo]") {
 }
 
 TEST_CASE("Model Pool Validation", "[model.validation]") {
-    auto pool = std::make_shared<ModelPool>();
+    auto pool = make_intrusive<ModelPool>();
 
     // Recognize dangling object member pointer
     pool->clear();

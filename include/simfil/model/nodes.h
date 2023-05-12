@@ -5,6 +5,7 @@
 #include "arena.h"
 #include "point.h"
 #include "fields.h"
+#include "simfil/intrusive_ptr.h"
 
 #include "sfl/small_vector.hpp"
 
@@ -16,9 +17,9 @@ class ModelPool;
 class Model;
 struct ModelNode;
 
-using ModelConstPtr = std::shared_ptr<const Model>;
-using ModelPoolConstPtr = std::shared_ptr<const ModelPool>;
-using ModelPoolPtr = std::shared_ptr<ModelPool>;
+using ModelConstPtr = intrusive_ptr<const Model>;
+using ModelPoolConstPtr = intrusive_ptr<const ModelPool>;
+using ModelPoolPtr = intrusive_ptr<ModelPool>;
 
 /**
  * Simfil value types
@@ -143,6 +144,8 @@ struct ModelNode
     friend class Model;
     friend class OverlayNode;
 
+    ~ModelNode();
+
     /// Get the node's scalar value if it has one
     [[nodiscard]] virtual ScalarValueType value() const;
 
@@ -248,10 +251,10 @@ struct ModelNode
     [[nodiscard]] ChildIterator end() const { return {size(), this}; }
 
 protected:
-    ModelNode() = default;
-    ModelNode(ModelNode const&) = default;
-    ModelNode(ModelNode&&) = default;
-    ModelNode& operator= (ModelNode const&) = default;
+    ModelNode();
+    ModelNode(ModelNode const&);
+    ModelNode(ModelNode&&);
+    ModelNode& operator= (ModelNode const&);
     ModelNode(ModelConstPtr, ModelNodeAddress, ScalarValueType data={});
 
     /// Extra data for the node
