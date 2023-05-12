@@ -84,7 +84,7 @@ public:
     GeoFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 /** GeoJSON geometry constructors */
@@ -96,7 +96,7 @@ public:
     PointFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 class BBoxFn : public Function
@@ -107,7 +107,7 @@ public:
     BBoxFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 class LineStringFn : public Function
@@ -118,7 +118,7 @@ public:
     LineStringFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 /* TODO: Not implemented
@@ -130,7 +130,7 @@ public:
     PolygonFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 */
 

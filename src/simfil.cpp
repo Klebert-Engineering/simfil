@@ -22,7 +22,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <cassert>
-#include <functional>
 #include <vector>
 #include <deque>
 
@@ -102,22 +101,23 @@ static auto expect(const ExprPtr& e, Type... types)
  * Helper for calling the result function if it has never been executed
  * at the time of destruction.
  */
-struct CountedResultFn
+template <class InnerFn = const ResultFn&>
+struct CountedResultFn : ResultFn
 {
-    size_t calls = 0;
+    mutable std::size_t calls = 0;
     bool finished = false;
-    ResultFn fn;
+    InnerFn fn;
     Context nonctx;
 
-    CountedResultFn(ResultFn fn, Context ctx)
-        : fn(std::move(fn))
+    CountedResultFn(InnerFn fn, Context ctx)
+        : fn(fn)
         , nonctx(std::move(ctx))
     {}
 
     CountedResultFn(const CountedResultFn&) = delete;
     CountedResultFn(CountedResultFn&&) = delete;
 
-    auto operator()(Context ctx, Value vv) -> Result
+    auto operator()(Context ctx, Value vv) const -> Result override
     {
         assert(!finished);
         ++calls;
@@ -149,29 +149,36 @@ public:
         return Type::PATH;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn ores) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
     {
         if (ctx.phase == Context::Phase::Compilation)
             return ores(ctx, Value::undef());
 
-        auto res = CountedResultFn(std::move(ores), ctx);
+        CountedResultFn<const ResultFn&> res(ores, ctx);
 
-        std::function<Result(Value, int)> iterate = [&iterate, &res, &ctx](Value val, int depth) {
-            if (!val.node)
+        struct Iterate
+        {
+            Context& ctx;
+            ResultFn& res;
+
+            auto iterate(Value val, int depth) {
+              if (!val.node)
                 return Result::Continue;
 
-            if (res(ctx, val) == Result::Stop)
+              if (res(ctx, val) == Result::Stop)
                 return Result::Stop;
 
-            for (auto&& subNode : *val.node) {
-                if (iterate(Value::field(*subNode), depth + 1) == Result::Stop)
-                    return Result::Stop;
-            }
+              for (auto &&subNode : *val.node) {
+                if (iterate(Value::field(*subNode), depth + 1) ==
+                    Result::Stop)
+                  return Result::Stop;
+              }
 
-            return Result::Continue;
+              return Result::Continue;
+            };
         };
 
-        auto r = iterate(val, 0);
+        auto r = Iterate{ctx, res}.iterate(val, 0);
         res.ensureCall();
         return r;
     }
@@ -196,7 +203,7 @@ public:
         return Type::PATH;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         if (ctx.phase == Context::Phase::Compilation)
             return res(ctx, Value::undef());
@@ -234,7 +241,7 @@ public:
         return Type::PATH;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         if (val.isa(ValueType::Undef))
             return res(ctx, std::move(val));
@@ -287,7 +294,7 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value, const ResultFn& res) const -> Result override
     {
         for (const auto& v : values_) {
             if (res(ctx, v) == Result::Stop)
@@ -330,7 +337,7 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value, const ResultFn& res) const -> Result override
     {
         return res(ctx, value_);
     }
@@ -359,12 +366,12 @@ public:
         return Type::SUBSCRIPT;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn ores) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
     {
-        auto res = CountedResultFn(std::move(ores), ctx);
+        auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-        auto r = left_->eval(ctx, val, [this, &val, &res](auto ctx, Value lval) {
-            return index_->eval(ctx, val, [this, &res, &lval](auto ctx, Value ival) {
+        auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, Value lval) {
+            return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, Value ival) {
                 /* Field subscript */
                 if (lval.node) {
                     ModelNode::Ptr node;
@@ -390,8 +397,8 @@ public:
                 }
 
                 return Result::Continue;
-            });
-        });
+            }));
+        }));
         res.ensureCall();
         return r;
     }
@@ -423,13 +430,13 @@ public:
         return Type::SUBEXPR;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn ores) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
     {
         /* Do not return null unless we have _no_ matching value. */
-        auto res = CountedResultFn(std::move(ores), ctx);
+        auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-        auto r = left_->eval(ctx, val, [this, &res](auto ctx, auto lv) {
-            return sub_->eval(ctx, lv, [this, &res, &lv](auto ctx, auto vv) {
+        auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value lv) {
+            return sub_->eval(ctx, lv, LambdaResultFn([this, &res, &lv](Context ctx, Value vv) {
                 auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
                 if (bv.isa(ValueType::Undef))
                     return Result::Continue;
@@ -438,8 +445,8 @@ public:
                     return res(ctx, lv);
 
                 return Result::Continue;
-            });
-        });
+            }));
+        }));
         res.ensureCall();
         return r;
     }
@@ -466,7 +473,7 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         if (!fn_)
             fn_ = ctx.env->findFunction(name_);
@@ -474,10 +481,10 @@ public:
             throw std::runtime_error("Unknown function "s + name_);
 
         auto anyval = false;
-        auto result = fn_->eval(ctx, val, args_, [&res, &anyval](auto ctx, auto vv) {
+        auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](Context ctx, Value vv) {
             anyval = true;
             return res(ctx, std::move(vv));
-        });
+        }));
 
         if (!anyval)
             return res(ctx, Value::null()); /* Expressions _must_ return at least one value! */
@@ -522,18 +529,18 @@ public:
         return Type::PATH;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn ores) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
     {
-        auto res = CountedResultFn(std::move(ores), ctx);
+        auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-        auto r = left_->eval(ctx, val, [this, &res](auto ctx, auto v) {
+        auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value v) {
             if (v.isa(ValueType::Undef))
                 return Result::Continue;
 
             if (v.isa(ValueType::Null) && !v.node)
                 return Result::Continue;
 
-            return right_->eval(ctx, std::move(v), [this, &res](auto ctx, auto vv) {
+            return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value vv) {
                 if (vv.isa(ValueType::Undef))
                     return Result::Continue;
 
@@ -541,8 +548,8 @@ public:
                     return Result::Continue;
 
                 return res(ctx, std::move(vv));
-            });
-        });
+            }));
+        }));
         res.ensureCall();
         return r;
     };
@@ -572,10 +579,10 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         auto anyval = false;
-        auto r = sub_->eval(ctx, val, [&res, &anyval](auto ctx, Value v) {
+        auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value v) {
             if (v.isa(ValueType::TransientObject)) {
                 const auto& obj = v.as<ValueType::TransientObject>();
                 auto r = Result::Continue;
@@ -592,7 +599,7 @@ public:
                     return Result::Stop;
             }
             return Result::Continue;
-        });
+        }));
 
         if (!anyval)
             r = res(ctx, Value::null());
@@ -623,11 +630,11 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
-        return sub_->eval(ctx, val, [&](auto ctx, auto vv) {
+        return sub_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value vv) {
             return res(ctx, UnaryOperatorDispatcher<_Operator>::dispatch(std::move(vv)));
-        });
+        }));
     }
 
     auto toString() const -> std::string override
@@ -658,14 +665,14 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
-        return left_->eval(ctx, val, [this, &res, &val](auto ctx, auto lv) {
-            return right_->eval(ctx, val, [this, &res, &lv](auto ctx, auto rv) {
+        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
+            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) {
                 return res(ctx, BinaryOperatorDispatcher<_Operator>::dispatch(std::move(lv),
                                                                               std::move(rv)));
-            });
-        });
+            }));
+        }));
     }
 
     auto toString() const -> std::string override
@@ -689,9 +696,9 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
-        return left_->eval(ctx, val, [this, &res](auto ctx, Value val) {
+        return left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value val) {
             if (val.isa(ValueType::Undef))
                 return res(ctx, std::move(val));
 
@@ -702,7 +709,7 @@ public:
 
             throw std::runtime_error(stx::format("Invalid operator '{}' for value of type {}",
                                                  ident_, valueType2String(val.type)));
-        });
+        }));
     }
 
     auto toString() const -> std::string override
@@ -728,10 +735,10 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
-        return left_->eval(ctx, val, [this, &res, &val](auto ctx, auto lval) {
-            return right_->eval(ctx, val, [this, &res, &lval](auto ctx, auto rval) {
+        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
+            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, Value rval) {
                 if (lval.isa(ValueType::Undef) || rval.isa(ValueType::Undef))
                     return res(ctx, Value::undef());
 
@@ -747,8 +754,8 @@ public:
 
                 throw std::runtime_error(stx::format("Invalid operator '{}' for values of type {} and {}",
                                                      ident_, valueType2String(lval.type), valueType2String(rval.type)));
-            });
-        });
+            }));
+        }));
     }
 
     auto toString() const -> std::string override
@@ -776,11 +783,11 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         /* Operator and behaves like in lua:
          * 'a and b' returns a if 'not a?' else b is returned */
-        return left_->eval(ctx, val, [this, &res, &val](auto ctx, auto lval) {
+        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
             if (lval.isa(ValueType::Undef))
                 return res(ctx, lval);
 
@@ -788,10 +795,10 @@ public:
                 if (!v.template as<ValueType::Bool>())
                     return res(ctx, std::move(lval));
 
-            return right_->eval(ctx, val, [&res](auto ctx, auto rval) {
+            return right_->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value rval) {
                 return res(ctx, std::move(rval));
-            });
-        });
+            }));
+        }));
     }
 
     auto toString() const -> std::string override
@@ -818,11 +825,11 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, Value val, ResultFn res) const -> Result override
+    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         /* Operator or behaves like in lua:
          * 'a or b' returns a if 'a?' else b is returned */
-        return left_->eval(ctx, val, [this, &res, &val](auto ctx, auto lval) {
+        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
             if (lval.isa(ValueType::Undef))
                 return res(ctx, lval);
 
@@ -830,10 +837,10 @@ public:
                 if (v.template as<ValueType::Bool>())
                     return res(ctx, std::move(lval));
 
-            return right_->eval(ctx, val, [&](auto ctx, auto rval) {
+            return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value rval) {
                 return res(ctx, std::move(rval));
-            });
-        });
+            }));
+        }));
 
     }
 
@@ -856,7 +863,7 @@ static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
 
     std::deque<Value> values;
     auto stub = Context(env, Context::Phase::Compilation);
-    (void)expr->eval(stub, Value::undef(), [&, n = 0](auto ctx, auto vv) mutable {
+    (void)expr->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         if (!vv.isa(ValueType::Undef) || vv.node) {
             values.push_back(std::move(vv));
             return Result::Continue;
@@ -869,7 +876,7 @@ static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
 
         values.clear();
         return Result::Stop;
-    });
+    }));
 
     /* Warn about constant results */
     if (!values.empty() && std::all_of(values.begin(), values.end(), [](const Value& v) {
@@ -1313,10 +1320,10 @@ auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t root
     Context ctx(&env);
 
     std::vector<Value> res;
-    ast.eval(ctx, Value::field(*model.root(rootIndex)), [&res](auto ctx, auto vv) {
+    ast.eval(ctx, Value::field(*model.root(rootIndex)), LambdaResultFn([&res](Context ctx, Value vv) {
         res.push_back(std::move(vv));
         return Result::Continue;
-    });
+    }));
 
     return res;
 }

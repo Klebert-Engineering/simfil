@@ -7,9 +7,8 @@
 #include <mutex>
 #include <sfl/segmented_vector.hpp>
 
-// Undef this to test the array arena without read-write locking.
-// In practice, this did not show a significant penalty.
-#define ARRAY_ARENA_THREAD_SAFE
+// Define this to enable array arena read-write locking.
+// #define ARRAY_ARENA_THREAD_SAFE
 
 namespace simfil
 {

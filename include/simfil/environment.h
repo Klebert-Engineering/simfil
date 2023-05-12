@@ -17,6 +17,7 @@ namespace simfil
 
 class Expr;
 class Function;
+struct ResultFn;
 struct Debug;
 
 /** Trace call stats. */
@@ -113,18 +114,11 @@ struct Context
 };
 
 /**
- * Result value callback.
- * Return `false` to stop evaluation.
- */
-enum Result { Continue = 1, Stop = 0 };
-using ResultFn = std::function<Result(Context, Value)>;
-
-/**
  * Debug interface
  */
 struct Debug
 {
-    std::function<void(const Expr&, Context&, Value&, ResultFn&)> evalBegin;
+    std::function<void(const Expr&, Context&, Value&, const ResultFn&)> evalBegin;
     std::function<void(const Expr&)> evalEnd;
 };
 

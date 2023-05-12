@@ -2,6 +2,7 @@
 
 #include "simfil/typed-meta-type.h"
 #include "simfil/value.h"
+#include "simfil/result.h"
 #include "simfil/operator.h"
 #include "simfil/model/model.h"
 
@@ -743,7 +744,7 @@ auto GeoFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() > 1)
         throw ArgumentCountError(*this, 0, 1, args.size());
@@ -881,9 +882,9 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, Resul
     };
 
     if (!args.empty())
-        return args[0]->eval(ctx, std::move(val), [&res, &eval](auto ctx, auto v) {
+        return args[0]->eval(ctx, std::move(val), LambdaResultFn([&res, &eval](auto ctx, auto v) {
             return eval(std::move(v));
-        });
+        }));
     return eval(std::move(val));
 };
 
@@ -898,7 +899,7 @@ auto PointFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto PointFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto PointFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() != 2)
         throw ArgumentCountError(*this, 2, 2, args.size());
@@ -934,7 +935,7 @@ auto BBoxFn::ident() const -> const FnInfo&
 }
 
 BBoxFn BBoxFn::Fn;
-auto BBoxFn::eval(Context ctx, Value v, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto BBoxFn::eval(Context ctx, Value v, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     /* Get the bounding box of other geometry types */
     if (args.size() == 1) {
@@ -1007,7 +1008,7 @@ auto LineStringFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
         throw ArgumentCountError(*this, 1, 1, args.size());
@@ -1022,7 +1023,7 @@ auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args
     floats.reserve(4);
 
     for (const auto& arg : args) {
-        (void)arg->eval(ctx, val, [&mode, &floats](auto, Value v) {
+        (void)arg->eval(ctx, val, LambdaResultFn([&mode, &floats](auto, Value v) {
             /* Argument 0 determines the argument type: Point<double> or Float, Float */
             if (mode == None)
                 mode = v.isa(ValueType::TransientObject) ? Points : Floats;
@@ -1042,7 +1043,7 @@ auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args
             }
 
             return Result::Continue;
-        });
+        }));
     }
 
     if (mode == Floats)
@@ -1070,7 +1071,7 @@ auto PolyognFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, ResultFn res) const -> Result
+auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     TODO: Implement.
 }
