@@ -161,24 +161,28 @@ public:
             Context& ctx;
             ResultFn& res;
 
-            auto iterate(Value val, int depth) {
-              if (!val.node)
-                return Result::Continue;
+            auto iterate(ModelNode const& val, int depth)
+            {
+                if (val.type() == ValueType::Null)
+                    return Result::Continue;
 
-              if (res(ctx, val) == Result::Stop)
-                return Result::Stop;
+                if (res(ctx, Value::field(val)) == Result::Stop)
+                    return Result::Stop;
 
-              for (auto &&subNode : *val.node) {
-                if (iterate(Value::field(*subNode), depth + 1) ==
-                    Result::Stop)
-                  return Result::Stop;
-              }
+                auto result = Result::Continue;
+                val.iterate(ModelNode::IterLambda([&, this](auto&& subNode) {
+                    if (iterate(subNode, depth + 1) == Result::Stop) {
+                        result = Result::Stop;
+                        return false;
+                    }
+                    return true;
+                }));
 
-              return Result::Continue;
+                return result;
             };
         };
 
-        auto r = Iterate{ctx, res}.iterate(val, 0);
+        auto r = Iterate{ctx, res}.iterate(*val.node, 0);
         res.ensureCall();
         return r;
     }
@@ -208,17 +212,17 @@ public:
         if (ctx.phase == Context::Phase::Compilation)
             return res(ctx, Value::undef());
 
-        if (!val.node)
+        if (!val.node || !val.node->size())
             return res(ctx, Value::null());
 
-        if (val.node->size() > 0) {
-            for (auto&& subNode : *val.node) {
-                if (res(ctx, Value::field(*subNode)) == Result::Stop)
-                    return Result::Stop;
+        auto result = Result::Continue;
+        val.node->iterate(ModelNode::IterLambda([&](auto&& subNode) {
+            if (res(ctx, Value::field(subNode)) == Result::Stop) {
+                result = Result::Stop;
+                return false;
             }
-        } else {
-            return res(ctx, Value::null());
-        }
+            return true;
+        }));
 
         return Result::Continue;
     }
@@ -617,7 +621,7 @@ public:
 /**
  * Generic unary operator expression.
  */
-template <class _Operator>
+template <class Operator>
 class UnaryExpr : public Expr
 {
 public:
@@ -633,13 +637,13 @@ public:
     auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         return sub_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value vv) {
-            return res(ctx, UnaryOperatorDispatcher<_Operator>::dispatch(std::move(vv)));
+            return res(ctx, UnaryOperatorDispatcher<Operator>::dispatch(std::move(vv)));
         }));
     }
 
     auto toString() const -> std::string override
     {
-        return "("s + _Operator::name() + " "s + sub_->toString() + ")"s;
+        return "("s + Operator::name() + " "s + sub_->toString() + ")"s;
     }
 
     ExprPtr sub_;
@@ -648,7 +652,7 @@ public:
 /**
  * Generic binary operator expression.
  */
-template <class _Operator>
+template <class Operator>
 class BinaryExpr : public Expr
 {
 public:
@@ -669,7 +673,7 @@ public:
     {
         return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
             return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) {
-                return res(ctx, BinaryOperatorDispatcher<_Operator>::dispatch(std::move(lv),
+                return res(ctx, BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv),
                                                                               std::move(rv)));
             }));
         }));
@@ -677,7 +681,7 @@ public:
 
     auto toString() const -> std::string override
     {
-        return "("s + _Operator::name() + " "s + left_->toString() + " "s + right_->toString() + ")"s;
+        return "("s + Operator::name() + " "s + left_->toString() + " "s + right_->toString() + ")"s;
     }
 
     ExprPtr left_, right_;
@@ -964,21 +968,21 @@ public:
  *
  * <expr> OP <expr>
  */
-template <class _Operator,
-          int _Precedence>
+template <class Operator,
+          int Precedence>
 class BinaryOpParser : public InfixParselet
 {
 public:
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
         auto right = p.parsePrecedence(precedence());
-        return simplifyOrForward(p.env, std::make_unique<BinaryExpr<_Operator>>(std::move(left),
+        return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(std::move(left),
                                                                                 std::move(right)));
     }
 
     int precedence() const override
     {
-        return _Precedence;
+        return Precedence;
     }
 };
 
@@ -987,25 +991,25 @@ public:
  *
  * ('-' | '~' | 'not') <expr>
  */
-template <class _Operator>
+template <class Operator>
 class UnaryOpParser : public PrefixParselet
 {
     auto parse(Parser& p, Token t) const -> ExprPtr override
     {
         auto sub = p.parsePrecedence(Precedence::UNARY);
-        return simplifyOrForward(p.env, std::make_unique<UnaryExpr<_Operator>>(std::move(sub)));
+        return simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(sub)));
     }
 };
 
 /**
  * Parse postfix unary operator.
  */
-template <class _Operator>
+template <class Operator>
 class UnaryPostOpParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryExpr<_Operator>>(std::move(left))), 0);
+        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(left))), 0);
     }
 
     auto precedence() const -> int override
@@ -1059,12 +1063,12 @@ class WordOpParser : public InfixParselet
  *
  * <token>
  */
-template <class _Type>
+template <class Type>
 class ScalarParser : public PrefixParselet
 {
     auto parse(Parser& p, Token t) const -> ExprPtr override
     {
-        return std::make_unique<ConstExpr>(std::get<_Type>(t.value));
+        return std::make_unique<ConstExpr>(std::get<Type>(t.value));
     }
 };
 

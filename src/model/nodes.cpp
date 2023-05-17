@@ -1,5 +1,6 @@
 #include "simfil/model/model.h"
 #include "simfil/value.h"
+#include "simfil/model/nodes.h"
 
 namespace simfil
 {
@@ -62,6 +63,12 @@ uint32_t ModelNode::size() const {
     if (pool_)
         pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.size(); }));
     return result;
+}
+
+/// Fast iteration
+void ModelNode::iterate(const IterCallback& cb) const {
+    if (pool_)
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { resolved.iterate(cb); }));
 }
 
 /** Model Node Base Impl. */
@@ -200,6 +207,20 @@ Array& Array::append(double const& value) {storage_->push_back(members_, pool().
 Array& Array::append(std::string_view const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
 Array& Array::append(ModelNode::Ptr const& value) {storage_->push_back(members_, value->addr()); return *this;}
 
+void Array::iterate(const ModelNode::IterCallback& cb) const
+{
+    auto cont = true;
+    auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
+        cont = cb(node);
+    });
+    auto length = storage_->size(members_);
+    for (auto i = 0; i < length; ++i) {
+        resolveAndCb(*ModelNode::Ptr::make(pool_, storage_->at(members_, i)));
+        if (!cont)
+            break;
+    }
+}
+
 /** Model Node impls for an object. */
 
 Object::Object(ArrayIndex i, ModelConstPtr pool_, ModelNodeAddress a)
@@ -291,6 +312,20 @@ Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& val
     return *this;
 }
 
+void Object::iterate(const ModelNode::IterCallback& cb) const
+{
+    auto cont = true;
+    auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
+        cont = cb(node);
+    });
+    auto length = storage_->size(members_);
+    for (auto i = 0; i < length; ++i) {
+        resolveAndCb(*ModelNode::Ptr::make(pool_, storage_->at(members_, i).node_));
+        if (!cont)
+            break;
+    }
+}
+
 /** Model node impls. for GeometryCollection */
 
 GeometryCollection::GeometryCollection(ModelConstPtr pool_, ModelNodeAddress a)
@@ -328,6 +363,12 @@ shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType ty
     auto result = pool().newGeometry(type, initialCapacity);
     pool().resolveArray(at(1))->append(ModelNode::Ptr(result));
     return result;
+}
+
+void GeometryCollection::iterate(const IterCallback& cb) const
+{
+    if (!cb(*at(0))) return;
+    if (!cb(*at(1))) return;
 }
 
 /** ModelNode impls. for Geometry */
@@ -387,6 +428,12 @@ Geometry::GeomType Geometry::geomType() const {
     return geomData_.type;
 }
 
+void Geometry::iterate(const IterCallback& cb) const
+{
+    if (!cb(*at(0))) return;
+    if (!cb(*at(1))) return;
+}
+
 /** ModelNode impls. for VertexBufferNode */
 
 VertexBufferNode::VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool_, ModelNodeAddress const& a)
@@ -417,6 +464,20 @@ ModelNode::Ptr VertexBufferNode::get(const FieldId &) const {
 
 FieldId VertexBufferNode::keyAt(int64_t) const {
     return {};
+}
+
+void VertexBufferNode::iterate(const IterCallback& cb) const
+{
+    auto cont = true;
+    auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
+        cont = cb(node);
+    });
+    auto length = size();
+    for (auto i = 0; i < length; ++i) {
+        resolveAndCb(*ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::Points, addr_.index()}, (int64_t)i));
+        if (!cont)
+            break;
+    }
 }
 
 /** Model node impls for vertex. */
@@ -457,6 +518,13 @@ FieldId VertexNode::keyAt(int64_t i) const {
     if (i == 1) return Fields::Lat;
     if (i == 2) return Fields::Elevation;
     throw std::out_of_range("vertex: Out of range.");
+}
+
+void VertexNode::iterate(const IterCallback& cb) const
+{
+    if (!cb(ValueNode(point_.x, pool_))) return;
+    if (!cb(ValueNode(point_.y, pool_))) return;
+    if (!cb(ValueNode(point_.z, pool_))) return;
 }
 
 }

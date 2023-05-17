@@ -164,6 +164,21 @@ struct ModelNode
     /// Get the node's address
     [[nodiscard]] inline ModelNodeAddress addr() const {return addr_;}
 
+    /// Fast iterator support
+    struct IterCallback
+    {
+        virtual ~IterCallback() = default;
+        virtual bool operator() (ModelNode const& resolved) const = 0;
+    };
+    template<typename T>
+    struct IterLambda : public IterCallback
+    {
+        IterLambda(T const& fn) : fn_(fn) {}  // NOLINT
+        bool operator() (ModelNode const& resolved) const override {return fn_(resolved);};
+        T fn_;
+    };
+    virtual void iterate(IterCallback const& cb) const;
+
     /// Iterator Support
     /// * `fieldNames()`: Returns range object which supports `for(FieldId const& f: node.fieldNames())`
     /// * `fields()`: Returns range object which supports `for(auto const& [fieldId, value] : node.fields())`
@@ -282,6 +297,7 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
+    void iterate(IterCallback const&) const override {}
 
 protected:
     ModelNodeBase(ModelConstPtr, ModelNodeAddress={}, ScalarValueType data={});  // NOLINT
@@ -364,6 +380,7 @@ struct Array : public MandatoryModelPoolNodeBase
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
+    void iterate(IterCallback const& cb) const override;
 
     Array& append(bool value);
     Array& append(uint16_t value);
@@ -393,6 +410,7 @@ struct Object : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
+    void iterate(IterCallback const& cb) const override;
 
     Object& addBool(std::string_view const& name, bool value);
     Object& addField(std::string_view const& name, uint16_t value);
@@ -453,6 +471,13 @@ class ProceduralObject : public Object
         return Object::keyAt(i - fields_.size());
     }
 
+    void iterate(IterCallback const& cb) const override {
+        for (auto const& [k, v] : fields_)
+            if (!cb(v))
+                return;
+        Object::iterate(cb);
+    }
+
 protected:
     ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a)
         : Object(i, pool, a) {}
@@ -485,6 +510,7 @@ struct Geometry : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
+    void iterate(IterCallback const& cb) const override;
 
     void append(geo::Point<double> const& p);
     [[nodiscard]] GeomType geomType() const;
@@ -522,6 +548,7 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
+    void iterate(IterCallback const& cb) const override;
 
     shared_model_ptr<Geometry> newGeometry(Geometry::GeomType type, size_t initialCapacity=4);
 
@@ -541,6 +568,7 @@ struct VertexBufferNode : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
+    void iterate(IterCallback const& cb) const override;
 
 protected:
     VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool, ModelNodeAddress const& a);
@@ -560,6 +588,7 @@ struct VertexNode : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
+    void iterate(IterCallback const& cb) const override;
 
 protected:
     VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData);

@@ -65,7 +65,7 @@ public:
      * Log a trace call.
      *
      * @param name  Trace identifier
-     * @param fn    Callback called thread-safe
+     * @param fn    IterCallback called thread-safe
      */
     auto trace(const std::string& name, std::function<void(Trace&)> fn) -> void;
 

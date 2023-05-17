@@ -59,4 +59,8 @@ auto OverlayNode::set(FieldId const& key, Value const& child) -> void
     return pool().value_.node->size();
 }
 
+void OverlayNode::iterate(IterCallback const& cb) const {
+    pool().value_.node->iterate(cb);
+}
+
 }
