@@ -11,12 +11,14 @@ void OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
 
 OverlayNode::OverlayNode(Value const &val)
     : MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>(
-          make_intrusive<OverlayNodeStorage>(val),
-          {ModelPool::Objects, 0}) {
-}
+          &storage_,
+          {ModelPool::Objects, 0})
+    , storage_(val)
+{}
 
 OverlayNode::OverlayNode(ModelNode const& n)
     : MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>(n)
+    , storage_(Value::null())
 {}
 
 auto OverlayNode::set(FieldId const& key, Value const& child) -> void

@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <vector>
+#include <memory>
 #include <cstdint>
 
 #if __has_include(<valgrind/callgrind.h>)
@@ -21,7 +22,7 @@ using FieldList = std::vector<std::pair<std::string,
 
 /* Generate array with `gen` items. */
 template <class _Gen>
-static auto generate_array(ModelPoolPtr& model, _Gen&& gen) -> ModelNode::Ptr
+static auto generate_array(ModelPoolPtr model, _Gen&& gen) -> ModelNode::Ptr
 {
     auto values = gen(model);
     auto arr = model->newArray(values.size());
@@ -33,7 +34,7 @@ static auto generate_array(ModelPoolPtr& model, _Gen&& gen) -> ModelNode::Ptr
 
 /* Generate array of `gen` with `n` items. */
 template <class _Gen>
-static auto generate_n(ModelPoolPtr& model, std::size_t n, _Gen&& gen) -> ModelNode::Ptr
+static auto generate_n(ModelPoolPtr model, std::size_t n, _Gen&& gen) -> ModelNode::Ptr
 {
     auto arr = model->newArray(n);
     for (auto i = 0u; i < n; ++i)
@@ -43,7 +44,7 @@ static auto generate_n(ModelPoolPtr& model, std::size_t n, _Gen&& gen) -> ModelN
 
 /* Generate object with <key, value> `gen` fields. */
 template <class _Gen>
-static auto generate_object(ModelPoolPtr& model, _Gen&& gen) -> ModelNode::Ptr
+static auto generate_object(ModelPoolPtr model, _Gen&& gen) -> ModelNode::Ptr
 {
     auto fields = gen(model);
     auto obj = model->newObject(fields.size());
@@ -55,13 +56,13 @@ static auto generate_object(ModelPoolPtr& model, _Gen&& gen) -> ModelNode::Ptr
 
 /* Generate single value. */
 template <class _Value>
-static auto generate_value(ModelPoolPtr& model, _Value value) -> ModelNode::Ptr
+static auto generate_value(ModelPoolPtr model, _Value value) -> ModelNode::Ptr
 {
     return model->newValue(value);
 }
 
 /* Generate random integer value. */
-static auto rand_num(ModelPoolPtr& model) -> ModelNode::Ptr
+static auto rand_num(ModelPoolPtr model) -> ModelNode::Ptr
 {
     return generate_value<int64_t>(model, rand());
 }
@@ -71,7 +72,7 @@ static auto rand_num(ModelPoolPtr& model) -> ModelNode::Ptr
  * - Keys are "SUB_%d" with '%d' being the field index
  */
 template <std::size_t _HeadSize, std::size_t... _Size>
-static auto generate_sub_tree_n(ModelPoolPtr& m) -> ModelNode::Ptr
+static auto generate_sub_tree_n(ModelPoolPtr m) -> ModelNode::Ptr
 {
     if (_HeadSize <= 0) {
         return rand_num(m);
@@ -90,8 +91,8 @@ static auto generate_sub_tree_n(ModelPoolPtr& m) -> ModelNode::Ptr
 /* Generate `n` test model objects. */
 static auto generate_model(std::size_t n)
 {
-    auto model = make_intrusive<simfil::ModelPool>();
-    model->addRoot(generate_n(model, n, [&, i = 0u](auto& m) mutable {
+    auto model = std::make_unique<simfil::ModelPool>();
+    model->addRoot(generate_n(model.get(), n, [&, i = 0u](auto& m) mutable {
         ++i;
         return generate_object(m, [&](auto& m) {
             FieldList fields;
@@ -110,7 +111,8 @@ static auto generate_model(std::size_t n)
     return model;
 }
 
-static auto result(const ModelPoolPtr& model, std::string_view query)
+static auto result(const std::unique_ptr<ModelPool>& model,
+                   std::string_view query)
 {
     Environment env(model->fieldNames());
     auto ast = compile(env, query, false);
@@ -119,7 +121,8 @@ static auto result(const ModelPoolPtr& model, std::string_view query)
     return eval(env, *ast, *model);
 }
 
-static auto joined_result(const ModelPoolPtr& model, std::string_view query)
+static auto joined_result(const std::unique_ptr<ModelPool>& model,
+                          std::string_view query)
 {
     auto res = result(model, query);
 

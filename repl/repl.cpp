@@ -2,7 +2,6 @@
 #include "simfil/expression.h"
 #include "simfil/value.h"
 #include "simfil/model/model.h"
-#include "simfil/intrusive_ptr.h"
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
 #  include "simfil/model/json.h"
@@ -103,18 +102,18 @@ static std::string input(const char* prompt = "> ")
     return r;
 }
 
-static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const simfil::intrusive_ptr<simfil::ModelPool>& model)
+static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, simfil::ModelPool& model)
 {
     std::vector<std::vector<simfil::Value>> result;
-    result.resize(std::max<size_t>(1, model->numRoots()));
+    result.resize(std::max<size_t>(1, model.numRoots()));
 
-    if (!model->numRoots()) {
-        model->addRoot(simfil::ModelNode::Ptr());
-        result[0] = simfil::eval(env, expr, *model);
+    if (!model.numRoots()) {
+        model.addRoot(simfil::ModelNode::Ptr());
+        result[0] = simfil::eval(env, expr, model);
         return result;
     }
 
-    auto n_threads = std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), model->numRoots()), 1);
+    auto n_threads = std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), model.numRoots()), 1);
     if (env.debug)
         n_threads = 1;
     if (!options.multi_threaded)
@@ -126,9 +125,9 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const si
     for (auto i = 0; i < n_threads; ++i) {
         threads.emplace_back(std::thread([&, i]() {
             size_t next;
-            while ((next = idx++) < model->numRoots()) {
+            while ((next = idx++) < model.numRoots()) {
                 try {
-                    result[next] = simfil::eval(env, expr, *model, next);
+                    result[next] = simfil::eval(env, expr, model, next);
                 } catch (...) {
                     return;
                 }
@@ -150,12 +149,12 @@ int main(int argc, char *argv[])
     rl_attempted_completion_function = command_completion;
 #endif
 
-    auto model = simfil::make_intrusive<simfil::ModelPool>();
+    auto model = simfil::ModelPool();
 #if defined(SIMFIL_WITH_MODEL_JSON)
     for (auto arg = argv + 1; *arg; ++arg) {
         std::cout << "Parsing " << *arg << "\n";
         auto f = std::ifstream(*arg);
-        simfil::json::parse(f, model);
+        simfil::json::parse(f, &model);
     }
 #endif
 
@@ -170,7 +169,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        simfil::Environment env(model->fieldNames());
+        simfil::Environment env(model.fieldNames());
         simfil::ExprPtr expr;
         try {
             expr = simfil::compile(env, cmd, options.auto_any);

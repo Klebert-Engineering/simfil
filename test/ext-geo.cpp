@@ -48,16 +48,16 @@ TEST_CASE("Polygon", "[geo.polygon]") {
 TEST_CASE("GeometryCollection", "[geom_collection]") {
 
     SECTION("Construct GeometryCollection") {
-        auto model_pool = make_intrusive<ModelPool>();
-        auto geometry_collection = model_pool->newGeometryCollection();
+        auto model_pool = ModelPool();
+        auto geometry_collection = model_pool.newGeometryCollection();
 
         REQUIRE(geometry_collection->type() == ValueType::Object);
         REQUIRE(geometry_collection->size() == 2); // 'type' and 'geometries' fields
     }
 
     SECTION("Construct Geometry and Add to GeometryCollection") {
-        auto model_pool = make_intrusive<ModelPool>();
-        auto geometry_collection = model_pool->newGeometryCollection();
+        auto model_pool = ModelPool();
+        auto geometry_collection = model_pool.newGeometryCollection();
         auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
 
         REQUIRE(point_geom->type() == ValueType::Object);
@@ -70,22 +70,22 @@ TEST_CASE("GeometryCollection", "[geom_collection]") {
 }
 
 TEST_CASE("Spatial Operators", "[spatial_ops]") {
-    auto model_pool = make_intrusive<ModelPool>();
+    auto model_pool = ModelPool();
 
     // Create a GeometryCollection with a Point
-    auto geometry_collection = model_pool->newGeometryCollection();
+    auto geometry_collection = model_pool.newGeometryCollection();
     auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
     point_geom->append({2., 3., 0.});
-    model_pool->addRoot(model_pool->newObject()->addField(
+    model_pool.addRoot(model_pool.newObject()->addField(
         "geometry",
         ModelNode::Ptr(point_geom)));
-    Environment env(model_pool->fieldNames());
+    Environment env(model_pool.fieldNames());
 
     SECTION("Point Within BBox") {
         auto ast = compile(env, "geo() within bbox(1, 2, 4, 5)", false);
         INFO("AST: " << ast->toString());
 
-        auto res = eval(env, *ast, *model_pool);
+        auto res = eval(env, *ast, model_pool);
         REQUIRE(res.size() == 1);
         REQUIRE(res[0].as<ValueType::Bool>() == true);
     }
@@ -94,7 +94,7 @@ TEST_CASE("Spatial Operators", "[spatial_ops]") {
         auto ast = compile(env, "geo() intersects bbox(1, 2, 4, 5)", false);
         INFO("AST: " << ast->toString());
 
-        auto res = eval(env, *ast, *model_pool);
+        auto res = eval(env, *ast, model_pool);
         REQUIRE(res.size() == 1);
         REQUIRE(res[0].as<ValueType::Bool>() == true);
     }
@@ -103,20 +103,20 @@ TEST_CASE("Spatial Operators", "[spatial_ops]") {
         auto ast = compile(env, "bbox(1, 2, 4, 5) contains geo()", false);
         INFO("AST: " << ast->toString());
 
-        auto res = eval(env, *ast, *model_pool);
+        auto res = eval(env, *ast, model_pool);
         REQUIRE(res.size() == 1);
         REQUIRE(res[0].as<ValueType::Bool>() == true);
     }
 }
 
 TEST_CASE("GeometryCollection Multiple Geometries", "[geom_collection_multiple]") {
-    auto model_pool = make_intrusive<ModelPool>();
+    auto model_pool = ModelPool();
 
     // Points
     BigPoint a{2, 3}, b{1, 1}, c{4, 4}, d{0, 0}, e{5, 0}, f{2.5, 5};
 
     // Create a GeometryCollection
-    auto geometry_collection = model_pool->newGeometryCollection();
+    auto geometry_collection = model_pool.newGeometryCollection();
 
     // Create and add Point geometry
     auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);

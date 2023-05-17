@@ -368,18 +368,18 @@ TEST_CASE("GeoJSON", "[geojson.geo]") {
 }
 
 TEST_CASE("Model Pool Validation", "[model.validation]") {
-    auto pool = make_intrusive<ModelPool>();
+    auto pool = ModelPool();
 
     // Recognize dangling object member pointer
-    pool->clear();
-    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
-    REQUIRE_THROWS(pool->validate());
+    pool.clear();
+    pool.newObject()->addField("good", ModelNode::Ptr::make(&pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    REQUIRE_THROWS(pool.validate());
 
     // An empty model should be valid
-    pool->clear();
-    REQUIRE_NOTHROW(pool->validate());
+    pool.clear();
+    REQUIRE_NOTHROW(pool.validate());
 
     // An empty object should also be valid
-    pool->newObject()->addField("good", ModelNode::Ptr(pool->newObject()));
-    REQUIRE_NOTHROW(pool->validate());
+    pool.newObject()->addField("good", ModelNode::Ptr(pool.newObject()));
+    REQUIRE_NOTHROW(pool.validate());
 }

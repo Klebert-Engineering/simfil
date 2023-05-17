@@ -57,9 +57,9 @@ void parse(const std::string& input, ModelPoolPtr const& model)
     model->validate();
 }
 
-ModelPoolPtr parse(const std::string& input)
+std::unique_ptr<ModelPool> parse(const std::string& input)
 {
-    auto model = make_intrusive<simfil::ModelPool>();
+    auto model = std::make_unique<simfil::ModelPool>();
     model->addRoot(build(json::parse(input), *model));
     model->validate();
     return model;

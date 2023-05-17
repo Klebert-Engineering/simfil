@@ -115,7 +115,7 @@ uint32_t ModelNodeBase::size() const
 /** Model Node impls. for arbitrary self-contained value storage. */
 
 ValueNode::ValueNode(ScalarValueType const& value)
-    : ModelNodeBase(make_intrusive<Model>(), Model::Scalar, value)
+    : ModelNodeBase(nullptr, Model::Scalar, value)
 {}
 
 ValueNode::ValueNode(const ScalarValueType& value, const ModelConstPtr& p)

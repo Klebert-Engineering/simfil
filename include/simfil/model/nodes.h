@@ -17,9 +17,9 @@ class ModelPool;
 class Model;
 struct ModelNode;
 
-using ModelConstPtr = intrusive_ptr<const Model>;
-using ModelPoolConstPtr = intrusive_ptr<const ModelPool>;
-using ModelPoolPtr = intrusive_ptr<ModelPool>;
+using ModelConstPtr = const Model*;
+using ModelPoolConstPtr = const ModelPool*;
+using ModelPoolPtr = ModelPool*;
 
 /**
  * Simfil value types
@@ -311,7 +311,7 @@ template<class PoolType>
 struct MandatoryDerivedModelPoolNodeBase : public ModelNodeBase
 {
 protected:
-    inline PoolType& pool() const {return *reinterpret_cast<PoolType*>(const_cast<Model*>(pool_.get()));}  // NOLINT
+    inline PoolType& pool() const {return *reinterpret_cast<PoolType*>(const_cast<Model*>(pool_));}  // NOLINT
 
     MandatoryDerivedModelPoolNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
         : ModelNodeBase(p, a, std::move(data)) {}
