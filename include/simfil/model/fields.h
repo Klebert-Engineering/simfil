@@ -78,9 +78,9 @@ private:
     std::unordered_map<std::string, FieldId> idForString_;
     std::unordered_map<FieldId, std::string> stringForId_;
     FieldId nextId_ = FirstDynamicId;
-    std::atomic_int64_t byteSize_;
-    std::atomic_int64_t cacheHits_;
-    std::atomic_int64_t cacheMisses_;
+    std::atomic_int64_t byteSize_{0};
+    std::atomic_int64_t cacheHits_{0};
+    std::atomic_int64_t cacheMisses_{0};
 };
 
 }
