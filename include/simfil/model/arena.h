@@ -267,6 +267,34 @@ public:
 
     ArrayRange range(ArrayIndex const& array) {return ArrayRange(begin(array), end(array));}
 
+    /// Support fast iteration via callback. The passed lambda needs to return true,
+    /// as long is the iteration is supposed to continue.
+    template <typename Func>
+    void iterate(ArrayIndex const& a, Func&& lambda)
+    {
+        Chunk const* current = &heads_[a];
+        size_t globalIndex = 0;
+        while (current != nullptr)
+        {
+            for (size_t i = 0; i < current->size && i < current->capacity; ++i)
+            {
+                if constexpr (std::is_invocable_r_v<bool, Func, ElementType&>) {
+                    // If lambda returns bool, break if it returns false
+                    if (!lambda(data_[current->offset + i]))
+                        return;
+                }
+                else if constexpr (std::is_invocable_v<Func, ElementType&, size_t>) {
+                    // If lambda takes two arguments, pass the current index
+                    lambda(data_[current->offset + i], globalIndex);
+                }
+                else
+                    lambda(data_[current->offset + i]);
+                ++globalIndex;
+            }
+            current = (current->next != -1) ? &continuations_[current->next] : nullptr;
+        }
+    }
+
 private:
     // Represents a chunk of an array in the arena.
     struct Chunk

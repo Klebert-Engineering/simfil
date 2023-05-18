@@ -213,12 +213,10 @@ void Array::iterate(const ModelNode::IterCallback& cb) const
     auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
         cont = cb(node);
     });
-    auto length = storage_->size(members_);
-    for (auto i = 0; i < length; ++i) {
-        resolveAndCb(*ModelNode::Ptr::make(pool_, storage_->at(members_, i)));
-        if (!cont)
-            break;
-    }
+    storage_->iterate(members_, [&, this](auto&& member){
+        pool_->resolve(*ModelNode::Ptr::make(pool_, member), resolveAndCb);
+        return cont;
+    });
 }
 
 /** Model Node impls for an object. */
@@ -254,20 +252,20 @@ uint32_t Object::size() const
 
 ModelNode::Ptr Object::get(const FieldId & field) const
 {
-    for (auto const& member : storage_->range(members_)) {
+    ModelNode::Ptr result;
+    storage_->iterate(members_, [&field, &result, this](auto&& member){
         if (member.name_ == field) {
-            return ModelNode::Ptr::make(pool_, member.node_);
+            result = ModelNode::Ptr::make(pool_, member.node_);
+            return false;
         }
-    }
-    return {};
+        return true;
+    });
+    return result;
 }
 
 ModelNode::Ptr Object::get(std::string_view const& fieldName) const {
     auto fieldId = pool().fieldNames()->emplace(fieldName);
-    for (auto&& [field, value] : fields())
-        if (field == fieldId)
-            return value;
-    return {};
+    return get(fieldId);
 }
 
 Object& Object::addBool(std::string_view const& name, bool value) {
@@ -318,12 +316,10 @@ void Object::iterate(const ModelNode::IterCallback& cb) const
     auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
         cont = cb(node);
     });
-    auto length = storage_->size(members_);
-    for (auto i = 0; i < length; ++i) {
-        resolveAndCb(*ModelNode::Ptr::make(pool_, storage_->at(members_, i).node_));
-        if (!cont)
-            break;
-    }
+    storage_->iterate(members_, [&, this](auto&& member){
+        pool_->resolve(*ModelNode::Ptr::make(pool_, member.node_), resolveAndCb);
+        return cont;
+    });
 }
 
 /** Model node impls. for GeometryCollection */

@@ -128,6 +128,39 @@ TEST_CASE("ArrayArena multiple arrays", "[ArrayArena]") {
     }
 }
 
+TEST_CASE("ArrayArena::iterate") {
+    ArrayArena<int> arena;
+    ArrayIndex a = arena.new_array(1);
+    for (size_t i = 0; i < 10; ++i) {
+        arena.push_back(a, static_cast<int>(i*2));
+    }
+
+    SECTION("lambda with no return type") {
+        int sum = 0;
+        arena.iterate(a, [&sum](int value) {
+            sum += value;
+        });
+        REQUIRE(sum == 90);  // sum of 0 to 18
+    }
+
+    SECTION("lambda with bool return type") {
+        int lastValue = -1;
+        arena.iterate(a, [&lastValue](int value) -> bool {
+            lastValue = value;
+            if (value == 10)
+                return false;
+            return true;
+        });
+        REQUIRE(lastValue == 10);
+    }
+
+    SECTION("lambda with index argument") {
+        arena.iterate(a, [](int value, size_t index) {
+            REQUIRE(value/2 == index);
+        });
+    }
+}
+
 #ifdef ARRAY_ARENA_THREAD_SAFE
 TEST_CASE("ArrayArena Concurrency", "[ArrayArena]") {
     ArrayArena<int> arena;
