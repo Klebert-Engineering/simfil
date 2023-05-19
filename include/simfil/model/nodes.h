@@ -59,18 +59,27 @@ struct shared_model_ptr
     template<typename> friend struct shared_model_ptr;
 
     shared_model_ptr(::nullptr_t) {}  // NOLINT
-    shared_model_ptr(T&& modelNode) : data_(modelNode) {}  // NOLINT
-    shared_model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
+    shared_model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
+    explicit shared_model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
+
     shared_model_ptr() = default;
+    shared_model_ptr(const shared_model_ptr&) = default;
+    shared_model_ptr(shared_model_ptr&&) = default;
+
+    shared_model_ptr& operator=(shared_model_ptr const&) = default;
+    shared_model_ptr& operator=(shared_model_ptr&&) = default;
 
     template<typename OtherT>
-    shared_model_ptr(shared_model_ptr<OtherT> const& other) : data_(other.data_) {};  // NOLINT
+    shared_model_ptr(shared_model_ptr<OtherT> const& other) : data_(other.data_) {}  // NOLINT
 
     template<typename OtherT>
-    shared_model_ptr(shared_model_ptr<OtherT>&& other) : data_(other.data_) {};  // NOLINT
+    shared_model_ptr(shared_model_ptr<OtherT>&& other) : data_(std::move(other.data_)) {}  // NOLINT
 
     template<typename OtherT>
-    shared_model_ptr& operator= (shared_model_ptr<OtherT> const& other) {data_ = other.data_; return *this;};
+    shared_model_ptr& operator= (shared_model_ptr<OtherT> const& other) {data_ = other.data_; return *this;}
+
+    template<typename OtherT>
+    shared_model_ptr& operator= (shared_model_ptr<OtherT>&& other) {data_ = std::move(other.data_); return *this;}
 
     template<typename... Args>
     explicit shared_model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}

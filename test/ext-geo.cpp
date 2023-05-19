@@ -76,9 +76,9 @@ TEST_CASE("Spatial Operators", "[spatial_ops]") {
     auto geometry_collection = model_pool->newGeometryCollection();
     auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
     point_geom->append({2., 3., 0.});
-    model_pool->addRoot(model_pool->newObject()->addField(
+    model_pool->addRoot(shared_model_ptr<ModelNode>(model_pool->newObject()->addField(
         "geometry",
-        ModelNode::Ptr(point_geom)));
+        ModelNode::Ptr(point_geom))));
     Environment env(model_pool->fieldNames());
 
     SECTION("Point Within BBox") {

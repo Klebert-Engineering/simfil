@@ -217,7 +217,7 @@ public:
 
         auto result = Result::Continue;
         val.node->iterate(ModelNode::IterLambda([&](auto&& subNode) {
-            if (res(ctx, Value::field(subNode)) == Result::Stop) {
+            if (res(ctx, Value::field(std::move(subNode))) == Result::Stop) {
                 result = Result::Stop;
                 return false;
             }
