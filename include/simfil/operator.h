@@ -150,34 +150,40 @@ struct OperatorTypeof
 {
     NAME("typeof")
 
-    auto operator()(NullType) const
+    auto operator()(NullType) const -> const std::string&
     {
-        return "null"s;
+        static auto n = "null"s;
+        return n;
     }
 
-    auto operator()(bool) const
+    auto operator()(bool) const -> const std::string&
     {
-        return "bool"s;
+        static auto n = "bool"s;
+        return n;
     }
 
-    auto operator()(int64_t) const
+    auto operator()(int64_t) const -> const std::string&
     {
-        return "int"s;
+        static auto n = "int"s;
+        return n;
     }
 
-    auto operator()(double) const
+    auto operator()(double) const -> const std::string&
     {
-        return "float"s;
+        static auto n = "float"s;
+        return n;
     }
 
-    auto operator()(const std::string&) const
+    auto operator()(const std::string&) const -> const std::string&
     {
-        return "string"s;
+        static auto n = "string"s;
+        return n;
     }
 
-    auto operator()(const ModelNode& v) const
+    auto operator()(const ModelNode& v) const -> const std::string&
     {
-        return "model"s;
+        static auto n = "model"s;
+        return n;
     }
 
     auto operator()(const TransientObject& v) const
@@ -263,12 +269,14 @@ struct OperatorAsString
 {
     NAME("string")
 
-    auto operator()(bool v) const
+    auto operator()(bool v) const -> const std::string&
     {
-        return v ? "true"s : "false"s;
+        static auto tn = "true"s;
+        static auto fn = "false"s;
+        return v ? tn : fn;
     }
 
-    auto operator()(const std::string& v) const
+    auto operator()(const std::string& v) const -> const std::string&
     {
         return v;
     }
@@ -345,11 +353,11 @@ struct OperatorAdd
     NAME("+")
     DENY_OTHER()
     NULL_AS_NULL()
-    DECL_OPERATION(int64_t,     int64_t,     +)
-    DECL_OPERATION(int64_t,     double,      +)
-    DECL_OPERATION(double,      int64_t,     +)
-    DECL_OPERATION(double,      double,      +)
-    DECL_OPERATION(std::string, std::string, +)
+    DECL_OPERATION(int64_t,            int64_t,            +)
+    DECL_OPERATION(int64_t,            double,             +)
+    DECL_OPERATION(double,             int64_t,            +)
+    DECL_OPERATION(double,             double,             +)
+    DECL_OPERATION(const std::string&, const std::string&, +)
 
     auto operator()(const std::string& l, NullType) const -> Value
     {
@@ -464,12 +472,12 @@ struct OperatorEq
 {
     NAME("==")
     DENY_OTHER()
-    DECL_OPERATION(bool,        bool,        ==)
-    DECL_OPERATION(int64_t,     int64_t,     ==)
-    DECL_OPERATION(int64_t,     double,      ==)
-    DECL_OPERATION(double,      int64_t,     ==)
-    DECL_OPERATION(double,      double,      ==)
-    DECL_OPERATION(std::string, std::string, ==)
+    DECL_OPERATION(bool,               bool,               ==)
+    DECL_OPERATION(int64_t,            int64_t,            ==)
+    DECL_OPERATION(int64_t,            double,             ==)
+    DECL_OPERATION(double,             int64_t,            ==)
+    DECL_OPERATION(double,             double,             ==)
+    DECL_OPERATION(const std::string&, const std::string&, ==)
 
     template <class Right>
     auto operator()(NullType, const Right&) const
@@ -504,11 +512,11 @@ struct OperatorLt
 {
     NAME("<")
     DENY_OTHER()
-    DECL_OPERATION(int64_t,     int64_t,     <)
-    DECL_OPERATION(int64_t,     double,      <)
-    DECL_OPERATION(double,      int64_t,     <)
-    DECL_OPERATION(double,      double,      <)
-    DECL_OPERATION(std::string, std::string, <)
+    DECL_OPERATION(int64_t,            int64_t,            <)
+    DECL_OPERATION(int64_t,            double,             <)
+    DECL_OPERATION(double,             int64_t,            <)
+    DECL_OPERATION(double,             double,             <)
+    DECL_OPERATION(const std::string&, const std::string&, <)
 
     template <class Right>
     auto operator()(NullType, const Right&) const
@@ -532,11 +540,11 @@ struct OperatorLtEq
 {
     NAME("<=")
     DENY_OTHER()
-    DECL_OPERATION(int64_t,     int64_t,     <=)
-    DECL_OPERATION(int64_t,     double,      <=)
-    DECL_OPERATION(double,      int64_t,     <=)
-    DECL_OPERATION(double,      double,      <=)
-    DECL_OPERATION(std::string, std::string, <=)
+    DECL_OPERATION(int64_t,            int64_t,            <=)
+    DECL_OPERATION(int64_t,            double,             <=)
+    DECL_OPERATION(double,             int64_t,            <=)
+    DECL_OPERATION(double,             double,             <=)
+    DECL_OPERATION(const std::string&, const std::string&, <=)
 
     template <class Right>
     auto operator()(NullType, const Right&) const
