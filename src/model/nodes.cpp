@@ -66,9 +66,11 @@ uint32_t ModelNode::size() const {
 }
 
 /// Fast iteration
-void ModelNode::iterate(const IterCallback& cb) const {
+bool ModelNode::iterate(const IterCallback& cb) const {
+    bool result = true;
     if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { resolved.iterate(cb); }));
+        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.iterate(cb); }));
+    return result;
 }
 
 /** Model Node Base Impl. */
@@ -207,7 +209,7 @@ Array& Array::append(double const& value) {storage_->push_back(members_, pool().
 Array& Array::append(std::string_view const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
 Array& Array::append(ModelNode::Ptr const& value) {storage_->push_back(members_, value->addr()); return *this;}
 
-void Array::iterate(const ModelNode::IterCallback& cb) const
+bool Array::iterate(const ModelNode::IterCallback& cb) const
 {
     auto cont = true;
     auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
@@ -217,6 +219,7 @@ void Array::iterate(const ModelNode::IterCallback& cb) const
         pool_->resolve(*ModelNode::Ptr::make(pool_, member), resolveAndCb);
         return cont;
     });
+    return cont;
 }
 
 /** Model Node impls for an object. */
@@ -310,7 +313,7 @@ Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& val
     return *this;
 }
 
-void Object::iterate(const ModelNode::IterCallback& cb) const
+bool Object::iterate(const ModelNode::IterCallback& cb) const
 {
     auto cont = true;
     auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
@@ -320,6 +323,7 @@ void Object::iterate(const ModelNode::IterCallback& cb) const
         pool_->resolve(*ModelNode::Ptr::make(pool_, member.node_), resolveAndCb);
         return cont;
     });
+    return cont;
 }
 
 /** Model node impls. for GeometryCollection */
@@ -361,10 +365,11 @@ shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType ty
     return result;
 }
 
-void GeometryCollection::iterate(const IterCallback& cb) const
+bool GeometryCollection::iterate(const IterCallback& cb) const
 {
-    if (!cb(*at(0))) return;
-    if (!cb(*at(1))) return;
+    if (!cb(*at(0))) return false;
+    if (!cb(*at(1))) return false;
+    return true;
 }
 
 /** ModelNode impls. for Geometry */
@@ -424,10 +429,11 @@ Geometry::GeomType Geometry::geomType() const {
     return geomData_.type;
 }
 
-void Geometry::iterate(const IterCallback& cb) const
+bool Geometry::iterate(const IterCallback& cb) const
 {
-    if (!cb(*at(0))) return;
-    if (!cb(*at(1))) return;
+    if (!cb(*at(0))) return false;
+    if (!cb(*at(1))) return false;
+    return true;
 }
 
 /** ModelNode impls. for VertexBufferNode */
@@ -462,7 +468,7 @@ FieldId VertexBufferNode::keyAt(int64_t) const {
     return {};
 }
 
-void VertexBufferNode::iterate(const IterCallback& cb) const
+bool VertexBufferNode::iterate(const IterCallback& cb) const
 {
     auto cont = true;
     auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
@@ -474,6 +480,7 @@ void VertexBufferNode::iterate(const IterCallback& cb) const
         if (!cont)
             break;
     }
+    return cont;
 }
 
 /** Model node impls for vertex. */
@@ -516,11 +523,12 @@ FieldId VertexNode::keyAt(int64_t i) const {
     throw std::out_of_range("vertex: Out of range.");
 }
 
-void VertexNode::iterate(const IterCallback& cb) const
+bool VertexNode::iterate(const IterCallback& cb) const
 {
-    if (!cb(ValueNode(point_.x, pool_))) return;
-    if (!cb(ValueNode(point_.y, pool_))) return;
-    if (!cb(ValueNode(point_.z, pool_))) return;
+    if (!cb(ValueNode(point_.x, pool_))) return false;
+    if (!cb(ValueNode(point_.y, pool_))) return false;
+    if (!cb(ValueNode(point_.z, pool_))) return false;
+    return true;
 }
 
 }

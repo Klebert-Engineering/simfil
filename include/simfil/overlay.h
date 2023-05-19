@@ -31,7 +31,7 @@ public:
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override;
     [[nodiscard]] FieldId keyAt(int64_t i) const override;
     [[nodiscard]] uint32_t size() const override;
-    void iterate(IterCallback const& cb) const override;
+    [[nodiscard]] bool iterate(IterCallback const& cb) const override;
 };
 
 }
