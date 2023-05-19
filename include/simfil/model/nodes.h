@@ -60,7 +60,7 @@ struct shared_model_ptr
 
     shared_model_ptr(::nullptr_t) {}  // NOLINT
     shared_model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
-    shared_model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
+    explicit shared_model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
 
     shared_model_ptr() = default;
     shared_model_ptr(const shared_model_ptr&) = default;

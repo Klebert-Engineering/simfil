@@ -522,7 +522,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
             ov->set(Fields::OverlayValue, vv);
             ov->set(Fields::OverlayIndex, Value::make((int64_t)n++));
 
-            subexpr->eval(ctx, Value::field(*ov), LambdaResultFn([&ov, &sum](auto ctx, auto vv) {
+            subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, auto vv) {
                 ov->set(Fields::OverlaySum, vv);
                 sum = vv;
                 return Result::Continue;
