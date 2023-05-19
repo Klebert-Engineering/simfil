@@ -19,7 +19,7 @@ struct ResultFn
 };
 
 template <class Lambda>
-struct LambdaResultFn : ResultFn
+struct LambdaResultFn final : ResultFn
 {
     mutable Lambda lambda;
 

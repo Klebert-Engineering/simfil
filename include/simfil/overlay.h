@@ -7,7 +7,7 @@
 namespace simfil
 {
 
-struct OverlayNodeStorage : public Model
+struct OverlayNodeStorage final : public Model
 {
     Value value_;
     std::map<FieldId, Value> overlayChildren_;
@@ -19,7 +19,7 @@ struct OverlayNodeStorage : public Model
 
 /** Node for injecting member fields */
 
-class OverlayNode : public MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>
+class OverlayNode final : public MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>
 {
 public:
     explicit OverlayNode(Value const& val);

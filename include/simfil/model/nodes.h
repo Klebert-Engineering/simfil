@@ -180,7 +180,7 @@ struct ModelNode
         virtual bool operator() (ModelNode const& resolved) const = 0;
     };
     template<typename T>
-    struct IterLambda : public IterCallback
+    struct IterLambda final : public IterCallback
     {
         IterLambda(T const& fn) : fn_(fn) {}  // NOLINT
         bool operator() (ModelNode const& resolved) const override {return fn_(resolved);};
@@ -316,7 +316,7 @@ protected:
 /**
  * Through the data_ member, a ModelNode can store an arbitrary value.
  */
-struct ValueNode : public ModelNodeBase
+struct ValueNode final : public ModelNodeBase
 {
     explicit ValueNode(ScalarValueType const& value);
     explicit ValueNode(ScalarValueType const& value, ModelConstPtr const& p);
@@ -357,7 +357,7 @@ namespace detail
  * The value is stored in the TreeNodeAddress.
  */
 template<typename T>
-struct SmallValueNode : public ModelNodeBase
+struct SmallValueNode final : public ModelNodeBase
 {
     friend class Model;
     [[nodiscard]] ScalarValueType value() const override;
@@ -381,7 +381,7 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 /** Model Node for an array. */
 
-struct Array : public MandatoryModelPoolNodeBase
+struct Array final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
     friend struct GeometryCollection;
@@ -501,7 +501,7 @@ protected:
  * or a triangle mesh.
  */
 
-struct Geometry : public MandatoryModelPoolNodeBase
+struct Geometry final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
     friend struct VertexNode;
@@ -568,7 +568,7 @@ protected:
 
 /** VertexBuffer Node */
 
-struct VertexBufferNode : public MandatoryModelPoolNodeBase
+struct VertexBufferNode final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
 
@@ -588,7 +588,7 @@ protected:
 
 /** Vertex Node */
 
-struct VertexNode : public MandatoryModelPoolNodeBase
+struct VertexNode final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
 
