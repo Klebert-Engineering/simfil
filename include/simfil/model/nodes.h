@@ -454,12 +454,12 @@ protected:
 
 /** Object with extra procedural fields */
 
-template<uint16_t MaxProceduralFields>
+template<uint16_t MaxProceduralFields, class LambdaThisType=Object>
 class ProceduralObject : public Object
 {
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
-            return fields_[i].second();
+            return fields_[i].second(reinterpret_cast<LambdaThisType const&>(*this));
         return Object::at(i - fields_.size());
     }
 
@@ -470,7 +470,7 @@ class ProceduralObject : public Object
     [[nodiscard]] ModelNode::Ptr get(const FieldId & field) const override {
         for (auto const& [k, v] : fields_)
             if (k == field)
-                return v();
+                return v(reinterpret_cast<LambdaThisType const&>(*this));
         return Object::get(field);
     }
 
@@ -481,9 +481,11 @@ class ProceduralObject : public Object
     }
 
     [[nodiscard]] bool iterate(IterCallback const& cb) const override {
-        for (auto const& [k, v] : fields_)
-            if (!cb(*v()))
+        for (auto const& [k, v] : fields_) {
+            auto vv = v(reinterpret_cast<LambdaThisType const&>(*this));
+            if (!cb(*vv))
                 return false;
+        }
         return Object::iterate(cb);
     }
 
@@ -492,7 +494,7 @@ protected:
         : Object(i, pool, a) {}
 
     sfl::small_vector<
-        std::pair<FieldId, std::function<ModelNode::Ptr()>>,
+        std::pair<FieldId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
         MaxProceduralFields> fields_;
 };
 
