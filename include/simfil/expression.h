@@ -4,8 +4,8 @@
 
 #include "simfil/value.h"
 #include "simfil/environment.h"
+#include "simfil/result.h"
 
-#include <functional>
 #include <memory>
 
 namespace simfil
@@ -34,18 +34,18 @@ public:
     virtual auto toString() const -> std::string = 0;
 
     /* Evaluation wrapper */
-    auto eval(Context ctx, Value val, ResultFn res) const -> Result
+    auto eval(Context ctx, Value val, const ResultFn& res) const -> Result
     {
         auto dbg = ctx.env->debug;
         if (dbg) dbg->evalBegin(*this, ctx, val, res);
-        auto r = ieval(std::move(ctx), std::move(val), std::move(res));
+        auto r = ieval(std::move(ctx), std::move(val), res);
         if (dbg) dbg->evalEnd(*this);
         return r;
     }
 
 private:
     /* Abstract evaluation implementation */
-    virtual auto ieval(Context, Value, ResultFn) const -> Result = 0;
+    virtual auto ieval(Context, Value, const ResultFn&) const -> Result = 0;
 };
 
 using ExprPtr = std::unique_ptr<Expr>;

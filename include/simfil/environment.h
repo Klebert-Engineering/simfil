@@ -3,7 +3,7 @@
 #pragma once
 
 #include "simfil/value.h"
-#include "simfil/model.h"
+#include "simfil/model/model.h"
 
 #include <map>
 #include <memory>
@@ -17,7 +17,7 @@ namespace simfil
 
 class Expr;
 class Function;
-class ModelNode;
+struct ResultFn;
 struct Debug;
 
 /** Trace call stats. */
@@ -34,11 +34,11 @@ public:
     /**
      * Construct a SIMFIL execution environment with a string cache,
      * which is used to map field names to short integer IDs.
-     * @param stringCache The string cache used by this environment.
+     * @param fieldNames The string cache used by this environment.
      *  Must be the same cache that is also used by ModelPools which
      *  are queried using this environment.
      */
-    explicit Environment(std::shared_ptr<Strings> stringCache);
+    explicit Environment(std::shared_ptr<Fields> fieldNames);
 
     /**
      * Constructor for instantiating an environment explicitly with
@@ -65,7 +65,7 @@ public:
      * Log a trace call.
      *
      * @param name  Trace identifier
-     * @param fn    Callback called thread-safe
+     * @param fn    IterCallback called thread-safe
      */
     auto trace(const std::string& name, std::function<void(Trace&)> fn) -> void;
 
@@ -78,7 +78,7 @@ public:
      * Obtain a strong reference to this environment's string cache.
      * Guaranteed not-null.
      */
-    auto stringCache() const -> std::shared_ptr<Strings>;
+    auto fieldNames() const -> std::shared_ptr<Fields>;
 
 public:
     std::unique_ptr<std::mutex> warnMtx;
@@ -91,7 +91,7 @@ public:
     std::map<std::string, const Function*> functions;
 
     Debug* debug = nullptr;
-    std::shared_ptr<Strings> stringCache_;
+    std::shared_ptr<Fields> fieldNames_;
 };
 
 /**
@@ -114,18 +114,11 @@ struct Context
 };
 
 /**
- * Result value callback.
- * Return `false` to stop evaluation.
- */
-enum Result { Continue = 1, Stop = 0 };
-using ResultFn = std::function<Result(Context, Value)>;
-
-/**
  * Debug interface
  */
 struct Debug
 {
-    std::function<void(const Expr&, Context&, Value&, ResultFn&)> evalBegin;
+    std::function<void(const Expr&, Context&, Value&, const ResultFn&)> evalBegin;
     std::function<void(const Expr&)> evalEnd;
 };
 

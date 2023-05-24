@@ -1,7 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/expression.h"
 #include "simfil/value.h"
-#include "simfil/model.h"
+#include "simfil/model/model.h"
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
 #  include "simfil/model/json.h"
@@ -108,7 +108,7 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
     result.resize(std::max<size_t>(1, model->numRoots()));
 
     if (!model->numRoots()) {
-        model->addRoot(model->addNull());
+        model->addRoot(simfil::ModelNode::Ptr());
         result[0] = simfil::eval(env, expr, *model);
         return result;
     }
@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        simfil::Environment env(model->strings);
+        simfil::Environment env(model->fieldNames());
         simfil::ExprPtr expr;
         try {
             expr = simfil::compile(env, cmd, options.auto_any);

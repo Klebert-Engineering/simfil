@@ -6,7 +6,7 @@
 
 using namespace simfil;
 
-static const auto invoice = json::parse(R"json(
+static const auto invoice = R"json(
 {
 "account": {
   "name": "Demo",
@@ -48,11 +48,12 @@ static const auto invoice = json::parse(R"json(
   ]
 }
 }
-)json");
+)json";
 
-static auto joined_result(const ModelPoolPtr& model, std::string_view query)
+static auto joined_result(std::string_view query)
 {
-    Environment env(model->strings);
+    auto model = json::parse(invoice);
+    Environment env(model->fieldNames());
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 
@@ -67,22 +68,22 @@ static auto joined_result(const ModelPoolPtr& model, std::string_view query)
     return vals;
 }
 
-#define REQUIRE_RESULT(model, query, result) \
-    REQUIRE(joined_result(model, query) == (result))
+#define REQUIRE_RESULT(query, result) \
+    REQUIRE(joined_result(query) == (result))
 
 TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
-    REQUIRE_RESULT(invoice, "account.order.*.product.*.(price * quantity)",
+    REQUIRE_RESULT("account.order.*.product.*.(price * quantity)",
                             "68.900000|21.670000|137.800000|107.990000");
-    REQUIRE_RESULT(invoice, "sum(account.order.*.product.*.(price * quantity))",
+    REQUIRE_RESULT("sum(account.order.*.product.*.(price * quantity))",
                             "336.360000");
-    REQUIRE_RESULT(invoice, "**.(price * quantity)",
+    REQUIRE_RESULT("**.(price * quantity)",
                             "68.900000|21.670000|137.800000|107.990000");
-    REQUIRE_RESULT(invoice, "sum(**.(price * quantity))",
+    REQUIRE_RESULT("sum(**.(price * quantity))",
                             "336.360000");
 }
 
 TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
-    REQUIRE_THROWS(joined_result(invoice, "1 / (nonexisting as int)")); /* Division by zero */
-    REQUIRE_THROWS(joined_result(invoice, "not nonexisting == 0"));     /* Invalid operands int and bool */
-    REQUIRE_THROWS(joined_result(invoice, "not *.nonexisting == 0"));   /* Invalid operands int and bool */
+    REQUIRE_THROWS(joined_result("1 / (nonexisting as int)")); /* Division by zero */
+    REQUIRE_THROWS(joined_result("not nonexisting == 0"));     /* Invalid operands int and bool */
+    REQUIRE_THROWS(joined_result("not *.nonexisting == 0"));   /* Invalid operands int and bool */
 }

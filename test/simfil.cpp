@@ -211,11 +211,10 @@ static const char* doc = R"json(
 }
 )json";
 
-static auto model = simfil::json::parse(doc);
-
 static auto joined_result(std::string_view query)
 {
-    Environment env(model->strings);
+    auto model = simfil::json::parse(doc);
+    Environment env(model->fieldNames());
 
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
@@ -243,7 +242,7 @@ TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
     REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
     REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
     REQUIRE_RESULT("count(*)", "8");
-    REQUIRE_RESULT("count(**)", "46");
+    REQUIRE_RESULT("count(**)", "47");
     REQUIRE_RESULT("count(sub.**.a)", "2");
     REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "10");
     REQUIRE_RESULT("count(sub.**.{typeof _ == 'string'})", "4");
@@ -272,8 +271,8 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
 }
 
 TEST_CASE("Single Values", "[yaml.single-values]") {
-    REQUIRE_RESULT("_", "null");
-    REQUIRE_RESULT("_._", "null");
+    REQUIRE_RESULT("_", "model");
+    REQUIRE_RESULT("_._", "model");
     REQUIRE_RESULT("a", "1");
     REQUIRE_RESULT("['a']", "1");
     REQUIRE_RESULT("b", "2");
@@ -369,22 +368,18 @@ TEST_CASE("GeoJSON", "[geojson.geo]") {
 }
 
 TEST_CASE("Model Pool Validation", "[model.validation]") {
-    ModelPool pool;
-
-    // Recognize dangling field name id
-    pool.addObject({ModelPool::Member{666, pool.addObject({})}});
-    REQUIRE_THROWS(pool.validate());
+    auto pool = std::make_shared<ModelPool>();
 
     // Recognize dangling object member pointer
-    pool.clear();
-    pool.addObject({ModelPool::Member{pool.strings->emplace("good"), ModelPool::ModelNodeIndex(ModelPool::Objects, 666)}});
-    REQUIRE_THROWS(pool.validate());
+    pool->clear();
+    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    REQUIRE_THROWS(pool->validate());
 
     // An empty model should be valid
-    pool.clear();
-    REQUIRE_NOTHROW(pool.validate());
+    pool->clear();
+    REQUIRE_NOTHROW(pool->validate());
 
     // An empty object should also be valid
-    pool.addObject({ModelPool::Member{pool.strings->emplace("good"), pool.addObject({})}});
-    REQUIRE_NOTHROW(pool.validate());
+    pool->newObject()->addField("good", ModelNode::Ptr(pool->newObject()));
+    REQUIRE_NOTHROW(pool->validate());
 }

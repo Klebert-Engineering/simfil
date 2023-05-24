@@ -1,7 +1,7 @@
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 
 #include "simfil/model/json.h"
-#include "simfil/model.h"
+#include "simfil/model/model.h"
 
 #include <nlohmann/json.hpp>
 
@@ -9,44 +9,40 @@ namespace simfil::json
 {
 using json = nlohmann::json;
 
-static ModelPool::ModelNodeIndex build(const json& j, ModelPool & model)
+static ModelNode::Ptr build(const json& j, ModelPool & model)
 {
     switch (j.type()) {
     case json::value_t::null:
-        return model.addNull();
+        return {};
     case json::value_t::boolean:
-        return model.addValue(j.get<bool>());
+        return model.newSmallValue(j.get<bool>());
     case json::value_t::number_float:
-        return model.addValue(j.get<double>());
+        return model.newValue(j.get<double>());
     case json::value_t::number_unsigned:
-        return model.addValue((int64_t)j.get<uint64_t>());
+        return model.newValue((int64_t)j.get<uint64_t>());
     case json::value_t::number_integer:
-        return model.addValue(j.get<int64_t>());
+        return model.newValue(j.get<int64_t>());
     case json::value_t::string:
-        return model.addValue(j.get<std::string>());
+        return model.newValue(j.get<std::string>());
     default:
         break;
     }
 
     if (j.is_object()) {
-        std::vector<ModelPool::Member> members;
-        members.reserve(j.size());
-        for (auto&& [key, value] : j.items()) {
-            members.emplace_back(model.strings->emplace(key), build(value, model));
-        }
-        return model.addObject(members);
+        auto object = model.newObject(j.size());
+        for (auto&& [key, value] : j.items())
+            object->addField(key, build(value, model));
+        return object;
     }
 
     if (j.is_array()) {
-        std::vector<ModelPool::Member> members;
-        members.reserve(j.size());
-        for (const auto& value : j) {
-            members.emplace_back(Strings::Empty, build(value, model));
-        }
-        return model.addArray(members);
+        auto array = model.newArray(j.size());
+        for (const auto& value : j)
+            array->append(build(value, model));
+        return array;
     }
 
-    return model.addNull();
+    return {};
 }
 
 void parse(std::istream& input, ModelPoolPtr const& model)

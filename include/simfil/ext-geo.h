@@ -2,6 +2,7 @@
 
 #include "function.h"
 #include "typed-meta-type.h"
+#include "model/point.h"
 
 /** Simfil GeoJSON Extension */
 namespace simfil::geo
@@ -12,31 +13,22 @@ static constexpr auto OP_NAME_WITHIN     = "within";
 static constexpr auto OP_NAME_CONTAINS   = "contains";
 static constexpr auto OP_NAME_INTERSECTS = "intersects";
 
+template<class Precision>
 struct Point;
+
 struct BBox;
 struct LineString;
 struct Polygon;
 
-struct Point
-{
-    double x = 0, y = 0;
-
-    auto angleTo(const Point&) const -> double;
-    auto distanceTo(const Point&) const -> double;
-
-    auto operator==(const Point&) const -> bool;
-    auto toString() const -> std::string;
-};
-
 struct BBox
 {
-    Point p1, p2;
+    Point<double> p1, p2;
 
     auto edges() const -> LineString;
     auto normalized() const -> BBox;
 
     auto contains(const BBox& b) const -> bool;
-    auto contains(const Point& p) const -> bool;
+    auto contains(const Point<double>& p) const -> bool;
     auto contains(const LineString& p) const -> bool;
     auto contains(const Polygon& p) const -> bool;
 
@@ -49,12 +41,12 @@ struct BBox
 
 struct LineString
 {
-    std::vector<Point> points;
+    std::vector<Point<double>> points;
 
     auto bbox() const -> BBox;
 
     auto intersects(const BBox&) const -> bool;
-    auto intersects(const Point&) const -> bool;
+    auto intersects(const Point<double>&) const -> bool;
     auto intersects(const LineString&) const -> bool;
     auto intersects(const Polygon&) const -> bool;
 
@@ -69,7 +61,7 @@ struct Polygon
     auto bbox() const -> BBox;
 
     auto contains(const BBox&) const -> bool;
-    auto contains(const Point&) const -> bool;
+    auto contains(const Point<double>&) const -> bool;
     auto contains(const LineString&) const -> bool;
 
     auto intersects(const BBox&) const -> bool;
@@ -92,7 +84,7 @@ public:
     GeoFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 /** GeoJSON geometry constructors */
@@ -104,7 +96,7 @@ public:
     PointFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 class BBoxFn : public Function
@@ -115,7 +107,7 @@ public:
     BBoxFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 class LineStringFn : public Function
@@ -126,7 +118,7 @@ public:
     LineStringFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
 /* TODO: Not implemented
@@ -138,14 +130,14 @@ public:
     PolygonFn() = default;
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const std::vector<ExprPtr>&, ResultFn) const -> Result override;
+    auto eval(Context, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 */
 
 /** Simfil Meta-Types */
 namespace meta
 {
-class PointType : public TypedMetaType<Point>
+class PointType : public TypedMetaType<Point<double>>
 {
 public:
     static PointType Type;
@@ -154,10 +146,10 @@ public:
 
     auto make(double x, double y) -> Value;
 
-    auto unaryOp(std::string_view op, const Point& p) const -> Value override;
-    auto binaryOp(std::string_view op, const Point& p, const Value& r) const -> Value override;
-    auto binaryOp(std::string_view op, const Value& l, const Point& r) const -> Value override;
-    auto unpack(const Point& p, std::function<bool(Value)> res) const -> void override;
+    auto unaryOp(std::string_view op, const Point<double>& p) const -> Value override;
+    auto binaryOp(std::string_view op, const Point<double>& p, const Value& r) const -> Value override;
+    auto binaryOp(std::string_view op, const Value& l, const Point<double>& r) const -> Value override;
+    auto unpack(const Point<double>& p, std::function<bool(Value)> res) const -> void override;
 };
 
 class BBoxType : public TypedMetaType<BBox>
@@ -183,7 +175,7 @@ public:
 
     LineStringType();
 
-    auto make(std::vector<Point> pts) -> Value;
+    auto make(std::vector<Point<double>> pts) -> Value;
 
     auto unaryOp(std::string_view op, const LineString& ls) const -> Value override;
     auto binaryOp(std::string_view op, const LineString& ls, const Value& r) const -> Value override;
