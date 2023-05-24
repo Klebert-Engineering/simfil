@@ -80,7 +80,7 @@ struct ArrayArenaExt
         simfil::ArrayIndex numArrays;
         s.value4b(numArrays);
         for (simfil::ArrayIndex i = 0; i < numArrays; ++i) {
-            typename std::decay_t<decltype(arena)>::sizeType size;
+            typename std::decay_t<decltype(arena)>::SizeType size;
             s.value4b(size);
             auto arrayIndex = arena.new_array(size);
             for (size_t j = 0; j < size; ++j)
@@ -95,7 +95,7 @@ namespace traits {
 template<typename T>
 struct ExtensionTraits<ext::ArrayArenaExt, T>
 {
-    using TValue = typename T::elementType;
+    using TValue = typename T::ElementType;
     static constexpr bool SupportValueOverload = true;
     static constexpr bool SupportObjectOverload = true;
     static constexpr bool SupportLambdaOverload = true;
