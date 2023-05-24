@@ -43,7 +43,7 @@ TEST_CASE("ArrayArena basic functionality", "[ArrayArena]") {
         REQUIRE(arena.at(array1, 1) == 43);
     }
 
-    SECTION("array growth") {
+    SECTION("array capacity growth") {
         ArrayIndex array1 = arena.new_array(2);
         arena.push_back(array1, 42);
         arena.push_back(array1, 43);
@@ -54,11 +54,13 @@ TEST_CASE("ArrayArena basic functionality", "[ArrayArena]") {
         REQUIRE(arena.at(array1, 2) == 44);
     }
 
-    SECTION("empty array") {
-        ArrayIndex array1 = arena.new_array(2);
+    SECTION("array with empty initial capacity") {
+        ArrayIndex array1 = arena.new_array(0);
         arena.push_back(array1, 42);
         arena.push_back(array1, 43);
-        arena.push_back(array1, 44);
+        REQUIRE(arena.size(array1) == 2);
+        REQUIRE(arena.at(array1, 0) == 42);
+        REQUIRE(arena.at(array1, 1) == 43);
     }
 }
 
