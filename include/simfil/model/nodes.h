@@ -465,6 +465,7 @@ protected:
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
     Object(ModelConstPtr pool, ModelNodeAddress);
+    Object(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_;
     ArrayIndex members_;
@@ -475,6 +476,7 @@ protected:
 template<uint16_t MaxProceduralFields, class LambdaThisType=Object>
 class ProceduralObject : public Object
 {
+public:
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].second(reinterpret_cast<LambdaThisType const&>(*this));

@@ -230,6 +230,12 @@ Object::Object(ModelConstPtr pool_, ModelNodeAddress a)
     storage_ = &pool().objectMemberStorage();
 }
 
+Object::Object(ArrayIndex members, ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(members)
+{
+    storage_ = &pool().objectMemberStorage();
+}
+
 ValueType Object::type() const
 {
     return ValueType::Object;
