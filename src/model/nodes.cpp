@@ -372,6 +372,15 @@ bool GeometryCollection::iterate(const IterCallback& cb) const
     return true;
 }
 
+bool GeometryCollection::forEachGeometry(
+    const std::function<bool(shared_model_ptr<Geometry>)>& callback) const
+{
+    auto geomArray = pool().arrayMemberStorage().range((ArrayIndex)addr().index());
+    return std::all_of(geomArray.begin(), geomArray.end(), [this, &callback](auto&& geomNodeAddress){
+        return callback(pool().resolveGeometry(ModelNode::Ptr::make(pool_, geomNodeAddress)));
+    });
+}
+
 /** ModelNode impls. for Geometry */
 
 Geometry::Geometry(Data& data, ModelConstPtr pool_, ModelNodeAddress a)
@@ -433,6 +442,17 @@ bool Geometry::iterate(const IterCallback& cb) const
 {
     if (!cb(*at(0))) return false;
     if (!cb(*at(1))) return false;
+    return true;
+}
+
+bool Geometry::forEachPoint(std::function<bool(const geo::Point<double>&)> const& callback) const
+{
+    VertexBufferNode vertexBufferNode{geomData_, pool_, {ModelPool::PointBuffers, addr_.index()}};
+    for (auto i = 0; i < vertexBufferNode.size(); ++i) {
+        VertexNode vertex{*vertexBufferNode.at(i), geomData_};
+        if (!callback(vertex.point_))
+            return false;
+    }
     return true;
 }
 

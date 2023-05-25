@@ -528,10 +528,10 @@ struct Geometry final : public MandatoryModelPoolNodeBase
     friend struct VertexBufferNode;
 
     enum class GeomType: uint8_t {
-        Points,
-        Line,
-        Polygon,
-        Mesh
+        Points,   // Point-cloud
+        Line,     // Line-string
+        Polygon,  // Auto-closed polygon
+        Mesh      // Collection of triangles
     };
 
     [[nodiscard]] ValueType type() const override;
@@ -541,8 +541,23 @@ struct Geometry final : public MandatoryModelPoolNodeBase
     [[nodiscard]] FieldId keyAt(int64_t) const override;
     [[nodiscard]] bool iterate(IterCallback const& cb) const override;
 
+    /** Add a point to the Geometry. */
     void append(geo::Point<double> const& p);
+
+    /** Get the type of the geometry. */
     [[nodiscard]] GeomType geomType() const;
+
+    /** Iterate over all Points in the geometry.
+     * @param callback Function which is called for each contained point.
+     *  Must return true to continue iteration, false to abort iteration.
+     * @return True if all points were visited, false if the callback ever returned false.
+     * @example
+     *   collection->forEachPoint([](auto&& point){
+     *      std::cout << point.x() << "," << point.y() << "," << point.z() << std::endl;
+     *      return true;
+     *   })
+     */
+    bool forEachPoint(std::function<bool(geo::Point<double> const& point)> const& callback) const;
 
 protected:
     struct Data {
@@ -586,7 +601,20 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     [[nodiscard]] FieldId keyAt(int64_t) const override;
     [[nodiscard]] bool iterate(IterCallback const& cb) const override;
 
+    /** Adds a new Geometry to the collection and returns a reference. */
     shared_model_ptr<Geometry> newGeometry(Geometry::GeomType type, size_t initialCapacity=4);
+
+    /** Iterate over all Geometries in the collection.
+     * @param callback Function which is called for each contained geometry.
+     *  Must return true to continue iteration, false to abort iteration.
+     * @return True if all geometries were visited, false if the callback ever returned false.
+     * @example
+     *   collection->forEachGeometry([](auto&& geom){
+     *      std::cout << geom->type() << std::endl;
+     *      return true;
+     *   })
+     */
+   bool forEachGeometry(std::function<bool(shared_model_ptr<Geometry> geom)> const& callback) const;
 
 protected:
     using Storage = Array::Storage;
@@ -598,6 +626,7 @@ protected:
 struct VertexBufferNode final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
+    friend class Geometry;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -618,6 +647,7 @@ protected:
 struct VertexNode final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
+    friend class Geometry;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;

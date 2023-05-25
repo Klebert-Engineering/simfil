@@ -67,6 +67,7 @@ class ModelPool : public Model
     friend struct Geometry;
     friend struct VertexBufferNode;
     friend struct VertexNode;
+    friend struct GeometryCollection;
 
 public:
     /**
