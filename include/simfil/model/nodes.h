@@ -413,7 +413,7 @@ struct Array final : public MandatoryModelPoolNodeBase
 protected:
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
-    Array(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress);
+    Array(ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_;
     ArrayIndex members_;
@@ -464,7 +464,7 @@ protected:
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
-    Object(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress);
+    Object(ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_;
     ArrayIndex members_;

@@ -63,6 +63,17 @@ public:
     }
 
     /**
+     * Returns the number of arrays in the arena.
+     * @return The number of arrays.
+     */
+    [[nodiscard]] size_t size() const {
+    #ifdef ARRAY_ARENA_THREAD_SAFE
+            std::shared_lock guard(lock_);
+    #endif
+            return heads_.size();
+    }
+
+    /**
      * Returns the size of the specified array.
      *
      * @param a The index of the array.

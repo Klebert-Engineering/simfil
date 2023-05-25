@@ -178,8 +178,8 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
 
 /** Model Node impls for an array. */
 
-Array::Array(ArrayIndex i, ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
+Array::Array(ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_((ArrayIndex)a.index())
 {
     storage_ = &pool().arrayMemberStorage();
 }
@@ -224,8 +224,8 @@ bool Array::iterate(const ModelNode::IterCallback& cb) const
 
 /** Model Node impls for an object. */
 
-Object::Object(ArrayIndex i, ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
+Object::Object(ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_((ArrayIndex)a.index())
 {
     storage_ = &pool().objectMemberStorage();
 }
