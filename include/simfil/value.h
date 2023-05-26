@@ -305,7 +305,7 @@ public:
     }
 
     template <class Visitor>
-    [[nodiscard]] auto visit(Visitor fn) const
+    [[nodiscard]] auto visit(Visitor fn) const -> decltype(auto)
     {
         if (type == ValueType::Undef)
             return fn(UndefinedType{});
@@ -328,7 +328,7 @@ public:
         return fn(UndefinedType{});
     }
 
-    [[nodiscard]] auto toString() const
+    [[nodiscard]] auto toString() const -> decltype(auto)
     {
         if (isa(ValueType::TransientObject)) {
             const auto& obj = std::get<TransientObject>(value);
