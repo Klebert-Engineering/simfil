@@ -457,6 +457,8 @@ protected:
 template<uint16_t MaxProceduralFields, class LambdaThisType=Object>
 class ProceduralObject : public Object
 {
+    using FieldFn = ModelNode::Ptr(*)(LambdaThisType const&);
+
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].second(reinterpret_cast<LambdaThisType const&>(*this));
@@ -494,7 +496,7 @@ protected:
         : Object(i, pool, a) {}
 
     sfl::small_vector<
-        std::pair<FieldId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
+        std::pair<FieldId, FieldFn>,
         MaxProceduralFields> fields_;
 };
 
