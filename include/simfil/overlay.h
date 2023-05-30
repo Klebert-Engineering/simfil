@@ -19,7 +19,7 @@ struct OverlayNodeStorage final : public Model
 
 /** Node for injecting member fields */
 
-class OverlayNode final : public MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>
+class OverlayNode final : public MandatoryDerivedModelNodeBase<OverlayNodeStorage>
 {
 public:
     explicit OverlayNode(Value const& val);

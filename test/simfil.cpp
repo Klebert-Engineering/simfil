@@ -403,7 +403,7 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
         {
             fields_.emplace_back(
                 Fields::StaticFieldIds::Elevation,
-                [] (auto&& self) { return shared_model_ptr<ValueNode>::make(std::string_view("high"), self.pool_); });
+                [] (auto&& self) { return shared_model_ptr<ValueNode>::make(std::string_view("high"), self.model_); });
         }
     };
 

@@ -9,23 +9,23 @@ void OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
 }
 
 OverlayNode::OverlayNode(Value const& val)
-    : MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>(
+    : MandatoryDerivedModelNodeBase<OverlayNodeStorage>(
           std::make_shared<OverlayNodeStorage>(val),
           {ModelPool::Objects, 0})
 {}
 
 OverlayNode::OverlayNode(ModelNode const& n)
-    : MandatoryDerivedModelPoolNodeBase<OverlayNodeStorage>(n)
+    : MandatoryDerivedModelNodeBase<OverlayNodeStorage>(n)
 {}
 
 auto OverlayNode::set(FieldId const& key, Value const& child) -> void
 {
-    pool().overlayChildren_.insert({key, child});
+    model().overlayChildren_.insert({key, child});
 }
 
 [[nodiscard]] ScalarValueType OverlayNode::value() const
 {
-    return pool().value_.getScalar();
+    return model().value_.getScalar();
 }
 
 [[nodiscard]] ValueType OverlayNode::type() const
@@ -35,32 +35,32 @@ auto OverlayNode::set(FieldId const& key, Value const& child) -> void
 
 [[nodiscard]] ModelNode::Ptr OverlayNode::get(const FieldId& key) const
 {
-    auto iter = pool().overlayChildren_.find(key);
-    if (iter != pool().overlayChildren_.end()) {
+    auto iter = model().overlayChildren_.find(key);
+    if (iter != model().overlayChildren_.end()) {
         if (iter->second.node)
             return iter->second.node;
         return ValueNode(iter->second.getScalar());
     }
-    return pool().value_.node->get(key);
+    return model().value_.node->get(key);
 }
 
 [[nodiscard]] ModelNode::Ptr OverlayNode::at(int64_t i) const
 {
-    return pool().value_.node->at(i);
+    return model().value_.node->at(i);
 }
 
 [[nodiscard]] FieldId OverlayNode::keyAt(int64_t i) const
 {
-    return pool().value_.node->keyAt(i);
+    return model().value_.node->keyAt(i);
 }
 
 [[nodiscard]] uint32_t OverlayNode::size() const
 {
-    return pool().value_.node->size();
+    return model().value_.node->size();
 }
 
 [[nodiscard]] bool OverlayNode::iterate(IterCallback const& cb) const {
-    return pool().value_.node->iterate(cb);
+    return model().value_.node->iterate(cb);
 }
 
 }
