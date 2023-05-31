@@ -8,6 +8,8 @@
 #include <optional>
 #include <string_view>
 #include <string>
+#include <istream>
+#include <ostream>
 
 namespace simfil
 {
@@ -37,7 +39,6 @@ struct Fields
         FirstDynamicId = 128
     };
 
-public:
     /// Default constructor initializes strings for static Ids
     Fields();
 
@@ -55,23 +56,31 @@ public:
     /// additional StaticFieldIds.
     virtual std::optional<std::string_view> resolve(FieldId const& id);
 
+    /// Get highest stored field id
+    FieldId highest() const;
+
     /// Get stats
-    size_t size();
-    size_t bytes();
-    size_t hits();
-    size_t misses();
+    size_t size() const;
+    size_t bytes() const;
+    size_t hits() const;
+    size_t misses() const;
 
     /// Add a static key-string mapping - Warning: Not thread-safe.
     void addStaticKey(FieldId k, std::string const& v);
 
+    /// Serialization - write to stream, starting from a specific
+    ///  id offset if necessary (for partial serialisation).
+    virtual void write(std::ostream& outputStream, FieldId offset=0) const; // NOLINT
+    virtual void read(std::istream& inputStream);
+
 private:
-    std::shared_mutex stringStoreMutex_;
+    mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<std::string, FieldId> idForString_;
-    std::unordered_map<FieldId , std::string> stringForId_;
+    std::unordered_map<FieldId, std::string> stringForId_;
     FieldId nextId_ = FirstDynamicId;
-    std::atomic_int64_t byteSize_;
-    std::atomic_int64_t cacheHits_;
-    std::atomic_int64_t cacheMisses_;
+    std::atomic_int64_t byteSize_{0};
+    std::atomic_int64_t cacheHits_{0};
+    std::atomic_int64_t cacheMisses_{0};
 };
 
 }

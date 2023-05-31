@@ -1,12 +1,18 @@
 #pragma once
 
 #include <memory>
+#include <variant>
 
 #include "arena.h"
 #include "point.h"
 #include "fields.h"
 
 #include "sfl/small_vector.hpp"
+
+namespace bitsery {
+    // Pre-declare bitsery protected member accessor.
+    class Access;
+}
 
 namespace simfil
 {
@@ -139,6 +145,11 @@ struct ModelNodeAddress
 
     [[nodiscard]] int16_t int16() const {
         return static_cast<int16_t>((value_ >> 8) & 0xffff);
+    }
+
+    template<typename S>
+    void serialize(S& s) {
+        s.value4b(value_);
     }
 };
 
@@ -413,6 +424,7 @@ protected:
 struct Object : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
+    friend class bitsery::Access;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -442,6 +454,12 @@ protected:
         Field(FieldId name, ModelNodeAddress a) : name_(name), node_(a) {}
         FieldId name_ = Fields::Empty;
         ModelNodeAddress node_;
+
+        template<typename S>
+        void serialize(S& s) {
+            s.value2b(name_);
+            s.object(node_);
+        }
     };
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
@@ -537,6 +555,13 @@ protected:
         // Offset is set when vertexArray is allocated,
         // which happens when the first point is added.
         geo::Point<double> offset_;
+
+        template<typename S>
+        void serialize(S& s) {
+            s.value1b(type);
+            s.value4b(vertexArray_);
+            s.object(offset_);
+        }
     };
 
     using Storage = ArrayArena<geo::Point<float>, detail::ColumnPageSize*2>;

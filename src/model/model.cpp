@@ -6,11 +6,14 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
-#include <unordered_map>
 #include <vector>
 #include "stx/format.h"
+#include "simfil/model/bitsery-traits.h"
 
 #include <sfl/segmented_vector.hpp>
+#include <bitsery/bitsery.h>
+#include <bitsery/adapter/stream.h>
+#include <bitsery/traits/string.h>
 
 namespace simfil
 {
@@ -49,6 +52,12 @@ struct ModelPool::Impl
     struct StringRange {
         uint32_t offset_;
         uint32_t length_;
+
+        template<typename S>
+        void serialize(S& s) {
+            s.value4b(offset_);
+            s.value4b(length_);
+        }
     };
 
     /// This model pool's field name store
@@ -70,6 +79,26 @@ struct ModelPool::Impl
         sfl::segmented_vector<Geometry::Data, detail::ColumnPageSize> geom_;
         Geometry::Storage vertexBuffers_;
     } columns_;
+
+    template<typename S>
+    void readWrite(S& s) {
+        constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
+
+        s.container(columns_.roots_, maxColumnSize);
+
+        s.container(columns_.objects_, maxColumnSize);
+        s.container(columns_.arrays_, maxColumnSize);
+        s.container(columns_.i64_, maxColumnSize);
+        s.container(columns_.double_, maxColumnSize);
+        s.text1b(columns_.stringData_, maxColumnSize);
+        s.container(columns_.strings_, maxColumnSize);
+
+        s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
+        s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
+
+        s.container(columns_.geom_, maxColumnSize);
+        s.ext(columns_.vertexBuffers_, bitsery::ext::ArrayArenaExt{});
+    }
 };
 
 ModelPool::ModelPool()
@@ -355,6 +384,21 @@ Array::Storage& ModelPool::arrayMemberStorage() {
 
 Geometry::Storage& ModelPool::vertexBufferStorage() {
     return impl_->columns_.vertexBuffers_;
+}
+
+void ModelPool::write(std::ostream& outputStream) {
+    bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
+    impl_->readWrite(s);
+}
+
+void ModelPool::read(std::istream& inputStream) {
+    bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
+    impl_->readWrite(s);
+    if (!s.adapter().isCompletedSuccessfully()) {
+        throw std::runtime_error(stx::format(
+            "Failed to read ModelPool: Error {}",
+            static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
+    }
 }
 
 }  // namespace simfil

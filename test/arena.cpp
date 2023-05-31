@@ -1,7 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <thread>
+#include <bitsery/bitsery.h>
+#include <bitsery/adapter/buffer.h>
+#include <bitsery/traits/vector.h>
 
 #include "simfil/model/arena.h"
+#include "simfil/model/bitsery-traits.h"
 
 using namespace simfil;
 
@@ -39,7 +43,7 @@ TEST_CASE("ArrayArena basic functionality", "[ArrayArena]") {
         REQUIRE(arena.at(array1, 1) == 43);
     }
 
-    SECTION("array growth") {
+    SECTION("array capacity growth") {
         ArrayIndex array1 = arena.new_array(2);
         arena.push_back(array1, 42);
         arena.push_back(array1, 43);
@@ -48,6 +52,15 @@ TEST_CASE("ArrayArena basic functionality", "[ArrayArena]") {
         REQUIRE(arena.at(array1, 0) == 42);
         REQUIRE(arena.at(array1, 1) == 43);
         REQUIRE(arena.at(array1, 2) == 44);
+    }
+
+    SECTION("array with empty initial capacity") {
+        ArrayIndex array1 = arena.new_array(0);
+        arena.push_back(array1, 42);
+        arena.push_back(array1, 43);
+        REQUIRE(arena.size(array1) == 2);
+        REQUIRE(arena.at(array1, 0) == 42);
+        REQUIRE(arena.at(array1, 1) == 43);
     }
 }
 
@@ -199,3 +212,45 @@ TEST_CASE("ArrayArena Concurrency", "[ArrayArena]") {
     }
 }
 #endif
+
+TEST_CASE("ArrayArena serialization and deserialization") {
+    ArrayArena<int> arena;
+
+    // Create arrays and fill them with data
+    auto array1 = arena.new_array(10);
+    for (int i = 0; i < 10; ++i) {
+        arena.push_back(array1, i);
+    }
+
+    auto array2 = arena.new_array(5);
+    for (int i = 10; i < 15; ++i) {
+        arena.push_back(array2, i);
+    }
+
+    // Serialize the ArrayArena
+    using Buffer = std::vector<uint8_t>;
+    using OutputAdapter = bitsery::OutputBufferAdapter<Buffer>;
+    using InputAdapter = bitsery::InputBufferAdapter<Buffer>;
+    Buffer buffer;
+    auto writtenSize = bitsery::quickSerialization<OutputAdapter>(buffer, arena);
+
+    // Deserialize the ArrayArena into a new instance
+    ArrayArena<int> deserializedArena;
+    auto state = bitsery::quickDeserialization<InputAdapter>(
+        {buffer.begin(), writtenSize}, deserializedArena
+    );
+
+    // Check the deserialization state and the content of the deserialized arena
+    REQUIRE(state.first == bitsery::ReaderError::NoError);
+    REQUIRE(state.second);
+    REQUIRE(arena.size(array1) == deserializedArena.size(array1));
+    REQUIRE(arena.size(array2) == deserializedArena.size(array2));
+
+    for (size_t i = 0; i < arena.size(array1); ++i) {
+        REQUIRE(arena.at(array1, i) == deserializedArena.at(array1, i));
+    }
+
+    for (size_t i = 0; i < arena.size(array2); ++i) {
+        REQUIRE(arena.at(array2, i) == deserializedArena.at(array2, i));
+    }
+}

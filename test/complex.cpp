@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <sstream>
+#include <iostream>
 
 #include "simfil/simfil.h"
 #include "simfil/model/json.h"
@@ -86,4 +88,53 @@ TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
     REQUIRE_THROWS(joined_result("1 / (nonexisting as int)")); /* Division by zero */
     REQUIRE_THROWS(joined_result("not nonexisting == 0"));     /* Invalid operands int and bool */
     REQUIRE_THROWS(joined_result("not *.nonexisting == 0"));   /* Invalid operands int and bool */
+}
+
+TEST_CASE("Serialization", "[yaml.complex.serialization]") {
+    auto model = json::parse(invoice);
+
+    SECTION("Test Model write/read")
+    {
+        std::stringstream stream;
+        model->write(stream);
+
+        auto recoveredModel = std::make_shared<ModelPool>();
+        recoveredModel->read(stream);
+
+        std::function<void(ModelNode::Ptr, ModelNode::Ptr)> require_equals = [&](auto l, auto r)
+        {
+            REQUIRE(l->type() == r->type());
+            switch (l->type()) {
+            case ValueType::Object:
+            case ValueType::Array: {
+                REQUIRE(l->size() == r->size());
+                for (auto i = 0; i < l->size(); ++i) {
+                    if (l->type() == ValueType::Object)
+                        REQUIRE(l->keyAt(i) == r->keyAt(i));
+                    require_equals(l->at(i), r->at(i));
+                }
+                break;
+            }
+            default: REQUIRE(l->value() == r->value());
+            }
+        };
+
+        REQUIRE(model->numRoots() == recoveredModel->numRoots());
+        require_equals(model->root(0), recoveredModel->root(0));
+    }
+
+    SECTION("Test Fields write/read")
+    {
+        std::stringstream stream;
+        model->fieldNames()->write(stream);
+
+        auto recoveredFields = std::make_shared<Fields>();
+        recoveredFields->read(stream);
+
+        REQUIRE(model->fieldNames()->size() == recoveredFields->size());
+        REQUIRE(model->fieldNames()->highest() == recoveredFields->highest());
+        REQUIRE(model->fieldNames()->bytes() == recoveredFields->bytes());
+        for (FieldId fieldId = 0; fieldId <= recoveredFields->highest(); ++fieldId)
+            REQUIRE(model->fieldNames()->resolve(fieldId) == recoveredFields->resolve(fieldId));
+    }
 }

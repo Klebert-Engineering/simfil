@@ -45,6 +45,14 @@ if (NOT TARGET stx)
   FetchContent_MakeAvailable(stx)
 endif()
 
+if (NOT TARGET bitsery)
+  FetchContent_Declare(bitsery
+    GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
+    GIT_TAG        "master"
+    GIT_SHALLOW    ON)
+  FetchContent_MakeAvailable(bitsery)
+endif()
+
 if (NOT DEFINED SIMFIL_WITH_MODEL_JSON)
   set(SIMFIL_WITH_MODEL_JSON YES)
 endif()
@@ -72,6 +80,7 @@ add_library(simfil STATIC
   include/simfil/model/point.h
   include/simfil/model/model.h
   include/simfil/model/nodes.h
+  include/simfil/model/bitsery-traits.h
 
   src/environment.cpp
   src/function.cpp
@@ -98,7 +107,8 @@ target_compile_features(simfil
 target_link_libraries(simfil
   PUBLIC
     sfl::sfl
-    stx::stx)
+    stx::stx
+    Bitsery::bitsery)
 
 if (MSVC)
   target_compile_definitions(simfil
