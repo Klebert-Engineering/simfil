@@ -406,7 +406,7 @@ void ModelPool::write(std::ostream& outputStream) {
 void ModelPool::read(std::istream& inputStream) {
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
     impl_->readWrite(s);
-    if (!s.adapter().isCompletedSuccessfully()) {
+    if (s.adapter().error() != bitsery::ReaderError::NoError) {
         throw std::runtime_error(stx::format(
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
