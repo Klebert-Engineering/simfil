@@ -158,6 +158,9 @@ protected:
     Object::Storage& objectMemberStorage();
     Array::Storage& arrayMemberStorage();
     Geometry::Storage& vertexBufferStorage();
+
+    /// Allows a derived ModelPool to set the field name storage dictionary
+    void setFieldNames(std::shared_ptr<Fields> fieldNames);
 };
 
 }

@@ -381,6 +381,11 @@ std::shared_ptr<Fields> ModelPool::fieldNames() const
     return impl_->fieldNames_;
 }
 
+void ModelPool::setFieldNames(std::shared_ptr<Fields> fieldNames)
+{
+    impl_->fieldNames_ = std::move(fieldNames);
+}
+
 Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
