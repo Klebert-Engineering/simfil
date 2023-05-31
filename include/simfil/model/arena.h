@@ -63,6 +63,17 @@ public:
     }
 
     /**
+     * Returns the number of arrays in the arena.
+     * @return The number of arrays.
+     */
+    [[nodiscard]] size_t size() const {
+    #ifdef ARRAY_ARENA_THREAD_SAFE
+            std::shared_lock guard(lock_);
+    #endif
+            return heads_.size();
+    }
+
+    /**
      * Returns the size of the specified array.
      *
      * @param a The index of the array.
@@ -179,6 +190,12 @@ public:
         friend class ArrayRange;
 
     public:
+        using iterator_category = std::input_iterator_tag;
+        using value_type = T;
+        using difference_type = std::ptrdiff_t;
+        using pointer = value_type*;
+        using reference = ElementRef;
+
         ArrayIterator(ArrayArenaRef arena, ArrayIndex array_index, size_t elem_index)
             : arena_(arena), array_index_(array_index), elem_index_(elem_index) {}
 
@@ -249,6 +266,12 @@ public:
         bool operator!=(const ArrayArenaIterator& other) const {
             return !(*this == other);  // NOLINT
         }
+
+        using iterator_category = std::input_iterator_tag;
+        using value_type = ArrayRange;
+        using difference_type = std::ptrdiff_t;
+        using pointer = value_type*;
+        using reference = value_type&;
 
     private:
         ArrayArena& arena_;

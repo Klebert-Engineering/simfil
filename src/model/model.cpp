@@ -65,8 +65,6 @@ struct ModelPool::Impl
 
     struct {
         sfl::segmented_vector<ModelNodeAddress, detail::ColumnPageSize> roots_;
-        sfl::segmented_vector<ArrayIndex, detail::ColumnPageSize> objects_;
-        sfl::segmented_vector<ArrayIndex, detail::ColumnPageSize> arrays_;
         sfl::segmented_vector<int64_t, detail::ColumnPageSize> i64_;
         sfl::segmented_vector<double, detail::ColumnPageSize> double_;
 
@@ -86,8 +84,6 @@ struct ModelPool::Impl
 
         s.container(columns_.roots_, maxColumnSize);
 
-        s.container(columns_.objects_, maxColumnSize);
-        s.container(columns_.arrays_, maxColumnSize);
         s.container(columns_.i64_, maxColumnSize);
         s.container(columns_.double_, maxColumnSize);
         s.text1b(columns_.stringData_, maxColumnSize);
@@ -116,13 +112,12 @@ std::vector<std::string> ModelPool::checkForErrors() const
 {
     std::vector<std::string> errors;
 
-    auto validateModelIndex = [&](ModelNodeAddress const& node) {
-        try {
-            resolve(ModelNode(shared_from_this(), node), Lambda([](auto&&){}));
+    auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
+        if (i < 0 || i >= arena.size()) {
+            errors.emplace_back(stx::format("Bad {} array index {}.", arrType, i));
+            return false;
         }
-        catch (std::exception& e) {
-            errors.emplace_back(e.what());
-        }
+        return true;
     };
 
     auto validateFieldName = [&, this](FieldId const& str)
@@ -133,20 +128,43 @@ std::vector<std::string> ModelPool::checkForErrors() const
             errors.push_back(stx::format("Bad string ID: {}", str));
     };
 
-    // Check object members
-    for (auto const& memberArray : impl_->columns_.objectMemberArrays_) {
-        for (auto const& member : memberArray) {
-            validateModelIndex(member.node_);
-            validateFieldName(member.name_);
+    std::function<void(ModelNode::Ptr)> validateModelNode = [&](ModelNode::Ptr node)
+    {
+        try {
+            if (node->type() == ValueType::Object) {
+                if (node->addr().column() == Objects)
+                    if (!validateArrayIndex(node->addr().index(), "object", impl_->columns_.objectMemberArrays_))
+                        return;
+                for (auto const& [fieldName, fieldValue] : node->fields()) {
+                    validateFieldName(fieldName);
+                    validateModelNode(fieldValue);
+                }
+            }
+            else if (node->type() == ValueType::Array) {
+                if (node->addr().column() == Arrays)
+                    if (!validateArrayIndex(node->addr().index(), "arrays", impl_->columns_.arrayMemberArrays_))
+                        return;
+                for (auto const& member : *node)
+                    validateModelNode(member);
+            }
+            resolve(*node, Lambda([](auto&&) {}));
         }
-    }
+        catch (std::exception& e) {
+            errors.emplace_back(e.what());
+        }
+    };
 
-    // Check array members
-    for (auto const& memberArray : impl_->columns_.arrayMemberArrays_) {
-        for (auto const& member : memberArray) {
-            validateModelIndex(member);
-        }
-    }
+    // Validate objects
+    for (auto i = 0; i < impl_->columns_.objectMemberArrays_.size(); ++i)
+        validateModelNode(ModelNode::Ptr::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)i}));
+
+    // Validate arrays
+    for (auto i = 0; i < impl_->columns_.arrayMemberArrays_.size(); ++i)
+        validateModelNode(ModelNode::Ptr::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)i}));
+
+    // Validate roots
+    for (auto i = 0; i < numRoots(); ++i)
+        validateModelNode(root(i));
 
     return errors;
 }
@@ -169,8 +187,6 @@ void ModelPool::clear()
     };
 
     clear_and_shrink(columns.roots_);
-    clear_and_shrink(columns.objects_);
-    clear_and_shrink(columns.arrays_);
     clear_and_shrink(columns.i64_);
     clear_and_shrink(columns.double_);
     clear_and_shrink(columns.strings_);
@@ -196,13 +212,11 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
 
     switch (n.addr_.column()) {
     case Objects: {
-        auto& val = get(impl_->columns_.objects_);
-        cb(Object(val, shared_from_this(), n.addr_));
+        cb(Object(shared_from_this(), n.addr_));
         break;
     }
     case Arrays: {
-        auto& val = get(impl_->columns_.arrays_);
-        cb(Array(val, shared_from_this(), n.addr_));
+        cb(Array(shared_from_this(), n.addr_));
         break;
     }
     case Int64: {
@@ -263,21 +277,17 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
 shared_model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
 {
     auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
-    impl_->columns_.objects_.emplace_back(memberArrId);
     return Object(
-        memberArrId,
         shared_from_this(),
-        {Objects, (uint32_t)impl_->columns_.objects_.size()-1});
+        {Objects, (uint32_t)memberArrId});
 }
 
 shared_model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
 {
     auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
-    impl_->columns_.arrays_.emplace_back(memberArrId);
     return Array(
-        memberArrId,
         shared_from_this(),
-        {Arrays, (uint32_t)impl_->columns_.arrays_.size()-1});
+        {Arrays, (uint32_t)memberArrId});
 }
 
 ModelNode::Ptr Model::newSmallValue(bool value)
@@ -324,10 +334,9 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 shared_model_ptr<GeometryCollection> ModelPool::newGeometryCollection(size_t initialCapacity)
 {
     auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialCapacity);
-    impl_->columns_.arrays_.emplace_back(memberArrId);
     return GeometryCollection(
         shared_from_this(),
-        {GeometryCollections, (uint32_t)impl_->columns_.arrays_.size()-1});
+        {GeometryCollections, (uint32_t)memberArrId});
 }
 
 shared_model_ptr<Geometry> ModelPool::newGeometry(Geometry::GeomType geomType, size_t initialCapacity)
@@ -342,16 +351,14 @@ shared_model_ptr<Geometry> ModelPool::newGeometry(Geometry::GeomType geomType, s
 shared_model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
     if (n->addr_.column() != Objects)
         throw std::runtime_error("Cannot cast this node to an object.");
-    auto& memberArrayIdx = impl_->columns_.objects_[n->addr_.index()];
-    return Object(memberArrayIdx, shared_from_this(), n->addr_);
+    return Object(shared_from_this(), n->addr_);
 }
 
 shared_model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
 {
     if (n->addr_.column() != Arrays)
         throw std::runtime_error("Cannot cast this node to an array.");
-    auto& memberArrayIdx = impl_->columns_.arrays_[n->addr_.index()];
-    return Array(memberArrayIdx, shared_from_this(), n->addr_);
+    return Array(shared_from_this(), n->addr_);
 }
 
 shared_model_ptr<GeometryCollection> ModelPool::resolveGeometryCollection(ModelNode::Ptr const& n) const
@@ -374,6 +381,11 @@ std::shared_ptr<Fields> ModelPool::fieldNames() const
     return impl_->fieldNames_;
 }
 
+void ModelPool::setFieldNames(std::shared_ptr<Fields> fieldNames)
+{
+    impl_->fieldNames_ = std::move(fieldNames);
+}
+
 Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
@@ -394,7 +406,7 @@ void ModelPool::write(std::ostream& outputStream) {
 void ModelPool::read(std::istream& inputStream) {
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
     impl_->readWrite(s);
-    if (!s.adapter().isCompletedSuccessfully()) {
+    if (s.adapter().error() != bitsery::ReaderError::NoError) {
         throw std::runtime_error(stx::format(
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));

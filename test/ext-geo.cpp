@@ -133,25 +133,48 @@ TEST_CASE("GeometryCollection Multiple Geometries", "[geom_collection_multiple]"
     polygon_geom->append(e);
     polygon_geom->append(f);
 
-    // Check stored points in Point geometry
-    REQUIRE(point_geom->get(Fields::Coordinates)->size() == 1);
-    REQUIRE(point_geom->get(Fields::Coordinates)->at(0)->type() == ValueType::Array); // Point
-    REQUIRE(point_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lon)->value() == ScalarValueType(a.x));
-    REQUIRE(point_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lat)->value() == ScalarValueType(a.y));
+    SECTION("Retrieve points") {
+        // Check stored points in Point geometry
+        REQUIRE(point_geom->get(Fields::Coordinates)->size() == 1);
+        REQUIRE(point_geom->get(Fields::Coordinates)->at(0)->type() == ValueType::Array); // Point
+        REQUIRE(point_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lon)->value() == ScalarValueType(a.x));
+        REQUIRE(point_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lat)->value() == ScalarValueType(a.y));
 
-    // Check stored points in LineString geometry
-    REQUIRE(linestring_geom->get(Fields::Coordinates)->size() == 2);
-    REQUIRE(linestring_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lon)->value() == ScalarValueType(b.x));
-    REQUIRE(linestring_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lat)->value() == ScalarValueType(b.y));
-    REQUIRE(linestring_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lon)->value() == ScalarValueType(c.x));
-    REQUIRE(linestring_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lat)->value() == ScalarValueType(c.y));
+        // Check stored points in LineString geometry
+        REQUIRE(linestring_geom->get(Fields::Coordinates)->size() == 2);
+        REQUIRE(linestring_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lon)->value() == ScalarValueType(b.x));
+        REQUIRE(linestring_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lat)->value() == ScalarValueType(b.y));
+        REQUIRE(linestring_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lon)->value() == ScalarValueType(c.x));
+        REQUIRE(linestring_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lat)->value() == ScalarValueType(c.y));
 
-    // Check stored points in Polygon geometry
-    REQUIRE(polygon_geom->get(Fields::Coordinates)->size() == 3);
-    REQUIRE(polygon_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lon)->value() == ScalarValueType(d.x));
-    REQUIRE(polygon_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lat)->value() == ScalarValueType(d.y));
-    REQUIRE(polygon_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lon)->value() == ScalarValueType(e.x));
-    REQUIRE(polygon_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lat)->value() == ScalarValueType(e.y));
-    REQUIRE(polygon_geom->get(Fields::Coordinates)->at(2)->get(Fields::Lon)->value() == ScalarValueType(f.x));
-    REQUIRE(polygon_geom->get(Fields::Coordinates)->at(2)->get(Fields::Lat)->value() == ScalarValueType(f.y));
+        // Check stored points in Polygon geometry
+        REQUIRE(polygon_geom->get(Fields::Coordinates)->size() == 3);
+        REQUIRE(polygon_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lon)->value() == ScalarValueType(d.x));
+        REQUIRE(polygon_geom->get(Fields::Coordinates)->at(0)->get(Fields::Lat)->value() == ScalarValueType(d.y));
+        REQUIRE(polygon_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lon)->value() == ScalarValueType(e.x));
+        REQUIRE(polygon_geom->get(Fields::Coordinates)->at(1)->get(Fields::Lat)->value() == ScalarValueType(e.y));
+        REQUIRE(polygon_geom->get(Fields::Coordinates)->at(2)->get(Fields::Lon)->value() == ScalarValueType(f.x));
+        REQUIRE(polygon_geom->get(Fields::Coordinates)->at(2)->get(Fields::Lat)->value() == ScalarValueType(f.y));
+    }
+
+    SECTION("For-each") {
+        auto pts = std::vector<BigPoint>{a, b, c, d, e, f};
+        auto numPts = 0;
+        auto numGeoms = 0;
+        geometry_collection->forEachGeometry(
+            [&](auto&& g)
+            {
+                g->forEachPoint(
+                    [&](auto&& p)
+                    {
+                        REQUIRE(p == pts[numPts]);
+                        ++numPts;
+                        return true;
+                    });
+                ++numGeoms;
+                return true;
+            });
+        REQUIRE(numGeoms == 3);
+        REQUIRE(numPts == 6);
+    }
 }

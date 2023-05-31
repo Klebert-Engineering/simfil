@@ -184,9 +184,9 @@ void Fields::read(std::istream& inputStream)
         }
     }
 
-    if (!s.adapter().isCompletedSuccessfully()) {
+    if (s.adapter().error() != bitsery::ReaderError::NoError) {
         throw std::runtime_error(stx::format(
-            "Failed to read ModelPool: Error {}",
+            "Failed to read Fields: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
 }

@@ -67,6 +67,7 @@ class ModelPool : public Model
     friend struct Geometry;
     friend struct VertexBufferNode;
     friend struct VertexNode;
+    friend struct GeometryCollection;
 
 public:
     /**
@@ -157,6 +158,9 @@ protected:
     Object::Storage& objectMemberStorage();
     Array::Storage& arrayMemberStorage();
     Geometry::Storage& vertexBufferStorage();
+
+    /// Allows a derived ModelPool to set the field name storage dictionary
+    void setFieldNames(std::shared_ptr<Fields> fieldNames);
 };
 
 }

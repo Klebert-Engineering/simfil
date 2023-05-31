@@ -375,6 +375,16 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
     pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
     REQUIRE_THROWS(pool->validate());
 
+    // Recognize dangling array member pointer
+    pool->clear();
+    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Arrays, 666}));
+    REQUIRE_THROWS(pool->validate());
+
+    // Recognize dangling root
+    pool->clear();
+    pool->addRoot(ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    REQUIRE_THROWS(pool->validate());
+
     // An empty model should be valid
     pool->clear();
     REQUIRE_NOTHROW(pool->validate());
@@ -382,4 +392,25 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
     // An empty object should also be valid
     pool->newObject()->addField("good", ModelNode::Ptr(pool->newObject()));
     REQUIRE_NOTHROW(pool->validate());
+}
+
+TEST_CASE("Procedural Object Node", "[model.procedural]") {
+    auto pool = std::make_shared<ModelPool>();
+
+    struct DerivedProceduralObject : public ProceduralObject<2, DerivedProceduralObject> {
+        DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
+            : ProceduralObject<2, DerivedProceduralObject>((ArrayIndex)a.index(), std::move(pool), a)
+        {
+            fields_.emplace_back(
+                Fields::StaticFieldIds::Elevation,
+                [] (auto&& self) { return shared_model_ptr<ValueNode>::make(std::string_view("high"), self.model_); });
+        }
+    };
+
+    auto baseObj = pool->newObject();
+    baseObj->addField("mood", "blue");
+
+    auto proceduralObj = shared_model_ptr<DerivedProceduralObject>::make(pool, baseObj->addr());
+    REQUIRE(proceduralObj->get(pool->fieldNames()->get("mood"))->value() == ScalarValueType(std::string_view("blue")));
+    REQUIRE(proceduralObj->get(Fields::Elevation)->value() == ScalarValueType(std::string_view("high")));
 }

@@ -14,62 +14,64 @@ static std::string_view MultiPolygonStr("MultiPolygon");
 /// Create a ModelNode from a model pool which serves as its
 /// VFT, and a TreeNodeAddress.
 ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data)
-    : pool_(std::move(pool)), addr_(addr), data_(std::move(data))
+    : model_(std::move(pool)), addr_(addr), data_(std::move(data))
 {}
 
 /// Get the node's scalar value if it has one
 ScalarValueType ModelNode::value() const {
     ScalarValueType result;
-    if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.value(); }));
+    if (model_)
+        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.value(); }));
     return result;
 }
 
 /// Get the node's abstract model type
 ValueType ModelNode::type() const {
     ValueType result = ValueType::Null;
-    if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.type(); }));
+    if (model_)
+        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.type(); }));
     return result;
 }
 
 /// Get a child by name
 ModelNode::Ptr ModelNode::get(const FieldId& field) const {
     ModelNode::Ptr result;
-    if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.get(field); }));
+    if (model_)
+        model_
+            ->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.get(field); }));
     return result;
 }
 
 /// Get a child by index
 ModelNode::Ptr ModelNode::at(int64_t index) const {
     ModelNode::Ptr result;
-    if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.at(index); }));
+    if (model_)
+        model_
+            ->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.at(index); }));
     return result;
 }
 
 /// Get an Object model's field names
 FieldId ModelNode::keyAt(int64_t i) const {
     FieldId result = 0;
-    if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.keyAt(i); }));
+    if (model_)
+        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.keyAt(i); }));
     return result;
 }
 
 /// Get the number of children
 uint32_t ModelNode::size() const {
     uint32_t result = 0;
-    if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.size(); }));
+    if (model_)
+        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.size(); }));
     return result;
 }
 
 /// Fast iteration
 bool ModelNode::iterate(const IterCallback& cb) const {
     bool result = true;
-    if (pool_)
-        pool_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.iterate(cb); }));
+    if (model_)
+        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.iterate(cb); }));
     return result;
 }
 
@@ -178,10 +180,10 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
 
 /** Model Node impls for an array. */
 
-Array::Array(ArrayIndex i, ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
+Array::Array(ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_((ArrayIndex)a.index())
 {
-    storage_ = &pool().arrayMemberStorage();
+    storage_ = &model().arrayMemberStorage();
 }
 
 ValueType Array::type() const
@@ -193,7 +195,7 @@ ModelNode::Ptr Array::at(int64_t i) const
 {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
-    return ModelNode::Ptr::make(pool_, storage_->at(members_, i));
+    return ModelNode::Ptr::make(model_, storage_->at(members_, i));
 }
 
 uint32_t Array::size() const
@@ -201,12 +203,12 @@ uint32_t Array::size() const
     return (uint32_t)storage_->size(members_);
 }
 
-Array& Array::append(bool value) {storage_->push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(uint16_t value) {storage_->push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(int16_t value) {storage_->push_back(members_, pool().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(int64_t const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
-Array& Array::append(double const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
-Array& Array::append(std::string_view const& value) {storage_->push_back(members_, pool().newValue(value)->addr()); return *this;}
+Array& Array::append(bool value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
+Array& Array::append(uint16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
+Array& Array::append(int16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
+Array& Array::append(int64_t const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
+Array& Array::append(double const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
+Array& Array::append(std::string_view const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 Array& Array::append(ModelNode::Ptr const& value) {storage_->push_back(members_, value->addr()); return *this;}
 
 bool Array::iterate(const ModelNode::IterCallback& cb) const
@@ -216,7 +218,7 @@ bool Array::iterate(const ModelNode::IterCallback& cb) const
         cont = cb(node);
     });
     storage_->iterate(members_, [&, this](auto&& member){
-        pool_->resolve(*ModelNode::Ptr::make(pool_, member), resolveAndCb);
+            model_->resolve(*ModelNode::Ptr::make(model_, member), resolveAndCb);
         return cont;
     });
     return cont;
@@ -224,10 +226,16 @@ bool Array::iterate(const ModelNode::IterCallback& cb) const
 
 /** Model Node impls for an object. */
 
-Object::Object(ArrayIndex i, ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(i)
+Object::Object(ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_((ArrayIndex)a.index())
 {
-    storage_ = &pool().objectMemberStorage();
+    storage_ = &model().objectMemberStorage();
+}
+
+Object::Object(ArrayIndex members, ModelConstPtr pool_, ModelNodeAddress a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(members)
+{
+    storage_ = &model().objectMemberStorage();
 }
 
 ValueType Object::type() const
@@ -239,7 +247,7 @@ ModelNode::Ptr Object::at(int64_t i) const
 {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
-    return ModelNode::Ptr::make(pool_, storage_->at(members_, i).node_);
+    return ModelNode::Ptr::make(model_, storage_->at(members_, i).node_);
 }
 
 FieldId Object::keyAt(int64_t i) const {
@@ -258,7 +266,7 @@ ModelNode::Ptr Object::get(const FieldId & field) const
     ModelNode::Ptr result;
     storage_->iterate(members_, [&field, &result, this](auto&& member){
         if (member.name_ == field) {
-            result = ModelNode::Ptr::make(pool_, member.node_);
+            result = ModelNode::Ptr::make(model_, member.node_);
             return false;
         }
         return true;
@@ -267,48 +275,48 @@ ModelNode::Ptr Object::get(const FieldId & field) const
 }
 
 ModelNode::Ptr Object::get(std::string_view const& fieldName) const {
-    auto fieldId = pool().fieldNames()->emplace(fieldName);
+    auto fieldId = model().fieldNames()->emplace(fieldName);
     return get(fieldId);
 }
 
 Object& Object::addBool(std::string_view const& name, bool value) {
-    auto fieldId = pool().fieldNames()->emplace(name);
-    storage_->emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
+    auto fieldId = model().fieldNames()->emplace(name);
+    storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, uint16_t value) {
-    auto fieldId = pool().fieldNames()->emplace(name);
-    storage_->emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
+    auto fieldId = model().fieldNames()->emplace(name);
+    storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, int16_t value) {
-    auto fieldId = pool().fieldNames()->emplace(name);
-    storage_->emplace_back(members_, fieldId, pool().newSmallValue(value)->addr());
+    auto fieldId = model().fieldNames()->emplace(name);
+    storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, int64_t const& value) {
-    auto fieldId = pool().fieldNames()->emplace(name);
-    storage_->emplace_back(members_, fieldId, pool().newValue(value)->addr());
+    auto fieldId = model().fieldNames()->emplace(name);
+    storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, double const& value) {
-    auto fieldId = pool().fieldNames()->emplace(name);
-    storage_->emplace_back(members_, fieldId, pool().newValue(value)->addr());
+    auto fieldId = model().fieldNames()->emplace(name);
+    storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, std::string_view const& value) {
-    auto fieldId = pool().fieldNames()->emplace(name);
-    storage_->emplace_back(members_, fieldId, pool().newValue(value)->addr());
+    auto fieldId = model().fieldNames()->emplace(name);
+    storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& value) {
-    auto fieldId = pool().fieldNames()->emplace(name);
+    auto fieldId = model().fieldNames()->emplace(name);
     storage_->emplace_back(members_, fieldId, value->addr());
     return *this;
 }
@@ -320,7 +328,7 @@ bool Object::iterate(const ModelNode::IterCallback& cb) const
         cont = cb(node);
     });
     storage_->iterate(members_, [&, this](auto&& member){
-        pool_->resolve(*ModelNode::Ptr::make(pool_, member.node_), resolveAndCb);
+            model_->resolve(*ModelNode::Ptr::make(model_, member.node_), resolveAndCb);
         return cont;
     });
     return cont;
@@ -338,8 +346,8 @@ ValueType GeometryCollection::type() const {
 }
 
 ModelNode::Ptr GeometryCollection::at(int64_t i) const {
-    if (i == 0) return ValueNode(GeometryCollectionStr, pool_);
-    if (i == 1) return ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
+    if (i == 0) return ValueNode(GeometryCollectionStr, model_);
+    if (i == 1) return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
     throw std::out_of_range("geom collection: Out of range.");
 }
 
@@ -360,8 +368,8 @@ FieldId GeometryCollection::keyAt(int64_t i) const {
 }
 
 shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType type, size_t initialCapacity) {
-    auto result = pool().newGeometry(type, initialCapacity);
-    pool().resolveArray(at(1))->append(ModelNode::Ptr(result));
+    auto result = model().newGeometry(type, initialCapacity);
+    model().resolveArray(at(1))->append(ModelNode::Ptr(result));
     return result;
 }
 
@@ -377,7 +385,7 @@ bool GeometryCollection::iterate(const IterCallback& cb) const
 Geometry::Geometry(Data& data, ModelConstPtr pool_, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(data)
 {
-    storage_ = &pool().vertexBufferStorage();
+    storage_ = &model().vertexBufferStorage();
 }
 
 ValueType Geometry::type() const {
@@ -389,8 +397,10 @@ ModelNode::Ptr Geometry::at(int64_t i) const {
         geomData_.type == GeomType::Points ? MultiPointStr :
         geomData_.type == GeomType::Line ? LineStringStr :
         geomData_.type == GeomType::Polygon ? PolygonStr :
-        geomData_.type == GeomType::Mesh ? MultiPolygonStr : "", pool_);
-    if (i == 1) return ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::PointBuffers, addr_.index()});
+        geomData_.type == GeomType::Mesh ? MultiPolygonStr : "",
+            model_);
+    if (i == 1) return ModelNode::Ptr::make(
+            model_, ModelNodeAddress{ModelPool::PointBuffers, addr_.index()});
     throw std::out_of_range("geom: Out of range.");
 }
 
@@ -441,7 +451,7 @@ bool Geometry::iterate(const IterCallback& cb) const
 VertexBufferNode::VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool_, ModelNodeAddress const& a)
     : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(geomData)
 {
-    storage_ = &pool().vertexBufferStorage();
+    storage_ = &model().vertexBufferStorage();
 }
 
 ValueType VertexBufferNode::type() const {
@@ -451,7 +461,7 @@ ValueType VertexBufferNode::type() const {
 ModelNode::Ptr VertexBufferNode::at(int64_t i) const {
     if (i < 0 || i > size())
         throw std::out_of_range("vertex-buffer: Out of range.");
-    return ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::Points, addr_.index()}, i);
+    return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Points, addr_.index()}, i);
 }
 
 uint32_t VertexBufferNode::size() const {
@@ -476,7 +486,8 @@ bool VertexBufferNode::iterate(const IterCallback& cb) const
     });
     auto length = size();
     for (auto i = 0; i < length; ++i) {
-        resolveAndCb(*ModelNode::Ptr::make(pool_, ModelNodeAddress{ModelPool::Points, addr_.index()}, (int64_t)i));
+        resolveAndCb(*ModelNode::Ptr::make(
+            model_, ModelNodeAddress{ModelPool::Points, addr_.index()}, (int64_t)i));
         if (!cont)
             break;
     }
@@ -491,7 +502,7 @@ VertexNode::VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData
     auto i = std::get<int64_t>(data_);
     point_ = geomData.offset_;
     if (i > 0)
-        point_ += pool().vertexBufferStorage().at(geomData.vertexArray_, i - 1);
+        point_ += model().vertexBufferStorage().at(geomData.vertexArray_, i - 1);
 }
 
 ValueType VertexNode::type() const {
@@ -499,9 +510,9 @@ ValueType VertexNode::type() const {
 }
 
 ModelNode::Ptr VertexNode::at(int64_t i) const {
-    if (i == 0) return shared_model_ptr<ValueNode>::make(point_.x, pool_);
-    if (i == 1) return shared_model_ptr<ValueNode>::make(point_.y, pool_);
-    if (i == 2) return shared_model_ptr<ValueNode>::make(point_.z, pool_);
+    if (i == 0) return shared_model_ptr<ValueNode>::make(point_.x, model_);
+    if (i == 1) return shared_model_ptr<ValueNode>::make(point_.y, model_);
+    if (i == 2) return shared_model_ptr<ValueNode>::make(point_.z, model_);
     throw std::out_of_range("vertex: Out of range.");
 }
 
@@ -525,9 +536,9 @@ FieldId VertexNode::keyAt(int64_t i) const {
 
 bool VertexNode::iterate(const IterCallback& cb) const
 {
-    if (!cb(ValueNode(point_.x, pool_))) return false;
-    if (!cb(ValueNode(point_.y, pool_))) return false;
-    if (!cb(ValueNode(point_.z, pool_))) return false;
+    if (!cb(ValueNode(point_.x, model_))) return false;
+    if (!cb(ValueNode(point_.y, model_))) return false;
+    if (!cb(ValueNode(point_.z, model_))) return false;
     return true;
 }
 

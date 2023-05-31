@@ -56,7 +56,7 @@ using ScalarValueType = std::variant<
  * All ModelNode types are actually pointers into a ModelPool, via their
  * nested ModelNodeAddress. They keep the ModelPool which they reference
  * alive. The shared_model_ptr wrapper ensures that the user has
- * a better sense of the object they are dealing with. Only mapget::shared_model_ptr
+ * a better sense of the object they are dealing with. Only shared_model_ptr
  * is allowed to copy ModelNodes - so e.g. `auto node = *nodePtr` is not possible.
  */
 template<typename T>
@@ -293,7 +293,7 @@ protected:
     ScalarValueType data_;
 
     /// Reference to the model which controls this node
-    ModelConstPtr pool_;
+    ModelConstPtr model_;
 
     /// Address of the model pool node which this object references
     ModelNodeAddress addr_;
@@ -338,20 +338,26 @@ struct ValueNode final : public ModelNodeBase
 /**
  * ModelNode base class which provides a pool() method that returns
  * a reference to a Model-derived pool type.
- * @tparam PoolType Model-derived type.
+ * @tparam ModelType Model-derived type.
  */
-template<class PoolType>
-struct MandatoryDerivedModelPoolNodeBase : public ModelNodeBase
+template<class ModelType>
+struct MandatoryDerivedModelNodeBase : public ModelNodeBase
 {
 protected:
-    inline PoolType& pool() const {return *reinterpret_cast<PoolType*>(const_cast<Model*>(pool_.get()));}  // NOLINT
+    template<class ModelType_ = ModelType>
+    inline ModelType_* modelPtr() const {
+        static_assert(std::is_base_of<ModelType, ModelType_>::value);
+        return reinterpret_cast<ModelType_*>(const_cast<Model*>(model_.get()));
+    }  // NOLINT
 
-    MandatoryDerivedModelPoolNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
+    inline ModelType& model() const {return *modelPtr<ModelType>();}  // NOLINT
+
+    MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
         : ModelNodeBase(p, a, std::move(data)) {}
-    MandatoryDerivedModelPoolNodeBase(ModelNode const& n) : ModelNodeBase(n) {}  // NOLINT
+    MandatoryDerivedModelNodeBase(ModelNode const& n) : ModelNodeBase(n) {}  // NOLINT
 };
 
-using MandatoryModelPoolNodeBase = MandatoryDerivedModelPoolNodeBase<ModelPool>;
+using MandatoryModelPoolNodeBase = MandatoryDerivedModelNodeBase<ModelPool>;
 
 namespace detail
 {
@@ -413,7 +419,7 @@ struct Array final : public MandatoryModelPoolNodeBase
 protected:
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
-    Array(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress);
+    Array(ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_;
     ArrayIndex members_;
@@ -464,7 +470,8 @@ protected:
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
-    Object(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress);
+    Object(ModelConstPtr pool, ModelNodeAddress);
+    Object(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_;
     ArrayIndex members_;
@@ -475,6 +482,7 @@ protected:
 template<uint16_t MaxProceduralFields, class LambdaThisType=Object>
 class ProceduralObject : public Object
 {
+public:
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].second(reinterpret_cast<LambdaThisType const&>(*this));
@@ -528,10 +536,10 @@ struct Geometry final : public MandatoryModelPoolNodeBase
     friend struct VertexBufferNode;
 
     enum class GeomType: uint8_t {
-        Points,
-        Line,
-        Polygon,
-        Mesh
+        Points,   // Point-cloud
+        Line,     // Line-string
+        Polygon,  // Auto-closed polygon
+        Mesh      // Collection of triangles
     };
 
     [[nodiscard]] ValueType type() const override;
@@ -541,8 +549,26 @@ struct Geometry final : public MandatoryModelPoolNodeBase
     [[nodiscard]] FieldId keyAt(int64_t) const override;
     [[nodiscard]] bool iterate(IterCallback const& cb) const override;
 
+    /** Add a point to the Geometry. */
     void append(geo::Point<double> const& p);
+
+    /** Get the type of the geometry. */
     [[nodiscard]] GeomType geomType() const;
+
+    /** Iterate over all Points in the geometry.
+     * @param callback Function which is called for each contained point.
+     *  Must return true to continue iteration, false to abort iteration.
+     * @return True if all points were visited, false if the callback ever returned false.
+     * @example
+     *   collection->forEachPoint([](simfil::geo::Point<double>&& point){
+     *      std::cout << point.x() << "," << point.y() << "," << point.z() << std::endl;
+     *      return true;
+     *   })
+     * @note The ModelType must also be templated here, because in this header
+     *  the class only exists in a predeclared form.
+     */
+    template <typename LambdaType, class ModelType=ModelPool>
+    bool forEachPoint(LambdaType const& callback) const;
 
 protected:
     struct Data {
@@ -586,7 +612,28 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     [[nodiscard]] FieldId keyAt(int64_t) const override;
     [[nodiscard]] bool iterate(IterCallback const& cb) const override;
 
+    /** Adds a new Geometry to the collection and returns a reference. */
     shared_model_ptr<Geometry> newGeometry(Geometry::GeomType type, size_t initialCapacity=4);
+
+    /** Iterate over all Geometries in the collection.
+     * @param callback Function which is called for each contained geometry.
+     *  Must return true to continue iteration, false to abort iteration.
+     * @return True if all geometries were visited, false if the callback ever returned false.
+     * @example
+     *   collection->forEachGeometry([](simfil::shared_model_ptr<Geometry> const& geom){
+     *      std::cout << geom->type() << std::endl;
+     *      return true;
+     *   })
+     * @note The ModelType must also be templated here, because in this header
+     *  the class only exists in a predeclared form.
+     */
+    template <typename LambdaType, class ModelType=ModelPool>
+    bool forEachGeometry(LambdaType const& callback) const {
+        auto geomArray = modelPtr<ModelType>()->arrayMemberStorage().range((ArrayIndex)addr().index());
+        return std::all_of(geomArray.begin(), geomArray.end(), [this, &callback](auto&& geomNodeAddress){
+            return callback(modelPtr<ModelType>()->resolveGeometry(ModelNode::Ptr::make(model_, geomNodeAddress)));
+        });
+    }
 
 protected:
     using Storage = Array::Storage;
@@ -598,6 +645,7 @@ protected:
 struct VertexBufferNode final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
+    friend struct Geometry;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -618,6 +666,7 @@ protected:
 struct VertexNode final : public MandatoryModelPoolNodeBase
 {
     friend class ModelPool;
+    friend struct Geometry;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -632,5 +681,15 @@ protected:
     geo::Point<double> point_;
 };
 
+template <typename LambdaType, class ModelType>
+bool Geometry::forEachPoint(LambdaType const& callback) const {
+    VertexBufferNode vertexBufferNode{geomData_, model_, {ModelType::PointBuffers, addr_.index()}};
+    for (auto i = 0; i < vertexBufferNode.size(); ++i) {
+        VertexNode vertex{*vertexBufferNode.at(i), geomData_};
+        if (!callback(vertex.point_))
+            return false;
+    }
+    return true;
+}
 
 }

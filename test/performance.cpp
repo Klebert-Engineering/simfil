@@ -132,7 +132,7 @@ static auto joined_result(const ModelPoolPtr& model, std::string_view query)
     return vals;
 }
 
-TEST_CASE("Small model performance queries", "[perf.big-model-benchmark]") {
+TEST_CASE("Big model query performance", "[perf.big-model-benchmark]") {
     if (RUNNING_ON_VALGRIND) {  // NOLINT
         SKIP("Skipping benchmarks when running under valgrind");
     }
