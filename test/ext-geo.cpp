@@ -8,6 +8,16 @@ using namespace simfil;
 using namespace simfil::geo;
 using BigPoint = Point<double>;
 
+#define REQUIRE_EVAL_1(query, type, result) \
+    do {\
+        Environment env(model_pool->fieldNames()); \
+        auto ast = compile(env, query, false); \
+        INFO("AST: " << ast->toString()); \
+        auto res = eval(env, *ast, *model_pool); \
+        REQUIRE(res.size() == 1); \
+        REQUIRE(res[0].as<type>() == result); \
+    } while (false)
+
 TEST_CASE("Point", "[geo.point]") {
     REQUIRE(BigPoint{0, 1} == BigPoint{0, 1});
 }
@@ -45,8 +55,7 @@ TEST_CASE("Polygon", "[geo.polygon]") {
     };
 }
 
-TEST_CASE("GeometryCollection", "[geom_collection]") {
-
+TEST_CASE("GeometryCollection", "[geom.collection]") {
     SECTION("Construct GeometryCollection") {
         auto model_pool = std::make_shared<ModelPool>();
         auto geometry_collection = model_pool->newGeometryCollection();
@@ -69,7 +78,7 @@ TEST_CASE("GeometryCollection", "[geom_collection]") {
     }
 }
 
-TEST_CASE("Spatial Operators", "[spatial_ops]") {
+TEST_CASE("Spatial Operators", "[spatial.ops]") {
     auto model_pool = std::make_shared<ModelPool>();
 
     // Create a GeometryCollection with a Point
@@ -82,34 +91,19 @@ TEST_CASE("Spatial Operators", "[spatial_ops]") {
     Environment env(model_pool->fieldNames());
 
     SECTION("Point Within BBox") {
-        auto ast = compile(env, "geo() within bbox(1, 2, 4, 5)", false);
-        INFO("AST: " << ast->toString());
-
-        auto res = eval(env, *ast, *model_pool);
-        REQUIRE(res.size() == 1);
-        REQUIRE(res[0].as<ValueType::Bool>() == true);
+        REQUIRE_EVAL_1("geo() within bbox(1, 2, 4, 5)", ValueType::Bool, true);
     }
 
     SECTION("Point Intersects BBox") {
-        auto ast = compile(env, "geo() intersects bbox(1, 2, 4, 5)", false);
-        INFO("AST: " << ast->toString());
-
-        auto res = eval(env, *ast, *model_pool);
-        REQUIRE(res.size() == 1);
-        REQUIRE(res[0].as<ValueType::Bool>() == true);
+        REQUIRE_EVAL_1("geo() intersects bbox(1, 2, 4, 5)", ValueType::Bool, true);
     }
 
     SECTION("BBox Contains Point") {
-        auto ast = compile(env, "bbox(1, 2, 4, 5) contains geo()", false);
-        INFO("AST: " << ast->toString());
-
-        auto res = eval(env, *ast, *model_pool);
-        REQUIRE(res.size() == 1);
-        REQUIRE(res[0].as<ValueType::Bool>() == true);
+        REQUIRE_EVAL_1("bbox(1, 2, 4, 5) contains geo()", ValueType::Bool, true);
     }
 }
 
-TEST_CASE("GeometryCollection Multiple Geometries", "[geom_collection_multiple]") {
+TEST_CASE("GeometryCollection Multiple Geometries", "[geom.collection.multiple]") {
     auto model_pool = std::make_shared<ModelPool>();
 
     // Points
@@ -132,6 +126,10 @@ TEST_CASE("GeometryCollection Multiple Geometries", "[geom_collection_multiple]"
     polygon_geom->append(d);
     polygon_geom->append(e);
     polygon_geom->append(f);
+
+    model_pool->addRoot(shared_model_ptr<ModelNode>(model_pool->newObject()->addField(
+        "geometry",
+        ModelNode::Ptr(geometry_collection))));
 
     SECTION("Retrieve points") {
         // Check stored points in Point geometry
@@ -176,5 +174,20 @@ TEST_CASE("GeometryCollection Multiple Geometries", "[geom_collection_multiple]"
             });
         REQUIRE(numGeoms == 3);
         REQUIRE(numPts == 6);
+    }
+
+    SECTION("type") {
+        REQUIRE_EVAL_1("geometry.type == 'GeometryCollection'", ValueType::Bool, true);
+    }
+
+    SECTION("geo-fn") {
+        // Pass sub-geometries unwrapped
+        REQUIRE_EVAL_1("count(geo(geometry.geometries.*))", ValueType::Int, 3);
+        
+        // Implicit resolve "geometry" field
+        REQUIRE_EVAL_1("count(geo())", ValueType::Int, 3);
+
+        // Explicit pass geometry object
+        REQUIRE_EVAL_1("count(geo(geometry))", ValueType::Int, 3);
     }
 }

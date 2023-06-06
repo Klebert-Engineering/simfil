@@ -752,20 +752,61 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
 
-    auto eval = [&ctx, &res](Value v) {
-        if (!v.node)
-            return res(ctx, std::move(v));
+    auto getType = [&](Value v) -> std::optional<std::string> {
+        if (v.node) {
+            if (auto typenode = v.node->get(Fields::Type))
+                if (Value value = typenode->value();
+                    value.isa(ValueType::String))
+                    return value.as<ValueType::String>();
+        }
+        return {};
+    };
 
-        if (auto geonode = v.node->get(Fields::Geometry))
-            v.node = geonode;
+    auto forEachGeometry = [&](Value v, auto&& callback) {
+        if (!v.node)
+            return Result::Stop;
+
+        if (auto geonode = v.node->get(Fields::Geometry)) {
+            v = Value::field(geonode);
+            if (!v.node)
+                return Result::Stop;
+        }
+
+        auto type = getType(v);
+        if (!type)
+            return Result::Stop;
+
+        if (type == "GeometryCollection"s) {
+            auto node = v.node->get(Fields::Geometries);
+            if (!node)
+                return Result::Stop;
+
+            return node->iterate(ModelNode::IterLambda([&](auto &&v) {
+                return callback(Value::field(v)) == Result::Continue;
+            })) ? Result::Continue : Result::Stop;
+        } else {
+            return callback(v);
+        }
+    };
+
+    auto evalValue = [&](Value v) {
+        if (!v.node)
+            return Result::Stop;
+
+        if (auto geonode = v.node->get(Fields::Geometry)) {
+            v = Value::field(geonode);
+            if (!v.node)
+                return Result::Stop;
+        }
 
         auto type = ""s;
-        if (auto typenode = v.node->get(Fields::Type))
-            if (Value value = typenode->value(); value.isa(ValueType::String))
-                type = value.as<ValueType::String>();
+        if (auto typestr = getType(v))
+            type = std::move(*typestr);
+        else
+            return res(ctx, std::move(v));
 
         if (auto coordnode = v.node->get(Fields::Coordinates)) {
-            auto getPt = [&](const ModelNode& node, Point<double>& pt) {
+            auto getPt = [&](const ModelNode &node, Point<double> &pt) {
                 auto nx = node.at(0), ny = node.at(1);
                 if (!nx || !ny)
                     return false;
@@ -790,9 +831,7 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
                         return Result::Stop;
 
                 return res(ctx, meta::PointType::Type.make(pt.x, pt.y));
-            }
-            else
-            if (type == "MultiPoint") {
+            } else if (type == "MultiPoint") {
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     Point<double> pt;
                     if (!getPt(*coordnode->at(i), pt))
@@ -803,9 +842,7 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
                 }
 
                 return Result::Continue;
-            }
-            else
-            if (type == "LineString") {
+            } else if (type == "LineString") {
                 std::vector<Point<double>> pts;
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     if (!getPt(*coordnode->at(i), pts.emplace_back()))
@@ -814,9 +851,7 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
                 }
 
                 return res(ctx, meta::LineStringType::Type.make(std::move(pts)));
-            }
-            else
-            if (type == "MultiLineString") {
+            } else if (type == "MultiLineString") {
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     std::vector<Point<double>> pts;
                     auto subline = coordnode->at(i);
@@ -826,14 +861,13 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
                                 return Result::Stop;
                     }
 
-                    if (res(ctx, meta::LineStringType::Type.make(std::move(pts))) == Result::Stop)
+                    if (res(ctx, meta::LineStringType::Type.make(std::move(pts))) ==
+                        Result::Stop)
                         return Result::Stop;
                 }
 
                 return Result::Continue;
-            }
-            else
-            if (type == "Polygon") {
+            } else if (type == "Polygon") {
                 std::vector<LineString> polys;
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     std::vector<Point<double>> pts;
@@ -848,9 +882,7 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
                 }
 
                 return res(ctx, meta::PolygonType::Type.make(std::move(polys)));
-            }
-            else
-            if (type == "MultiPolygon") {
+            } else if (type == "MultiPolygon") {
                 for (auto i = 0; i < coordnode->size(); ++i) {
                     std::vector<LineString> polys;
                     auto subpoly = coordnode->at(i);
@@ -866,7 +898,8 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
                         polys.push_back({std::move(pts)});
                     }
 
-                    if (res(ctx, meta::PolygonType::Type.make(std::move(polys))) == Result::Stop)
+                    if (res(ctx, meta::PolygonType::Type.make(std::move(polys))) ==
+                        Result::Stop)
                         return Result::Stop;
                 }
 
@@ -882,10 +915,11 @@ auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
     };
 
     if (!args.empty())
-        return args[0]->eval(ctx, std::move(val), LambdaResultFn([&res, &eval](auto ctx, auto v) {
-            return eval(std::move(v));
-        }));
-    return eval(std::move(val));
+        return args[0]->eval(ctx, std::move(val),
+                             LambdaResultFn([&](auto ctx, auto v) {
+                                 return forEachGeometry(std::move(v), evalValue);
+                             }));
+    return forEachGeometry(std::move(val), evalValue);
 };
 
 PointFn PointFn::Fn;
@@ -1077,4 +1111,4 @@ auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args
 }
 */
 
-}
+} // namespace simfil::geo
