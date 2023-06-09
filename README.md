@@ -71,6 +71,11 @@ All of the example queries above can be tested by loading [example.json](example
 <buil-dir>/repl/simfil-repl <worktree>/examples/example.json
 ```
 
+The repl provides some extra commands for testing queries:
+- `/any` Toggle wrapping input with an `any(...)` call to only get boolean results (default `off`)
+- `/mt` Toggle multithreading (default `on`)
+- `/verbose` Toggle verbosity (default `on`)
+
 ## Extensions
 ### Language Extensions
 The query language can be extended by additional functions and addititonal types.
