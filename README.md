@@ -14,7 +14,7 @@ Simfil is a language for querying tree structured data.
 For details about the language see the [Language Guide](simfil-language.md).
 
 ### Examples
-All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the repl `<builddir>/repl/simfil-repl INPUT`.
+All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the repl `<builddir>/repl/simfil-repl INPUT` (see [repl](#repl)).
 
 #### All persons names
 ```
