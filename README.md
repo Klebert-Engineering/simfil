@@ -3,9 +3,11 @@
 [![](https://img.shields.io/badge/Coverage-HTML-orange)](https://htmlpreview.github.io/?https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/ed28c457ebc09ce8ddddc9cec6668e130d59b64c/coverage.html)
 [![](https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/0ae49c7509dea18b4c110b8bf416f2715a214933/badge.svg)](https://github.com/Klebert-Engineering/simfil)
 
-Simfil is a language for querying tree structured data.
+Simfil is a C++ 17 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the simfil query language, along with a query interpreter to query the actual data.
 
-## Motivation
+Although simfil is made for querying map feature data, it is easy to plug in custom data models, such as the generic JSON interface the library also comes with.
+
+## Design Consideration
 - **Simplicity**: the language should be very simple but yet powerful to allow for complex queries.
 - **Speed**: querying models should be fast and scale to multiple cores.
 - **Efficiency**: the internal model should be memory efficient, as simfil is designed to query huge amounts of data.
@@ -14,7 +16,7 @@ Simfil is a language for querying tree structured data.
 For details about the language see the [Language Guide](simfil-language.md).
 
 ### Examples
-All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the repl `<builddir>/repl/simfil-repl INPUT` (see [repl](#repl)).
+All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the interactive command line tool `<builddir>/repl/simfil-repl INPUT` (see [Using the Interactive Command Line Tool](#Using the Interactive Command Line Tool)).
 
 #### All persons names
 ```
@@ -64,14 +66,16 @@ range(1,25)...{count((_ % range(1,_)...) == 0) == 2}
 ```
 
 ## Building the Project
+Simfil uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC.
+
 ```sh
 mkdir build && cd build
 cmake .. && cmake --build .
 ctest
 ```
 
-## Using the Repl
-The project contains an interactive command line program to to test queries against a JSON datasource: `simfil-repl`.
+## Using the Interactive Command Line Tool
+The project contains an interactive command line program (repl: “Read-Eval-Print-Loop”) to to test queries against a JSON datasource: `simfil-repl`.
 
 ```sh
 <build-dir>/repl/simfil-repl <json-file>
