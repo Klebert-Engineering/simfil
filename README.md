@@ -66,7 +66,7 @@ range(1,25)...{count((_ % range(1,_)...) == 0) == 2}
 ```
 
 ## Building the Project
-Simfil uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC.
+Simfil uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC. Dependencies outsides the repository are automatically downloaded using CMakes `FetchContent` system.
 
 ```sh
 mkdir build && cd build
