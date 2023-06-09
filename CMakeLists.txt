@@ -149,6 +149,7 @@ endif()
 add_library(simfil::simfil ALIAS simfil)
 
 add_subdirectory(repl)
+add_subdirectory(examples/minimal)
 
 if (MAIN_PROJECT)
   add_subdirectory(test)

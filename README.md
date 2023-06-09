@@ -27,6 +27,7 @@ Franz
 ```
 
 #### All persons older than 30 years using a [subquery](simfil-language.md#sub-queries)
+Subqueries, denoted by braces `{...}` can be used as predicates for the current object. Insides a subquery, the current value is accessible through the special name `_`.
 ```
 *.{age > 30}.name
 ```
@@ -53,13 +54,23 @@ Franz Eder
 Franz
 ```
 
-## Build
+#### Find Primes in Range 1 to 25
+Some types have special operators. The type `irange` supports the unpack operator `...` to expand its list of values.
+```
+range(1,25)...{count((_ % range(1,_)...) == 0) == 2}
+```
+```
+2, 3, 5, 7, 11, 13, 17, 19, 23
+```
+
+## Building the Project
 ```sh
 mkdir build && cd build
 cmake .. && cmake --build .
+ctest
 ```
 
-## Repl
+## Using the Repl
 The project contains an interactive command line program to to test queries against a JSON datasource: `simfil-repl`.
 
 ```sh
@@ -76,13 +87,12 @@ The repl provides some extra commands for testing queries:
 - `/mt` Toggle multithreading (default `on`)
 - `/verbose` Toggle verbosity (default `on`)
 
-## Extensions
-### Language Extensions
+## Extending the Language
 The query language can be extended by additional functions and addititonal types.
-An example of how to add functions can be found in the repl: [repl.cpp](repl/repl.cpp).
 For an example of how to add new types to simfil, see [ext-geo.h](include/simfil/ext-geo.h).
 
-## Using simfil via CMake
+## Using the Library
+### Linking via CMake
 To link against simfil vial CMake, all you have to do is to add the following to you `CMakeLists.txt`:
 ```cmake
 # Using CMakes FetchContent
@@ -95,6 +105,38 @@ FetchContent_MakeAvailable(simfil)
 # Link against the simfil target
 target_link_libraries(<my-app> PUBLIC simfil)
 ```
+
+### Minimal Usage Example
+```c++
+#include "simfil/simfil.h"
+#include "simfil/model/model.h"
+#include "simfil/model/fields.h"
+
+// Shared string pool used for string interning
+auto strings = std::make_shared<simfil::Fields>();
+
+// Declare a model with one object
+auto model = std::make_shared<simfil::ModelPool>(strings);
+
+auto obj = model->newObject();
+obj->addField("name", "demo");
+model->addRoot(obj);
+
+// Compilation and evaluation environment
+// to register custom functions or callbacks.
+auto env = simfil::Environment{strings};
+
+// Compile query string to a simfil::Expression.
+auto query = simfil::compile(env, "name", false);
+
+// Evalualte query and get result of type simfil::Value.
+auto result = simfil::eval(env, *query, *model);
+
+for (auto&& value : result)
+    std::cout << value.toString() << "\n";
+```
+
+The full source of the example can be found [here](./examples/minimal/main.cpp).
 
 ## Dependencies
 - [nlohmann/json](https://github.com/nlohmann/json) for JSON model support (switch: `SIMFIL_WITH_MODEL_JSON`, default: `YES`).

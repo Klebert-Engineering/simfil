@@ -211,8 +211,9 @@ The function returns a value of type `irange` which overloads the following oper
 ```
 range(1, 5) => 1..5
 
-typeof range(1, 5) => 'irange'
-range(1, 5) as string => '1..5'
+typeof range(1, 5) => 'irange'  # Get type of a range object
+range(1, 5) as string => '1..5' # Convert range to string
+range(1, 100)... % 2 == 0 => 50 # Get all even numbers in range 1..100
 ```
 
 ### `arr(...)`
