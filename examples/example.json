@@ -1,0 +1,29 @@
+[
+  {
+    "name": "John",
+    "surname": "Doe",
+    "age": 30,
+    "attribs": [
+      {"id": "A", "value": 0},
+      {"id": "B", "value": 10},
+      {"id": "C", "value": 30}
+    ]
+  },
+  {
+    "name": "Angelika",
+    "surname": "Musterfrau",
+    "age": 40,
+    "attribs": [
+      {"id": "B", "value": 100}
+    ]
+  },
+  {
+    "name": "Franz",
+    "surname": "Eder",
+    "age": 55,
+    "attribs": [
+      {"id": "A", "value": 50},
+      {"id": "C", "value": 0}
+    ]
+  }
+]

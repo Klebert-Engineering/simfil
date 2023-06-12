@@ -26,7 +26,6 @@ using namespace std::string_literals;
 struct
 {
     bool auto_any = false;
-    bool sum_results = true;
     bool verbose = true;
     bool multi_threaded = true;
 } options;
@@ -203,11 +202,9 @@ int main(int argc, char *argv[])
 
         std::cout << "Time:\n  " << msec.count() << " ms\n";
         std::cout << "Result:\n";
-        ///if (!options.sum_results) {
-            for (const auto& v : flatres) {
-                std::cout << "  " << v.toString() << "\n";
-            }
-        ///}
+        for (const auto& v : flatres) {
+            std::cout << "  " << v.toString() << "\n";
+        }
     }
 
     return 0;
