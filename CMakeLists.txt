@@ -23,6 +23,12 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/cmake-modules")
 set(MAIN_PROJECT OFF)
 if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
   set(MAIN_PROJECT ON)
+
+  option(WITH_REPL     "Build simfil repl" YES)
+  option(WITH_EXAMPLES "Build examples" YES)
+else()
+  set(WITH_REPL NO)
+  set(WITH_EXAMPLES NO)
 endif()
 
 if (NOT TARGET sfl)
@@ -148,9 +154,6 @@ endif()
 
 add_library(simfil::simfil ALIAS simfil)
 
-add_subdirectory(repl)
-add_subdirectory(examples/minimal)
-
 if (MAIN_PROJECT)
   add_subdirectory(test)
 
@@ -161,4 +164,12 @@ if (MAIN_PROJECT)
       BASE_DIRECTORY "${CMAKE_SOURCE_DIR}/src"
       EXCLUDE "*catch2*")
   endif()
+endif()
+
+if (WITH_REPL)
+  add_subdirectory(repl)
+endif()
+
+if (WITH_EXAMPLES)
+  add_subdirectory(examples/minimal)
 endif()
