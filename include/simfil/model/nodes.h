@@ -343,14 +343,14 @@ struct ValueNode final : public ModelNodeBase
 template<class ModelType>
 struct MandatoryDerivedModelNodeBase : public ModelNodeBase
 {
+    inline ModelType& model() const {return *modelPtr<ModelType>();}  // NOLINT
+
 protected:
     template<class ModelType_ = ModelType>
     inline ModelType_* modelPtr() const {
         static_assert(std::is_base_of<ModelType, ModelType_>::value);
         return reinterpret_cast<ModelType_*>(const_cast<Model*>(model_.get()));
     }  // NOLINT
-
-    inline ModelType& model() const {return *modelPtr<ModelType>();}  // NOLINT
 
     MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
         : ModelNodeBase(p, a, std::move(data)) {}
