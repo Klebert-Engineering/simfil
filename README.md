@@ -1,24 +1,28 @@
-# SIMFIL
+# `simfil`
 
 [![](https://img.shields.io/badge/Coverage-HTML-orange)](https://htmlpreview.github.io/?https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/ed28c457ebc09ce8ddddc9cec6668e130d59b64c/coverage.html)
 [![](https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/0ae49c7509dea18b4c110b8bf416f2715a214933/badge.svg)](https://github.com/Klebert-Engineering/simfil)
 
-Simfil is a C++ 17 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the simfil query language, along with a query interpreter to query the actual data.
+`simfil` is a C++ 17 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the `simfil` query language, along with a query interpreter to query the actual data.
 
-Although simfil is made for querying map feature data, it is easy to plug in custom data models, such as the generic JSON interface the library also comes with.
+Although `simfil` is made for querying map feature data, it is easy to plug in custom data models, such as the generic JSON interface the library also comes with.
 
-## Design Consideration
+## Design Considerations
+
 - **Simplicity**: the language should be very simple but yet powerful to allow for complex queries.
 - **Speed**: querying models should be fast and scale to multiple cores.
-- **Efficiency**: the internal model should be memory efficient, as simfil is designed to query huge amounts of data.
+- **Efficiency**: the internal model should be memory efficient, as `simfil` is designed to query huge amounts of data.
 
 ## Query Language
+
 For details about the language see the [Language Guide](simfil-language.md).
 
 ### Examples
+
 All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the interactive command line tool `<builddir>/repl/simfil-repl INPUT` (see [Using the Interactive Command Line Tool](#Using the Interactive Command Line Tool)).
 
-#### All persons names
+#### All person's names
+
 ```
 *.name
 ```
@@ -66,7 +70,7 @@ range(1,25)...{count((_ % range(1,_)...) == 0) == 2}
 ```
 
 ## Building the Project
-Simfil uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC. Dependencies outsides the repository are automatically downloaded using CMakes `FetchContent` system.
+`simfil` uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC. Dependencies outsides the repository are automatically downloaded using CMakes `FetchContent` system.
 
 ```sh
 mkdir build && cd build
@@ -93,11 +97,11 @@ The repl provides some extra commands for testing queries:
 
 ## Extending the Language
 The query language can be extended by additional functions and addititonal types.
-For an example of how to add new types to simfil, see [ext-geo.h](include/simfil/ext-geo.h).
+For an example of how to add new types to `simfil`, see [ext-geo.h](include/simfil/ext-geo.h).
 
 ## Using the Library
 ### Linking via CMake
-To link against simfil vial CMake, all you have to do is to add the following to you `CMakeLists.txt`:
+To link against `simfil` vial CMake, all you have to do is to add the following to you `CMakeLists.txt`:
 ```cmake
 # Using CMakes FetchContent
 FetchContent_Declare(simfil
@@ -145,5 +149,5 @@ The full source of the example can be found [here](./examples/minimal/main.cpp).
 ## Dependencies
 - [nlohmann/json](https://github.com/nlohmann/json) for JSON model support (switch: `SIMFIL_WITH_MODEL_JSON`, default: `YES`).
 - [fraillt/bitsery](https://github.com/fraillt/bitsery) for binary en- and decoding.
-- [slavenf/sfl-library](https://github.com/slavenf/sfl-library.git) for small vector container.
+- [slavenf/sfl-library](https://github.com/slavenf/sfl-library.git) for small and segmented vector containers.
 - [klebert-engineering/stx](https://github.com/Klebert-Engineering/stx.git) for string formatting.
