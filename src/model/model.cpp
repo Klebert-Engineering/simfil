@@ -341,6 +341,7 @@ shared_model_ptr<GeometryCollection> ModelPool::newGeometryCollection(size_t ini
 
 shared_model_ptr<Geometry> ModelPool::newGeometry(Geometry::GeomType geomType, size_t initialCapacity)
 {
+    initialCapacity = std::max((size_t)1, initialCapacity);
     impl_->columns_.geom_.emplace_back(Geometry::Data{geomType, -(ArrayIndex)initialCapacity, {.0, .0, .0}});
     return Geometry(
         impl_->columns_.geom_.back(),
