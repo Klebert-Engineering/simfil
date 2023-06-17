@@ -421,9 +421,13 @@ FieldId Geometry::keyAt(int64_t i) const {
 }
 
 void Geometry::append(geo::Point<double> const& p) {
+    // Before the geometry is assigned with a vertex array,
+    // a negative array handle denotes the desired initial
+    // capacity, +1, because there is always the additional
+    // offset point.
     if (geomData_.vertexArray_ < 0) {
         auto initialCapacity = abs(geomData_.vertexArray_);
-        geomData_.vertexArray_ = storage_->new_array(initialCapacity);
+        geomData_.vertexArray_ = storage_->new_array(initialCapacity-1);
         geomData_.offset_ = p;
         return;
     }
