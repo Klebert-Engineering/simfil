@@ -133,6 +133,7 @@ add_subdirectory(repl)
 
 if (MAIN_PROJECT)
   add_subdirectory(test)
+  add_subdirectory(playground)
 
   if (WITH_COVERAGE)
     setup_target_for_coverage_gcovr_html(
