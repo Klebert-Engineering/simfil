@@ -42,6 +42,9 @@ struct Fields
     /// Default constructor initializes strings for static Ids
     Fields();
 
+    /// Virtual destructor to allow polymorphism
+    virtual ~Fields() = default;
+
     /// Use this function to lookup a stored string, or insert it
     /// if it doesn't exist yet.
     FieldId emplace(std::string_view const& str);

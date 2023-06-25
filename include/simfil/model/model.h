@@ -46,6 +46,9 @@ public:
         T fn_;
     };
 
+    /// Virtual destructor to allow polymorphism
+    virtual ~Model() = default;
+
     /// Get a callback with the actual class of the given node.
     /// This facilitates the Virtual Function Table role of the Model.
     virtual void resolve(ModelNode const& n, ResolveFn const& cb) const;

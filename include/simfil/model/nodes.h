@@ -184,6 +184,9 @@ struct ModelNode
     /// Get the node's address
     [[nodiscard]] inline ModelNodeAddress addr() const {return addr_;}
 
+    /// Virtual destructor to allow polymorphism
+    virtual ~ModelNode() = default;
+
     /// Fast iterator support
     struct IterCallback
     {
