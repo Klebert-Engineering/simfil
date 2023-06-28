@@ -68,13 +68,15 @@ TEST_CASE("GeometryCollection", "[geom.collection]") {
         auto model_pool = std::make_shared<ModelPool>();
         auto geometry_collection = model_pool->newGeometryCollection();
         auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
+        point_geom->append({.0, .0, .0});
+        point_geom->append({.1, .1, .1});
 
         REQUIRE(point_geom->type() == ValueType::Object);
         REQUIRE(point_geom->geomType() == Geometry::GeomType::Points);
 
         REQUIRE(geometry_collection->size() == 2); // 'type' and 'geometries' fields
         REQUIRE(geometry_collection->at(1)->type() == ValueType::Array); // 'geometries' field
-        REQUIRE(geometry_collection->at(1)->size() == 1); // one geometry in the collection
+        REQUIRE(geometry_collection->at(1)->size() == 2); // one geometry in the collection, directly resolves to single nested geometry
     }
 }
 

@@ -346,22 +346,30 @@ ValueType GeometryCollection::type() const {
 }
 
 ModelNode::Ptr GeometryCollection::at(int64_t i) const {
+    if (auto singleGeomEntry = singleGeom())
+        return (*singleGeomEntry)->at(i);
     if (i == 0) return ValueNode(GeometryCollectionStr, model_);
     if (i == 1) return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
     throw std::out_of_range("geom collection: Out of range.");
 }
 
 uint32_t GeometryCollection::size() const {
+    if (auto singleGeomEntry = singleGeom())
+        return (*singleGeomEntry)->size();
     return 2;
 }
 
 ModelNode::Ptr GeometryCollection::get(const FieldId& f) const {
+    if (auto singleGeomEntry = singleGeom())
+        return (*singleGeomEntry)->get(f);
     if (f == Fields::Type) return at(0);
     if (f == Fields::Geometries) return at(1);
     return {};
 }
 
 FieldId GeometryCollection::keyAt(int64_t i) const {
+    if (auto singleGeomEntry = singleGeom())
+        return (*singleGeomEntry)->keyAt(i);
     if (i == 0) return Fields::Type;
     if (i == 1) return Fields::Geometries;
     throw std::out_of_range("geom collection: Out of range.");
@@ -369,15 +377,27 @@ FieldId GeometryCollection::keyAt(int64_t i) const {
 
 shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType type, size_t initialCapacity) {
     auto result = model().newGeometry(type, initialCapacity);
-    model().resolveArray(at(1))->append(ModelNode::Ptr(result));
+    auto arrayPtr = ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
+    model().resolveArray(arrayPtr)->append(ModelNode::Ptr(result));
     return result;
 }
 
 bool GeometryCollection::iterate(const IterCallback& cb) const
 {
+    if (auto singleGeomEntry = singleGeom())
+        return (*singleGeomEntry)->iterate(cb);
     if (!cb(*at(0))) return false;
     if (!cb(*at(1))) return false;
     return true;
+}
+
+std::optional<ModelNode::Ptr> GeometryCollection::singleGeom() const
+{
+    if (model().arrayMemberStorage().size((ArrayIndex)addr_.index()) == 1) {
+        auto arrayPtr = ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
+        return model().resolveArray(arrayPtr)->at(0);
+    }
+    return {};
 }
 
 /** ModelNode impls. for Geometry */

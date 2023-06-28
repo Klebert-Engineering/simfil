@@ -639,6 +639,8 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     }
 
 protected:
+    std::optional<ModelNode::Ptr> singleGeom() const;
+
     using Storage = Array::Storage;
     GeometryCollection(ModelConstPtr pool, ModelNodeAddress);
 };
