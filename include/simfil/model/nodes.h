@@ -184,6 +184,9 @@ struct ModelNode
     /// Get the node's address
     [[nodiscard]] inline ModelNodeAddress addr() const {return addr_;}
 
+    /// Virtual destructor to allow polymorphism
+    virtual ~ModelNode() = default;
+
     /// Fast iterator support
     struct IterCallback
     {
@@ -197,7 +200,7 @@ struct ModelNode
         bool operator() (ModelNode const& resolved) const override {return fn_(resolved);};
         T fn_;
     };
-    [[nodiscard]] virtual bool iterate(IterCallback const& cb) const;
+    virtual bool iterate(IterCallback const& cb) const; // NOLINT (allow discard)
 
     /// Iterator Support
     /// * `fieldNames()`: Returns range object which supports `for(FieldId const& f: node.fieldNames())`
@@ -317,7 +320,7 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] bool iterate(IterCallback const&) const override {return true;}
+    bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
 
 protected:
     ModelNodeBase(ModelConstPtr, ModelNodeAddress={}, ScalarValueType data={});  // NOLINT
@@ -406,7 +409,7 @@ struct Array final : public MandatoryModelPoolNodeBase
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] bool iterate(IterCallback const& cb) const override;
+    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
     Array& append(bool value);
     Array& append(uint16_t value);
@@ -437,7 +440,7 @@ struct Object : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
-    [[nodiscard]] bool iterate(IterCallback const& cb) const override;
+    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
     Object& addBool(std::string_view const& name, bool value);
     Object& addField(std::string_view const& name, uint16_t value);
@@ -506,7 +509,7 @@ public:
         return Object::keyAt(i - fields_.size());
     }
 
-    [[nodiscard]] bool iterate(IterCallback const& cb) const override {
+    bool iterate(IterCallback const& cb) const override {  // NOLINT (allow discard)
         for (auto const& [k, v] : fields_) {
             auto vv = v(reinterpret_cast<LambdaThisType const&>(*this));
             if (!cb(*vv))
@@ -547,7 +550,7 @@ struct Geometry final : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
-    [[nodiscard]] bool iterate(IterCallback const& cb) const override;
+    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
     /** Add a point to the Geometry. */
     void append(geo::Point<double> const& p);
@@ -610,7 +613,7 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
-    [[nodiscard]] bool iterate(IterCallback const& cb) const override;
+    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
     /** Adds a new Geometry to the collection and returns a reference. */
     shared_model_ptr<Geometry> newGeometry(Geometry::GeomType type, size_t initialCapacity=4);
@@ -636,6 +639,8 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     }
 
 protected:
+    std::optional<ModelNode::Ptr> singleGeom() const;
+
     using Storage = Array::Storage;
     GeometryCollection(ModelConstPtr pool, ModelNodeAddress);
 };
@@ -652,7 +657,7 @@ struct VertexBufferNode final : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
-    [[nodiscard]] bool iterate(IterCallback const& cb) const override;
+    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
     VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool, ModelNodeAddress const& a);
@@ -673,7 +678,7 @@ struct VertexNode final : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
-    [[nodiscard]] bool iterate(IterCallback const& cb) const override;
+    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
     VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData);
