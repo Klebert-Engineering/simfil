@@ -151,7 +151,7 @@ void Fields::write(std::ostream& outputStream, FieldId offset) const  // NOLINT
 
 void Fields::read(std::istream& inputStream)
 {
-    std::shared_lock stringStoreWriteAccess_(stringStoreMutex_);
+    std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
 
     // Determine how many fields are to be received
