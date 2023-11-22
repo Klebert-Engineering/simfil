@@ -400,6 +400,17 @@ std::optional<ModelNode::Ptr> GeometryCollection::singleGeom() const
     return {};
 }
 
+void GeometryCollection::addGeometry(const shared_model_ptr<Geometry>& geom)
+{
+    auto arrayPtr = ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
+    model().resolveArray(arrayPtr)->append(ModelNode::Ptr(geom));
+}
+
+size_t GeometryCollection::numGeometries() const
+{
+    return model().arrayMemberStorage().size((ArrayIndex)addr().index());
+}
+
 /** ModelNode impls. for Geometry */
 
 Geometry::Geometry(Data& data, ModelConstPtr pool_, ModelNodeAddress a)
@@ -468,6 +479,19 @@ bool Geometry::iterate(const IterCallback& cb) const
     if (!cb(*at(0))) return false;
     if (!cb(*at(1))) return false;
     return true;
+}
+
+size_t Geometry::numPoints() const
+{
+    VertexBufferNode vertexBufferNode{geomData_, model_, {ModelPool::PointBuffers, addr_.index()}};
+    return vertexBufferNode.size();
+}
+
+geo::Point<double> Geometry::pointAt(size_t index) const
+{
+    VertexBufferNode vertexBufferNode{geomData_, model_, {ModelPool::PointBuffers, addr_.index()}};
+    VertexNode vertex{*vertexBufferNode.at((int64_t)index), geomData_};
+    return vertex.point_;
 }
 
 /** ModelNode impls. for VertexBufferNode */
