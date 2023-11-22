@@ -69,22 +69,31 @@ TEST_CASE("GeometryCollection", "[geom.collection]") {
         auto geometry_collection = model_pool->newGeometryCollection();
         auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
         point_geom->append({.0, .0, .0});
-        point_geom->append({.1, .1, .1});
+        point_geom->append({.25, .25, .25});
+        point_geom->append({.5, .5, .5});
+        point_geom->append({1., 1., 1.});
 
         REQUIRE(point_geom->type() == ValueType::Object);
         REQUIRE(point_geom->geomType() == Geometry::GeomType::Points);
+        REQUIRE(point_geom->numPoints() == 4);
+        REQUIRE(point_geom->pointAt(0).x == .0);
+        REQUIRE(point_geom->pointAt(1).x == .25);
+        REQUIRE(point_geom->pointAt(2).x == .5);
+        REQUIRE(point_geom->pointAt(3).x == 1.);
+        REQUIRE(geometry_collection->numGeometries() == 1);
 
         // Since the collection only contains one geometry,
         // it hides itself and directly presents the nested geometry,
         // conforming to GeoJSON (a collection must have >1 geometries).
         REQUIRE(geometry_collection->size() == 2); // 'type' and 'geometry' fields
         REQUIRE(geometry_collection->at(1)->type() == ValueType::Array); // 'geometry' field
-        REQUIRE(geometry_collection->at(1)->size() == 2); // two points
+        REQUIRE(geometry_collection->at(1)->size() == 4); // four points
 
         // Add nested geometry again two more times, now the view changes.
         geometry_collection->addGeometry(point_geom);
         geometry_collection->addGeometry(point_geom);
 
+        REQUIRE(geometry_collection->numGeometries() == 3);
         REQUIRE(geometry_collection->at(1)->size() == 3); // Three geometries
     }
 }

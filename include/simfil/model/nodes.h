@@ -558,6 +558,12 @@ struct Geometry final : public MandatoryModelPoolNodeBase
     /** Get the type of the geometry. */
     [[nodiscard]] GeomType geomType() const;
 
+    /** Get the number of points in the geometry buffer. */
+    [[nodiscard]] size_t numPoints() const;
+
+    /** Get a point at an index. */
+    [[nodiscard]] geo::Point<double> pointAt(size_t index) const;
+
     /** Iterate over all Points in the geometry.
      * @param callback Function which is called for each contained point.
      *  Must return true to continue iteration, false to abort iteration.
@@ -620,6 +626,9 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
 
     /** Append an existing Geometry to the collection. */
     void addGeometry(shared_model_ptr<Geometry> const& geom);
+
+    /** Get the number of contained geometries. */
+    [[nodiscard]] size_t numGeometries() const;
 
     /** Iterate over all Geometries in the collection.
      * @param callback Function which is called for each contained geometry.
