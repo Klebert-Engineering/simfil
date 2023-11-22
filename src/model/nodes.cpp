@@ -400,6 +400,12 @@ std::optional<ModelNode::Ptr> GeometryCollection::singleGeom() const
     return {};
 }
 
+void GeometryCollection::addGeometry(const shared_model_ptr<Geometry>& geom)
+{
+    auto arrayPtr = ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
+    model().resolveArray(arrayPtr)->append(ModelNode::Ptr(geom));
+}
+
 /** ModelNode impls. for Geometry */
 
 Geometry::Geometry(Data& data, ModelConstPtr pool_, ModelNodeAddress a)

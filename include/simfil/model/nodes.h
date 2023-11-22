@@ -618,6 +618,9 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     /** Adds a new Geometry to the collection and returns a reference. */
     shared_model_ptr<Geometry> newGeometry(Geometry::GeomType type, size_t initialCapacity=4);
 
+    /** Append an existing Geometry to the collection. */
+    void addGeometry(shared_model_ptr<Geometry> const& geom);
+
     /** Iterate over all Geometries in the collection.
      * @param callback Function which is called for each contained geometry.
      *  Must return true to continue iteration, false to abort iteration.
