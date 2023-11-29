@@ -378,7 +378,7 @@ FieldId GeometryCollection::keyAt(int64_t i) const {
 shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType type, size_t initialCapacity) {
     auto result = model().newGeometry(type, initialCapacity);
     auto arrayPtr = ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
-    model().resolveArray(arrayPtr)->append(ModelNode::Ptr(result));
+    model().resolveArray(arrayPtr)->append(result);
     return result;
 }
 

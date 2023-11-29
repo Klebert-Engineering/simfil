@@ -390,7 +390,7 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
     REQUIRE_NOTHROW(pool->validate());
 
     // An empty object should also be valid
-    pool->newObject()->addField("good", ModelNode::Ptr(pool->newObject()));
+    pool->newObject()->addField("good", pool->newObject());
     REQUIRE_NOTHROW(pool->validate());
 }
 
