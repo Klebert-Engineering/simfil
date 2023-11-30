@@ -291,7 +291,7 @@ public:
     ArrayRange range(ArrayIndex const& array) {return ArrayRange(begin(array), end(array));}
 
     /// Support fast iteration via callback. The passed lambda needs to return true,
-    /// as long is the iteration is supposed to continue.
+    /// as long as the iteration is supposed to continue.
     template <typename Func>
     void iterate(ArrayIndex const& a, Func&& lambda)
     {
