@@ -411,6 +411,11 @@ struct Array final : public MandatoryModelPoolNodeBase
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
+    template<class ModelNodeType>
+    Array& append(shared_model_ptr<ModelNodeType> const& value) {
+        return append(static_cast<ModelNode::Ptr>(value));
+    }
+
     Array& append(bool value);
     Array& append(uint16_t value);
     Array& append(int16_t value);
@@ -441,6 +446,11 @@ struct Object : public MandatoryModelPoolNodeBase
     [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
     [[nodiscard]] FieldId keyAt(int64_t) const override;
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
+
+    template<class ModelNodeType>
+    Object& addField(std::string_view const& name, shared_model_ptr<ModelNodeType> const& value) {
+        return addField(name, static_cast<ModelNode::Ptr>(value));
+    }
 
     Object& addBool(std::string_view const& name, bool value);
     Object& addField(std::string_view const& name, uint16_t value);
