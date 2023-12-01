@@ -425,8 +425,8 @@ TEST_CASE("Object/Array Extend", "[model.extend]") {
         testObjectA->addField("occupation", "baker");
 
         auto testObjectB = pool->newObject();
-        testObjectB->addField("height", 220ll);
-        testObjectB->addField("age", 55ll);
+        testObjectB->addField("height", (int64_t)220);
+        testObjectB->addField("age", (int64_t)55);
 
         REQUIRE(testObjectA->size() == 2);
         REQUIRE(testObjectB->size() == 2);
@@ -452,8 +452,8 @@ TEST_CASE("Object/Array Extend", "[model.extend]") {
         testArrayA->append(std::string("baker"));
 
         auto testArrayB = pool->newArray();
-        testArrayB->append(220ll);
-        testArrayB->append(55ll);
+        testArrayB->append((int64_t)220);
+        testArrayB->append((int64_t)55);
 
         REQUIRE(testArrayA->size() == 2);
         REQUIRE(testArrayB->size() == 2);
