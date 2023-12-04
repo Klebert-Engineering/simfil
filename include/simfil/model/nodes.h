@@ -621,10 +621,10 @@ protected:
 
     using Storage = ArrayArena<geo::Point<float>, detail::ColumnPageSize*2>;
 
-    Data& geomData_;
+    Data* geomData_;
     Storage* storage_;
 
-    Geometry(Data& data, ModelConstPtr pool, ModelNodeAddress a);
+    Geometry(Data* data, ModelConstPtr pool, ModelNodeAddress a);
 };
 
 /** GeometryCollection node has `type` and `geometries` fields. */
@@ -692,9 +692,9 @@ struct VertexBufferNode final : public MandatoryModelPoolNodeBase
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
-    VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool, ModelNodeAddress const& a);
+    VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool, ModelNodeAddress const& a);
 
-    Geometry::Data const& geomData_;
+    Geometry::Data const* geomData_;
     Geometry::Storage* storage_;
 };
 
@@ -722,7 +722,7 @@ template <typename LambdaType, class ModelType>
 bool Geometry::forEachPoint(LambdaType const& callback) const {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelType::PointBuffers, addr_.index()}};
     for (auto i = 0; i < vertexBufferNode.size(); ++i) {
-        VertexNode vertex{*vertexBufferNode.at(i), geomData_};
+        VertexNode vertex{*vertexBufferNode.at(i), *geomData_};
         if (!callback(vertex.point_))
             return false;
     }
