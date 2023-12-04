@@ -325,6 +325,7 @@ struct ModelNodeBase : public ModelNode
 protected:
     ModelNodeBase(ModelConstPtr, ModelNodeAddress={}, ScalarValueType data={});  // NOLINT
     ModelNodeBase(ModelNode const&);  // NOLINT
+    ModelNodeBase() = default;
 };
 
 /**
@@ -355,6 +356,7 @@ protected:
         return reinterpret_cast<ModelType_*>(const_cast<Model*>(model_.get()));
     }  // NOLINT
 
+    MandatoryDerivedModelNodeBase() = default;
     MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
         : ModelNodeBase(p, a, std::move(data)) {}
     MandatoryDerivedModelNodeBase(ModelNode const& n) : ModelNodeBase(n) {}  // NOLINT
@@ -383,6 +385,7 @@ struct SmallValueNode final : public ModelNodeBase
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
 protected:
+    SmallValueNode() = default;
     SmallValueNode(ModelConstPtr, ModelNodeAddress);
 };
 
@@ -432,10 +435,11 @@ struct Array final : public MandatoryModelPoolNodeBase
 protected:
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
+    Array() = default;
     Array(ModelConstPtr pool, ModelNodeAddress);
 
-    Storage* storage_;
-    ArrayIndex members_;
+    Storage* storage_ = nullptr;
+    ArrayIndex members_ = 0;
 };
 
 /** Model Node for an object. */
@@ -493,11 +497,12 @@ protected:
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
+    Object() = default;
     Object(ModelConstPtr pool, ModelNodeAddress);
     Object(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
 
-    Storage* storage_;
-    ArrayIndex members_;
+    Storage* storage_ = nullptr;
+    ArrayIndex members_ = 0;
 };
 
 /** Object with extra procedural fields */
@@ -539,6 +544,7 @@ public:
     }
 
 protected:
+    ProceduralObject() = default;
     ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a)
         : Object(i, pool, a) {}
 
@@ -621,9 +627,10 @@ protected:
 
     using Storage = ArrayArena<geo::Point<float>, detail::ColumnPageSize*2>;
 
-    Data* geomData_;
-    Storage* storage_;
+    Data* geomData_ = nullptr;
+    Storage* storage_ = nullptr;
 
+    Geometry() = default;
     Geometry(Data* data, ModelConstPtr pool, ModelNodeAddress a);
 };
 
@@ -674,6 +681,8 @@ protected:
     std::optional<ModelNode::Ptr> singleGeom() const;
 
     using Storage = Array::Storage;
+
+    GeometryCollection() = default;
     GeometryCollection(ModelConstPtr pool, ModelNodeAddress);
 };
 
@@ -692,10 +701,11 @@ struct VertexBufferNode final : public MandatoryModelPoolNodeBase
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
+    VertexBufferNode() = default;
     VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool, ModelNodeAddress const& a);
 
-    Geometry::Data const* geomData_;
-    Geometry::Storage* storage_;
+    Geometry::Data const* geomData_ = nullptr;
+    Geometry::Storage* storage_ = nullptr;
 };
 
 /** Vertex Node */
@@ -713,6 +723,7 @@ struct VertexNode final : public MandatoryModelPoolNodeBase
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
+    VertexNode() = default;
     VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData);
 
     geo::Point<double> point_;
