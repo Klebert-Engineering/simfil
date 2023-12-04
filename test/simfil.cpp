@@ -414,3 +414,60 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
     REQUIRE(proceduralObj->get(pool->fieldNames()->get("mood"))->value() == ScalarValueType(std::string_view("blue")));
     REQUIRE(proceduralObj->get(Fields::Elevation)->value() == ScalarValueType(std::string_view("high")));
 }
+
+TEST_CASE("Object/Array Extend", "[model.extend]") {
+    auto pool = std::make_shared<ModelPool>();
+
+    SECTION("Extend object")
+    {
+        auto testObjectA = pool->newObject();
+        testObjectA->addField("name", "hans");
+        testObjectA->addField("occupation", "baker");
+
+        auto testObjectB = pool->newObject();
+        testObjectB->addField("height", (int64_t)220);
+        testObjectB->addField("age", (int64_t)55);
+
+        REQUIRE(testObjectA->size() == 2);
+        REQUIRE(testObjectB->size() == 2);
+        REQUIRE(Value(testObjectA->get("name")->value()).toString() == "hans");
+        REQUIRE(Value(testObjectA->get("occupation")->value()).toString() == "baker");
+        REQUIRE(!testObjectA->get("height"));
+        REQUIRE(!testObjectA->get("age"));
+        testObjectA->extend(testObjectB);
+
+        REQUIRE(testObjectA->size() == 4);
+        REQUIRE(testObjectB->size() == 2);
+        REQUIRE(Value(testObjectA->get("name")->value()).toString() == "hans");
+        REQUIRE(Value(testObjectA->get("occupation")->value()).toString() == "baker");
+        REQUIRE(Value(testObjectA->get("height")->value()).as<ValueType::Int>() == 220ll);
+        REQUIRE(Value(testObjectA->get("age")->value()).as<ValueType::Int>() == 55ll);
+    }
+
+    SECTION("Extend array")
+    {
+        auto testArrayA = pool->newArray();
+        // The bool overload is used if we don't cast to strings here explicitly.
+        testArrayA->append(std::string("hans"));
+        testArrayA->append(std::string("baker"));
+
+        auto testArrayB = pool->newArray();
+        testArrayB->append((int64_t)220);
+        testArrayB->append((int64_t)55);
+
+        REQUIRE(testArrayA->size() == 2);
+        REQUIRE(testArrayB->size() == 2);
+        REQUIRE(Value(testArrayA->at(0)->value()).toString() == "hans");
+        REQUIRE(Value(testArrayA->at(1)->value()).toString() == "baker");
+        REQUIRE(!testArrayA->at(2));
+        REQUIRE(!testArrayA->at(3));
+        testArrayA->extend(testArrayB);
+
+        REQUIRE(testArrayA->size() == 4);
+        REQUIRE(testArrayB->size() == 2);
+        REQUIRE(Value(testArrayA->at(0)->value()).toString() == "hans");
+        REQUIRE(Value(testArrayA->at(1)->value()).toString() == "baker");
+        REQUIRE(Value(testArrayA->at(2)->value()).as<ValueType::Int>() == 220ll);
+        REQUIRE(Value(testArrayA->at(3)->value()).as<ValueType::Int>() == 55ll);
+    }
+}

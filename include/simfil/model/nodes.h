@@ -424,6 +424,11 @@ struct Array final : public MandatoryModelPoolNodeBase
     Array& append(std::string_view const& value);
     Array& append(ModelNode::Ptr const& value={});
 
+    /**
+     * Append all elements from `other` to this array.
+     */
+    Array& extend(shared_model_ptr<Array> const& other);
+
 protected:
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
@@ -461,6 +466,11 @@ struct Object : public MandatoryModelPoolNodeBase
     Object& addField(std::string_view const& name, ModelNode::Ptr const& value={});
 
     [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
+
+    /**
+     * Adopt all fields from the `other` object into this one.
+     */
+    Object& extend(shared_model_ptr<Object> const& other);
 
 protected:
     /**

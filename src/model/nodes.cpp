@@ -224,6 +224,14 @@ bool Array::iterate(const ModelNode::IterCallback& cb) const
     return cont;
 }
 
+Array& Array::extend(shared_model_ptr<Array> const& other) {
+    auto otherSize = other->size();
+    for (auto i = 0; i < otherSize; ++i) {
+        storage_->push_back(members_, storage_->at(other->members_, i));
+    }
+    return *this;
+}
+
 /** Model Node impls for an object. */
 
 Object::Object(ModelConstPtr pool_, ModelNodeAddress a)
@@ -327,11 +335,20 @@ bool Object::iterate(const ModelNode::IterCallback& cb) const
     auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
         cont = cb(node);
     });
-    storage_->iterate(members_, [&, this](auto&& member){
-            model_->resolve(*ModelNode::Ptr::make(model_, member.node_), resolveAndCb);
+    storage_->iterate(members_, [&, this](auto&& member) {
+        model_->resolve(*ModelNode::Ptr::make(model_, member.node_), resolveAndCb);
         return cont;
     });
     return cont;
+}
+
+Object& Object::extend(shared_model_ptr<Object> const& other)
+{
+    auto otherSize = other->size();
+    for (auto i = 0; i < otherSize; ++i) {
+        storage_->push_back(members_, storage_->at(other->members_, i));
+    }
+    return *this;
 }
 
 /** Model node impls. for GeometryCollection */
