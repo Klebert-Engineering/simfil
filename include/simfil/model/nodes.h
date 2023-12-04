@@ -381,6 +381,7 @@ namespace detail
 template<typename T>
 struct SmallValueNode final : public ModelNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class Model;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
@@ -406,6 +407,7 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 struct Array final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct GeometryCollection;
 
@@ -446,6 +448,7 @@ protected:
 
 struct Object : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
 
@@ -560,6 +563,7 @@ protected:
 
 struct Geometry final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct VertexNode;
     friend struct VertexBufferNode;
@@ -638,6 +642,7 @@ protected:
 
 struct GeometryCollection : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct GeometryList;
 
@@ -690,6 +695,7 @@ protected:
 
 struct VertexBufferNode final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct Geometry;
 
@@ -712,6 +718,7 @@ protected:
 
 struct VertexNode final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct Geometry;
 
