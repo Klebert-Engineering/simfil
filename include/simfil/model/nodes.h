@@ -325,6 +325,7 @@ struct ModelNodeBase : public ModelNode
 protected:
     ModelNodeBase(ModelConstPtr, ModelNodeAddress={}, ScalarValueType data={});  // NOLINT
     ModelNodeBase(ModelNode const&);  // NOLINT
+    ModelNodeBase() = default;
 };
 
 /**
@@ -355,6 +356,7 @@ protected:
         return reinterpret_cast<ModelType_*>(const_cast<Model*>(model_.get()));
     }  // NOLINT
 
+    MandatoryDerivedModelNodeBase() = default;
     MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
         : ModelNodeBase(p, a, std::move(data)) {}
     MandatoryDerivedModelNodeBase(ModelNode const& n) : ModelNodeBase(n) {}  // NOLINT
@@ -379,10 +381,12 @@ namespace detail
 template<typename T>
 struct SmallValueNode final : public ModelNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class Model;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
 protected:
+    SmallValueNode() = default;
     SmallValueNode(ModelConstPtr, ModelNodeAddress);
 };
 
@@ -403,6 +407,7 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 struct Array final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct GeometryCollection;
 
@@ -432,16 +437,18 @@ struct Array final : public MandatoryModelPoolNodeBase
 protected:
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
+    Array() = default;
     Array(ModelConstPtr pool, ModelNodeAddress);
 
-    Storage* storage_;
-    ArrayIndex members_;
+    Storage* storage_ = nullptr;
+    ArrayIndex members_ = 0;
 };
 
 /** Model Node for an object. */
 
 struct Object : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
 
@@ -493,11 +500,12 @@ protected:
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
+    Object() = default;
     Object(ModelConstPtr pool, ModelNodeAddress);
     Object(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
 
-    Storage* storage_;
-    ArrayIndex members_;
+    Storage* storage_ = nullptr;
+    ArrayIndex members_ = 0;
 };
 
 /** Object with extra procedural fields */
@@ -539,6 +547,7 @@ public:
     }
 
 protected:
+    ProceduralObject() = default;
     ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a)
         : Object(i, pool, a) {}
 
@@ -554,6 +563,7 @@ protected:
 
 struct Geometry final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct VertexNode;
     friend struct VertexBufferNode;
@@ -621,16 +631,18 @@ protected:
 
     using Storage = ArrayArena<geo::Point<float>, detail::ColumnPageSize*2>;
 
-    Data& geomData_;
-    Storage* storage_;
+    Data* geomData_ = nullptr;
+    Storage* storage_ = nullptr;
 
-    Geometry(Data& data, ModelConstPtr pool, ModelNodeAddress a);
+    Geometry() = default;
+    Geometry(Data* data, ModelConstPtr pool, ModelNodeAddress a);
 };
 
 /** GeometryCollection node has `type` and `geometries` fields. */
 
 struct GeometryCollection : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct GeometryList;
 
@@ -674,6 +686,8 @@ protected:
     std::optional<ModelNode::Ptr> singleGeom() const;
 
     using Storage = Array::Storage;
+
+    GeometryCollection() = default;
     GeometryCollection(ModelConstPtr pool, ModelNodeAddress);
 };
 
@@ -681,6 +695,7 @@ protected:
 
 struct VertexBufferNode final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct Geometry;
 
@@ -692,16 +707,18 @@ struct VertexBufferNode final : public MandatoryModelPoolNodeBase
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
-    VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool, ModelNodeAddress const& a);
+    VertexBufferNode() = default;
+    VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool, ModelNodeAddress const& a);
 
-    Geometry::Data const& geomData_;
-    Geometry::Storage* storage_;
+    Geometry::Data const* geomData_ = nullptr;
+    Geometry::Storage* storage_ = nullptr;
 };
 
 /** Vertex Node */
 
 struct VertexNode final : public MandatoryModelPoolNodeBase
 {
+    template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend struct Geometry;
 
@@ -713,6 +730,7 @@ struct VertexNode final : public MandatoryModelPoolNodeBase
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
+    VertexNode() = default;
     VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData);
 
     geo::Point<double> point_;
@@ -722,7 +740,7 @@ template <typename LambdaType, class ModelType>
 bool Geometry::forEachPoint(LambdaType const& callback) const {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelType::PointBuffers, addr_.index()}};
     for (auto i = 0; i < vertexBufferNode.size(); ++i) {
-        VertexNode vertex{*vertexBufferNode.at(i), geomData_};
+        VertexNode vertex{*vertexBufferNode.at(i), *geomData_};
         if (!callback(vertex.point_))
             return false;
     }

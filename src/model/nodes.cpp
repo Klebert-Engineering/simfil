@@ -430,7 +430,7 @@ size_t GeometryCollection::numGeometries() const
 
 /** ModelNode impls. for Geometry */
 
-Geometry::Geometry(Data& data, ModelConstPtr pool_, ModelNodeAddress a)
+Geometry::Geometry(Data* data, ModelConstPtr pool_, ModelNodeAddress a)
     : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(data)
 {
     storage_ = &model().vertexBufferStorage();
@@ -442,10 +442,10 @@ ValueType Geometry::type() const {
 
 ModelNode::Ptr Geometry::at(int64_t i) const {
     if (i == 0) return ValueNode(
-        geomData_.type == GeomType::Points ? MultiPointStr :
-        geomData_.type == GeomType::Line ? LineStringStr :
-        geomData_.type == GeomType::Polygon ? PolygonStr :
-        geomData_.type == GeomType::Mesh ? MultiPolygonStr : "",
+        geomData_->type == GeomType::Points ? MultiPointStr :
+        geomData_->type == GeomType::Line ? LineStringStr :
+        geomData_->type == GeomType::Polygon ? PolygonStr :
+        geomData_->type == GeomType::Mesh ? MultiPolygonStr : "",
             model_);
     if (i == 1) return ModelNode::Ptr::make(
             model_, ModelNodeAddress{ModelPool::PointBuffers, addr_.index()});
@@ -473,22 +473,22 @@ void Geometry::append(geo::Point<double> const& p) {
     // a negative array handle denotes the desired initial
     // capacity, +1, because there is always the additional
     // offset point.
-    if (geomData_.vertexArray_ < 0) {
-        auto initialCapacity = abs(geomData_.vertexArray_);
-        geomData_.vertexArray_ = storage_->new_array(initialCapacity-1);
-        geomData_.offset_ = p;
+    if (geomData_->vertexArray_ < 0) {
+        auto initialCapacity = abs(geomData_->vertexArray_);
+        geomData_->vertexArray_ = storage_->new_array(initialCapacity-1);
+        geomData_->offset_ = p;
         return;
     }
     storage_->emplace_back(
-        geomData_.vertexArray_,
+        geomData_->vertexArray_,
         geo::Point<float>{
-            static_cast<float>(p.x - geomData_.offset_.x),
-            static_cast<float>(p.y - geomData_.offset_.y),
-            static_cast<float>(p.z - geomData_.offset_.z)});
+            static_cast<float>(p.x - geomData_->offset_.x),
+            static_cast<float>(p.y - geomData_->offset_.y),
+            static_cast<float>(p.z - geomData_->offset_.z)});
 }
 
 Geometry::GeomType Geometry::geomType() const {
-    return geomData_.type;
+    return geomData_->type;
 }
 
 bool Geometry::iterate(const IterCallback& cb) const
@@ -507,13 +507,13 @@ size_t Geometry::numPoints() const
 geo::Point<double> Geometry::pointAt(size_t index) const
 {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelPool::PointBuffers, addr_.index()}};
-    VertexNode vertex{*vertexBufferNode.at((int64_t)index), geomData_};
+    VertexNode vertex{*vertexBufferNode.at((int64_t)index), *geomData_};
     return vertex.point_;
 }
 
 /** ModelNode impls. for VertexBufferNode */
 
-VertexBufferNode::VertexBufferNode(Geometry::Data const& geomData, ModelConstPtr pool_, ModelNodeAddress const& a)
+VertexBufferNode::VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool_, ModelNodeAddress const& a)
     : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(geomData)
 {
     storage_ = &model().vertexBufferStorage();
@@ -530,9 +530,9 @@ ModelNode::Ptr VertexBufferNode::at(int64_t i) const {
 }
 
 uint32_t VertexBufferNode::size() const {
-    if (geomData_.vertexArray_ < 0)
+    if (geomData_->vertexArray_ < 0)
         return 0;
-    return 1 + storage_->size(geomData_.vertexArray_);
+    return 1 + storage_->size(geomData_->vertexArray_);
 }
 
 ModelNode::Ptr VertexBufferNode::get(const FieldId &) const {

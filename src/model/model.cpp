@@ -244,12 +244,12 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
     }
     case PointBuffers: {
         auto& val = get(impl_->columns_.geom_);
-        cb(VertexBufferNode(val, shared_from_this(), n.addr_));
+        cb(VertexBufferNode(&val, shared_from_this(), n.addr_));
         break;
     }
     case Geometries: {
         auto& val = get(impl_->columns_.geom_);
-        cb(Geometry(const_cast<Geometry::Data&>(val), shared_from_this(), n.addr_));
+        cb(Geometry(&const_cast<Geometry::Data&>(val), shared_from_this(), n.addr_));
         break;
     }
     case GeometryCollections: {
@@ -344,7 +344,7 @@ shared_model_ptr<Geometry> ModelPool::newGeometry(Geometry::GeomType geomType, s
     initialCapacity = std::max((size_t)1, initialCapacity);
     impl_->columns_.geom_.emplace_back(Geometry::Data{geomType, -(ArrayIndex)initialCapacity, {.0, .0, .0}});
     return Geometry(
-        impl_->columns_.geom_.back(),
+        &impl_->columns_.geom_.back(),
         shared_from_this(),
         {Geometries, (uint32_t)impl_->columns_.geom_.size()-1});
 }
@@ -374,7 +374,7 @@ shared_model_ptr<Geometry> ModelPool::resolveGeometry(ModelNode::Ptr const& n) c
     if (n->addr_.column() != Geometries)
         throw std::runtime_error("Cannot cast this node to a Geometry.");
     auto& geomData = impl_->columns_.geom_[n->addr_.index()];
-    return Geometry(geomData, shared_from_this(), n->addr_);
+    return Geometry(&geomData, shared_from_this(), n->addr_);
 }
 
 std::shared_ptr<Fields> ModelPool::fieldNames() const
