@@ -109,7 +109,7 @@ target_include_directories(simfil
 
 target_compile_features(simfil
   PUBLIC
-    cxx_std_17)
+    cxx_std_20)
 
 target_link_libraries(simfil
   PUBLIC

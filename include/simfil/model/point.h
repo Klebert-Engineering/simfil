@@ -9,10 +9,39 @@ namespace simfil
 namespace geo
 {
 
+/**
+ * Concept which is used to construct points
+ * from arbitrary other compatible structures.
+ */
+template <typename T, typename Precision>
+concept HasXY = requires(T t) {
+    { t.x } -> std::convertible_to<Precision>;
+    { t.y } -> std::convertible_to<Precision>;
+};
+
+/** Minimal 3D point structure. */
 template <class Precision = double>
 struct Point
 {
     Precision x = 0, y = 0, z = 0;
+
+    /** Define trivial constructors */
+    Point() = default;
+    Point(Point const&) = default;
+    Point(Precision const& x, Precision const& y, Precision const& z = .0) : x(x), y(y), z(z) {}
+
+    /**
+     * Allow constructing a point from any class which has .x and .y members.
+     * If the other class has a z member, it will be applied as well.
+     */
+    template <typename T>
+    requires HasXY<T, Precision>
+    Point(T const& other) : x(other.x), y(other.y)  // NOLINT: Allow implicit conversion
+    {
+        if constexpr (requires { {other.z} -> std::convertible_to<Precision>; }) {
+            z = other.z;
+        }
+    }
 
     auto operator==(const Point& o) const -> bool
     {
