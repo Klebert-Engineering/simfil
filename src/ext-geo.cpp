@@ -227,7 +227,7 @@ auto BBox::toString() const -> std::string
 auto Polygon::bbox() const -> BBox
 {
     if (polys.empty())
-        return {{0, 0}, {0}};
+        return {{0, 0}, {0, 0}};
 
     return polys[0].bbox();
 }

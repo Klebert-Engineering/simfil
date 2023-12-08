@@ -23,7 +23,7 @@ TEST_CASE("Point", "[geo.point]") {
 }
 
 TEST_CASE("BBox", "[geo.bbox]") {
-    REQUIRE(BBox{0, 1, 2, 3} == BBox{0, 1, 2, 3});
+    REQUIRE(BBox{{0, 1}, {2, 3}} == BBox{{0, 1}, {2, 3}});
 }
 
 TEST_CASE("LineString", "[geo.linestring]") {
