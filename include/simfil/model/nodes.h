@@ -610,22 +610,68 @@ struct Geometry final : public MandatoryModelPoolNodeBase
     bool forEachPoint(LambdaType const& callback) const;
 
 protected:
-    struct Data {
-        GeomType type = GeomType::Points;
+    struct Data
+    {
+        Data() = default;
+        Data(GeomType t, size_t capacity) : isView_(false), type_(t) {
+            detail_.geom_.vertexArray_ = -(ArrayIndex)capacity;
+        }
+        Data(GeomType t, uint32_t offset, uint32_t size, ModelNodeAddress base) : isView_(true), type_(t) {
+            detail_.view_.offset_ = offset;
+            detail_.view_.size_ = size;
+            detail_.view_.baseGeometry_ = base;
+        }
 
-        // Vertex array index, or negative requested initial
-        // capacity, if no point is added yet.
-        ArrayIndex vertexArray_ = -1;
+        // Flag to indicate whether this geometry is just
+        // a view into another geometry object.
+        bool isView_ = false;
 
-        // Offset is set when vertexArray is allocated,
-        // which happens when the first point is added.
-        geo::Point<double> offset_;
+        // Geometry type. A view can have a different geometry type
+        // than the base geometry.
+        GeomType type_ = GeomType::Points;
+
+        union GeomDetails
+        {
+            GeomDetails() {new(&geom_) GeomBaseDetails();}
+
+            struct GeomBaseDetails {
+                // Vertex array index, or negative requested initial
+                // capacity, if no point is added yet.
+                ArrayIndex vertexArray_ = -1;
+
+                // Offset is set when vertexArray is allocated,
+                // which happens when the first point is added.
+                geo::Point<double> offset_;
+            } geom_;
+
+            struct GeomViewDetails {
+                // If this geometry is a view, then it references
+                // a range of vertices in another geometry.
+
+                // Offset within the other geometry.
+                uint32_t offset_ = 0;
+
+                // Number of referenced vertices.
+                uint32_t size_ = 0;
+
+                // Address of the referenced geometry - may be a view itself.
+                ModelNodeAddress baseGeometry_;
+            } view_;
+        } detail_;
 
         template<typename S>
         void serialize(S& s) {
-            s.value1b(type);
-            s.value4b(vertexArray_);
-            s.object(offset_);
+            s.value1b(isView_);
+            s.value1b(type_);
+            if (!isView_) {
+                s.value4b(detail_.geom_.vertexArray_);
+                s.object(detail_.geom_.offset_);
+            }
+            else {
+                s.value4b(detail_.view_.offset_);
+                s.value4b(detail_.view_.size_);
+                s.value4b(detail_.view_.baseGeometry_.value_);
+            }
         }
     };
 
@@ -712,6 +758,8 @@ protected:
 
     Geometry::Data const* geomData_ = nullptr;
     Geometry::Storage* storage_ = nullptr;
+    uint32_t offset_ = 0;
+    uint32_t size_ = 0;
 };
 
 /** Vertex Node */
@@ -740,7 +788,7 @@ template <typename LambdaType, class ModelType>
 bool Geometry::forEachPoint(LambdaType const& callback) const {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelType::PointBuffers, addr_.index()}};
     for (auto i = 0; i < vertexBufferNode.size(); ++i) {
-        VertexNode vertex{*vertexBufferNode.at(i), *geomData_};
+        VertexNode vertex{*vertexBufferNode.at(i), *vertexBufferNode.geomData_};
         if (!callback(vertex.point_))
             return false;
     }

@@ -55,24 +55,24 @@ TEST_CASE("Polygon", "[geo.polygon]") {
     };
 }
 
-TEST_CASE("GeometryCollection", "[geom.collection]") {
-    SECTION("Construct GeometryCollection") {
-        auto model_pool = std::make_shared<ModelPool>();
-        auto geometry_collection = model_pool->newGeometryCollection();
+TEST_CASE("GeometryCollection", "[geom.collection]")
+{
+    auto model_pool = std::make_shared<ModelPool>();
+    auto geometry_collection = model_pool->newGeometryCollection();
+    auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
+    point_geom->append({.0, .0, .0});
+    point_geom->append({.25, .25, .25});
+    point_geom->append({.5, .5, .5});
+    point_geom->append({1., 1., 1.});
 
+    SECTION("Construct GeometryCollection")
+    {
         REQUIRE(geometry_collection->type() == ValueType::Object);
         REQUIRE(geometry_collection->size() == 2); // 'type' and 'geometries' fields
     }
 
-    SECTION("Construct Geometry and Add to GeometryCollection") {
-        auto model_pool = std::make_shared<ModelPool>();
-        auto geometry_collection = model_pool->newGeometryCollection();
-        auto point_geom = geometry_collection->newGeometry(Geometry::GeomType::Points);
-        point_geom->append({.0, .0, .0});
-        point_geom->append({.25, .25, .25});
-        point_geom->append({.5, .5, .5});
-        point_geom->append({1., 1., 1.});
-
+    SECTION("Recover geometry")
+    {
         REQUIRE(point_geom->type() == ValueType::Object);
         REQUIRE(point_geom->geomType() == Geometry::GeomType::Points);
         REQUIRE(point_geom->numPoints() == 4);
@@ -81,7 +81,9 @@ TEST_CASE("GeometryCollection", "[geom.collection]") {
         REQUIRE(point_geom->pointAt(2).x == .5);
         REQUIRE(point_geom->pointAt(3).x == 1.);
         REQUIRE(geometry_collection->numGeometries() == 1);
+    }
 
+    SECTION("GeoJSON representation") {
         // Since the collection only contains one geometry,
         // it hides itself and directly presents the nested geometry,
         // conforming to GeoJSON (a collection must have >1 geometries).
@@ -95,6 +97,17 @@ TEST_CASE("GeometryCollection", "[geom.collection]") {
 
         REQUIRE(geometry_collection->numGeometries() == 3);
         REQUIRE(geometry_collection->at(1)->size() == 3); // Three geometries
+    }
+
+    SECTION("Geometry View") {
+        auto view = model_pool->newGeometryView(Geometry::GeomType::Line, 1, 2, point_geom);
+        REQUIRE(view->pointAt(0).x == .25);
+        REQUIRE(view->pointAt(1).x == .5);
+        REQUIRE_THROWS(view->pointAt(2));
+
+        auto subview = model_pool->newGeometryView(Geometry::GeomType::Points, 1, 1, view);
+        REQUIRE(subview->pointAt(0).x == .5);
+        REQUIRE_THROWS(subview->pointAt(1));
     }
 }
 

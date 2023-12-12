@@ -138,6 +138,11 @@ public:
     /// Geometry(-Collection) factories
     shared_model_ptr<GeometryCollection> newGeometryCollection(size_t initialCapacity = 1);
     shared_model_ptr<Geometry> newGeometry(Geometry::GeomType geomType, size_t initialCapacity = 1);
+    shared_model_ptr<Geometry> newGeometryView(
+        Geometry::GeomType geomType,
+        uint32_t offset,
+        uint32_t size,
+        shared_model_ptr<Geometry> const& base);
 
     /// Node-type-specific resolve-functions
     shared_model_ptr<Object> resolveObject(ModelNode::Ptr const& n) const;
