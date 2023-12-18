@@ -367,7 +367,7 @@ private:
         data_.resize(offset + newCapacity);
         if (head.capacity == 0) {
             head.offset = (SizeType_)offset;
-            head.capacity = newCapacity;
+            head.capacity = static_cast<SizeType_>(newCapacity);
             return head;
         }
         auto newIndex = static_cast<ArrayIndex>(continuations_.size());
