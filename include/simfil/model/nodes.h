@@ -757,6 +757,7 @@ protected:
     VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool, ModelNodeAddress const& a);
 
     Geometry::Data const* geomData_ = nullptr;
+    ModelNodeAddress geomAddress_;
     Geometry::Storage* storage_ = nullptr;
     uint32_t offset_ = 0;
     uint32_t size_ = 0;

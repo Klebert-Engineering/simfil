@@ -520,7 +520,7 @@ geo::Point<double> Geometry::pointAt(size_t index) const
 /** ModelNode impls. for VertexBufferNode */
 
 VertexBufferNode::VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool_, ModelNodeAddress const& a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(geomData)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(geomData), geomAddress_(a)
 {
     storage_ = &model().vertexBufferStorage();
 
@@ -530,6 +530,7 @@ VertexBufferNode::VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr
         while (geomData_->isView_) {
             offset_ += geomData_->detail_.view_.offset_;
             size_ = geomData_->detail_.view_.size_;
+            geomAddress_ = geomData_->detail_.view_.baseGeometry_;
             geomData_ = model().resolveGeometry(
                 ModelNode::Ptr::make(model_, geomData_->detail_.view_.baseGeometry_))->geomData_;
         }
@@ -550,10 +551,10 @@ ValueType VertexBufferNode::type() const {
 }
 
 ModelNode::Ptr VertexBufferNode::at(int64_t i) const {
-    i += offset_;
-    if (i < 0 || i > size())
+    if (i < 0 || i >= size())
         throw std::out_of_range("vertex-buffer: Out of range.");
-    return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Points, addr_.index()}, i);
+    i += offset_;
+    return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Points, geomAddress_.index()}, i);
 }
 
 uint32_t VertexBufferNode::size() const {
@@ -574,10 +575,9 @@ bool VertexBufferNode::iterate(const IterCallback& cb) const
     auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
         cont = cb(node);
     });
-    auto length = size();
-    for (auto i = 0u; i < length; ++i) {
+    for (auto i = 0u; i < size_; ++i) {
         resolveAndCb(*ModelNode::Ptr::make(
-            model_, ModelNodeAddress{ModelPool::Points, addr_.index()}, (int64_t)i));
+            model_, ModelNodeAddress{ModelPool::Points, geomAddress_.index()}, (int64_t)i+offset_));
         if (!cont)
             break;
     }
@@ -589,13 +589,9 @@ bool VertexBufferNode::iterate(const IterCallback& cb) const
 VertexNode::VertexNode(ModelNode const& baseNode, Geometry::Data const* geomData)
     : MandatoryModelPoolNodeBase(baseNode)
 {
+    if (geomData->isView_)
+        throw std::runtime_error("Point must be constructed through VertexBuffer which resolves view to geometry.");
     auto i = std::get<int64_t>(data_);
-    while (geomData->isView_) {
-        i += geomData->detail_.view_.offset_;
-        geomData = model().resolveGeometry(
-            ModelNode::Ptr::make(model_, geomData->detail_.view_.baseGeometry_))->geomData_;
-    }
-
     point_ = geomData->detail_.geom_.offset_;
     if (i > 0)
         point_ += model().vertexBufferStorage().at(geomData->detail_.geom_.vertexArray_, i - 1);
