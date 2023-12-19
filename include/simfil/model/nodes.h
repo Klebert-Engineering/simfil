@@ -779,7 +779,7 @@ struct VertexNode final : public MandatoryModelPoolNodeBase
 
 protected:
     VertexNode() = default;
-    VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData);
+    VertexNode(ModelNode const& baseNode, Geometry::Data const* geomData);
 
     geo::Point<double> point_;
 };
@@ -788,7 +788,7 @@ template <typename LambdaType, class ModelType>
 bool Geometry::forEachPoint(LambdaType const& callback) const {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelType::PointBuffers, addr_.index()}};
     for (auto i = 0; i < vertexBufferNode.size(); ++i) {
-        VertexNode vertex{*vertexBufferNode.at(i), *vertexBufferNode.geomData_};
+        VertexNode vertex{*vertexBufferNode.at(i), vertexBufferNode.geomData_};
         if (!callback(vertex.point_))
             return false;
     }

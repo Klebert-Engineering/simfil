@@ -513,7 +513,7 @@ size_t Geometry::numPoints() const
 geo::Point<double> Geometry::pointAt(size_t index) const
 {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelPool::PointBuffers, addr_.index()}};
-    VertexNode vertex{*vertexBufferNode.at((int64_t)index), *vertexBufferNode.geomData_};
+    VertexNode vertex{*vertexBufferNode.at((int64_t)index), vertexBufferNode.geomData_};
     return vertex.point_;
 }
 
@@ -586,13 +586,19 @@ bool VertexBufferNode::iterate(const IterCallback& cb) const
 
 /** Model node impls for vertex. */
 
-VertexNode::VertexNode(ModelNode const& baseNode, Geometry::Data const& geomData)
+VertexNode::VertexNode(ModelNode const& baseNode, Geometry::Data const* geomData)
     : MandatoryModelPoolNodeBase(baseNode)
 {
     auto i = std::get<int64_t>(data_);
-    point_ = geomData.detail_.geom_.offset_;
+    while (geomData->isView_) {
+        i += geomData->detail_.view_.offset_;
+        geomData = model().resolveGeometry(
+            ModelNode::Ptr::make(model_, geomData->detail_.view_.baseGeometry_))->geomData_;
+    }
+
+    point_ = geomData->detail_.geom_.offset_;
     if (i > 0)
-        point_ += model().vertexBufferStorage().at(geomData.detail_.geom_.vertexArray_, i - 1);
+        point_ += model().vertexBufferStorage().at(geomData->detail_.geom_.vertexArray_, i - 1);
 }
 
 ValueType VertexNode::type() const {

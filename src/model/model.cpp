@@ -239,7 +239,7 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
     }
     case Points: {
         auto& val = get(impl_->columns_.geom_);
-        cb(VertexNode(n, val));
+        cb(VertexNode(n, &val));
         break;
     }
     case PointBuffers: {
