@@ -756,7 +756,8 @@ protected:
     VertexBufferNode() = default;
     VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool, ModelNodeAddress const& a);
 
-    Geometry::Data const* geomData_ = nullptr;
+    Geometry::Data const* baseGeomData_ = nullptr;
+    ModelNodeAddress baseGeomAddress_;
     Geometry::Storage* storage_ = nullptr;
     uint32_t offset_ = 0;
     uint32_t size_ = 0;
@@ -788,7 +789,7 @@ template <typename LambdaType, class ModelType>
 bool Geometry::forEachPoint(LambdaType const& callback) const {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelType::PointBuffers, addr_.index()}};
     for (auto i = 0; i < vertexBufferNode.size(); ++i) {
-        VertexNode vertex{*vertexBufferNode.at(i), vertexBufferNode.geomData_};
+        VertexNode vertex{*vertexBufferNode.at(i), vertexBufferNode.baseGeomData_};
         if (!callback(vertex.point_))
             return false;
     }
