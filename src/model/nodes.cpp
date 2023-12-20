@@ -513,36 +513,37 @@ size_t Geometry::numPoints() const
 geo::Point<double> Geometry::pointAt(size_t index) const
 {
     VertexBufferNode vertexBufferNode{geomData_, model_, {ModelPool::PointBuffers, addr_.index()}};
-    VertexNode vertex{*vertexBufferNode.at((int64_t)index), vertexBufferNode.geomData_};
+    VertexNode vertex{*vertexBufferNode.at((int64_t)index), vertexBufferNode.baseGeomData_};
     return vertex.point_;
 }
 
 /** ModelNode impls. for VertexBufferNode */
 
 VertexBufferNode::VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool_, ModelNodeAddress const& a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), geomData_(geomData), geomAddress_(a)
+    : MandatoryModelPoolNodeBase(std::move(pool_), a), baseGeomData_(geomData), baseGeomAddress_(a)
 {
     storage_ = &model().vertexBufferStorage();
 
     // Resolve geometry view to actual geometry, process
     // actual offset and length.
-    if (geomData_->isView_) {
-        while (geomData_->isView_) {
-            offset_ += geomData_->detail_.view_.offset_;
-            size_ = geomData_->detail_.view_.size_;
-            geomAddress_ = geomData_->detail_.view_.baseGeometry_;
-            geomData_ = model().resolveGeometry(
-                ModelNode::Ptr::make(model_, geomData_->detail_.view_.baseGeometry_))->geomData_;
+    if (baseGeomData_->isView_) {
+        size_ = baseGeomData_->detail_.view_.size_;
+
+        while (baseGeomData_->isView_) {
+            offset_ += baseGeomData_->detail_.view_.offset_;
+            baseGeomAddress_ = baseGeomData_->detail_.view_.baseGeometry_;
+            baseGeomData_ = model().resolveGeometry(
+                ModelNode::Ptr::make(model_, baseGeomData_->detail_.view_.baseGeometry_))->geomData_;
         }
 
-        auto maxSize = 1 + storage_->size(geomData_->detail_.geom_.vertexArray_);
+        auto maxSize = 1 + storage_->size(baseGeomData_->detail_.geom_.vertexArray_);
         if (offset_ + size_ > maxSize)
             throw std::runtime_error("Geometry view is out of bounds.");
     }
     else {
         // Just get the correct length.
-        if (geomData_->detail_.geom_.vertexArray_ >= 0)
-            size_ = 1 + storage_->size(geomData_->detail_.geom_.vertexArray_);
+        if (baseGeomData_->detail_.geom_.vertexArray_ >= 0)
+            size_ = 1 + storage_->size(baseGeomData_->detail_.geom_.vertexArray_);
     }
 }
 
@@ -554,7 +555,7 @@ ModelNode::Ptr VertexBufferNode::at(int64_t i) const {
     if (i < 0 || i >= size())
         throw std::out_of_range("vertex-buffer: Out of range.");
     i += offset_;
-    return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Points, geomAddress_.index()}, i);
+    return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Points, baseGeomAddress_.index()}, i);
 }
 
 uint32_t VertexBufferNode::size() const {
@@ -577,7 +578,7 @@ bool VertexBufferNode::iterate(const IterCallback& cb) const
     });
     for (auto i = 0u; i < size_; ++i) {
         resolveAndCb(*ModelNode::Ptr::make(
-            model_, ModelNodeAddress{ModelPool::Points, geomAddress_.index()}, (int64_t)i+offset_));
+            model_, ModelNodeAddress{ModelPool::Points, baseGeomAddress_.index()}, (int64_t)i+offset_));
         if (!cont)
             break;
     }
