@@ -17,29 +17,23 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update && sudo apt-get install gcovr ninja-build valgrind
-    - name: Setup
+    - name: Install Conan 2
       run: |
-        mkdir build
-    - name: Configure
-      working-directory: build
-      run: |
-        cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=YES -GNinja ..
+        pip install conan
+        conan profile detect
     - name: Build
-      working-directory: build
       run: |
-        cmake --build .
-
+        conan build . -o with_tests=True --settings=build_type=RelWithDebInfo --build=missing
     - name: Run CTest
-      working-directory: build/test
       run: |
-        ctest --verbose --output-junit result-junit.xml
+        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo
     - name: Publish Test Results
       uses: EnricoMi/publish-unit-test-result-action@v2
       id: test-results
       if: always()
       with:
         files: |
-          build/test/*.xml
+          build/RelWithDebInfo/test/*.xml
     - name: Set badge color
       shell: bash
       run: |
@@ -73,26 +67,26 @@ jobs:
         file: badge.svg
 
     - name: Run Valgrind Memcheck
-      working-directory: build/test
+      working-directory: build/RelWithDebInfo/test
       run: |
         valgrind --tool=memcheck ./test.simfil
     - name: Run Valgrind Helgrind
-      working-directory: build/test
+      working-directory: build/RelWithDebInfo/test
       run: |
         valgrind --tool=helgrind ./test.simfil
     - name: Run Valgrind Cachegrind
-      working-directory: build/test
+      working-directory: build/RelWithDebInfo/test
       run: |
         valgrind --tool=cachegrind ./test.simfil | tee cachegrind-out.txt
     - name: Run Valgrind Callgrind
-      working-directory: build/test
+      working-directory: build/RelWithDebInfo/test
       run: |
         valgrind --tool=callgrind --instr-atstart=no ./test.simfil
     - name: Publish Callgrind Output
       uses: actions/upload-artifact@v3
       with:
         name: Callgrind Output
-        path: build/test/callgrind.out.*
+        path: build/RelWithDebInfo/test/callgrind.out.*
 
   build-windows:
     name: Windows
@@ -101,24 +95,16 @@ jobs:
     - uses: actions/checkout@v3
       with:
         submodules: true
-    - name: Setup
+    - name: Install Conan 2
       run: |
-        mkdir build
-    - name: Configure
-      working-directory: build
-      run: |
-        cmake ..
-      shell: cmd
+        pip install conan
+        conan profile detect
     - name: Build
-      working-directory: build
       run: |
-        cmake --build .
-      shell: cmd
+        conan build . -o with_tests=True --settings=build_type=RelWithDebInfo --build=missing
     - name: Run CTest
-      working-directory: build/test
       run: |
-        ctest -C Debug --verbose
-      shell: cmd
+        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo
 
   build-macos:
     name: MacOS
@@ -127,18 +113,13 @@ jobs:
     - uses: actions/checkout@v3
       with:
         submodules: true
-    - name: Setup
+    - name: Install Conan 2
       run: |
-        mkdir build
-    - name: Configure
-      working-directory: build
-      run: |
-        cmake ..
+        pip install conan
+        conan profile detect
     - name: Build
-      working-directory: build
       run: |
-        cmake --build .
+        conan build . -o with_tests=True --settings=build_type=RelWithDebInfo --build=missing
     - name: Run CTest
-      working-directory: build/test
       run: |
-        ctest --verbose
+        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo

@@ -22,9 +22,9 @@ if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
   option(WITH_EXAMPLES "Build examples" YES)
 
   if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-    option(WITH_COVERAGE "Enable gcovr coverage" YES)
+    option(SIMFIL_WITH_COVERAGE "Enable gcovr coverage" YES)
   else()
-    set(WITH_COVERAGE NO)
+    set(SIMFIL_WITH_COVERAGE NO)
   endif()
 else()
   set(WITH_REPL NO)
@@ -48,18 +48,13 @@ if (NOT TARGET stx)
   FetchContent_MakeAvailable(stx)
 endif()
 
-FetchContent_Declare(bitsery
-  GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
-  GIT_TAG        "master"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS NAMES Bitsery)
-FetchContent_MakeAvailable(bitsery)
+find_package(Bitsery REQUIRED)
 
 if (NOT DEFINED SIMFIL_WITH_MODEL_JSON)
   set(SIMFIL_WITH_MODEL_JSON YES)
 endif()
 
-if (WITH_COVERAGE)
+if (WITH_COVERAGE OR SIMFIL_WITH_COVERAGE)
   include(CodeCoverage)
 endif()
 
@@ -122,12 +117,7 @@ if (MSVC)
 endif()
 
 if (SIMFIL_WITH_MODEL_JSON)
-  FetchContent_Declare(nlohmann_json
-    GIT_REPOSITORY "https://github.com/nlohmann/json.git"
-    GIT_TAG        "v3.11.2"
-    GIT_SHALLOW    ON
-    FIND_PACKAGE_ARGS)
-  FetchContent_MakeAvailable(nlohmann_json)
+  find_package(nlohmann_json REQUIRED)
 
   target_compile_definitions(simfil
     PUBLIC
@@ -149,10 +139,10 @@ endif()
 
 add_library(simfil::simfil ALIAS simfil)
 
-if (MAIN_PROJECT)
+if (MAIN_PROJECT OR SIMFIL_WITH_TESTS)
   add_subdirectory(test)
 
-  if (WITH_COVERAGE)
+  if (WITH_COVERAGE OR SIMFIL_WITH_COVERAGE)
     setup_target_for_coverage_gcovr_html(
       NAME coverage
       EXECUTABLE test.simfil

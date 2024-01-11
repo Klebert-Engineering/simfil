@@ -19,23 +19,16 @@ jobs:
         sudo apt-get install ninja-build
         pip install gcovr
         gcovr --version
-    - name: Setup
+    - name: Install Conan 2
       run: |
-        mkdir build
-    - name: Configure
-      working-directory: build
-      run: |
-        cmake -DCMAKE_BUILD_TYPE=Debug \
-              -DCMAKE_EXPORT_COMPILE_COMMANDS=YES \
-              -DWITH_COVERAGE=YES -GNinja ..
+        pip install conan
+        conan profile detect
     - name: Build
-      working-directory: build
       run: |
-        cmake --build .
-    - name: Run Test
-      working-directory: build/test
+        conan build . -o with_tests=True -o with_coverage=True --settings=build_type=RelWithDebInfo --build=missing
+    - name: Run CTest
       run: |
-        ctest
+        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo
     - name: Run Gcovr
       run: |
         mkdir coverage
