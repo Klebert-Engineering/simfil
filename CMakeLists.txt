@@ -48,14 +48,12 @@ if (NOT TARGET stx)
   FetchContent_MakeAvailable(stx)
 endif()
 
-if (NOT TARGET bitsery)
-  FetchContent_Declare(bitsery
-    GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
-    GIT_TAG        "master"
-    GIT_SHALLOW    ON
-    FIND_PACKAGE_ARGS NAMES Bitsery)
-  FetchContent_MakeAvailable(bitsery)
-endif()
+FetchContent_Declare(bitsery
+  GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
+  GIT_TAG        "master"
+  GIT_SHALLOW    ON
+  FIND_PACKAGE_ARGS NAMES Bitsery)
+FetchContent_MakeAvailable(bitsery)
 
 if (NOT DEFINED SIMFIL_WITH_MODEL_JSON)
   set(SIMFIL_WITH_MODEL_JSON YES)
@@ -124,14 +122,12 @@ if (MSVC)
 endif()
 
 if (SIMFIL_WITH_MODEL_JSON)
-  if (NOT TARGET nlohmann_json)
-    FetchContent_Declare(nlohmann_json
-      GIT_REPOSITORY "https://github.com/nlohmann/json.git"
-      GIT_TAG        "v3.11.2"
-      GIT_SHALLOW    ON
-      FIND_PACKAGE_ARGS)
-    FetchContent_MakeAvailable(nlohmann_json)
-  endif()
+  FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY "https://github.com/nlohmann/json.git"
+    GIT_TAG        "v3.11.2"
+    GIT_SHALLOW    ON
+    FIND_PACKAGE_ARGS)
+  FetchContent_MakeAvailable(nlohmann_json)
 
   target_compile_definitions(simfil
     PUBLIC
