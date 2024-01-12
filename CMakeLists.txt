@@ -38,10 +38,6 @@ if (NOT TARGET sfl)
     GIT_TAG        "master"
     GIT_SHALLOW    ON)
   FetchContent_MakeAvailable(sfl)
-  add_library(sfl INTERFACE)
-  FetchContent_GetProperties(sfl SOURCE_DIR sfl_source_dir)
-  target_include_directories(sfl INTERFACE "${sfl_source_dir}/include")
-  add_library(sfl::sfl ALIAS sfl)
 endif()
 
 if (NOT TARGET stx)
