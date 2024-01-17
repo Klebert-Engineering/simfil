@@ -32,23 +32,38 @@ else()
   set(WITH_COVERAGE NO)
 endif()
 
-if (NOT TARGET sfl)
-  FetchContent_Declare(sfl
-    GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
-    GIT_TAG        "master"
-    GIT_SHALLOW    ON)
-  FetchContent_MakeAvailable(sfl)
-endif()
+FetchContent_Declare(sfl
+  GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
+  GIT_TAG        "master"
+  GIT_SHALLOW    ON
+  FIND_PACKAGE_ARGS)
+FetchContent_MakeAvailable(sfl)
 
-if (NOT TARGET stx)
-  FetchContent_Declare(stx
-    GIT_REPOSITORY "https://github.com/Klebert-Engineering/stx.git"
-    GIT_TAG        "main"
-    GIT_SHALLOW    ON)
-  FetchContent_MakeAvailable(stx)
-endif()
+FetchContent_Declare(stx
+  GIT_REPOSITORY "https://github.com/Klebert-Engineering/stx.git"
+  GIT_TAG        "main"
+  GIT_SHALLOW    ON
+  FIND_PACKAGE_ARGS)
 
-find_package(Bitsery REQUIRED)
+FetchContent_Declare(Bitsery
+  GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
+  GIT_TAG        "v5.2.3"
+  GIT_SHALLOW    ON
+  FIND_PACKAGE_ARGS)
+
+FetchContent_Declare(nlohmann_json
+  GIT_REPOSITORY "https://github.com/nlohmann/json.git"
+  GIT_TAG        "v3.11.2"
+  GIT_SHALLOW    ON
+  FIND_PACKAGE_ARGS)
+
+FetchContent_Declare(Catch2
+  GIT_REPOSITORY "https://github.com/catchorg/Catch2.git"
+  GIT_TAG        "v3.5.2"
+  GIT_SHALLOW    ON
+  FIND_PACKAGE_ARGS)
+
+FetchContent_MakeAvailable(sfl stx Bitsery)
 
 if (NOT DEFINED SIMFIL_WITH_MODEL_JSON)
   set(SIMFIL_WITH_MODEL_JSON YES)
@@ -117,7 +132,7 @@ if (MSVC)
 endif()
 
 if (SIMFIL_WITH_MODEL_JSON)
-  find_package(nlohmann_json REQUIRED)
+  FetchContent_MakeAvailable(nlohmann_json)
 
   target_compile_definitions(simfil
     PUBLIC

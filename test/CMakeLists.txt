@@ -1,7 +1,8 @@
 project(test.simfil)
 
 set(CMAKE_CXX_STANDARD 17) # Required for catch2
-find_package(Catch2 REQUIRED)
+
+FetchContent_MakeAvailable(Catch2)
 
 add_executable(test.simfil
   token.cpp
