@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <bitsery/traits/core/std_defaults.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/ext/std_map.h>
