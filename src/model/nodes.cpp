@@ -402,13 +402,13 @@ shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType ty
 bool GeometryCollection::iterate(const IterCallback& cb) const
 {
     if (auto singleGeomEntry = singleGeom())
-        return (*singleGeomEntry)->iterate(cb);
+        return singleGeomEntry->iterate(cb);
     if (!cb(*at(0))) return false;
     if (!cb(*at(1))) return false;
     return true;
 }
 
-std::optional<ModelNode::Ptr> GeometryCollection::singleGeom() const
+ModelNode::Ptr GeometryCollection::singleGeom() const
 {
     if (model().arrayMemberStorage().size((ArrayIndex)addr_.index()) == 1) {
         auto arrayPtr = ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});

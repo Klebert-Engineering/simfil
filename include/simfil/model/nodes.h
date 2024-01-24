@@ -101,7 +101,7 @@ struct shared_model_ptr
     inline T* operator-> () {return &data_;}
     inline T const& operator* () const {return data_;}
     inline T const* operator-> () const {return &data_;}
-    inline operator bool () const {return data_.addr_.value_ != 0;}  // NOLINT
+    inline operator bool () const {return data_.addr_;}  // NOLINT (allow implicit bool cast)
 
 private:
     T data_;
@@ -145,6 +145,10 @@ struct ModelNodeAddress
 
     [[nodiscard]] int16_t int16() const {
         return static_cast<int16_t>((value_ >> 8) & 0xffff);
+    }
+
+    [[nodiscard]] operator bool() const {  // NOLINT (allow implicit bool cast)
+        return value_ != 0;
     }
 
     template<typename S>
@@ -670,7 +674,7 @@ protected:
             else {
                 s.value4b(detail_.view_.offset_);
                 s.value4b(detail_.view_.size_);
-                s.value4b(detail_.view_.baseGeometry_.value_);
+                s.object(detail_.view_.baseGeometry_);
             }
         }
     };
@@ -729,7 +733,7 @@ struct GeometryCollection : public MandatoryModelPoolNodeBase
     }
 
 protected:
-    std::optional<ModelNode::Ptr> singleGeom() const;
+    ModelNode::Ptr singleGeom() const;
 
     using Storage = Array::Storage;
 
