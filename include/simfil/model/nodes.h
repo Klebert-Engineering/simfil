@@ -405,7 +405,7 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 /** Model Node for an array. */
 
-struct Array final : public MandatoryModelPoolNodeBase
+struct Array : public MandatoryModelPoolNodeBase
 {
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
