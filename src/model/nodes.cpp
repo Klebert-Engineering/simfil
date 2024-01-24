@@ -364,7 +364,7 @@ ValueType GeometryCollection::type() const {
 
 ModelNode::Ptr GeometryCollection::at(int64_t i) const {
     if (auto singleGeomEntry = singleGeom())
-        return (*singleGeomEntry)->at(i);
+        return singleGeomEntry->at(i);
     if (i == 0) return ValueNode(GeometryCollectionStr, model_);
     if (i == 1) return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
     throw std::out_of_range("geom collection: Out of range.");
@@ -372,13 +372,13 @@ ModelNode::Ptr GeometryCollection::at(int64_t i) const {
 
 uint32_t GeometryCollection::size() const {
     if (auto singleGeomEntry = singleGeom())
-        return (*singleGeomEntry)->size();
+        return singleGeomEntry->size();
     return 2;
 }
 
 ModelNode::Ptr GeometryCollection::get(const FieldId& f) const {
     if (auto singleGeomEntry = singleGeom())
-        return (*singleGeomEntry)->get(f);
+        return singleGeomEntry->get(f);
     if (f == Fields::Type) return at(0);
     if (f == Fields::Geometries) return at(1);
     return {};
@@ -386,7 +386,7 @@ ModelNode::Ptr GeometryCollection::get(const FieldId& f) const {
 
 FieldId GeometryCollection::keyAt(int64_t i) const {
     if (auto singleGeomEntry = singleGeom())
-        return (*singleGeomEntry)->keyAt(i);
+        return singleGeomEntry->keyAt(i);
     if (i == 0) return Fields::Type;
     if (i == 1) return Fields::Geometries;
     throw std::out_of_range("geom collection: Out of range.");
