@@ -10,11 +10,21 @@ class SimfilRecipe(ConanFile):
 
     # Binary configuration
     settings = "os", "compiler", "build_type", "arch"
-    options = {"shared": [True, False], "fPIC": [True, False], "with_json": [True, False], "with_tests": [True, False], "with_coverage": [True, False]}
-    default_options = {"shared": False, "fPIC": True, "with_json": True, "with_tests": False, "with_coverage": False}
+    options = {
+        "fPIC": [True, False],
+        "with_json": [True, False],
+        "with_tests": [True, False],
+        "with_coverage": [True, False]
+    }
+    default_options = {
+        "fPIC": True,
+        "with_json": True,
+        "with_tests": False,
+        "with_coverage": False
+    }
 
     # Sources are located in the same place as this recipe, copy them to the recipe
-    exports_sources = "CMakeLists.txt", "src/*", "include/*", "repl/*"
+    exports_sources = "CMakeLists.txt", "include/*", "src/*"
 
     # Requirements
     def requirements(self):
@@ -38,7 +48,11 @@ class SimfilRecipe(ConanFile):
         deps.generate()
 
     def build(self):
-        variables = {}
+        variables = {
+            "SIMFIL_WITH_REPL": "FALSE",
+            "SIMFIL_WITH_COVERAGE": "FALSE",
+            "SIMFIL_WITH_EXAMPLES": "FALSE",
+        }
         if self.options.with_json:
             variables["SIMFIL_WITH_MODEL_JSON"] = "TRUE"
         if self.options.with_tests:

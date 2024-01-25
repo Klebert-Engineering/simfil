@@ -1,35 +1,33 @@
 cmake_minimum_required(VERSION 3.14.0)
 enable_testing()
 
+project(simfil
+  HOMEPAGE_URL "https://github.com/Klebert-Engineering/simfil"
+  LANGUAGES CXX)
+
 include(FetchContent)
-
-project(simfil)
-
-find_program(GCOVR_BIN gcovr)
-if (WITH_COVERAGE AND NOT GCOVR_BIN)
-  set(WITH_COVERAGE NO)
-  message(WARNING "Could not find gcovr binary. Disabling coverage report!")
-endif()
+include(GNUInstallDirs)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake-modules")
 
-# Do not build tests, if bundled
-set(MAIN_PROJECT OFF)
+# Do not build additional content, if bundled
+set(MAIN_PROJECT NO)
 if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
-  set(MAIN_PROJECT ON)
+  set(MAIN_PROJECT YES)
+endif()
 
-  option(WITH_REPL     "Build simfil repl" YES)
-  option(WITH_EXAMPLES "Build examples" YES)
-
-  if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-    option(SIMFIL_WITH_COVERAGE "Enable gcovr coverage" YES)
-  else()
-    set(SIMFIL_WITH_COVERAGE NO)
-  endif()
+if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  option(SIMFIL_WITH_COVERAGE "Enable gcovr coverage" ${MAIN_PROJECT})
 else()
-  set(WITH_REPL NO)
-  set(WITH_EXAMPLES NO)
-  set(WITH_COVERAGE NO)
+  set(SIMFIL_WITH_COVERAGE NO)
+endif()
+option(SIMFIL_WITH_REPL "Build simfil repl" ${MAIN_PROJECT})
+option(SIMFIL_WITH_EXAMPLES "Build examples" ${MAIN_PROJECT})
+
+find_program(GCOVR_BIN gcovr)
+if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
+  set(SIMFIL_WITH_COVERAGE NO)
+  message(WARNING "Could not find gcovr binary. Disabling coverage report!")
 endif()
 
 FetchContent_Declare(sfl
@@ -37,7 +35,6 @@ FetchContent_Declare(sfl
   GIT_TAG        "master"
   GIT_SHALLOW    ON
   FIND_PACKAGE_ARGS)
-FetchContent_MakeAvailable(sfl)
 
 FetchContent_Declare(stx
   GIT_REPOSITORY "https://github.com/Klebert-Engineering/stx.git"
@@ -110,7 +107,8 @@ add_library(simfil STATIC
 
 target_include_directories(simfil
   PUBLIC
-    include)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 target_compile_features(simfil
   PUBLIC
@@ -154,7 +152,7 @@ endif()
 
 add_library(simfil::simfil ALIAS simfil)
 
-if (MAIN_PROJECT OR SIMFIL_WITH_TESTS)
+if (SIMFIL_WITH_TESTS)
   add_subdirectory(test)
 
   if (WITH_COVERAGE OR SIMFIL_WITH_COVERAGE)
@@ -166,10 +164,13 @@ if (MAIN_PROJECT OR SIMFIL_WITH_TESTS)
   endif()
 endif()
 
-if (WITH_REPL)
+if (SIMFIL_WITH_REPL)
   add_subdirectory(repl)
 endif()
 
-if (WITH_EXAMPLES)
+if (SIMFIL_WITH_EXAMPLES)
   add_subdirectory(examples/minimal)
 endif()
+
+install(TARGETS simfil
+  PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/simfil)
