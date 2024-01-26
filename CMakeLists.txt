@@ -156,7 +156,7 @@ add_library(simfil::simfil ALIAS simfil)
 if (SIMFIL_WITH_TESTS)
   add_subdirectory(test)
 
-  if (WITH_COVERAGE OR SIMFIL_WITH_COVERAGE)
+  if (SIMFIL_WITH_COVERAGE)
     setup_target_for_coverage_gcovr_html(
       NAME coverage
       EXECUTABLE test.simfil

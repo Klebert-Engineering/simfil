@@ -13,14 +13,10 @@ class SimfilRecipe(ConanFile):
     options = {
         "fPIC": [True, False],
         "with_json": [True, False],
-        "with_tests": [True, False],
-        "with_coverage": [True, False]
     }
     default_options = {
         "fPIC": True,
         "with_json": True,
-        "with_tests": False,
-        "with_coverage": False
     }
 
     # Sources are located in the same place as this recipe, copy them to the recipe
@@ -31,8 +27,6 @@ class SimfilRecipe(ConanFile):
         self.requires("bitsery/5.2.3")
         if self.options.with_json:
             self.requires("nlohmann_json/3.11.2")
-        if self.options.with_tests:
-            self.requires("catch2/3.5.1")
 
     def config_options(self):
         if self.settings.os == "Windows":
@@ -52,13 +46,10 @@ class SimfilRecipe(ConanFile):
             "SIMFIL_WITH_REPL": "FALSE",
             "SIMFIL_WITH_COVERAGE": "FALSE",
             "SIMFIL_WITH_EXAMPLES": "FALSE",
+            "SIMFIL_WITH_TESTS": "FALSE",
         }
         if self.options.with_json:
             variables["SIMFIL_WITH_MODEL_JSON"] = "TRUE"
-        if self.options.with_tests:
-            variables["SIMFIL_WITH_TESTS"] = "TRUE"
-        if self.options.with_coverage:
-            variables["SIMFIL_WITH_COVERAGE"] = "TRUE"
 
         cmake = CMake(self)
         cmake.configure(variables=variables)
@@ -67,3 +58,7 @@ class SimfilRecipe(ConanFile):
     def package(self):
         cmake = CMake(self)
         cmake.install()
+
+    def package_info(self):
+        self.cpp_info.libs = ["simfil"]
+        self.cpp_info.set_property("cmake_target_name", "simfil::simfil")
