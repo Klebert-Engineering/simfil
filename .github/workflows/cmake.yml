@@ -23,17 +23,20 @@ jobs:
         conan profile detect
     - name: Build
       run: |
-        conan build . -o with_tests=True --settings=build_type=RelWithDebInfo --build=missing
+        mkdir build
+        cmake . -B build -GNinja
+        cmake --build build
     - name: Run CTest
+      working-directory: build/test
       run: |
-        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo
+        ctest --verbose --output-junit result-junit.xml
     - name: Publish Test Results
       uses: EnricoMi/publish-unit-test-result-action@v2
       id: test-results
       if: always()
       with:
         files: |
-          build/RelWithDebInfo/test/*.xml
+          build/test/*.xml
     - name: Set badge color
       shell: bash
       run: |
@@ -67,26 +70,26 @@ jobs:
         file: badge.svg
 
     - name: Run Valgrind Memcheck
-      working-directory: build/RelWithDebInfo/test
+      working-directory: build/test
       run: |
         valgrind --tool=memcheck ./test.simfil
     - name: Run Valgrind Helgrind
-      working-directory: build/RelWithDebInfo/test
+      working-directory: build/test
       run: |
         valgrind --tool=helgrind ./test.simfil
     - name: Run Valgrind Cachegrind
-      working-directory: build/RelWithDebInfo/test
+      working-directory: build/test
       run: |
         valgrind --tool=cachegrind ./test.simfil | tee cachegrind-out.txt
     - name: Run Valgrind Callgrind
-      working-directory: build/RelWithDebInfo/test
+      working-directory: build/test
       run: |
         valgrind --tool=callgrind --instr-atstart=no ./test.simfil
     - name: Publish Callgrind Output
       uses: actions/upload-artifact@v3
       with:
         name: Callgrind Output
-        path: build/RelWithDebInfo/test/callgrind.out.*
+        path: build/test/callgrind.out.*
 
   build-windows:
     name: Windows
@@ -101,10 +104,13 @@ jobs:
         conan profile detect
     - name: Build
       run: |
-        conan build . -o with_tests=True --settings=build_type=RelWithDebInfo --build=missing
+        mkdir build
+        cmake . -B build
+        cmake --build build
     - name: Run CTest
+      working-directory: build/test
       run: |
-        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo
+        ctest --verbose --output-junit result-junit.xml
 
   build-macos:
     name: MacOS
@@ -119,7 +125,10 @@ jobs:
         conan profile detect
     - name: Build
       run: |
-        conan build . -o with_tests=True --settings=build_type=RelWithDebInfo --build=missing
+        mkdir build
+        cmake . -B build
+        cmake --build build
     - name: Run CTest
+      working-directory: build/test
       run: |
-        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo
+        ctest --verbose --output-junit result-junit.xml
