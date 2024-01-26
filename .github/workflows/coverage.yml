@@ -25,10 +25,13 @@ jobs:
         conan profile detect
     - name: Build
       run: |
-        conan build . -o with_tests=True -o with_coverage=True --settings=build_type=RelWithDebInfo --build=missing
+        mkdir build
+        cmake . -B build -DSIMFIL_WITH_COVERAGE=YES -DSIMFIL_WITH_TESTS=YES -DCMAKE_BUILD_TYPE=Debug -GNinja
+        cmake --build build
     - name: Run CTest
+      working-directory: build/test
       run: |
-        ctest --verbose --output-junit result-junit.xml --preset conan-relwithdebinfo
+        ctest --verbose --output-junit result-junit.xml
     - name: Run Gcovr
       run: |
         mkdir coverage

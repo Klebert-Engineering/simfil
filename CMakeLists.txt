@@ -23,6 +23,7 @@ else()
 endif()
 option(SIMFIL_WITH_REPL "Build simfil repl" ${MAIN_PROJECT})
 option(SIMFIL_WITH_EXAMPLES "Build examples" ${MAIN_PROJECT})
+option(SIMFIL_WITH_TESTS "Build tests" ${MAIN_PROJECT})
 
 find_program(GCOVR_BIN gcovr)
 if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
