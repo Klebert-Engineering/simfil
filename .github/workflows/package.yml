@@ -1,0 +1,21 @@
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ '**' ]
+
+jobs:
+  build-linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: true
+    - name: Install Conan 2
+      run: |
+        pip install conan
+        conan profile detect
+    - name: Build
+      run: |
+        conan build . -of build --build=missing
