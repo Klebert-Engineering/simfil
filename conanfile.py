@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 
 from conan import ConanFile
-from conan.tools.cmake import CMakeToolchain, CMakeDeps, CMake, cmake_layout
+from conan.tools.files import copy, get, collect_libs
+from conan.tools.build import check_min_cppstd
+from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
+from conan.tools.scm import Version
+from conan.errors import ConanInvalidConfiguration
+
+
+required_conan_version = ">=2.0.0"
 
 
 class SimfilRecipe(ConanFile):
@@ -37,22 +44,16 @@ class SimfilRecipe(ConanFile):
 
     def generate(self):
         tc = CMakeToolchain(self)
+        tc.cache_variables["SIMFIL_WITH_REPL"] = False
+        tc.cache_variables["SIMFIL_WITH_COVERAGE"] = False
+        tc.cache_variables["SIMFIL_WITH_TESTS"] = False
+        tc.cache_variables["SIMFIL_WITH_EXAMPLES"] = False
+        tc.cache_variables["SIMFIL_WITH_MODEL_JSON"] = bool(self.options.with_json)
         tc.generate()
-        deps = CMakeDeps(self)
-        deps.generate()
 
     def build(self):
-        variables = {
-            "SIMFIL_WITH_REPL": "FALSE",
-            "SIMFIL_WITH_COVERAGE": "FALSE",
-            "SIMFIL_WITH_EXAMPLES": "FALSE",
-            "SIMFIL_WITH_TESTS": "FALSE",
-        }
-        if self.options.with_json:
-            variables["SIMFIL_WITH_MODEL_JSON"] = "TRUE"
-
         cmake = CMake(self)
-        cmake.configure(variables=variables)
+        cmake.configure()
         cmake.build()
 
     def package(self):

@@ -71,27 +71,9 @@ if (WITH_COVERAGE OR SIMFIL_WITH_COVERAGE)
   include(CodeCoverage)
 endif()
 
+set(SIMFIL_PUBLIC_HEADER "")
+
 add_library(simfil STATIC
-  include/simfil/environment.h
-  include/simfil/expression.h
-  include/simfil/ext-geo.h
-  include/simfil/function.h
-  include/simfil/operator.h
-  include/simfil/parser.h
-  include/simfil/token.h
-  include/simfil/typed-meta-type.h
-  include/simfil/types.h
-  include/simfil/value.h
-  include/simfil/transient.h
-  include/simfil/simfil.h
-
-  include/simfil/model/arena.h
-  include/simfil/model/fields.h
-  include/simfil/model/point.h
-  include/simfil/model/model.h
-  include/simfil/model/nodes.h
-  include/simfil/model/bitsery-traits.h
-
   src/environment.cpp
   src/function.cpp
   src/parser.cpp
@@ -101,10 +83,33 @@ add_library(simfil STATIC
   src/simfil.cpp
   src/value.cpp
   src/overlay.cpp
-
   src/model/model.cpp
   src/model/nodes.cpp
   src/model/fields.cpp)
+
+target_sources(simfil PUBLIC
+  FILE_SET public_headers
+    TYPE HEADERS
+    FILES
+      include/simfil/environment.h
+      include/simfil/expression.h
+      include/simfil/ext-geo.h
+      include/simfil/function.h
+      include/simfil/operator.h
+      include/simfil/parser.h
+      include/simfil/token.h
+      include/simfil/typed-meta-type.h
+      include/simfil/types.h
+      include/simfil/value.h
+      include/simfil/transient.h
+      include/simfil/simfil.h
+
+      include/simfil/model/arena.h
+      include/simfil/model/fields.h
+      include/simfil/model/point.h
+      include/simfil/model/model.h
+      include/simfil/model/nodes.h
+      include/simfil/model/bitsery-traits.h)
 
 target_include_directories(simfil
   PUBLIC
@@ -136,11 +141,13 @@ if (SIMFIL_WITH_MODEL_JSON)
   target_compile_definitions(simfil
     PUBLIC
       SIMFIL_WITH_MODEL_JSON)
-
-  target_sources(simfil
-    PRIVATE
-      include/simfil/model/json.h
-      src/model/json.cpp)
+  target_sources(simfil PRIVATE
+    src/model/json.cpp)
+  target_sources(simfil PUBLIC
+    FILE_SET public_headers
+      TYPE HEADERS
+      FILES
+        include/simfil/model/json.h)
 
   target_link_libraries(simfil
     PRIVATE
@@ -173,5 +180,20 @@ if (SIMFIL_WITH_EXAMPLES)
   add_subdirectory(examples/minimal)
 endif()
 
-install(TARGETS simfil
-  PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/simfil)
+install(TARGETS simfil)
+install(DIRECTORY include/simfil
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# As sfl is not on conan.io, we install it alongsides
+# simfil (as it is used in public headers).
+FetchContent_GetProperties(sfl)
+if (sfl_POPULATED)
+  install(DIRECTORY ${sfl_SOURCE_DIR}/include/sfl
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
+
+FetchContent_GetProperties(stx)
+if (stx_POPULATED)
+  install(DIRECTORY ${stx_SOURCE_DIR}/include/stx
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
