@@ -7,7 +7,7 @@
 #include "simfil/parser.h"
 #include "simfil/environment.h"
 #include "simfil/model/model.h"
-#include "stx/format.h"
+#include "fmt/core.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -711,7 +711,7 @@ public:
                 return res(ctx, obj.meta->unaryOp(ident_, obj));
             }
 
-            throw std::runtime_error(stx::format("Invalid operator '{}' for value of type {}",
+            throw std::runtime_error(fmt::format("Invalid operator '{}' for value of type {}",
                                                  ident_, valueType2String(val.type)));
         }));
     }
@@ -756,7 +756,7 @@ public:
                     return res(ctx, obj.meta->binaryOp(ident_, lval, obj));
                 }
 
-                throw std::runtime_error(stx::format("Invalid operator '{}' for values of type {} and {}",
+                throw std::runtime_error(fmt::format("Invalid operator '{}' for values of type {} and {}",
                                                      ident_, valueType2String(lval.type), valueType2String(rval.type)));
             }));
         }));

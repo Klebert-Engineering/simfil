@@ -21,9 +21,12 @@ if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
 else()
   set(SIMFIL_WITH_COVERAGE NO)
 endif()
-option(SIMFIL_WITH_REPL "Build simfil repl" ${MAIN_PROJECT})
-option(SIMFIL_WITH_EXAMPLES "Build examples" ${MAIN_PROJECT})
-option(SIMFIL_WITH_TESTS "Build tests" ${MAIN_PROJECT})
+
+option(SIMFIL_SHARED          "Build a shared library" YES)
+option(SIMFIL_WITH_REPL       "Build simfil repl" ${MAIN_PROJECT})
+option(SIMFIL_WITH_EXAMPLES   "Build examples" ${MAIN_PROJECT})
+option(SIMFIL_WITH_TESTS      "Build tests" ${MAIN_PROJECT})
+option(SIMFIL_WITH_MODEL_JSON "Include JSON model support" YES)
 
 find_program(GCOVR_BIN gcovr)
 if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
@@ -31,49 +34,19 @@ if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
   message(WARNING "Could not find gcovr binary. Disabling coverage report!")
 endif()
 
-FetchContent_Declare(sfl
-  GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
-  GIT_TAG        "master"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
-
-FetchContent_Declare(stx
-  GIT_REPOSITORY "https://github.com/Klebert-Engineering/stx.git"
-  GIT_TAG        "main"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
-
-FetchContent_Declare(Bitsery
-  GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
-  GIT_TAG        "v5.2.3"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
-
-FetchContent_Declare(nlohmann_json
-  GIT_REPOSITORY "https://github.com/nlohmann/json.git"
-  GIT_TAG        "v3.11.2"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
-
-FetchContent_Declare(Catch2
-  GIT_REPOSITORY "https://github.com/catchorg/Catch2.git"
-  GIT_TAG        "v3.5.2"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
-
-FetchContent_MakeAvailable(sfl stx Bitsery)
-
-if (NOT DEFINED SIMFIL_WITH_MODEL_JSON)
-  set(SIMFIL_WITH_MODEL_JSON YES)
-endif()
-
 if (WITH_COVERAGE OR SIMFIL_WITH_COVERAGE)
   include(CodeCoverage)
 endif()
 
-set(SIMFIL_PUBLIC_HEADER "")
+if (SIMFIL_SHARED)
+  set(LIBRARY_TYPE SHARED)
+else()
+  set(LIBRARY_TYPE STATIC)
+endif()
 
-add_library(simfil STATIC
+include(deps.cmake)
+
+add_library(simfil ${LIBRARY_TYPE}
   src/environment.cpp
   src/function.cpp
   src/parser.cpp
@@ -123,7 +96,7 @@ target_compile_features(simfil
 target_link_libraries(simfil
   PUBLIC
     sfl::sfl
-    stx::stx
+    fmt::fmt
     Bitsery::bitsery)
 
 if (MSVC)
@@ -136,8 +109,6 @@ if (MSVC)
 endif()
 
 if (SIMFIL_WITH_MODEL_JSON)
-  FetchContent_MakeAvailable(nlohmann_json)
-
   target_compile_definitions(simfil
     PUBLIC
       SIMFIL_WITH_MODEL_JSON)
@@ -189,11 +160,5 @@ install(DIRECTORY include/simfil
 FetchContent_GetProperties(sfl)
 if (sfl_POPULATED)
   install(DIRECTORY ${sfl_SOURCE_DIR}/include/sfl
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-endif()
-
-FetchContent_GetProperties(stx)
-if (stx_POPULATED)
-  install(DIRECTORY ${stx_SOURCE_DIR}/include/stx
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 endif()

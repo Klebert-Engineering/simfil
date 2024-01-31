@@ -2,14 +2,15 @@
 #include "simfil/model/arena.h"
 #include "simfil/value.h"
 #include "simfil/overlay.h"
+#include "simfil/model/bitsery-traits.h"
 
 #include <algorithm>
 #include <atomic>
 #include <memory>
 #include <vector>
-#include "stx/format.h"
-#include "simfil/model/bitsery-traits.h"
 
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <sfl/segmented_vector.hpp>
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/stream.h>
@@ -37,7 +38,7 @@ void Model::resolve(const ModelNode& n, const ResolveFn& cb) const
             cb(ValueNode(n));
             break;
         default:
-            throw std::runtime_error(stx::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
+            throw std::runtime_error(fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
     }
 }
 
@@ -114,7 +115,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
         if (i < 0 || i >= arena.size()) {
-            errors.emplace_back(stx::format("Bad {} array index {}.", arrType, i));
+            errors.emplace_back(fmt::format("Bad {} array index {}.", arrType, i));
             return false;
         }
         return true;
@@ -125,7 +126,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
         if (!impl_->fieldNames_)
             return;
         if (!impl_->fieldNames_->resolve(str))
-            errors.push_back(stx::format("Bad string ID: {}", str));
+            errors.push_back(fmt::format("Bad string ID: {}", str));
     };
 
     std::function<void(ModelNode::Ptr)> validateModelNode = [&](ModelNode::Ptr node)
@@ -174,7 +175,7 @@ void ModelPool::validate() const
     auto errors = checkForErrors();
     if (!errors.empty()) {
         throw std::runtime_error(
-            stx::format("Model Error(s): {}", stx::join(errors.begin(), errors.end(), ", ")));
+            fmt::format("Model Error(s): {}", fmt::join(errors, ", ")));
     }
 }
 
@@ -203,7 +204,7 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
         auto idx = n.addr_.index();
         if (idx >= vec.size())
             throw std::runtime_error(
-                stx::format(
+                fmt::format(
                     "Bad node reference: col={}, i={}",
                     (uint16_t)n.addr_.column(), idx
                 ));
@@ -421,7 +422,7 @@ void ModelPool::read(std::istream& inputStream) {
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
     impl_->readWrite(s);
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
-        throw std::runtime_error(stx::format(
+        throw std::runtime_error(fmt::format(
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }

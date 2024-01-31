@@ -3,5 +3,5 @@ project(PackageTest CXX)
 
 find_package(simfil CONFIG REQUIRED)
 
-add_executable(example src/example.cpp)
-target_link_libraries(example simfil::simfil)
+add_executable(test_package src/example.cpp)
+target_link_libraries(test_package simfil::simfil)

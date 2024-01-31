@@ -150,4 +150,4 @@ The full source of the example can be found [here](./examples/minimal/main.cpp).
 - [nlohmann/json](https://github.com/nlohmann/json) for JSON model support (switch: `SIMFIL_WITH_MODEL_JSON`, default: `YES`).
 - [fraillt/bitsery](https://github.com/fraillt/bitsery) for binary en- and decoding.
 - [slavenf/sfl-library](https://github.com/slavenf/sfl-library.git) for small and segmented vector containers.
-- [klebert-engineering/stx](https://github.com/Klebert-Engineering/stx.git) for string formatting.
+- [fmtlib/fmt](https://github.com/fmtlib/fmt) string formatting library.

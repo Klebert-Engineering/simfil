@@ -1,6 +1,6 @@
 #pragma once
 
-#include "stx/format.h"
+#include <fmt/core.h>
 #include <cmath>
 
 namespace simfil
@@ -59,7 +59,7 @@ struct Point
 
     [[nodiscard]] auto toString() const -> std::string
     {
-        return stx::format("[{},{}]", x, y);
+        return fmt::format("[{},{},{}]", x, y, z);
     }
 
     template <class OtherPrecision>
@@ -71,7 +71,9 @@ struct Point
     template <class OtherPrecision>
     auto distanceTo(const Point<OtherPrecision>& o) const -> double
     {
-        return std::sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y));
+        return std::sqrt((x - o.x) * (x - o.x) +
+                         (y - o.y) * (y - o.y) +
+                         (z - o.z) * (z - o.z));
     }
 };
 
