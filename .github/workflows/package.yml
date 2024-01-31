@@ -18,4 +18,4 @@ jobs:
         conan profile detect
     - name: Build
       run: |
-        conan create . --build=missing
+        conan create . --build=missing -s compiler.cppstd=20
