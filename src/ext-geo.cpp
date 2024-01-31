@@ -9,6 +9,7 @@
 #include "fmt/core.h"
 
 #include <cmath>
+#include <array>
 
 namespace simfil::geo
 {
