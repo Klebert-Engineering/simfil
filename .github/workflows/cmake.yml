@@ -24,8 +24,8 @@ jobs:
     - name: Build
       run: |
         mkdir build
-        conan install . -of build --build=missing
-        cmake . -B build -GNinja
+        conan install . -of build --build=missing -s compiler.cppstd=20
+        cmake . -B build -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
         cmake --build build
     - name: Run CTest
       working-directory: build/test
@@ -106,8 +106,8 @@ jobs:
     - name: Build
       run: |
         mkdir build
-        conan install . -of build --build=missing
-        cmake . -B build
+        conan install . -of build --build=missing -s compiler.cppstd=20
+        cmake . -B build -DSIMFIL_FPIC=NO -DSIMFIL_SHARED=NO
         cmake --build build
     - name: Run CTest
       working-directory: build/test
@@ -128,8 +128,8 @@ jobs:
     - name: Build
       run: |
         mkdir build
-        conan install . -of build --build=missing
-        cmake . -B build
+        conan install . -of build --build=missing -s compiler.cppstd=20
+        cmake . -B build -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
         cmake --build build
     - name: Run CTest
       working-directory: build/test

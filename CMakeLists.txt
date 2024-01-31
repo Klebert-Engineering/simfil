@@ -23,6 +23,7 @@ else()
 endif()
 
 option(SIMFIL_SHARED          "Build a shared library" YES)
+option(SIMFIL_FPIC            "Build with fPIC enabled" YES)
 option(SIMFIL_WITH_REPL       "Build simfil repl" ${MAIN_PROJECT})
 option(SIMFIL_WITH_EXAMPLES   "Build examples" ${MAIN_PROJECT})
 option(SIMFIL_WITH_TESTS      "Build tests" ${MAIN_PROJECT})
