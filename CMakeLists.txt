@@ -99,7 +99,7 @@ target_link_libraries(simfil
     fmt::fmt
     Bitsery::bitsery)
 
-if (SIMFIL_FPIC)
+if (SIMFIL_FPIC OR NOT SIMFIL_SHARED)
   set_property(TARGET simfil PROPERTY
     POSITION_INDEPENDENT_CODE ON)
 endif()
