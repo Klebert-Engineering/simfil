@@ -41,7 +41,7 @@ class SimfilRecipe(ConanFile):
 
     def config_options(self):
         if self.settings.os == "Windows":
-            del self.options.fPIC
+            self.options.fPIC = False
 
     def layout(self):
         cmake_layout(self)
@@ -49,6 +49,7 @@ class SimfilRecipe(ConanFile):
     def generate(self):
         tc = CMakeToolchain(self)
         tc.cache_variables["SIMFIL_SHARED"] = bool(self.options.shared)
+        tc.cache_variables["SIMFIL_FPIC"] = bool(self.options.fPIC)
         tc.cache_variables["SIMFIL_WITH_REPL"] = False
         tc.cache_variables["SIMFIL_WITH_COVERAGE"] = False
         tc.cache_variables["SIMFIL_WITH_TESTS"] = False

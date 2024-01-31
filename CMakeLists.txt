@@ -99,6 +99,11 @@ target_link_libraries(simfil
     fmt::fmt
     Bitsery::bitsery)
 
+if (SIMFIL_FPIC)
+  set_property(TARGET simfil PROPERTY
+    POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if (MSVC)
   target_compile_definitions(simfil
     PRIVATE
