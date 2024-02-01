@@ -35,10 +35,6 @@ if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
   message(WARNING "Could not find gcovr binary. Disabling coverage report!")
 endif()
 
-if (SIMFIL_WITH_COVERAGE)
-  include(CodeCoverage)
-endif()
-
 if (SIMFIL_SHARED)
   set(LIBRARY_TYPE SHARED)
 else()
@@ -132,7 +128,8 @@ if (SIMFIL_WITH_MODEL_JSON)
 endif()
 
 if (SIMFIL_WITH_COVERAGE)
-  append_coverage_compiler_flags_to_target(simfil)
+  include(CodeCoverage)
+  append_coverage_compiler_flags()
 endif()
 
 add_library(simfil::simfil ALIAS simfil)
