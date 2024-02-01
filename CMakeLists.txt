@@ -35,7 +35,7 @@ if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
   message(WARNING "Could not find gcovr binary. Disabling coverage report!")
 endif()
 
-if (WITH_COVERAGE OR SIMFIL_WITH_COVERAGE)
+if (SIMFIL_WITH_COVERAGE)
   include(CodeCoverage)
 endif()
 
@@ -131,7 +131,7 @@ if (SIMFIL_WITH_MODEL_JSON)
       nlohmann_json::nlohmann_json)
 endif()
 
-if (WITH_COVERAGE)
+if (SIMFIL_WITH_COVERAGE)
   append_coverage_compiler_flags_to_target(simfil)
 endif()
 
