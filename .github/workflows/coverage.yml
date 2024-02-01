@@ -41,6 +41,7 @@ jobs:
         gcovr --cobertura coverage.xml \
               --html coverage.html \
               --filter src/ --filter include/
+        less coverage.xml
 
     - name: Publish Coverage HTML
       uses: actions/upload-artifact@v3
