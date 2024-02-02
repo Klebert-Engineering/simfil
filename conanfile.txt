@@ -1,0 +1,8 @@
+[requires]
+fmt/10.2.1
+bitsery/5.2.3
+nlohmann_json/3.11.2
+
+[generators]
+CMakeDeps
+CMakeToolchain
