@@ -3,7 +3,7 @@ enable_testing()
 
 project(simfil
   HOMEPAGE_URL "https://github.com/Klebert-Engineering/simfil"
-  LANGUAGES CXX)
+  LANGUAGES C CXX)
 
 include(FetchContent)
 include(GNUInstallDirs)
