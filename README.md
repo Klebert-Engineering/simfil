@@ -151,3 +151,7 @@ The full source of the example can be found [here](./examples/minimal/main.cpp).
 - [fraillt/bitsery](https://github.com/fraillt/bitsery) for binary en- and decoding.
 - [slavenf/sfl-library](https://github.com/slavenf/sfl-library.git) for small and segmented vector containers.
 - [fmtlib/fmt](https://github.com/fmtlib/fmt) string formatting library.
+
+## Conan Package in Editable Mode
+To use this library as a dependency you can install it locally using
+`conan editable add <simfil-dir>`, see [Conan 2 editable mode](https://docs.conan.io/2/tutorial/developing_packages/editable_packages.html). The editable version can then be used by requireing `simfil/dev`. This comes handy if you want to develop on simfil while not having to switch to another packaging mechanism, as a package in _editable mode_ acts like a symlink: it gets build from source instead of needing to be exported for every change.

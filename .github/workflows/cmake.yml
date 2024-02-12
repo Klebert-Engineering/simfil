@@ -5,6 +5,9 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ '**' ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
 
 jobs:
   build-linux:
