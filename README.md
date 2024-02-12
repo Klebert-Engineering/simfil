@@ -152,6 +152,24 @@ The full source of the example can be found [here](./examples/minimal/main.cpp).
 - [slavenf/sfl-library](https://github.com/slavenf/sfl-library.git) for small and segmented vector containers.
 - [fmtlib/fmt](https://github.com/fmtlib/fmt) string formatting library.
 
-## Conan Package in Editable Mode
+## Consuming simfil as Conan Package
+### Using Conan Editable Mode
+You can link the local simfil source directory as a [Conan 2 editable mode package ](https://docs.conan.io/2/tutorial/developing_packages/editable_packages.html) via `conan editable add <simfil-dir>`. Note that you have to pass
+`--build=editable` to your `conan install` invocation, otherwise the CMake build fails with errors about not finding the library.
+
+To use the editable package, just set the version to the one in this
+repositories `conanfile.py`, which is `dev`:
+
+```conan
+[requires]
+simfil/dev
+
+[generators]
+CMakeDeps
+CMakeToolchain
+```
+
+### Installing the Package Locally
 To use this library as a dependency you can install it locally using
-`conan editable add <simfil-dir>`, see [Conan 2 editable mode](https://docs.conan.io/2/tutorial/developing_packages/editable_packages.html). The editable version can then be used by requireing `simfil/dev`. This comes handy if you want to develop on simfil while not having to switch to another packaging mechanism, as a package in _editable mode_ acts like a symlink: it gets build from source instead of needing to be exported for every change.
+`conan create <simfil-dir> --build=missing -s compiler.cppstd=20`, which
+exports the package into the local conan registry. Note that for developing simfil it is recomendet to use Conans "editable mode".
