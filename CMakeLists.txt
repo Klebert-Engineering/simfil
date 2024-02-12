@@ -163,5 +163,5 @@ install(DIRECTORY include/simfil
 FetchContent_GetProperties(sfl)
 if (sfl_POPULATED)
   install(DIRECTORY ${sfl_SOURCE_DIR}/include/sfl
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/sfl)
 endif()
