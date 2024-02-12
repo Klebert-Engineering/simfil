@@ -36,6 +36,7 @@ class SimfilRecipe(ConanFile):
         check_min_cppstd(self, "20")
 
     def requirements(self):
+        self.requires("sfl/1.2.3")
         self.requires("fmt/10.2.1")
         self.requires("bitsery/5.2.3")
         if self.options.with_json:

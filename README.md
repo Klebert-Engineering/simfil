@@ -173,3 +173,6 @@ CMakeToolchain
 To use this library as a dependency you can install it locally using
 `conan create <simfil-dir> --build=missing -s compiler.cppstd=20`, which
 exports the package into the local conan registry. Note that for developing simfil it is recomendet to use Conans "editable mode".
+
+Note: Installing locally with simfil registered as an editable package at the same time will fail. You have to first remove the
+package from editable mode, the error messages do not give a hint about the conflict!

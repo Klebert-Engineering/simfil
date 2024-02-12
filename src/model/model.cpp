@@ -11,10 +11,10 @@
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
-#include <sfl/segmented_vector.hpp>
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
+#include <sfl/segmented_vector.hpp>
 
 namespace simfil
 {

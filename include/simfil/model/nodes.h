@@ -7,7 +7,7 @@
 #include "point.h"
 #include "fields.h"
 
-#include "sfl/small_vector.hpp"
+#include <sfl/small_vector.hpp>
 
 namespace bitsery {
     // Pre-declare bitsery protected member accessor.

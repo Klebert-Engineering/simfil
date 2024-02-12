@@ -157,11 +157,3 @@ endif()
 install(TARGETS simfil)
 install(DIRECTORY include/simfil
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-
-# As sfl is not on conan.io, we install it alongsides
-# simfil (as it is used in public headers).
-FetchContent_GetProperties(sfl)
-if (sfl_POPULATED)
-  install(DIRECTORY ${sfl_SOURCE_DIR}/include/sfl
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/sfl)
-endif()
