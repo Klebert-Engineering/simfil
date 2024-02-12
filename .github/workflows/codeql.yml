@@ -1,0 +1,43 @@
+name: Scan
+on:
+  push:
+    branches: [main, protected]
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+    schedule:
+      - cron: '16 6 * * 0'
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: [ubuntu-latest]
+    permissions:
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install ninja-build
+      - name: Install Conan 2
+        run: |
+          pip install conan
+          conan profile detect
+      - name: Build
+        run: |
+          mkdir build
+          conan install . -of build --build=missing -s compiler.cppstd=20
+          cmake . -B build -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
+          cmake --build build
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: c-cpp
