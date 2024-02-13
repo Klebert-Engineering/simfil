@@ -16,6 +16,8 @@ required_conan_version = ">=2.0.0"
 class SimfilRecipe(ConanFile):
     name = "simfil"
     version = "dev"
+    url = "https://github.com/conan-io/conan-center-index"
+    homepage = "https://github.com/Klebert-Engineering/simfil"
 
     # Binary configuration
     settings = "os", "compiler", "build_type", "arch"
@@ -36,7 +38,7 @@ class SimfilRecipe(ConanFile):
         check_min_cppstd(self, "20")
 
     def requirements(self):
-        self.requires("sfl/1.2.3")
+        self.requires("sfl/1.2.3", transitive_headers=True)
         self.requires("fmt/10.2.1")
         self.requires("bitsery/5.2.3")
         if self.options.with_json:
