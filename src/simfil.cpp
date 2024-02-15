@@ -1318,18 +1318,26 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
 
 auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t rootIndex) -> std::vector<Value>
 {
-    if (env.fieldNames() != model.fieldNames())
+    if (model.fieldNames() != model.fieldNames())
         throw std::runtime_error("Environment must use same field name resource as model.");
+
+    return eval(env, ast, *model.root(rootIndex));
+}
+
+auto eval(Environment& env, const Expr& ast, const ModelNode& node) -> std::vector<Value>
+{
+    if (!node.model_)
+        throw std::runtime_error("ModelNode must have a model!");
 
     Context ctx(&env);
 
     std::vector<Value> res;
-    ast.eval(ctx, Value::field(*model.root(rootIndex)), LambdaResultFn([&res](Context ctx, Value vv) {
+    ast.eval(ctx, Value::field(node), LambdaResultFn([&res](Context ctx, Value vv) {
         res.push_back(std::move(vv));
         return Result::Continue;
     }));
 
-    return res;
+    return std::move(res);
 }
 
 }
