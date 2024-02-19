@@ -1337,7 +1337,7 @@ auto eval(Environment& env, const Expr& ast, const ModelNode& node) -> std::vect
         return Result::Continue;
     }));
 
-    return std::move(res);
+    return res;
 }
 
 }
