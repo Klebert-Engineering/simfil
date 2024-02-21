@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 
 from conan import ConanFile
-from conan.tools.files import copy, get, collect_libs
 from conan.tools.build import check_min_cppstd
 from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
-from conan.tools.scm import Version
-from conan.errors import ConanInvalidConfiguration
 
 
-required_conan_version = ">=2.0.0"
+required_conan_version = ">=1.62.0"
+
 
 # NOTE: The recipe used for conan-center-index is a copy of this
-#       file with the version set to != dev! Make sure to copy changes
+#       file with the version removed! Make sure to copy changes
 #       in this file over to the conan-center-index recipe.
 class SimfilRecipe(ConanFile):
     name = "simfil"
     version = "dev"
     url = "https://github.com/conan-io/conan-center-index"
     homepage = "https://github.com/Klebert-Engineering/simfil"
+    license = "BSD 3-Clause"
 
     # Binary configuration
     settings = "os", "compiler", "build_type", "arch"
