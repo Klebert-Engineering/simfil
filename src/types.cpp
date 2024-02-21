@@ -1,7 +1,7 @@
 #include "simfil/types.h"
 
 #include "simfil/operator.h"
-#include "stx/format.h"
+#include "fmt/core.h"
 
 namespace simfil
 {
@@ -30,7 +30,7 @@ auto IRangeType::unaryOp(std::string_view op, const IRange& self) const -> Value
         return Value::t();
 
     if (op == OperatorAsString::name())
-        return Value::make(stx::format("{}..{}", self.begin, self.end));
+        return Value::make(fmt::format("{}..{}", self.begin, self.end));
 
     if (op == OperatorLen::name())
         return Value::make((int64_t)self.high() - self.low());

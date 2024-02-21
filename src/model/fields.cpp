@@ -4,7 +4,7 @@
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
-#include <stx/format.h>
+#include <fmt/core.h>
 #include <cmath>
 
 namespace simfil
@@ -185,7 +185,7 @@ void Fields::read(std::istream& inputStream)
     }
 
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
-        throw std::runtime_error(stx::format(
+        throw std::runtime_error(fmt::format(
             "Failed to read Fields: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }

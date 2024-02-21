@@ -5,8 +5,8 @@
 #include <vector>
 #include <shared_mutex>
 #include <mutex>
-#include <sfl/segmented_vector.hpp>
 #include <cmath>
+#include <sfl/segmented_vector.hpp>
 
 // Define this to enable array arena read-write locking.
 // #define ARRAY_ARENA_THREAD_SAFE

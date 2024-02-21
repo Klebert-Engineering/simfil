@@ -5,30 +5,31 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ '**' ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
 
 jobs:
   build-linux:
     name: Linux
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: true
     - name: Install dependencies
       run: |
         sudo apt-get update && sudo apt-get install gcovr ninja-build valgrind
-    - name: Setup
+    - name: Install Conan 2
+      run: |
+        pip install conan
+        conan profile detect
+    - name: Build
       run: |
         mkdir build
-    - name: Configure
-      working-directory: build
-      run: |
-        cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=YES -GNinja ..
-    - name: Build
-      working-directory: build
-      run: |
-        cmake --build .
-
+        conan install . -of build --build=missing -s compiler.cppstd=20
+        cmake . -B build -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
+        cmake --build build
     - name: Run CTest
       working-directory: build/test
       run: |
@@ -98,47 +99,42 @@ jobs:
     name: Windows
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: true
-    - name: Setup
+    - name: Install Conan 2
+      run: |
+        pip install conan
+        conan profile detect
+    - name: Build
       run: |
         mkdir build
-    - name: Configure
-      working-directory: build
-      run: |
-        cmake ..
-      shell: cmd
-    - name: Build
-      working-directory: build
-      run: |
-        cmake --build .
-      shell: cmd
+        conan install . -of build --build=missing -s compiler.cppstd=20
+        cmake . -B build -DSIMFIL_FPIC=NO -DSIMFIL_SHARED=NO
+        cmake --build build
     - name: Run CTest
       working-directory: build/test
       run: |
-        ctest -C Debug --verbose
-      shell: cmd
+        ctest --verbose --output-junit result-junit.xml
 
   build-macos:
     name: MacOS
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: true
-    - name: Setup
+    - name: Install Conan 2
+      run: |
+        pip install conan
+        conan profile detect
+    - name: Build
       run: |
         mkdir build
-    - name: Configure
-      working-directory: build
-      run: |
-        cmake ..
-    - name: Build
-      working-directory: build
-      run: |
-        cmake --build .
+        conan install . -of build --build=missing -s compiler.cppstd=20
+        cmake . -B build -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
+        cmake --build build
     - name: Run CTest
       working-directory: build/test
       run: |
-        ctest --verbose
+        ctest --verbose --output-junit result-junit.xml

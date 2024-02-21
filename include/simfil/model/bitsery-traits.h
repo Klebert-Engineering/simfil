@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <iostream>
 #include <bitsery/traits/core/std_defaults.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/ext/std_map.h>
@@ -8,8 +10,6 @@
 #include "nodes.h"
 #include "arena.h"
 #include "point.h"
-
-#include <iostream>
 
 namespace bitsery
 {

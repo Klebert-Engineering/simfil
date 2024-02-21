@@ -28,3 +28,5 @@ if (READLINE_FOUND)
     PRIVATE
       -DWITH_READLINE=1)
 endif()
+
+install(TARGETS simfil-repl)

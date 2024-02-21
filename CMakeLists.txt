@@ -1,90 +1,49 @@
 cmake_minimum_required(VERSION 3.14.0)
 enable_testing()
 
+project(simfil
+  HOMEPAGE_URL "https://github.com/Klebert-Engineering/simfil"
+  LANGUAGES C CXX)
+
 include(FetchContent)
-
-project(simfil)
-
-find_program(GCOVR_BIN gcovr)
-if (WITH_COVERAGE AND NOT GCOVR_BIN)
-  set(WITH_COVERAGE NO)
-  message(WARNING "Could not find gcovr binary. Disabling coverage report!")
-endif()
+include(GNUInstallDirs)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake-modules")
 
-# Do not build tests, if bundled
-set(MAIN_PROJECT OFF)
+# Do not build additional content, if bundled
+set(MAIN_PROJECT NO)
 if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
-  set(MAIN_PROJECT ON)
+  set(MAIN_PROJECT YES)
+endif()
 
-  option(WITH_REPL     "Build simfil repl" YES)
-  option(WITH_EXAMPLES "Build examples" YES)
-
-  if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-    option(WITH_COVERAGE "Enable gcovr coverage" YES)
-  else()
-    set(WITH_COVERAGE NO)
-  endif()
+if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  option(SIMFIL_WITH_COVERAGE "Enable gcovr coverage" ${MAIN_PROJECT})
 else()
-  set(WITH_REPL NO)
-  set(WITH_EXAMPLES NO)
-  set(WITH_COVERAGE NO)
+  set(SIMFIL_WITH_COVERAGE NO)
 endif()
 
-if (NOT TARGET sfl)
-  FetchContent_Declare(sfl
-    GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
-    GIT_TAG        "master"
-    GIT_SHALLOW    ON)
-  FetchContent_MakeAvailable(sfl)
+option(SIMFIL_SHARED          "Build a shared library" YES)
+option(SIMFIL_FPIC            "Build with fPIC enabled" YES)
+option(SIMFIL_WITH_REPL       "Build simfil repl" ${MAIN_PROJECT})
+option(SIMFIL_WITH_EXAMPLES   "Build examples" ${MAIN_PROJECT})
+option(SIMFIL_WITH_TESTS      "Build tests" ${MAIN_PROJECT})
+option(SIMFIL_WITH_MODEL_JSON "Include JSON model support" YES)
+
+find_program(GCOVR_BIN gcovr)
+if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
+  set(SIMFIL_WITH_COVERAGE NO)
+  message(WARNING "Could not find gcovr binary. Disabling coverage report!")
 endif()
 
-if (NOT TARGET stx)
-  FetchContent_Declare(stx
-    GIT_REPOSITORY "https://github.com/Klebert-Engineering/stx.git"
-    GIT_TAG        "main"
-    GIT_SHALLOW    ON)
-  FetchContent_MakeAvailable(stx)
+if (SIMFIL_SHARED)
+  set(LIBRARY_TYPE SHARED)
+else()
+  set(LIBRARY_TYPE STATIC)
 endif()
 
-if (NOT TARGET bitsery)
-  FetchContent_Declare(bitsery
-    GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
-    GIT_TAG        "master"
-    GIT_SHALLOW    ON)
-  FetchContent_MakeAvailable(bitsery)
-endif()
+include(deps.cmake)
 
-if (NOT DEFINED SIMFIL_WITH_MODEL_JSON)
-  set(SIMFIL_WITH_MODEL_JSON YES)
-endif()
-
-if (WITH_COVERAGE)
-  include(CodeCoverage)
-endif()
-
-add_library(simfil STATIC
-  include/simfil/environment.h
-  include/simfil/expression.h
-  include/simfil/ext-geo.h
-  include/simfil/function.h
-  include/simfil/operator.h
-  include/simfil/parser.h
-  include/simfil/token.h
-  include/simfil/typed-meta-type.h
-  include/simfil/types.h
-  include/simfil/value.h
-  include/simfil/transient.h
-  include/simfil/simfil.h
-
-  include/simfil/model/arena.h
-  include/simfil/model/fields.h
-  include/simfil/model/point.h
-  include/simfil/model/model.h
-  include/simfil/model/nodes.h
-  include/simfil/model/bitsery-traits.h
-
+add_library(simfil ${LIBRARY_TYPE}
   src/environment.cpp
   src/function.cpp
   src/parser.cpp
@@ -94,14 +53,38 @@ add_library(simfil STATIC
   src/simfil.cpp
   src/value.cpp
   src/overlay.cpp
-
   src/model/model.cpp
   src/model/nodes.cpp
   src/model/fields.cpp)
 
+target_sources(simfil PUBLIC
+  FILE_SET public_headers
+    TYPE HEADERS
+    FILES
+      include/simfil/environment.h
+      include/simfil/expression.h
+      include/simfil/ext-geo.h
+      include/simfil/function.h
+      include/simfil/operator.h
+      include/simfil/parser.h
+      include/simfil/token.h
+      include/simfil/typed-meta-type.h
+      include/simfil/types.h
+      include/simfil/value.h
+      include/simfil/transient.h
+      include/simfil/simfil.h
+
+      include/simfil/model/arena.h
+      include/simfil/model/fields.h
+      include/simfil/model/point.h
+      include/simfil/model/model.h
+      include/simfil/model/nodes.h
+      include/simfil/model/bitsery-traits.h)
+
 target_include_directories(simfil
   PUBLIC
-    include)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 target_compile_features(simfil
   PUBLIC
@@ -110,8 +93,13 @@ target_compile_features(simfil
 target_link_libraries(simfil
   PUBLIC
     sfl::sfl
-    stx::stx
+    fmt::fmt
     Bitsery::bitsery)
+
+if (SIMFIL_FPIC OR NOT SIMFIL_SHARED)
+  set_property(TARGET simfil PROPERTY
+    POSITION_INDEPENDENT_CODE ON)
+endif()
 
 if (MSVC)
   target_compile_definitions(simfil
@@ -123,38 +111,33 @@ if (MSVC)
 endif()
 
 if (SIMFIL_WITH_MODEL_JSON)
-  if (NOT TARGET nlohmann_json)
-    FetchContent_Declare(nlohmann_json
-      GIT_REPOSITORY "https://github.com/nlohmann/json.git"
-      GIT_TAG        "v3.11.2"
-      GIT_SHALLOW    ON)
-    FetchContent_MakeAvailable(nlohmann_json)
-  endif()
-
   target_compile_definitions(simfil
     PUBLIC
       SIMFIL_WITH_MODEL_JSON)
-
-  target_sources(simfil
-    PRIVATE
-      include/simfil/model/json.h
-      src/model/json.cpp)
+  target_sources(simfil PRIVATE
+    src/model/json.cpp)
+  target_sources(simfil PUBLIC
+    FILE_SET public_headers
+      TYPE HEADERS
+      FILES
+        include/simfil/model/json.h)
 
   target_link_libraries(simfil
     PRIVATE
       nlohmann_json::nlohmann_json)
 endif()
 
-if (WITH_COVERAGE)
-  append_coverage_compiler_flags_to_target(simfil)
+if (SIMFIL_WITH_COVERAGE)
+  include(CodeCoverage)
+  append_coverage_compiler_flags()
 endif()
 
 add_library(simfil::simfil ALIAS simfil)
 
-if (MAIN_PROJECT)
+if (SIMFIL_WITH_TESTS)
   add_subdirectory(test)
 
-  if (WITH_COVERAGE)
+  if (SIMFIL_WITH_COVERAGE)
     setup_target_for_coverage_gcovr_html(
       NAME coverage
       EXECUTABLE test.simfil
@@ -163,10 +146,14 @@ if (MAIN_PROJECT)
   endif()
 endif()
 
-if (WITH_REPL)
+if (SIMFIL_WITH_REPL)
   add_subdirectory(repl)
 endif()
 
-if (WITH_EXAMPLES)
+if (SIMFIL_WITH_EXAMPLES)
   add_subdirectory(examples/minimal)
 endif()
+
+install(TARGETS simfil)
+install(DIRECTORY include/simfil
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

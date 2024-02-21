@@ -6,9 +6,10 @@
 #include "simfil/operator.h"
 #include "simfil/model/model.h"
 
-#include "stx/format.h"
+#include "fmt/core.h"
 
 #include <cmath>
+#include <array>
 
 namespace simfil::geo
 {
@@ -221,7 +222,7 @@ auto BBox::operator==(const BBox& o) const -> bool
 
 auto BBox::toString() const -> std::string
 {
-    return stx::format("[{},{}]", p1.toString(), p2.toString());
+    return fmt::format("[{},{}]", p1.toString(), p2.toString());
 }
 
 auto Polygon::bbox() const -> BBox
@@ -426,7 +427,7 @@ auto PointType::unaryOp(std::string_view op, const Point<double>& self) const ->
 {
     COMMON_UNARY_OPS(self);
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operand {}", op, ident));
+    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto PointType::binaryOp(std::string_view op, const Point<double>& p, const Value& r) const -> Value
@@ -455,7 +456,7 @@ auto PointType::binaryOp(std::string_view op, const Point<double>& p, const Valu
             return Value::make(o->contains(p));
     }
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -464,7 +465,7 @@ auto PointType::binaryOp(std::string_view op, const Value& l, const Point<double
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 
@@ -503,7 +504,7 @@ auto BBoxType::unaryOp(std::string_view op, const BBox& self) const -> Value
 {
     COMMON_UNARY_OPS(self);
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operand {}", op, ident));
+    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto BBoxType::binaryOp(std::string_view op, const BBox& b, const Value& r) const -> Value
@@ -545,7 +546,7 @@ auto BBoxType::binaryOp(std::string_view op, const BBox& b, const Value& r) cons
             return Value::make(o->intersects(b));
     }
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -554,7 +555,7 @@ auto BBoxType::binaryOp(std::string_view op, const Value& l, const BBox& r) cons
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 
@@ -587,7 +588,7 @@ auto LineStringType::unaryOp(std::string_view op, const LineString& self) const 
     if (op == OperatorLen::name())
         return Value::make((int64_t)self.points.size());
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operand {}", op, ident));
+    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto LineStringType::binaryOp(std::string_view op, const LineString& ls, const Value& r) const -> Value
@@ -616,7 +617,7 @@ auto LineStringType::binaryOp(std::string_view op, const LineString& ls, const V
             return Value::make(ls.intersects(*o));
     }
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -625,7 +626,7 @@ auto LineStringType::binaryOp(std::string_view op, const Value& l, const LineStr
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 
@@ -667,7 +668,7 @@ auto PolygonType::unaryOp(std::string_view op, const Polygon& self) const -> Val
     if (op == OperatorLen::name())
         return Value::make(self.polys.size() > 0 ? (int64_t)self.polys[0].points.size() : 0);
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operand {}", op, ident));
+    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto PolygonType::binaryOp(std::string_view op, const Polygon& l, const Value& r) const -> Value
@@ -707,7 +708,7 @@ auto PolygonType::binaryOp(std::string_view op, const Polygon& l, const Value& r
             return Value::make(l.intersects(*o));
     }
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -716,7 +717,7 @@ auto PolygonType::binaryOp(std::string_view op, const Value& l, const Polygon& r
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(stx::format("Invalid operator {} for operands {} and {}",
+    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 

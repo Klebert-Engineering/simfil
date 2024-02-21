@@ -6,11 +6,11 @@
 #include "simfil/model/model.h"
 #include "simfil/types.h"
 #include "simfil/overlay.h"
-#include "stx/string.h"
-#include "stx/format.h"
+#include "fmt/core.h"
 
 #include <iostream>
 #include <optional>
+#include <ranges>
 
 namespace simfil
 {
@@ -20,24 +20,24 @@ using namespace std::string_literals;
 auto ArgumentCountError::what() const noexcept -> const char*
 {
     if (min < max)
-        msg = stx::format("{}: Expected {} to {} arguments; got {}",
+        msg = fmt::format("{}: Expected {} to {} arguments; got {}",
                           fn->ident().ident, min, max, have);
     else
-        msg = stx::format("{}: Expected {} arguments; got {}",
+        msg = fmt::format("{}: Expected {} arguments; got {}",
                           fn->ident().ident, min, have);
     return msg.c_str();
 }
 
 auto ArgumentValueCountError::what() const noexcept -> const char*
 {
-    msg = stx::format("{}: Argument {} must be a single value",
+    msg = fmt::format("{}: Argument {} must be a single value",
                       fn->ident().ident, index);
     return msg.c_str();
 }
 
 auto ArgumentTypeError::what() const noexcept -> const char*
 {
-    msg = stx::format("{}: Expected argument {} to be of type {}; got {}",
+    msg = fmt::format("{}: Expected argument {} to be of type {}; got {}",
                       fn->ident().ident, index, want, have);
     return msg.c_str();
 }
@@ -413,6 +413,51 @@ auto SplitFn::ident() const -> const FnInfo&
     return info;
 }
 
+namespace {
+template <class _Container = std::vector<std::string>>
+_Container split(std::string_view what,
+                 std::string_view at,
+                 bool removeEmpty = true)
+{
+    using ResultType = typename _Container::value_type;
+
+    _Container container;
+    auto out = std::back_inserter(container);
+
+    /* Special case: empty `what` */
+    if (what.empty())
+        return container;
+
+    /* Special case: empty `at` */
+    if (at.empty()) {
+        *out++ = ResultType(what);
+        return container;
+    }
+
+    auto begin = 0ull;
+    auto end = 0ull;
+
+    auto next = [&]() {
+        if ((end = what.find(at, begin)) != std::string::npos) {
+            if (end - begin || !removeEmpty)
+                *out++ = ResultType(what).substr(begin, end - begin);
+
+            begin = end + at.size();
+            return true;
+        }
+
+        if (what.size() - begin || !removeEmpty)
+            *out++ = ResultType(what).substr(begin);
+
+        return false;
+    };
+
+    while (next()) { /* noop */ }
+
+    return container;
+}
+}
+
 auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     Value str = Value::undef();
@@ -429,8 +474,8 @@ auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
     if (!ok)
         return res(subctx, Value::undef());
 
-    auto items = stx::split(str.as<ValueType::String>(), sep.as<ValueType::String>(), !keepEmpty.as<ValueType::Bool>());
-    for (auto&& item : std::move(items)) {
+    auto items = split(str.as<ValueType::String>(), sep.as<ValueType::String>(), !keepEmpty.as<ValueType::Bool>());
+    for (auto&& item : items) {
         if (res(subctx, Value::make(std::move(item))) == Result::Stop)
             break;
     }

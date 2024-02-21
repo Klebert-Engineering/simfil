@@ -70,11 +70,20 @@ range(1,25)...{count((_ % range(1,_)...) == 0) == 2}
 ```
 
 ## Building the Project
-`simfil` uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC. Dependencies outsides the repository are automatically downloaded using CMakes `FetchContent` system.
+`simfil` uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC. Dependencies outsides the repository are automatically downloaded using either CMakes `FetchContent` system or [Conan](https://conan.io).
 
+### With Conan
 ```sh
-mkdir build && cd build
-cmake .. && cmake --build .
+conan install . --build missing
+cmake --preset conan-release -DSIMFIL_WITH_TESTS=ON -DSIMFIL_WITH_REPL=ON
+cmake --build --preset conan-release
+ctest --preset conan-release
+```
+
+### With FetchContent
+```sh
+mkdir -p build && cd build
+cmake .. -DSIMFIL_WITH_TESTS=ON -DSIMFIL_WITH_REPL=ON && cmake --build .
 ctest
 ```
 
@@ -100,7 +109,32 @@ The query language can be extended by additional functions and addititonal types
 For an example of how to add new types to `simfil`, see [ext-geo.h](include/simfil/ext-geo.h).
 
 ## Using the Library
-### Linking via CMake
+### Conan Package
+#### Using Conan Editable Mode
+You can link the local simfil source directory as a [Conan 2 editable mode package ](https://docs.conan.io/2/tutorial/developing_packages/editable_packages.html) via `conan editable add <simfil-dir>`. Note that you have to pass
+`--build=editable` to your `conan install` invocation, otherwise the CMake build fails with errors about not finding the library.
+
+To use the editable package, just set the version to the one in this
+repositories `conanfile.py`, which is `dev`:
+
+```conan
+[requires]
+simfil/dev
+
+[generators]
+CMakeDeps
+CMakeToolchain
+```
+
+#### Installing the Package Locally
+To use this library as a dependency you can install it locally using
+`conan create <simfil-dir> --build=missing -s compiler.cppstd=20`, which
+exports the package into the local conan registry. Note that for developing simfil it is recomendet to use Conans "editable mode".
+
+Note: Installing locally with simfil registered as an editable package at the same time will fail. You have to first remove the
+package from editable mode, the error messages do not give a hint about the conflict!
+
+### CMake FetchContent
 To link against `simfil` vial CMake, all you have to do is to add the following to you `CMakeLists.txt`:
 ```cmake
 # Using CMakes FetchContent
@@ -150,4 +184,4 @@ The full source of the example can be found [here](./examples/minimal/main.cpp).
 - [nlohmann/json](https://github.com/nlohmann/json) for JSON model support (switch: `SIMFIL_WITH_MODEL_JSON`, default: `YES`).
 - [fraillt/bitsery](https://github.com/fraillt/bitsery) for binary en- and decoding.
 - [slavenf/sfl-library](https://github.com/slavenf/sfl-library.git) for small and segmented vector containers.
-- [klebert-engineering/stx](https://github.com/Klebert-Engineering/stx.git) for string formatting.
+- [fmtlib/fmt](https://github.com/fmtlib/fmt) string formatting library.

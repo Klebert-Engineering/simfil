@@ -1,4 +1,9 @@
 .idea
 .clang-format
-cmake-build-debug/
-cmake-build-release/
+.cache
+**/compile_commands.json
+**/CMakeUserPresets.json
+/cmake-build-debug/
+/cmake-build-release/
+/build/
+/test_package/build/
