@@ -1,14 +1,5 @@
 include(FetchContent)
 
-if (SIMFIL_CONAN)
-  find_package(sfl REQUIRED)
-  find_package(fmt REQUIRED)
-  find_package(Bitsery REQUIRED)
-  if (SIMFIL_WITH_MODEL_JSON)
-    find_package(nlohmann_json REQUIRED)
-  endif()
-endif()
-
 FetchContent_Declare(sfl
   GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
   GIT_TAG        "master"
