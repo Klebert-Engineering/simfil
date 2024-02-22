@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 
 from conan import ConanFile
-from conan.tools.files import copy, get, collect_libs
 from conan.tools.build import check_min_cppstd
-from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
-from conan.tools.scm import Version
-from conan.errors import ConanInvalidConfiguration
+from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 
 
-required_conan_version = ">=2.0.0"
+required_conan_version = ">=1.62.0"
+
 
 # NOTE: The recipe used for conan-center-index is a copy of this
-#       file with the version set to != dev! Make sure to copy changes
+#       file with the version removed! Make sure to copy changes
 #       in this file over to the conan-center-index recipe.
 class SimfilRecipe(ConanFile):
     name = "simfil"
     version = "dev"
     url = "https://github.com/conan-io/conan-center-index"
     homepage = "https://github.com/Klebert-Engineering/simfil"
+    license = "BSD 3-Clause"
+    topics = ["query language"]
 
     # Binary configuration
     settings = "os", "compiler", "build_type", "arch"
@@ -27,7 +27,7 @@ class SimfilRecipe(ConanFile):
         "with_json": [True, False],
     }
     default_options = {
-        "shared": True,
+        "shared": False,
         "fPIC": True,
         "with_json": True,
     }
@@ -38,9 +38,9 @@ class SimfilRecipe(ConanFile):
         check_min_cppstd(self, "20")
 
     def requirements(self):
-        self.requires("sfl/1.2.3", transitive_headers=True)
-        self.requires("fmt/10.2.1")
-        self.requires("bitsery/5.2.3")
+        self.requires("sfl/1.2.4", transitive_headers=True)
+        self.requires("fmt/10.2.1", transitive_headers=True)
+        self.requires("bitsery/5.2.3", transitive_headers=True)
         if self.options.with_json:
             self.requires("nlohmann_json/3.11.2")
 
@@ -53,6 +53,7 @@ class SimfilRecipe(ConanFile):
 
     def generate(self):
         tc = CMakeToolchain(self)
+        tc.cache_variables["SIMFIL_CONAN"] = True
         tc.cache_variables["SIMFIL_SHARED"] = bool(self.options.get_safe("shared"))
         tc.cache_variables["SIMFIL_WITH_REPL"] = False
         tc.cache_variables["SIMFIL_WITH_COVERAGE"] = False
@@ -60,6 +61,8 @@ class SimfilRecipe(ConanFile):
         tc.cache_variables["SIMFIL_WITH_EXAMPLES"] = False
         tc.cache_variables["SIMFIL_WITH_MODEL_JSON"] = bool(self.options.with_json)
         tc.generate()
+        deps = CMakeDeps(self)
+        deps.generate()
 
     def build(self):
         cmake = CMake(self)
