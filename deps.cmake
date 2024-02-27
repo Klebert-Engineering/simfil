@@ -21,13 +21,13 @@ FetchContent_Declare(fmt
   GIT_SHALLOW    ON
   FIND_PACKAGE_ARGS)
 
-FetchContent_Declare(Bitsery
+FetchContent_Declare(bitsery
   GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
   GIT_TAG        "v5.2.3"
   GIT_SHALLOW    ON
   FIND_PACKAGE_ARGS)
 
-FetchContent_MakeAvailable(sfl fmt Bitsery)
+FetchContent_MakeAvailable(sfl fmt bitsery)
 
 if (SIMFIL_WITH_MODEL_JSON)
   FetchContent_Declare(nlohmann_json
