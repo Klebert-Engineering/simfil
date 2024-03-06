@@ -21,7 +21,7 @@ class Value;
 class ModelPool;
 class Model;
 struct ModelNode;
-class Environment;
+struct Environment;
 class Expr;
 
 std::vector<Value> eval(Environment& env, const Expr& ast, const ModelNode& node);
