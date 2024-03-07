@@ -7,42 +7,48 @@ if (SIMFIL_CONAN)
   if (SIMFIL_WITH_MODEL_JSON)
     find_package(nlohmann_json REQUIRED)
   endif()
-endif()
+else()
+  if (NOT TARGET sfl::sfl)
+    FetchContent_Declare(sfl
+      GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
+      GIT_TAG        "master"
+      GIT_SHALLOW    ON)
+  endif()
 
-FetchContent_Declare(sfl
-  GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
-  GIT_TAG        "master"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
+  if (NOT TARGET fmt::fmt)
+    FetchContent_Declare(fmt
+      GIT_REPOSITORY "https://github.com/fmtlib/fmt.git"
+      GIT_TAG        "10.0.0"
+      GIT_SHALLOW    ON)
+  endif()
 
-FetchContent_Declare(fmt
-  GIT_REPOSITORY "https://github.com/fmtlib/fmt.git"
-  GIT_TAG        "10.2.1"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
+  if (NOT TARGET bitsery::bitsery)
+    FetchContent_Declare(bitsery
+      GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
+      GIT_TAG        "v5.2.3"
+      GIT_SHALLOW    ON)
+  endif()
 
-FetchContent_Declare(bitsery
-  GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
-  GIT_TAG        "v5.2.3"
-  GIT_SHALLOW    ON
-  FIND_PACKAGE_ARGS)
+  FetchContent_MakeAvailable(sfl fmt bitsery)
 
-FetchContent_MakeAvailable(sfl fmt bitsery)
-
-if (SIMFIL_WITH_MODEL_JSON)
-  FetchContent_Declare(nlohmann_json
-    GIT_REPOSITORY "https://github.com/nlohmann/json.git"
-    GIT_TAG        "v3.11.2"
-    GIT_SHALLOW    ON
-    FIND_PACKAGE_ARGS)
-  FetchContent_MakeAvailable(nlohmann_json)
+  if (SIMFIL_WITH_MODEL_JSON)
+    if (NOT TARGET nlohmann_json::nlohmann_json)
+      FetchContent_Declare(nlohmann_json
+        GIT_REPOSITORY "https://github.com/nlohmann/json.git"
+        GIT_TAG        "v3.11.2"
+        GIT_SHALLOW    ON)
+      FetchContent_MakeAvailable(nlohmann_json)
+    endif()
+  endif()
 endif()
 
 if (SIMFIL_WITH_TESTS)
-  FetchContent_Declare(catch2
-    GIT_REPOSITORY "https://github.com/catchorg/Catch2.git"
-    GIT_TAG        "v3.5.2"
-    GIT_SHALLOW    ON
-    FIND_PACKAGE_ARGS)
-  FetchContent_MakeAvailable(catch2)
+  if (NOT TARGET Catch2::Catch2WithMain)
+    FetchContent_Declare(catch2
+      GIT_REPOSITORY "https://github.com/catchorg/Catch2.git"
+      GIT_TAG        "v3.5.2"
+      GIT_SHALLOW    ON
+      FIND_PACKAGE_ARGS)
+    FetchContent_MakeAvailable(catch2)
+  endif()
 endif()

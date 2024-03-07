@@ -2,6 +2,7 @@
 
 [![](https://img.shields.io/badge/Coverage-HTML-orange)](https://htmlpreview.github.io/?https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/ed28c457ebc09ce8ddddc9cec6668e130d59b64c/coverage.html)
 [![](https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/0ae49c7509dea18b4c110b8bf416f2715a214933/badge.svg)](https://github.com/Klebert-Engineering/simfil)
+[![Conan Center](https://img.shields.io/conan/v/simfil)](https://conan.io/center/recipes/simfil)
 
 `simfil` is a C++ 17 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the `simfil` query language, along with a query interpreter to query the actual data.
 
@@ -110,6 +111,19 @@ For an example of how to add new types to `simfil`, see [ext-geo.h](include/simf
 
 ## Using the Library
 ### Conan Package
+#### Using Conan
+Simfil is published on [conan.io](https://conan.io/center/recipes/simfil). All you have to do is to add it to your
+conanfile:
+
+``` conan
+[requires]
+simfil/0.1.1
+
+[generators]
+CMakeDeps
+CMakeToolchain
+```
+
 #### Using Conan Editable Mode
 You can link the local simfil source directory as a [Conan 2 editable mode package ](https://docs.conan.io/2/tutorial/developing_packages/editable_packages.html) via `conan editable add <simfil-dir>`. Note that you have to pass
 `--build=editable` to your `conan install` invocation, otherwise the CMake build fails with errors about not finding the library.

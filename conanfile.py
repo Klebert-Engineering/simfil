@@ -16,8 +16,8 @@ class SimfilRecipe(ConanFile):
     version = "dev"
     url = "https://github.com/conan-io/conan-center-index"
     homepage = "https://github.com/Klebert-Engineering/simfil"
-    license = "BSD 3-Clause"
-    topics = ["query language"]
+    license = "BSD-3-Clause"
+    topics = ["query-language", "json", "data-model"]
 
     # Binary configuration
     settings = "os", "compiler", "build_type", "arch"
@@ -37,12 +37,15 @@ class SimfilRecipe(ConanFile):
     def validate(self):
         check_min_cppstd(self, "20")
 
+    def build_requirements(self):
+        self.tool_requires("cmake/[>3.19 <4]")
+
     def requirements(self):
-        self.requires("sfl/1.2.4", transitive_headers=True)
-        self.requires("fmt/10.2.1", transitive_headers=True)
-        self.requires("bitsery/5.2.3", transitive_headers=True)
+        self.requires("sfl/[~1]", transitive_headers=True)
+        self.requires("fmt/10.0.0", transitive_headers=True)
+        self.requires("bitsery/[~5]", transitive_headers=True)
         if self.options.with_json:
-            self.requires("nlohmann_json/3.11.2")
+            self.requires("nlohmann_json/[~3]", transitive_headers=True)
 
     def config_options(self):
         if self.settings.os == "Windows":
@@ -50,6 +53,10 @@ class SimfilRecipe(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def configure(self):
+        if self.options.shared:
+            self.options.rm_safe("fPIC")
 
     def generate(self):
         tc = CMakeToolchain(self)
@@ -75,4 +82,3 @@ class SimfilRecipe(ConanFile):
 
     def package_info(self):
         self.cpp_info.libs = ["simfil"]
-        self.cpp_info.set_property("cmake_target_name", "simfil::simfil")
