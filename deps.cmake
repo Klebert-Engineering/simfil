@@ -13,6 +13,7 @@ else()
       GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
       GIT_TAG        "master"
       GIT_SHALLOW    ON)
+    FetchContent_MakeAvailable(sfl)
   endif()
 
   if (NOT TARGET fmt::fmt)
@@ -20,6 +21,7 @@ else()
       GIT_REPOSITORY "https://github.com/fmtlib/fmt.git"
       GIT_TAG        "10.0.0"
       GIT_SHALLOW    ON)
+    FetchContent_MakeAvailable(fmt)
   endif()
 
   if (NOT TARGET bitsery::bitsery)
@@ -27,9 +29,8 @@ else()
       GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
       GIT_TAG        "v5.2.3"
       GIT_SHALLOW    ON)
+    FetchContent_MakeAvailable(bitsery)
   endif()
-
-  FetchContent_MakeAvailable(sfl fmt bitsery)
 
   if (SIMFIL_WITH_MODEL_JSON)
     if (NOT TARGET nlohmann_json::nlohmann_json)
