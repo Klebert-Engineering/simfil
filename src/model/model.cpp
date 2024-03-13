@@ -428,4 +428,22 @@ void ModelPool::read(std::istream& inputStream) {
     }
 }
 
+std::shared_ptr<simfil::Fields> ModelPool::takeFieldsDictOwnership()
+{
+    impl_->fieldNames_ = std::make_shared<Fields>(*impl_->fieldNames_);
+    return impl_->fieldNames_;
+}
+
+void ModelPool::transcode(std::shared_ptr<simfil::Fields> const& newDict)
+{
+    // Translate object field IDs to the new dictionary.
+    for (auto memberArray : impl_->columns_.objectMemberArrays_) {
+        for (auto& member : memberArray) {
+            if (auto resolvedName = impl_->fieldNames_->resolve(member.name_))
+                member.name_ = newDict->emplace(*resolvedName);
+        }
+    }
+    impl_->fieldNames_ = newDict;
+}
+
 }  // namespace simfil

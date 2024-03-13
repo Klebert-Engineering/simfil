@@ -471,3 +471,20 @@ TEST_CASE("Object/Array Extend", "[model.extend]") {
         REQUIRE(Value(testArrayA->at(3)->value()).as<ValueType::Int>() == 55ll);
     }
 }
+
+TEST_CASE("Transcode Model", "[model.transcode]")
+{
+    auto pool = std::make_shared<ModelPool>();
+    auto oldFieldDict = pool->fieldNames();
+    auto newFieldDict = pool->takeFieldsDictOwnership();
+    REQUIRE(oldFieldDict != newFieldDict);
+
+    auto obj = pool->newObject();
+    obj->addField("hello", "world");
+
+    oldFieldDict->emplace("gobbledigook");
+    pool->transcode(oldFieldDict);
+    REQUIRE_NOTHROW(pool->validate());
+    REQUIRE(pool->fieldNames() == oldFieldDict);
+    REQUIRE(oldFieldDict->size() != newFieldDict->size());
+}

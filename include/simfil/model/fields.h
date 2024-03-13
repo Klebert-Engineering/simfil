@@ -42,6 +42,9 @@ struct Fields
     /// Default constructor initializes strings for static Ids
     Fields();
 
+    /// Copy constructor
+    Fields(Fields const&);
+
     /// Virtual destructor to allow polymorphism
     virtual ~Fields() = default;
 

@@ -153,6 +153,17 @@ public:
     /// Access the field name storage
     std::shared_ptr<Fields> fieldNames() const;
 
+     /// Instruct the model to switch to its own field dict copy.
+     /// This can be necessary, if you make changes to this dict,
+     /// which are not supposed to have any side effects for other layers.
+     /// Returns the new copy of the dictionary.
+    std::shared_ptr<simfil::Fields> takeFieldsDictOwnership();
+
+    /// Change the fields dict of this model to a different one.
+    /// Note: This will potentially create new field entries in the newDict,
+    /// for field names which were not there before.
+    virtual void transcode(std::shared_ptr<simfil::Fields> const& newDict);
+
     /// Serialization
     virtual void write(std::ostream& outputStream);
     virtual void read(std::istream& inputStream);
