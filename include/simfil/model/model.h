@@ -153,6 +153,11 @@ public:
     /// Access the field name storage
     std::shared_ptr<Fields> fieldNames() const;
 
+    /// Change the fields dict of this model to a different one.
+    /// Note: This will potentially create new field entries in the newDict,
+    /// for field names which were not there before.
+    virtual void setFieldNames(std::shared_ptr<simfil::Fields> const& newDict);
+
     /// Serialization
     virtual void write(std::ostream& outputStream);
     virtual void read(std::istream& inputStream);
@@ -166,9 +171,6 @@ protected:
     Object::Storage& objectMemberStorage();
     Array::Storage& arrayMemberStorage();
     Geometry::Storage& vertexBufferStorage();
-
-    /// Allows a derived ModelPool to set the field name storage dictionary
-    void setFieldNames(std::shared_ptr<Fields> fieldNames);
 };
 
 }

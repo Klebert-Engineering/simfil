@@ -10,8 +10,6 @@
 namespace simfil
 {
 
-/** String Pool implementation */
-
 Fields::Fields() {
     addStaticKey(Empty, "");
     addStaticKey(Lon, "lon");
@@ -24,6 +22,16 @@ Fields::Fields() {
     addStaticKey(Type, "type");
     addStaticKey(Coordinates, "coordinates");
     addStaticKey(Elevation, "elevation");
+}
+
+Fields::Fields(const Fields& other) :
+    idForString_(other.idForString_),
+    stringForId_(other.stringForId_),
+    nextId_(other.nextId_),
+    byteSize_(other.byteSize_.load()),
+    cacheHits_(other.cacheHits_.load()),
+    cacheMisses_(other.cacheMisses_.load())
+{
 }
 
 FieldId Fields::emplace(std::string_view const& str)

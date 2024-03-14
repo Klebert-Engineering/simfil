@@ -396,9 +396,16 @@ std::shared_ptr<Fields> ModelPool::fieldNames() const
     return impl_->fieldNames_;
 }
 
-void ModelPool::setFieldNames(std::shared_ptr<Fields> fieldNames)
+void ModelPool::setFieldNames(std::shared_ptr<Fields> const& newDict)
 {
-    impl_->fieldNames_ = std::move(fieldNames);
+    // Translate object field IDs to the new dictionary.
+    for (auto memberArray : impl_->columns_.objectMemberArrays_) {
+        for (auto& member : memberArray) {
+            if (auto resolvedName = impl_->fieldNames_->resolve(member.name_))
+                member.name_ = newDict->emplace(*resolvedName);
+        }
+    }
+    impl_->fieldNames_ = newDict;
 }
 
 Object::Storage& ModelPool::objectMemberStorage() {
