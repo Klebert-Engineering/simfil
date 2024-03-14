@@ -396,9 +396,16 @@ std::shared_ptr<Fields> ModelPool::fieldNames() const
     return impl_->fieldNames_;
 }
 
-void ModelPool::setFieldNames(std::shared_ptr<Fields> fieldNames)
+void ModelPool::setFieldNames(std::shared_ptr<Fields> const& newDict)
 {
-    impl_->fieldNames_ = std::move(fieldNames);
+    // Translate object field IDs to the new dictionary.
+    for (auto memberArray : impl_->columns_.objectMemberArrays_) {
+        for (auto& member : memberArray) {
+            if (auto resolvedName = impl_->fieldNames_->resolve(member.name_))
+                member.name_ = newDict->emplace(*resolvedName);
+        }
+    }
+    impl_->fieldNames_ = newDict;
 }
 
 Object::Storage& ModelPool::objectMemberStorage() {
@@ -426,24 +433,6 @@ void ModelPool::read(std::istream& inputStream) {
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
-}
-
-std::shared_ptr<simfil::Fields> ModelPool::takeFieldsDictOwnership()
-{
-    impl_->fieldNames_ = std::make_shared<Fields>(*impl_->fieldNames_);
-    return impl_->fieldNames_;
-}
-
-void ModelPool::transcode(std::shared_ptr<simfil::Fields> const& newDict)
-{
-    // Translate object field IDs to the new dictionary.
-    for (auto memberArray : impl_->columns_.objectMemberArrays_) {
-        for (auto& member : memberArray) {
-            if (auto resolvedName = impl_->fieldNames_->resolve(member.name_))
-                member.name_ = newDict->emplace(*resolvedName);
-        }
-    }
-    impl_->fieldNames_ = newDict;
 }
 
 }  // namespace simfil

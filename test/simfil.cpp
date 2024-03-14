@@ -472,19 +472,21 @@ TEST_CASE("Object/Array Extend", "[model.extend]") {
     }
 }
 
-TEST_CASE("Transcode Model", "[model.transcode]")
+TEST_CASE("Switch Model Fields Dict", "[model.setfieldnames]")
 {
     auto pool = std::make_shared<ModelPool>();
     auto oldFieldDict = pool->fieldNames();
-    auto newFieldDict = pool->takeFieldsDictOwnership();
-    REQUIRE(oldFieldDict != newFieldDict);
+    auto newFieldDict = std::make_shared<simfil::Fields>(*oldFieldDict);
+    pool->setFieldNames(newFieldDict);
+    REQUIRE(pool->fieldNames() == newFieldDict);
 
     auto obj = pool->newObject();
     obj->addField("hello", "world");
 
     oldFieldDict->emplace("gobbledigook");
-    pool->transcode(oldFieldDict);
-    REQUIRE_NOTHROW(pool->validate());
+    pool->setFieldNames(oldFieldDict);
+
     REQUIRE(pool->fieldNames() == oldFieldDict);
+    REQUIRE_NOTHROW(pool->validate());
     REQUIRE(oldFieldDict->size() != newFieldDict->size());
 }
