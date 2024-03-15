@@ -509,7 +509,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, co
         .ok();
 
     if (!ok)
-        res(ctx, Value::undef());
+        return res(ctx, Value::undef());
 
     auto iidx = idx.as<ValueType::Int>();
     auto icnt = cnt.as<ValueType::Int>();
