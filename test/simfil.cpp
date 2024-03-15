@@ -303,6 +303,7 @@ TEST_CASE("Model Functions", "[yaml.mode-functions]") {
         REQUIRE_RESULT("split('hello.this.is.a.test.', '.', false)", "hello|this|is|a|test");
     }
     SECTION("Test select(... )") {
+        REQUIRE_RESULT("select(split('a.b.c.d', '.'), a)", "b");
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 0)", "a");
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 1, 2)", "b|c");
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 1, 0)", "b|c|d");
