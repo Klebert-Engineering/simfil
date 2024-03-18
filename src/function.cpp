@@ -62,18 +62,18 @@ struct ArgParser
         , idx(idx)
     {
         if (args.size() < idx)
-            throw std::runtime_error(fname + ": too few arguments"s);
+            raise<std::runtime_error>(fname + ": too few arguments"s);
     }
 
     auto arg(const char* name, ValueType type, Value& outValue) -> ArgParser&
     {
         if (args.size() <= idx)
-            throw std::runtime_error(fname + ": missing argument "s + name);
+            raise<std::runtime_error>(fname + ": missing argument "s + name);
 
         auto subctx = ctx;
         args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable {
             if (++n > 1)
-                throw std::runtime_error(fname + ": argument "s + name + " must return a single value"s);
+                raise<std::runtime_error>(fname + ": argument "s + name + " must return a single value"s);
 
             if (vv.isa(ValueType::Undef)) {
                 anyUndef = true;
@@ -82,7 +82,7 @@ struct ArgParser
             }
 
             if (!vv.isa(type))
-                throw std::runtime_error(fname + ": invalid value type for argument '"s + name + "'"s);
+                raise<std::runtime_error>(fname + ": invalid value type for argument '"s + name + "'"s);
 
             outValue = std::move(vv);
 
@@ -104,7 +104,7 @@ struct ArgParser
         auto subctx = ctx;
         args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable {
             if (++n > 1)
-                throw std::runtime_error(fname + ": argument "s + name + " must return a single value"s);
+                raise<std::runtime_error>(fname + ": argument "s + name + " must return a single value"s);
 
             if (vv.isa(ValueType::Undef)) {
                 anyUndef = true;
@@ -113,7 +113,7 @@ struct ArgParser
             }
 
             if (!vv.isa(type))
-                throw std::runtime_error(fname + ": invalid value type for argument '"s + name + "'"s);
+                raise<std::runtime_error>(fname + ": invalid value type for argument '"s + name + "'"s);
 
             outValue = std::move(vv);
             if (set) *set = true;
@@ -157,7 +157,7 @@ auto AnyFn::ident() const -> const FnInfo&
 auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
-        throw std::runtime_error("any(...) expects one argument; got "s + std::to_string(args.size()));
+        raise<std::runtime_error>("any(...) expects one argument; got "s + std::to_string(args.size()));
 
     auto subctx = ctx;
     auto result = false; /* At least one value is true  */
@@ -202,7 +202,7 @@ auto EachFn::ident() const -> const FnInfo&
 auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
-        throw std::runtime_error("each(...) expects one argument; got "s + std::to_string(args.size()));
+        raise<std::runtime_error>("each(...) expects one argument; got "s + std::to_string(args.size()));
 
     auto subctx = ctx;
     auto result = true; /* All values are true  */
@@ -246,7 +246,7 @@ auto CountFn::ident() const -> const FnInfo&
 auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
-        throw std::runtime_error("count(...) expects one argument; got "s + std::to_string(args.size()));
+        raise<std::runtime_error>("count(...) expects one argument; got "s + std::to_string(args.size()));
 
     auto subctx = ctx;
     auto undef = false; /* At least one value is undef */
@@ -351,7 +351,7 @@ auto RangeFn::ident() const -> const FnInfo&
 auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() != 2)
-        throw std::runtime_error("range(begin, end) expects 2 arguments; got "s + std::to_string(args.size()));
+        raise<std::runtime_error>("range(begin, end) expects 2 arguments; got "s + std::to_string(args.size()));
 
     Value begin = Value::undef();
     Value end = Value::undef();
@@ -548,7 +548,7 @@ auto SumFn::ident() const -> const FnInfo&
 auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1 || args.size() > 3)
-        throw std::runtime_error("sum: Expected at least 1 argument; got "s + std::to_string(args.size()));
+        raise<std::runtime_error>("sum: Expected at least 1 argument; got "s + std::to_string(args.size()));
 
     Value sum = Value::make((int64_t)0);
 
@@ -603,7 +603,7 @@ auto KeysFn::ident() const -> const FnInfo&
 auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() != 1)
-        throw std::runtime_error("keys: Expected 1 argument; got "s + std::to_string(args.size()));
+        raise<std::runtime_error>("keys: Expected 1 argument; got "s + std::to_string(args.size()));
 
     auto result = args[0]->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value vv) {
         if (ctx.phase == Context::Phase::Compilation)

@@ -77,7 +77,7 @@ static auto expect(const ExprPtr& e, Type... types)
     };
 
     if (!e)
-        throw std::runtime_error("Expected expression"s);
+        raise<std::runtime_error>("Expected expression"s);
 
     if constexpr (sizeof...(types) >= 1) {
         Expr::Type list[] = {types...};
@@ -93,7 +93,7 @@ static auto expect(const ExprPtr& e, Type... types)
             typeNames += type2str(list[i]);
         }
 
-        throw std::runtime_error("Expected "s + typeNames + " got "s + type2str(e->type()));
+        raise<std::runtime_error>("Expected "s + typeNames + " got "s + type2str(e->type()));
     }
 }
 
@@ -482,7 +482,7 @@ public:
         if (!fn_)
             fn_ = ctx.env->findFunction(name_);
         if (!fn_)
-            throw std::runtime_error("Unknown function "s + name_);
+            raise<std::runtime_error>("Unknown function "s + name_);
 
         auto anyval = false;
         auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](Context ctx, Value vv) {
@@ -711,7 +711,7 @@ public:
                 return res(ctx, obj.meta->unaryOp(ident_, obj));
             }
 
-            throw std::runtime_error(fmt::format("Invalid operator '{}' for value of type {}",
+            raise<std::runtime_error>(fmt::format("Invalid operator '{}' for value of type {}",
                                                  ident_, valueType2String(val.type)));
         }));
     }
@@ -756,7 +756,7 @@ public:
                     return res(ctx, obj.meta->binaryOp(ident_, lval, obj));
                 }
 
-                throw std::runtime_error(fmt::format("Invalid operator '{}' for values of type {} and {}",
+                raise<std::runtime_error>(fmt::format("Invalid operator '{}' for values of type {} and {}",
                                                      ident_, valueType2String(lval.type), valueType2String(rval.type)));
             }));
         }));
@@ -940,7 +940,7 @@ public:
             return std::make_unique<ConstExpr>(Value::null());
 
         if (type.type != Token::Type::WORD)
-            throw std::runtime_error("'as' expected typename got "s + type.toString());
+            raise<std::runtime_error>("'as' expected typename got "s + type.toString());
 
         auto name = std::get<std::string>(type.value);
         return simplifyOrForward(p.env, [&]() -> ExprPtr {
@@ -953,7 +953,7 @@ public:
             if (name == strings::TypenameString)
                 return std::make_unique<UnaryExpr<OperatorAsString>>(std::move(left));
 
-            throw std::runtime_error("Invalid type name for cast '"s + name + "'"s);
+            raise<std::runtime_error>("Invalid type name for cast '"s + name + "'"s);
         }());
     }
 
@@ -1312,14 +1312,14 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     }();
 
     if (!p.match(Token::Type::NIL))
-        throw std::runtime_error("Expected end-of-input; got "s + p.current().toString());
+        raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());
     return expr;
 }
 
 auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t rootIndex) -> std::vector<Value>
 {
     if (env.fieldNames() != model.fieldNames())
-        throw std::runtime_error("Environment must use same field name resource as model.");
+        raise<std::runtime_error>("Environment must use same field name resource as model.");
 
     return eval(env, ast, *model.root(rootIndex));
 }
@@ -1327,7 +1327,7 @@ auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t root
 auto eval(Environment& env, const Expr& ast, const ModelNode& node) -> std::vector<Value>
 {
     if (!node.model_)
-        throw std::runtime_error("ModelNode must have a model!");
+        raise<std::runtime_error>("ModelNode must have a model!");
 
     Context ctx(&env);
 

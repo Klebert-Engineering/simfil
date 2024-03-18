@@ -12,7 +12,7 @@ Environment::Environment(std::shared_ptr<Fields> fieldNames)
       fieldNames_(std::move(fieldNames))
 {
     if (!fieldNames_)
-        throw std::runtime_error("The string cache must not be null.");
+        raise<std::runtime_error>("The string cache must not be null.");
 
     functions["any"]    = &AnyFn::Fn;
     functions["each"]   = &EachFn::Fn;

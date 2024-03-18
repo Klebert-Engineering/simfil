@@ -1,6 +1,7 @@
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 
 #include "simfil/token.h"
+#include "simfil/exception-handler.h"
 
 #include <cctype>
 #include <cmath>
@@ -165,7 +166,7 @@ struct Scanner
         if (pos_ < orig_.size())
             msg += " ("s + std::string(orig_.substr(pos_)) + ")"s;
 
-        throw std::runtime_error(std::move(msg));
+        raise<std::runtime_error>(std::move(msg));
     }
 
     auto pos() const

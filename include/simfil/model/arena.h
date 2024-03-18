@@ -8,6 +8,8 @@
 #include <cmath>
 #include <sfl/segmented_vector.hpp>
 
+#include "../exception-handler.h"
+
 // Define this to enable array arena read-write locking.
 // #define ARRAY_ARENA_THREAD_SAFE
 
@@ -389,7 +391,7 @@ private:
             if (remaining < current->capacity && remaining < current->size)
                 return self.data_[current->offset + remaining];
             if (current->next == -1)
-                throw std::out_of_range("Index out of range");
+                raise<std::out_of_range>("Index out of range");
             remaining -= current->capacity;
             current = &self.continuations_[current->next];
         }

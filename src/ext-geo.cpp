@@ -427,7 +427,7 @@ auto PointType::unaryOp(std::string_view op, const Point<double>& self) const ->
 {
     COMMON_UNARY_OPS(self);
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto PointType::binaryOp(std::string_view op, const Point<double>& p, const Value& r) const -> Value
@@ -456,7 +456,7 @@ auto PointType::binaryOp(std::string_view op, const Point<double>& p, const Valu
             return Value::make(o->contains(p));
     }
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -465,7 +465,7 @@ auto PointType::binaryOp(std::string_view op, const Value& l, const Point<double
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 
@@ -504,7 +504,7 @@ auto BBoxType::unaryOp(std::string_view op, const BBox& self) const -> Value
 {
     COMMON_UNARY_OPS(self);
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto BBoxType::binaryOp(std::string_view op, const BBox& b, const Value& r) const -> Value
@@ -546,7 +546,7 @@ auto BBoxType::binaryOp(std::string_view op, const BBox& b, const Value& r) cons
             return Value::make(o->intersects(b));
     }
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -555,7 +555,7 @@ auto BBoxType::binaryOp(std::string_view op, const Value& l, const BBox& r) cons
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 
@@ -588,7 +588,7 @@ auto LineStringType::unaryOp(std::string_view op, const LineString& self) const 
     if (op == OperatorLen::name())
         return Value::make((int64_t)self.points.size());
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto LineStringType::binaryOp(std::string_view op, const LineString& ls, const Value& r) const -> Value
@@ -617,7 +617,7 @@ auto LineStringType::binaryOp(std::string_view op, const LineString& ls, const V
             return Value::make(ls.intersects(*o));
     }
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -626,7 +626,7 @@ auto LineStringType::binaryOp(std::string_view op, const Value& l, const LineStr
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 
@@ -668,7 +668,7 @@ auto PolygonType::unaryOp(std::string_view op, const Polygon& self) const -> Val
     if (op == OperatorLen::name())
         return Value::make(self.polys.size() > 0 ? (int64_t)self.polys[0].points.size() : 0);
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operand {}", op, ident));
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operand {}", op, ident));
 }
 
 auto PolygonType::binaryOp(std::string_view op, const Polygon& l, const Value& r) const -> Value
@@ -708,7 +708,7 @@ auto PolygonType::binaryOp(std::string_view op, const Polygon& l, const Value& r
             return Value::make(l.intersects(*o));
     }
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, ident, valueType2String(r.type)));
 }
 
@@ -717,7 +717,7 @@ auto PolygonType::binaryOp(std::string_view op, const Value& l, const Polygon& r
     if (op == OperatorEq::name() || op == OperatorNeq::name() || op == OP_NAME_INTERSECTS)
         return binaryOp(op, r, l);
 
-    throw std::runtime_error(fmt::format("Invalid operator {} for operands {} and {}",
+    raise<std::runtime_error>(fmt::format("Invalid operator {} for operands {} and {}",
                                          op, valueType2String(l.type), ident));
 }
 
@@ -748,7 +748,7 @@ auto GeoFn::ident() const -> const FnInfo&
 auto GeoFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() > 1)
-        throw ArgumentCountError(*this, 0, 1, args.size());
+        raise<ArgumentCountError>(*this, 0, 1, args.size());
 
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -937,23 +937,23 @@ auto PointFn::ident() const -> const FnInfo&
 auto PointFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() != 2)
-        throw ArgumentCountError(*this, 2, 2, args.size());
+        raise<ArgumentCountError>(*this, 2, 2, args.size());
 
     auto [xok, xval] = util::evalArg1Any(ctx, val, args[0]);
     if (!xok)
-        throw ArgumentValueCountError(*this, 0);
+        raise<ArgumentValueCountError>(*this, 0);
 
     auto [yok, yval] = util::evalArg1Any(ctx, val, args[1]);
     if (!yok)
-        throw ArgumentValueCountError(*this, 1);
+        raise<ArgumentValueCountError>(*this, 1);
 
     auto [xtypeok, x] = getNumeric<double>(xval);
     if (!xtypeok)
-        throw ArgumentTypeError(*this, 0, "numeric", valueType2String(xval.type));
+        raise<ArgumentTypeError>(*this, 0, "numeric", valueType2String(xval.type));
 
     auto [ytypeok, y] = getNumeric<double>(yval);
     if (!ytypeok)
-        throw ArgumentTypeError(*this, 1, "numeric", valueType2String(xval.type));
+        raise<ArgumentTypeError>(*this, 1, "numeric", valueType2String(xval.type));
 
     return res(ctx, meta::PointType::Type.make(x, y));
 }
@@ -976,7 +976,7 @@ auto BBoxFn::eval(Context ctx, Value v, const std::vector<ExprPtr>& args, const 
     if (args.size() == 1) {
         auto [ok, val] = util::evalArg1Any(ctx, v, args[0]);
         if (!ok)
-            throw ArgumentValueCountError(*this, 0);
+            raise<ArgumentValueCountError>(*this, 0);
 
         if (auto o = getObject<BBox>(val, &meta::BBoxType::Type))
             return res(ctx, meta::BBoxType::Type.make(*o));
@@ -992,38 +992,38 @@ auto BBoxFn::eval(Context ctx, Value v, const std::vector<ExprPtr>& args, const 
     if (args.size() == 2) {
         auto [p1ok, p1val] = util::evalArg1Any(ctx, v, args[0]);
         if (!p1ok)
-            throw ArgumentValueCountError(*this, 0);
+            raise<ArgumentValueCountError>(*this, 0);
 
         auto [p2ok, p2val] = util::evalArg1Any(ctx, v, args[1]);
         if (!p2ok)
-            throw ArgumentValueCountError(*this, 1);
+            raise<ArgumentValueCountError>(*this, 1);
 
         Point<double> p1, p2;
         if (auto a1 = getObject<Point<double>>(p1val, &meta::PointType::Type))
             p1 = *a1;
         else
-            throw ArgumentTypeError(*this, 0, "point", valueType2String(p1val.type));
+            raise<ArgumentTypeError>(*this, 0, "point", valueType2String(p1val.type));
         if (auto a2 = getObject<Point<double>>(p2val, &meta::PointType::Type))
             p2 = *a2;
         else
-            throw ArgumentTypeError(*this, 1, "point", valueType2String(p2val.type));
+            raise<ArgumentTypeError>(*this, 1, "point", valueType2String(p2val.type));
 
         return res(ctx, meta::BBoxType::Type.make(p1.x, p1.y, p2.x, p2.y));
     }
 
     /* Construct with 4 values */
     if (args.size() != 4)
-        throw ArgumentCountError(*this, 1, 1, args.size());
+        raise<ArgumentCountError>(*this, 1, 1, args.size());
 
     std::array<double, 4> fargs;
     for (auto i = 0; i < 4; ++i) {
         auto [ok, val] = util::evalArg1Any(ctx, v, args[i]);
         if (!ok)
-            throw ArgumentValueCountError(*this, i);
+            raise<ArgumentValueCountError>(*this, i);
 
         auto [typeok, v] = getNumeric<double>(val);
         if (!typeok)
-            throw ArgumentTypeError(*this, i, "numeric", valueType2String(val.type));
+            raise<ArgumentTypeError>(*this, i, "numeric", valueType2String(val.type));
 
         fargs[i] = v;
     }
@@ -1046,7 +1046,7 @@ auto LineStringFn::ident() const -> const FnInfo&
 auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
     if (args.size() < 1)
-        throw ArgumentCountError(*this, 1, 1, args.size());
+        raise<ArgumentCountError>(*this, 1, 1, args.size());
 
     enum {
         None,
@@ -1065,14 +1065,14 @@ auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args
 
             if (auto pt = getObject<Point<double>>(v, &meta::PointType::Type)) {
                 if (mode != Points)
-                    throw std::runtime_error("linestring: Expected value of type point; got "s + v.toString());
+                    raise<std::runtime_error>("linestring: Expected value of type point; got "s + v.toString());
 
                 floats.push_back(pt->x);
                 floats.push_back(pt->y);
             } else {
                 auto [ok, f] = getNumeric<double>(v);
                 if (!ok)
-                    throw std::runtime_error("linestring: Expected numeric value; got "s + v.toString());
+                    raise<std::runtime_error>("linestring: Expected numeric value; got "s + v.toString());
 
                 floats.push_back(f);
             }
@@ -1083,7 +1083,7 @@ auto LineStringFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args
 
     if (mode == Floats)
         if (floats.size() % 2 != 0)
-            throw std::runtime_error("linestring: Uneven number of values");
+            raise<std::runtime_error>("linestring: Uneven number of values");
 
     std::vector<Point<double>> points;
     for (auto i = 1; i < floats.size(); i += 2) {

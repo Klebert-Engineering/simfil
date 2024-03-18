@@ -53,6 +53,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/simfil.cpp
   src/value.cpp
   src/overlay.cpp
+  src/exception-handler.cpp
   src/model/model.cpp
   src/model/nodes.cpp
   src/model/fields.cpp)
@@ -73,6 +74,7 @@ target_sources(simfil PUBLIC
       include/simfil/value.h
       include/simfil/transient.h
       include/simfil/simfil.h
+      include/simfil/exception-handler.h
 
       include/simfil/model/arena.h
       include/simfil/model/fields.h

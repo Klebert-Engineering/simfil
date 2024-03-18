@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <variant>
+#include <functional>
 
 #include "arena.h"
 #include "point.h"
