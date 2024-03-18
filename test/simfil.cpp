@@ -506,4 +506,7 @@ TEST_CASE("Exception Handler", "[exception]")
     REQUIRE_THROWS(raise<std::runtime_error>("TestMessage"));
     REQUIRE(handlerCalled);
     REQUIRE(message == "TestMessage");
+
+    // Reset throw-handler, so it isn't erroneously used by other tests.
+    simfil::ThrowHandler::instance().set(nullptr);
 }
