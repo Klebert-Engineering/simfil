@@ -47,14 +47,14 @@ auto Parser::consume() -> const Token&
 {
     if (!eof())
         return tokens_[pos_++];
-    throw std::runtime_error("Parser EOF (consume)");
+    raise<std::runtime_error>("Parser EOF (consume)");
 }
 
 auto Parser::current() const -> const Token&
 {
     if (!eof())
         return tokens_[pos_];
-    throw std::runtime_error("Parser EOF (current)");
+    raise<std::runtime_error>("Parser EOF (current)");
 }
 
 auto Parser::precedence(Token token) const -> int
@@ -70,7 +70,7 @@ auto Parser::parseInfix(ExprPtr left, int prec) -> ExprPtr
         auto token = consume();
         auto parser = findInfixParser(token);
         if (!parser)
-            throw std::runtime_error("Error parsing infix expression");
+            raise<std::runtime_error>("Error parsing infix expression");
 
         left = parser->parse(*this, std::move(left), token);
     }
@@ -83,7 +83,7 @@ auto Parser::parsePrecedence(int precedence, bool optional) -> ExprPtr
     auto parser = findPrefixParser(token);
     if (!parser) {
         if (!optional)
-            throw std::runtime_error("Error parsing left expression");
+            raise<std::runtime_error>("Error parsing left expression");
         return nullptr;
     }
     consume();
@@ -101,12 +101,12 @@ auto Parser::parseTo(Token::Type type) -> ExprPtr
 {
     auto expr = parse();
     if (!expr)
-        throw std::runtime_error("Expected expression"s);
+        raise<std::runtime_error>("Expected expression"s);
 
     if (!match(type)) {
         auto msg = "Expected "s + Token::toString(type) +
             " got "s + current().toString();
-        throw std::runtime_error(msg);
+        raise<std::runtime_error>(msg);
     }
     consume();
 
@@ -129,7 +129,7 @@ auto Parser::parseList(Token::Type stop) -> std::vector<ExprPtr>
             if (match(Token::COMMA))
                 consume();
             else
-                throw std::runtime_error("Expected "s + Token::toString(stop) +
+                raise<std::runtime_error>("Expected "s + Token::toString(stop) +
                                          " got "s + current().toString());
         } else {
             consume();

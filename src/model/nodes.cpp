@@ -367,7 +367,7 @@ ModelNode::Ptr GeometryCollection::at(int64_t i) const {
         return singleGeomEntry->at(i);
     if (i == 0) return ValueNode(GeometryCollectionStr, model_);
     if (i == 1) return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Arrays, addr_.index()});
-    throw std::out_of_range("geom collection: Out of range.");
+    raise<std::out_of_range>("geom collection: Out of range.");
 }
 
 uint32_t GeometryCollection::size() const {
@@ -389,7 +389,7 @@ FieldId GeometryCollection::keyAt(int64_t i) const {
         return singleGeomEntry->keyAt(i);
     if (i == 0) return Fields::Type;
     if (i == 1) return Fields::Geometries;
-    throw std::out_of_range("geom collection: Out of range.");
+    raise<std::out_of_range>("geom collection: Out of range.");
 }
 
 shared_model_ptr<Geometry> GeometryCollection::newGeometry(Geometry::GeomType type, size_t initialCapacity) {
@@ -449,7 +449,7 @@ ModelNode::Ptr Geometry::at(int64_t i) const {
             model_);
     if (i == 1) return ModelNode::Ptr::make(
         model_, ModelNodeAddress{ModelPool::PointBuffers, addr_.index()});
-    throw std::out_of_range("geom: Out of range.");
+    raise<std::out_of_range>("geom: Out of range.");
 }
 
 uint32_t Geometry::size() const {
@@ -465,13 +465,13 @@ ModelNode::Ptr Geometry::get(const FieldId& f) const {
 FieldId Geometry::keyAt(int64_t i) const {
     if (i == 0) return Fields::Type;
     if (i == 1) return Fields::Coordinates;
-    throw std::out_of_range("geom: Out of range.");
+    raise<std::out_of_range>("geom: Out of range.");
 }
 
 void Geometry::append(geo::Point<double> const& p)
 {
     if (geomData_->isView_)
-        throw std::runtime_error("Cannot append to geometry view.");
+        raise<std::runtime_error>("Cannot append to geometry view.");
 
     auto& geomData = geomData_->detail_.geom_;
 
@@ -538,7 +538,7 @@ VertexBufferNode::VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr
 
         auto maxSize = 1 + storage_->size(baseGeomData_->detail_.geom_.vertexArray_);
         if (offset_ + size_ > maxSize)
-            throw std::runtime_error("Geometry view is out of bounds.");
+            raise<std::runtime_error>("Geometry view is out of bounds.");
     }
     else {
         // Just get the correct length.
@@ -553,7 +553,7 @@ ValueType VertexBufferNode::type() const {
 
 ModelNode::Ptr VertexBufferNode::at(int64_t i) const {
     if (i < 0 || i >= size())
-        throw std::out_of_range("vertex-buffer: Out of range.");
+        raise<std::out_of_range>("vertex-buffer: Out of range.");
     i += offset_;
     return ModelNode::Ptr::make(model_, ModelNodeAddress{ModelPool::Points, baseGeomAddress_.index()}, i);
 }
@@ -591,7 +591,7 @@ VertexNode::VertexNode(ModelNode const& baseNode, Geometry::Data const* geomData
     : MandatoryModelPoolNodeBase(baseNode)
 {
     if (geomData->isView_)
-        throw std::runtime_error("Point must be constructed through VertexBuffer which resolves view to geometry.");
+        raise<std::runtime_error>("Point must be constructed through VertexBuffer which resolves view to geometry.");
     auto i = std::get<int64_t>(data_);
     point_ = geomData->detail_.geom_.offset_;
     if (i > 0)
@@ -606,7 +606,7 @@ ModelNode::Ptr VertexNode::at(int64_t i) const {
     if (i == 0) return shared_model_ptr<ValueNode>::make(point_.x, model_);
     if (i == 1) return shared_model_ptr<ValueNode>::make(point_.y, model_);
     if (i == 2) return shared_model_ptr<ValueNode>::make(point_.z, model_);
-    throw std::out_of_range("vertex: Out of range.");
+    raise<std::out_of_range>("vertex: Out of range.");
 }
 
 uint32_t VertexNode::size() const {
@@ -624,7 +624,7 @@ FieldId VertexNode::keyAt(int64_t i) const {
     if (i == 0) return Fields::Lon;
     if (i == 1) return Fields::Lat;
     if (i == 2) return Fields::Elevation;
-    throw std::out_of_range("vertex: Out of range.");
+    raise<std::out_of_range>("vertex: Out of range.");
 }
 
 bool VertexNode::iterate(const IterCallback& cb) const

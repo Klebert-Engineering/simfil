@@ -3,6 +3,7 @@
 #pragma once
 
 #include "simfil/value.h"
+#include "exception-handler.h"
 
 #include <cstdint>
 #include <string_view>
@@ -428,28 +429,28 @@ struct OperatorDiv
     auto operator()(int64_t l, int64_t r) const -> int64_t
     {
         if (r == 0)
-            throw std::runtime_error("Division by zero");
+            raise<std::runtime_error>("Division by zero");
         return static_cast<int64_t>(l / r);
     }
 
     auto operator()(int64_t l, double r) const -> double
     {
         if (r == 0)
-            throw std::runtime_error("Division by zero");
+            raise<std::runtime_error>("Division by zero");
         return static_cast<double>(l / r);
     }
 
     auto operator()(double l, int64_t r) const -> double
     {
         if (r == 0)
-            throw std::runtime_error("Division by zero");
+            raise<std::runtime_error>("Division by zero");
         return static_cast<double>(l / r);
     }
 
     auto operator()(double l, double r) const -> double
     {
         if (r == 0)
-            throw std::runtime_error("Division by zero");
+            raise<std::runtime_error>("Division by zero");
         return static_cast<double>(l / r);
     }
 };
@@ -463,7 +464,7 @@ struct OperatorMod
     auto operator()(int64_t l, int64_t r) const -> int64_t
     {
         if (r == 0)
-            throw std::runtime_error("Division by zero");
+            raise<std::runtime_error>("Division by zero");
         return static_cast<int64_t>(l % r);
     }
 };
@@ -701,7 +702,7 @@ inline Value makeOperatorResult(Value value)
 template <class _Operator>
 inline Value makeOperatorResult(InvalidOperands)
 {
-    throw InvalidOperandsError(_Operator::name());
+    raise<InvalidOperandsError>(_Operator::name());
 }
 
 }
@@ -725,7 +726,7 @@ struct UnaryOperatorDispatcher
             } catch (...) {
                 ltype = valueType2String(value.type);
             }
-            throw std::runtime_error("Invalid operand "s + ltype +
+            raise<std::runtime_error>("Invalid operand "s + ltype +
                                      " for operator "s + std::string(err.operatorName));
         }
     }
@@ -794,7 +795,7 @@ struct BinaryOperatorDispatcher
                 ltype = valueType2String(lhs.type);
                 rtype = valueType2String(rhs.type);
             }
-            throw std::runtime_error("Invalid operands "s + ltype +
+            raise<std::runtime_error>("Invalid operands "s + ltype +
                                      " and "s + rtype +
                                      " for operator "s + std::string(err.operatorName));
         }

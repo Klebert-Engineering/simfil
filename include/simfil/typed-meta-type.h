@@ -4,6 +4,7 @@
 
 #include "value.h"
 #include "operator.h"
+#include "exception-handler.h"
 
 namespace simfil
 {
@@ -75,7 +76,7 @@ struct TypedMetaType : MetaType
 
     virtual auto unpack(const Type&, std::function<bool(Value)> fn) const -> void
     {
-        throw InvalidOperandsError("...");
+        raise<InvalidOperandsError>("...");
     }
 };
 

@@ -1,4 +1,5 @@
 #include "simfil/model/fields.h"
+#include "simfil/exception-handler.h"
 
 #include <algorithm>
 #include <bitsery/bitsery.h>
@@ -193,7 +194,7 @@ void Fields::read(std::istream& inputStream)
     }
 
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
-        throw std::runtime_error(fmt::format(
+        raise<std::runtime_error>(fmt::format(
             "Failed to read Fields: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }

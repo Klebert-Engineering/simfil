@@ -38,7 +38,7 @@ void Model::resolve(const ModelNode& n, const ResolveFn& cb) const
             cb(ValueNode(n));
             break;
         default:
-            throw std::runtime_error(fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
+            raise<std::runtime_error>(fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
     }
 }
 
@@ -174,7 +174,7 @@ void ModelPool::validate() const
 {
     auto errors = checkForErrors();
     if (!errors.empty()) {
-        throw std::runtime_error(
+        raise<std::runtime_error>(
             fmt::format("Model Error(s): {}", fmt::join(errors, ", ")));
     }
 }
@@ -203,7 +203,7 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
     auto get = [&n](auto const& vec) -> auto& {
         auto idx = n.addr_.index();
         if (idx >= vec.size())
-            throw std::runtime_error(
+            raise<std::runtime_error>(
                 fmt::format(
                     "Bad node reference: col={}, i={}",
                     (uint16_t)n.addr_.column(), idx
@@ -267,7 +267,7 @@ size_t ModelPool::numRoots() const {
 
 ModelNode::Ptr ModelPool::root(size_t const& i) const {
     if (i < 0 || i > impl_->columns_.roots_.size())
-        throw std::runtime_error("Root index does not exist.");
+        raise<std::runtime_error>("Root index does not exist.");
     return ModelNode(shared_from_this(), impl_->columns_.roots_[i]);
 }
 
@@ -365,28 +365,28 @@ shared_model_ptr<Geometry> ModelPool::newGeometryView(
 
 shared_model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
     if (n->addr_.column() != Objects)
-        throw std::runtime_error("Cannot cast this node to an object.");
+        raise<std::runtime_error>("Cannot cast this node to an object.");
     return Object(shared_from_this(), n->addr_);
 }
 
 shared_model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
 {
     if (n->addr_.column() != Arrays)
-        throw std::runtime_error("Cannot cast this node to an array.");
+        raise<std::runtime_error>("Cannot cast this node to an array.");
     return Array(shared_from_this(), n->addr_);
 }
 
 shared_model_ptr<GeometryCollection> ModelPool::resolveGeometryCollection(ModelNode::Ptr const& n) const
 {
     if (n->addr_.column() != GeometryCollections)
-        throw std::runtime_error("Cannot cast this node to a GeometryCollection.");
+        raise<std::runtime_error>("Cannot cast this node to a GeometryCollection.");
     return GeometryCollection(shared_from_this(), n->addr_);
 }
 
 shared_model_ptr<Geometry> ModelPool::resolveGeometry(ModelNode::Ptr const& n) const
 {
     if (n->addr_.column() != Geometries)
-        throw std::runtime_error("Cannot cast this node to a Geometry.");
+        raise<std::runtime_error>("Cannot cast this node to a Geometry.");
     auto& geomData = impl_->columns_.geom_[n->addr_.index()];
     return Geometry(&geomData, shared_from_this(), n->addr_);
 }
@@ -429,7 +429,7 @@ void ModelPool::read(std::istream& inputStream) {
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
     impl_->readWrite(s);
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
-        throw std::runtime_error(fmt::format(
+        raise<std::runtime_error>(fmt::format(
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }

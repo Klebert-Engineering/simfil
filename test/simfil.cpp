@@ -1,4 +1,5 @@
 #include "simfil/simfil.h"
+#include "simfil/exception-handler.h"
 #include "simfil/model/json.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -490,4 +491,19 @@ TEST_CASE("Switch Model Fields Dict", "[model.setfieldnames]")
     REQUIRE(pool->fieldNames() == oldFieldDict);
     REQUIRE_NOTHROW(pool->validate());
     REQUIRE(oldFieldDict->size() != newFieldDict->size());
+}
+
+TEST_CASE("Exception Handler", "[exception]")
+{
+    bool handlerCalled = false;
+    std::string message;
+
+    simfil::ThrowHandler::instance().set([&](auto&& type, auto&& msg){
+        handlerCalled = true;
+        message = msg;
+    });
+
+    REQUIRE_THROWS(raise<std::runtime_error>("TestMessage"));
+    REQUIRE(handlerCalled);
+    REQUIRE(message == "TestMessage");
 }

@@ -35,7 +35,7 @@ auto IRangeType::unaryOp(std::string_view op, const IRange& self) const -> Value
     if (op == OperatorLen::name())
         return Value::make((int64_t)self.high() - self.low());
 
-    throw InvalidOperandsError(op);
+    raise<InvalidOperandsError>(op);
 }
 
 auto IRangeType::binaryOp(std::string_view op, const IRange& l, const Value& r) const -> Value
@@ -62,7 +62,7 @@ auto IRangeType::binaryOp(std::string_view op, const IRange& l, const Value& r) 
             return Value::make(l.begin == o->begin && l.end == o->end);
     }
 
-    throw InvalidOperandsError(op);
+    raise<InvalidOperandsError>(op);
 }
 
 auto IRangeType::binaryOp(std::string_view op, const Value& l, const IRange& r) const -> Value
@@ -70,7 +70,7 @@ auto IRangeType::binaryOp(std::string_view op, const Value& l, const IRange& r) 
     if (op == OperatorEq::name() || op == OperatorNeq::name())
         return binaryOp(op, r, l);
 
-    throw InvalidOperandsError(op);
+    raise<InvalidOperandsError>(op);
 }
 
 auto IRangeType::unpack(const IRange& self, std::function<bool(Value)> res) const -> void
