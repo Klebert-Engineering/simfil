@@ -22,26 +22,19 @@ class ThrowHandler
 {
 public:
     // Retrieves the singleton instance of the ThrowHandler
-    static ThrowHandler& instance() {
-        static ThrowHandler instance;
-        return instance;
-    }
+    static ThrowHandler& instance();
 
     // Prevent copying and assignment
     ThrowHandler(const ThrowHandler&) = delete;
     ThrowHandler& operator=(const ThrowHandler&) = delete;
 
-    void set(CustomThrowHandlerType handler) {
-        customThrowHandler_ = std::move(handler);
-    }
+    void set(CustomThrowHandlerType handler);
 
-    [[nodiscard]] CustomThrowHandlerType const& get() const {
-        return customThrowHandler_;
-    }
+    [[nodiscard]] CustomThrowHandlerType const& get() const;
 
 private:
     CustomThrowHandlerType customThrowHandler_;
-    ThrowHandler() = default; // Private constructor for singleton
+    ThrowHandler() = default; // Private constructor for singleton.
 };
 
 
