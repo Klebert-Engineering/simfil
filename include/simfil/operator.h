@@ -362,12 +362,12 @@ struct OperatorAdd
 
     auto operator()(const std::string& l, NullType) const -> Value
     {
-        return Value::null();
+        return Value::make(l + "null"s);
     }
 
     auto operator()(NullType, const std::string& r) const -> Value
     {
-        return Value::null();
+        return Value::make("null"s + r);
     }
 
     auto operator()(const std::string& l, const ModelNode&) const -> Value

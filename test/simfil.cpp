@@ -56,8 +56,8 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     CHECK_THROWS(getASTString("1%0"));
 
     /* String */
-    REQUIRE_AST("'a'+null", "null");
-    REQUIRE_AST("null+'a'", "null");
+    REQUIRE_AST("'a'+null", "\"anull\"");
+    REQUIRE_AST("null+'a'", "\"nulla\"");
 
     /* Comparison */
     REQUIRE_AST("1==1", "true");
