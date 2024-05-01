@@ -101,7 +101,7 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("123.1 as string", "\"123.100000\"");
     REQUIRE_AST("true as string",  "\"true\"");
     REQUIRE_AST("false as string", "\"false\"");
-    REQUIRE_AST("null as string",  "\"\"");
+    REQUIRE_AST("null as string",  "\"null\"");
     REQUIRE_AST("range(1,3) as string", "\"1..3\"");
 
     /* Unpack */

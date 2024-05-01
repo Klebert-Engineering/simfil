@@ -299,7 +299,7 @@ struct OperatorAsString
         return std::to_string(v);
     }
 
-    NULL_AS(""s);
+    NULL_AS("null"s);
 };
 
 #undef DENY_OTHER
