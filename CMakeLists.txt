@@ -49,7 +49,6 @@ add_library(simfil ${LIBRARY_TYPE}
   src/parser.cpp
   src/token.cpp
   src/types.cpp
-  src/ext-geo.cpp
   src/simfil.cpp
   src/value.cpp
   src/overlay.cpp
@@ -64,7 +63,6 @@ target_sources(simfil PUBLIC
     FILES
       include/simfil/environment.h
       include/simfil/expression.h
-      include/simfil/ext-geo.h
       include/simfil/function.h
       include/simfil/operator.h
       include/simfil/parser.h
