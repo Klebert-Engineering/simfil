@@ -353,22 +353,6 @@ TEST_CASE("Value Expansion", "[yaml.value-expansion]") {
     }
 }
 
-TEST_CASE("GeoJSON", "[geojson.geo]") {
-    SECTION("Construct Geometry") {
-        REQUIRE_RESULT("typeof geo()",                       "null");
-        REQUIRE_RESULT("typeof geo(_)",                      "null");
-        REQUIRE_RESULT("typeof geo(geoPoint)",               "point");
-        REQUIRE_RESULT("typeof geo(geoPoint.geometry)",      "point");
-        REQUIRE_RESULT("typeof geoPoint.geo()",              "point");
-        REQUIRE_RESULT("typeof geo(geoLineString)",          "linestring");
-        REQUIRE_RESULT("typeof geo(geoLineString.geometry)", "linestring");
-        REQUIRE_RESULT("typeof geoLineString.geo()",         "linestring");
-        REQUIRE_RESULT("typeof geo(geoPolygon)",             "polygon");
-        REQUIRE_RESULT("typeof geo(geoPolygon.geometry)",    "polygon");
-        REQUIRE_RESULT("typeof geoPolygon.geo()",            "polygon");
-    }
-}
-
 TEST_CASE("Model Pool Validation", "[model.validation]") {
     auto pool = std::make_shared<ModelPool>();
 

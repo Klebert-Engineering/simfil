@@ -107,7 +107,6 @@ The repl provides some extra commands for testing queries:
 
 ## Extending the Language
 The query language can be extended by additional functions and addititonal types.
-For an example of how to add new types to `simfil`, see [ext-geo.h](include/simfil/ext-geo.h).
 
 ## Using the Library
 ### Conan Package

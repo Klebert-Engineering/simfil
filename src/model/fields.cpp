@@ -11,7 +11,8 @@
 namespace simfil
 {
 
-Fields::Fields() {
+Fields::Fields()
+{
     addStaticKey(Empty, "");
     addStaticKey(Lon, "lon");
     addStaticKey(Lat, "lat");
