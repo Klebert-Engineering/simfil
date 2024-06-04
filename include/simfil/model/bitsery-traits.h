@@ -9,7 +9,6 @@
 
 #include "nodes.h"
 #include "arena.h"
-#include "point.h"
 
 namespace bitsery
 {
@@ -34,20 +33,6 @@ template <typename S>
 void serialize(S& s, int64_t& v)
 {
     s.value8b(v);
-}
-
-template <typename S>
-void serialize(S& s, simfil::geo::Point<float>& v) {
-    s.value4b(v.x);
-    s.value4b(v.y);
-    s.value4b(v.z);
-}
-
-template <typename S>
-void serialize(S& s, simfil::geo::Point<double>& v) {
-    s.value8b(v.x);
-    s.value8b(v.y);
-    s.value8b(v.z);
 }
 
 template <typename S>

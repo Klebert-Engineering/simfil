@@ -5,7 +5,6 @@
 #include <functional>
 
 #include "arena.h"
-#include "point.h"
 #include "fields.h"
 
 #include <sfl/small_vector.hpp>
@@ -417,9 +416,10 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 struct Array : public MandatoryModelPoolNodeBase
 {
+    using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
+
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
-    friend struct GeometryCollection;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -445,8 +445,6 @@ struct Array : public MandatoryModelPoolNodeBase
     Array& extend(shared_model_ptr<Array> const& other);
 
 protected:
-    using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
-
     Array() = default;
     Array(ModelConstPtr pool, ModelNodeAddress);
 
