@@ -393,7 +393,7 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
         {
             fields_.emplace_back(
                 StaticTestKey,
-                [] (const auto& self) { return shared_model_ptr<ValueNode>::make(std::string_view("static"), self.model_); });
+                [] (const auto& self) { return shared_model_ptr<ValueNode>::make(std::string_view("static"), self.model_); }); //NOSONAR
         }
     };
 

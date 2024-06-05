@@ -108,7 +108,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
     std::vector<std::string> errors;
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
-        if (i < 0 || i >= arena.size()) {
+        if ((i < 0) || (i >= arena.size())) {
             errors.emplace_back(fmt::format("Bad {} array index {}.", arrType, i));
             return false;
         }
@@ -239,9 +239,9 @@ size_t ModelPool::numRoots() const {
 }
 
 ModelNode::Ptr ModelPool::root(size_t const& i) const {
-    if (i < 0 || i > impl_->columns_.roots_.size())
+    if ((i < 0) || (i >= impl_->columns_.roots_.size()))
         raise<std::runtime_error>("Root index does not exist.");
-    return ModelNode(shared_from_this(), impl_->columns_.roots_[i]);
+    return ModelNode(shared_from_this(), impl_->columns_.roots_.at(i));
 }
 
 void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
