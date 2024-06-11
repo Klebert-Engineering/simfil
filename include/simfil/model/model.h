@@ -4,12 +4,10 @@
 
 #include "simfil/value.h"
 
-#include <algorithm>
 #include <memory>
 #include <vector>
 #include <istream>
 #include <ostream>
-#include <optional>
 
 #include "nodes.h"
 

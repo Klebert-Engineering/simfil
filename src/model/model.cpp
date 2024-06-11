@@ -1,11 +1,7 @@
 #include "simfil/model/model.h"
 #include "simfil/model/arena.h"
-#include "simfil/value.h"
-#include "simfil/overlay.h"
 #include "simfil/model/bitsery-traits.h"
 
-#include <algorithm>
-#include <atomic>
 #include <memory>
 #include <vector>
 
