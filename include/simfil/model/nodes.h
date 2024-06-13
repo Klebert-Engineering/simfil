@@ -261,7 +261,7 @@ struct ModelNode
         FieldIterator& operator++() { ++index; return *this; }
         bool operator==(const FieldIterator& other) const { return index == other.index; }
         bool operator!=(const FieldIterator& other) const { return index != other.index; }
-        std::pair<FieldId, Ptr> operator*() const { return std::make_pair(parent->keyAt(index), parent->get(parent->keyAt(index))); }
+        std::pair<FieldId, Ptr> operator*() const { return std::make_pair(parent->keyAt(index), parent->at(index)); }
     };
     class FieldRange
     {
