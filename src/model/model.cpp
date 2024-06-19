@@ -1,11 +1,7 @@
 #include "simfil/model/model.h"
 #include "simfil/model/arena.h"
-#include "simfil/value.h"
-#include "simfil/overlay.h"
 #include "simfil/model/bitsery-traits.h"
 
-#include <algorithm>
-#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -74,9 +70,6 @@ struct ModelPool::Impl
 
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
-
-        sfl::segmented_vector<Geometry::Data, detail::ColumnPageSize> geom_;
-        Geometry::Storage vertexBuffers_;
     } columns_;
 
     template<typename S>
@@ -92,9 +85,6 @@ struct ModelPool::Impl
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
-
-        s.container(columns_.geom_, maxColumnSize);
-        s.ext(columns_.vertexBuffers_, bitsery::ext::ArrayArenaExt{});
     }
 };
 
@@ -114,7 +104,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
     std::vector<std::string> errors;
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
-        if (i < 0 || i >= arena.size()) {
+        if ((i < 0) || (i >= arena.size())) {
             errors.emplace_back(fmt::format("Bad {} array index {}.", arrType, i));
             return false;
         }
@@ -194,8 +184,6 @@ void ModelPool::clear()
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
-    clear_and_shrink(columns.geom_);
-    clear_and_shrink(columns.vertexBuffers_);
 }
 
 void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
@@ -238,25 +226,6 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
             shared_from_this()));
         break;
     }
-    case Points: {
-        auto& val = get(impl_->columns_.geom_);
-        cb(VertexNode(n, &val));
-        break;
-    }
-    case PointBuffers: {
-        auto& val = get(impl_->columns_.geom_);
-        cb(VertexBufferNode(&val, shared_from_this(), n.addr_));
-        break;
-    }
-    case Geometries: {
-        auto& val = get(impl_->columns_.geom_);
-        cb(Geometry(&const_cast<Geometry::Data&>(val), shared_from_this(), n.addr_));
-        break;
-    }
-    case GeometryCollections: {
-        cb(GeometryCollection(shared_from_this(), n.addr_));
-        break;
-    }
     default: Model::resolve(n, cb);
     }
 }
@@ -266,9 +235,9 @@ size_t ModelPool::numRoots() const {
 }
 
 ModelNode::Ptr ModelPool::root(size_t const& i) const {
-    if (i < 0 || i > impl_->columns_.roots_.size())
+    if ((i < 0) || (i >= impl_->columns_.roots_.size()))
         raise<std::runtime_error>("Root index does not exist.");
-    return ModelNode(shared_from_this(), impl_->columns_.roots_[i]);
+    return ModelNode(shared_from_this(), impl_->columns_.roots_.at(i));
 }
 
 void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
@@ -332,37 +301,6 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
-shared_model_ptr<GeometryCollection> ModelPool::newGeometryCollection(size_t initialCapacity)
-{
-    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialCapacity);
-    return GeometryCollection(
-        shared_from_this(),
-        {GeometryCollections, (uint32_t)memberArrId});
-}
-
-shared_model_ptr<Geometry> ModelPool::newGeometry(Geometry::GeomType geomType, size_t initialCapacity)
-{
-    initialCapacity = std::max((size_t)1, initialCapacity);
-    impl_->columns_.geom_.emplace_back(geomType, initialCapacity);
-    return Geometry(
-        &impl_->columns_.geom_.back(),
-        shared_from_this(),
-        {Geometries, (uint32_t)impl_->columns_.geom_.size()-1});
-}
-
-shared_model_ptr<Geometry> ModelPool::newGeometryView(
-    Geometry::GeomType geomType,
-    uint32_t offset,
-    uint32_t size,
-    const shared_model_ptr<Geometry>& base)
-{
-    impl_->columns_.geom_.emplace_back(geomType, offset, size, base->addr_);
-    return Geometry(
-        &impl_->columns_.geom_.back(),
-        shared_from_this(),
-        {Geometries, (uint32_t)impl_->columns_.geom_.size()-1});
-}
-
 shared_model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
     if (n->addr_.column() != Objects)
         raise<std::runtime_error>("Cannot cast this node to an object.");
@@ -374,21 +312,6 @@ shared_model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
     if (n->addr_.column() != Arrays)
         raise<std::runtime_error>("Cannot cast this node to an array.");
     return Array(shared_from_this(), n->addr_);
-}
-
-shared_model_ptr<GeometryCollection> ModelPool::resolveGeometryCollection(ModelNode::Ptr const& n) const
-{
-    if (n->addr_.column() != GeometryCollections)
-        raise<std::runtime_error>("Cannot cast this node to a GeometryCollection.");
-    return GeometryCollection(shared_from_this(), n->addr_);
-}
-
-shared_model_ptr<Geometry> ModelPool::resolveGeometry(ModelNode::Ptr const& n) const
-{
-    if (n->addr_.column() != Geometries)
-        raise<std::runtime_error>("Cannot cast this node to a Geometry.");
-    auto& geomData = impl_->columns_.geom_[n->addr_.index()];
-    return Geometry(&geomData, shared_from_this(), n->addr_);
 }
 
 std::shared_ptr<Fields> ModelPool::fieldNames() const
@@ -414,10 +337,6 @@ Object::Storage& ModelPool::objectMemberStorage() {
 
 Array::Storage& ModelPool::arrayMemberStorage() {
     return impl_->columns_.arrayMemberArrays_;
-}
-
-Geometry::Storage& ModelPool::vertexBufferStorage() {
-    return impl_->columns_.vertexBuffers_;
 }
 
 void ModelPool::write(std::ostream& outputStream) {

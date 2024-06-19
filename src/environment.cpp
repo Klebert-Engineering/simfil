@@ -1,6 +1,5 @@
 #include "simfil/environment.h"
 #include "simfil/function.h"
-#include "simfil/ext-geo.h"
 
 namespace simfil
 {
@@ -25,13 +24,6 @@ Environment::Environment(std::shared_ptr<Fields> fieldNames)
     functions["sum"]    = &SumFn::Fn;
     functions["keys"]   = &KeysFn::Fn;
     functions["trace"]  = &TraceFn::Fn;
-
-    /* GeoJSON Extension */
-    functions["geo"]        = &geo::GeoFn::Fn;
-    functions["point"]      = &geo::PointFn::Fn;
-    functions["bbox"]       = &geo::BBoxFn::Fn;
-    functions["linestring"] = &geo::LineStringFn::Fn;
-    //functions["polygon"]    = &geo::PolygonFn::Fn;
 }
 
 Environment::Environment(NewStringCache_) :

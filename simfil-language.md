@@ -1,7 +1,7 @@
 # Simple Map Filter Language
 
 The “Simple Map Filter Language” – short “simfil” – is a query language for
-structured data built for use with GeoJSON.
+structured data.
 
 ## Language Basics
 
@@ -284,51 +284,3 @@ Returns all sub-element keys of object `object`
 ```
 keys(a.b) => 'c', 'd', ...
 ```
-
-# Working with GeoJSON
-
-The query language has native support for GeoJSON types.
-GeoJSON objects implement the following operators:
-- `within` To check whether the left value is enclosed by the right object
-- `contains` To check if the left value contains the right value
-- `intersects` To check if two objects intersect
-
-*Example*
-```
--- Check if a bbox contains a point
-bbox(0, 0, 10, 10) contains point(1, 1) => true
-
--- Check whether the current feature intersects a bounding box
-geo() intersects bbox(11, 11, 12, 12)
-```
-
-## Functions
-
-### `geo([obj])`
-
-Returns the GeoJSON object at `obj` (defaults to `_`).
-The following types are supported:
-- Point
-- LineString
-- Polygon
-
-The following types are returned as multiple values:
-- MultiPoint
-- MultiLineString
-- MultiPolygon
-
-### `point(x, y)`
-
-Returns a GeoJSON `point` object.
-
-### `bbox(x1, y1, x2, y2)`
-
-Returns a bounding box `bbox` object.
-
-### `linestring(<x, y>...)`
-
-Returns a GeoJSON `linestring` object.
-
-### `polygon(<x, y>...)` NOT YET IMPLEMENTED
-
-Returns a GeoJSON `polygon` object.

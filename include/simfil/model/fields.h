@@ -24,16 +24,9 @@ struct Fields
 {
     enum StaticFieldIds: FieldId {
         Empty = 0,
-        Lon,
-        Lat,
         OverlaySum,
         OverlayValue,
         OverlayIndex,
-        Geometry,
-        Geometries,
-        Type,
-        Coordinates,
-        Elevation,
 
         NextStaticId,
         FirstDynamicId = 128

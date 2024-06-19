@@ -6,7 +6,6 @@ add_executable(test.simfil
   token.cpp
   simfil.cpp
   complex.cpp
-  ext-geo.cpp
   performance.cpp
   arena.cpp)
 

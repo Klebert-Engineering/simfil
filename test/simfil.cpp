@@ -6,6 +6,9 @@
 
 using namespace simfil;
 
+static const auto StaticTestKey = Fields::NextStaticId;
+
+
 static auto getASTString(std::string_view input)
 {
     Environment env(Environment::WithNewStringCache);
@@ -353,22 +356,6 @@ TEST_CASE("Value Expansion", "[yaml.value-expansion]") {
     }
 }
 
-TEST_CASE("GeoJSON", "[geojson.geo]") {
-    SECTION("Construct Geometry") {
-        REQUIRE_RESULT("typeof geo()",                       "null");
-        REQUIRE_RESULT("typeof geo(_)",                      "null");
-        REQUIRE_RESULT("typeof geo(geoPoint)",               "point");
-        REQUIRE_RESULT("typeof geo(geoPoint.geometry)",      "point");
-        REQUIRE_RESULT("typeof geoPoint.geo()",              "point");
-        REQUIRE_RESULT("typeof geo(geoLineString)",          "linestring");
-        REQUIRE_RESULT("typeof geo(geoLineString.geometry)", "linestring");
-        REQUIRE_RESULT("typeof geoLineString.geo()",         "linestring");
-        REQUIRE_RESULT("typeof geo(geoPolygon)",             "polygon");
-        REQUIRE_RESULT("typeof geo(geoPolygon.geometry)",    "polygon");
-        REQUIRE_RESULT("typeof geoPolygon.geo()",            "polygon");
-    }
-}
-
 TEST_CASE("Model Pool Validation", "[model.validation]") {
     auto pool = std::make_shared<ModelPool>();
 
@@ -398,14 +385,15 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
 
 TEST_CASE("Procedural Object Node", "[model.procedural]") {
     auto pool = std::make_shared<ModelPool>();
+    pool->fieldNames()->addStaticKey(StaticTestKey, "test");
 
     struct DerivedProceduralObject : public ProceduralObject<2, DerivedProceduralObject> {
         DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
             : ProceduralObject<2, DerivedProceduralObject>((ArrayIndex)a.index(), std::move(pool), a)
         {
             fields_.emplace_back(
-                Fields::StaticFieldIds::Elevation,
-                [] (auto&& self) { return shared_model_ptr<ValueNode>::make(std::string_view("high"), self.model_); });
+                StaticTestKey,
+                [] (const auto& self) { return shared_model_ptr<ValueNode>::make(std::string_view("static"), self.model_); }); //NOSONAR
         }
     };
 
@@ -414,7 +402,7 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
 
     auto proceduralObj = shared_model_ptr<DerivedProceduralObject>::make(pool, baseObj->addr());
     REQUIRE(proceduralObj->get(pool->fieldNames()->get("mood"))->value() == ScalarValueType(std::string_view("blue")));
-    REQUIRE(proceduralObj->get(Fields::Elevation)->value() == ScalarValueType(std::string_view("high")));
+    REQUIRE(proceduralObj->get(StaticTestKey)->value() == ScalarValueType(std::string_view("static")));
 }
 
 TEST_CASE("Object/Array Extend", "[model.extend]") {

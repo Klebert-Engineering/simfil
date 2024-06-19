@@ -5,7 +5,6 @@
 #include <functional>
 
 #include "arena.h"
-#include "point.h"
 #include "fields.h"
 
 #include <sfl/small_vector.hpp>
@@ -417,9 +416,10 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 struct Array : public MandatoryModelPoolNodeBase
 {
+    using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
+
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
-    friend struct GeometryCollection;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -445,8 +445,6 @@ struct Array : public MandatoryModelPoolNodeBase
     Array& extend(shared_model_ptr<Array> const& other);
 
 protected:
-    using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
-
     Array() = default;
     Array(ModelConstPtr pool, ModelNodeAddress);
 
@@ -565,245 +563,5 @@ protected:
         std::pair<FieldId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
         MaxProceduralFields> fields_;
 };
-
-/**
- * Geometry object, which stores a point collection, a line-string,
- * or a triangle mesh.
- */
-
-struct Geometry final : public MandatoryModelPoolNodeBase
-{
-    template<typename> friend struct shared_model_ptr;
-    friend class ModelPool;
-    friend struct VertexNode;
-    friend struct VertexBufferNode;
-
-    enum class GeomType: uint8_t {
-        Points,   // Point-cloud
-        Line,     // Line-string
-        Polygon,  // Auto-closed polygon
-        Mesh      // Collection of triangles
-    };
-
-    [[nodiscard]] ValueType type() const override;
-    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
-    [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
-    [[nodiscard]] FieldId keyAt(int64_t) const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
-
-    /** Add a point to the Geometry. */
-    void append(geo::Point<double> const& p);
-
-    /** Get the type of the geometry. */
-    [[nodiscard]] GeomType geomType() const;
-
-    /** Get the number of points in the geometry buffer. */
-    [[nodiscard]] size_t numPoints() const;
-
-    /** Get a point at an index. */
-    [[nodiscard]] geo::Point<double> pointAt(size_t index) const;
-
-    /** Iterate over all Points in the geometry.
-     * @param callback Function which is called for each contained point.
-     *  Must return true to continue iteration, false to abort iteration.
-     * @return True if all points were visited, false if the callback ever returned false.
-     * @example
-     *   collection->forEachPoint([](simfil::geo::Point<double>&& point){
-     *      std::cout << point.x() << "," << point.y() << "," << point.z() << std::endl;
-     *      return true;
-     *   })
-     * @note The ModelType must also be templated here, because in this header
-     *  the class only exists in a predeclared form.
-     */
-    template <typename LambdaType, class ModelType=ModelPool>
-    bool forEachPoint(LambdaType const& callback) const;
-
-protected:
-    struct Data
-    {
-        Data() = default;
-        Data(GeomType t, size_t capacity) : isView_(false), type_(t) {
-            detail_.geom_.vertexArray_ = -(ArrayIndex)capacity;
-        }
-        Data(GeomType t, uint32_t offset, uint32_t size, ModelNodeAddress base) : isView_(true), type_(t) {
-            detail_.view_.offset_ = offset;
-            detail_.view_.size_ = size;
-            detail_.view_.baseGeometry_ = base;
-        }
-
-        // Flag to indicate whether this geometry is just
-        // a view into another geometry object.
-        bool isView_ = false;
-
-        // Geometry type. A view can have a different geometry type
-        // than the base geometry.
-        GeomType type_ = GeomType::Points;
-
-        union GeomDetails
-        {
-            GeomDetails() {new(&geom_) GeomBaseDetails();}
-
-            struct GeomBaseDetails {
-                // Vertex array index, or negative requested initial
-                // capacity, if no point is added yet.
-                ArrayIndex vertexArray_ = -1;
-
-                // Offset is set when vertexArray is allocated,
-                // which happens when the first point is added.
-                geo::Point<double> offset_;
-            } geom_;
-
-            struct GeomViewDetails {
-                // If this geometry is a view, then it references
-                // a range of vertices in another geometry.
-
-                // Offset within the other geometry.
-                uint32_t offset_ = 0;
-
-                // Number of referenced vertices.
-                uint32_t size_ = 0;
-
-                // Address of the referenced geometry - may be a view itself.
-                ModelNodeAddress baseGeometry_;
-            } view_;
-        } detail_;
-
-        template<typename S>
-        void serialize(S& s) {
-            s.value1b(isView_);
-            s.value1b(type_);
-            if (!isView_) {
-                s.value4b(detail_.geom_.vertexArray_);
-                s.object(detail_.geom_.offset_);
-            }
-            else {
-                s.value4b(detail_.view_.offset_);
-                s.value4b(detail_.view_.size_);
-                s.object(detail_.view_.baseGeometry_);
-            }
-        }
-    };
-
-    using Storage = ArrayArena<geo::Point<float>, detail::ColumnPageSize*2>;
-
-    Data* geomData_ = nullptr;
-    Storage* storage_ = nullptr;
-
-    Geometry() = default;
-    Geometry(Data* data, ModelConstPtr pool, ModelNodeAddress a);
-};
-
-/** GeometryCollection node has `type` and `geometries` fields. */
-
-struct GeometryCollection : public MandatoryModelPoolNodeBase
-{
-    template<typename> friend struct shared_model_ptr;
-    friend class ModelPool;
-    friend struct GeometryList;
-
-    [[nodiscard]] ValueType type() const override;
-    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
-    [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
-    [[nodiscard]] FieldId keyAt(int64_t) const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
-
-    /** Adds a new Geometry to the collection and returns a reference. */
-    shared_model_ptr<Geometry> newGeometry(Geometry::GeomType type, size_t initialCapacity=4);
-
-    /** Append an existing Geometry to the collection. */
-    void addGeometry(shared_model_ptr<Geometry> const& geom);
-
-    /** Get the number of contained geometries. */
-    [[nodiscard]] size_t numGeometries() const;
-
-    /** Iterate over all Geometries in the collection.
-     * @param callback Function which is called for each contained geometry.
-     *  Must return true to continue iteration, false to abort iteration.
-     * @return True if all geometries were visited, false if the callback ever returned false.
-     * @example
-     *   collection->forEachGeometry([](simfil::shared_model_ptr<Geometry> const& geom){
-     *      std::cout << geom->type() << std::endl;
-     *      return true;
-     *   })
-     * @note The ModelType must also be templated here, because in this header
-     *  the class only exists in a predeclared form.
-     */
-    template <typename LambdaType, class ModelType=ModelPool>
-    bool forEachGeometry(LambdaType const& callback) const {
-        auto geomArray = modelPtr<ModelType>()->arrayMemberStorage().range((ArrayIndex)addr().index());
-        return std::all_of(geomArray.begin(), geomArray.end(), [this, &callback](auto&& geomNodeAddress){
-            return callback(modelPtr<ModelType>()->resolveGeometry(ModelNode::Ptr::make(model_, geomNodeAddress)));
-        });
-    }
-
-protected:
-    ModelNode::Ptr singleGeom() const;
-
-    using Storage = Array::Storage;
-
-    GeometryCollection() = default;
-    GeometryCollection(ModelConstPtr pool, ModelNodeAddress);
-};
-
-/** VertexBuffer Node */
-
-struct VertexBufferNode final : public MandatoryModelPoolNodeBase
-{
-    template<typename> friend struct shared_model_ptr;
-    friend class ModelPool;
-    friend struct Geometry;
-
-    [[nodiscard]] ValueType type() const override;
-    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
-    [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
-    [[nodiscard]] FieldId keyAt(int64_t) const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
-
-protected:
-    VertexBufferNode() = default;
-    VertexBufferNode(Geometry::Data const* geomData, ModelConstPtr pool, ModelNodeAddress const& a);
-
-    Geometry::Data const* baseGeomData_ = nullptr;
-    ModelNodeAddress baseGeomAddress_;
-    Geometry::Storage* storage_ = nullptr;
-    uint32_t offset_ = 0;
-    uint32_t size_ = 0;
-};
-
-/** Vertex Node */
-
-struct VertexNode final : public MandatoryModelPoolNodeBase
-{
-    template<typename> friend struct shared_model_ptr;
-    friend class ModelPool;
-    friend struct Geometry;
-
-    [[nodiscard]] ValueType type() const override;
-    [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
-    [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
-    [[nodiscard]] FieldId keyAt(int64_t) const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
-
-protected:
-    VertexNode() = default;
-    VertexNode(ModelNode const& baseNode, Geometry::Data const* geomData);
-
-    geo::Point<double> point_;
-};
-
-template <typename LambdaType, class ModelType>
-bool Geometry::forEachPoint(LambdaType const& callback) const {
-    VertexBufferNode vertexBufferNode{geomData_, model_, {ModelType::PointBuffers, addr_.index()}};
-    for (auto i = 0; i < vertexBufferNode.size(); ++i) {
-        VertexNode vertex{*vertexBufferNode.at(i), vertexBufferNode.baseGeomData_};
-        if (!callback(vertex.point_))
-            return false;
-    }
-    return true;
-}
 
 }

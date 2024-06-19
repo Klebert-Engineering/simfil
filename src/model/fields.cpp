@@ -11,18 +11,12 @@
 namespace simfil
 {
 
-Fields::Fields() {
+Fields::Fields()
+{
     addStaticKey(Empty, "");
-    addStaticKey(Lon, "lon");
-    addStaticKey(Lat, "lat");
     addStaticKey(OverlaySum, "$sum");
     addStaticKey(OverlayValue, "$val");
     addStaticKey(OverlayIndex, "$idx");
-    addStaticKey(Geometry, "geometry");
-    addStaticKey(Geometries, "geometries");
-    addStaticKey(Type, "type");
-    addStaticKey(Coordinates, "coordinates");
-    addStaticKey(Elevation, "elevation");
 }
 
 Fields::Fields(const Fields& other) :

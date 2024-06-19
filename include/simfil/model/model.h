@@ -4,12 +4,10 @@
 
 #include "simfil/value.h"
 
-#include <algorithm>
 #include <memory>
 #include <vector>
 #include <istream>
 #include <ostream>
-#include <optional>
 
 #include "nodes.h"
 
@@ -67,10 +65,6 @@ class ModelPool : public Model
 {
     friend struct Object;
     friend struct Array;
-    friend struct Geometry;
-    friend struct VertexBufferNode;
-    friend struct VertexNode;
-    friend struct GeometryCollection;
 
 public:
     /**
@@ -81,10 +75,6 @@ public:
     enum ColumnId : uint8_t {
         Objects = FirstNontrivialColumnId,
         Arrays,
-        Points,
-        PointBuffers,
-        Geometries,
-        GeometryCollections,
         Int64,
         Double,
         String,
@@ -135,20 +125,9 @@ public:
     ModelNode::Ptr newValue(double const& value);
     ModelNode::Ptr newValue(std::string_view const& value);
 
-    /// Geometry(-Collection) factories
-    shared_model_ptr<GeometryCollection> newGeometryCollection(size_t initialCapacity = 1);
-    shared_model_ptr<Geometry> newGeometry(Geometry::GeomType geomType, size_t initialCapacity = 1);
-    shared_model_ptr<Geometry> newGeometryView(
-        Geometry::GeomType geomType,
-        uint32_t offset,
-        uint32_t size,
-        shared_model_ptr<Geometry> const& base);
-
     /// Node-type-specific resolve-functions
     shared_model_ptr<Object> resolveObject(ModelNode::Ptr const& n) const;
     shared_model_ptr<Array> resolveArray(ModelNode::Ptr const& n) const;
-    shared_model_ptr<GeometryCollection> resolveGeometryCollection(ModelNode::Ptr const& n) const;
-    shared_model_ptr<Geometry> resolveGeometry(ModelNode::Ptr const& n) const;
 
     /// Access the field name storage
     std::shared_ptr<Fields> fieldNames() const;
@@ -170,7 +149,6 @@ protected:
     /// so derived ModelPools can create Object/Array-derived nodes.
     Object::Storage& objectMemberStorage();
     Array::Storage& arrayMemberStorage();
-    Geometry::Storage& vertexBufferStorage();
 };
 
 }

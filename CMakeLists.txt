@@ -37,6 +37,7 @@ endif()
 
 if (SIMFIL_SHARED)
   set(LIBRARY_TYPE SHARED)
+  set(CMAKE_POSITION_INDEPENDENT_CODE YES)
 else()
   set(LIBRARY_TYPE STATIC)
 endif()
@@ -49,7 +50,6 @@ add_library(simfil ${LIBRARY_TYPE}
   src/parser.cpp
   src/token.cpp
   src/types.cpp
-  src/ext-geo.cpp
   src/simfil.cpp
   src/value.cpp
   src/overlay.cpp
@@ -64,7 +64,6 @@ target_sources(simfil PUBLIC
     FILES
       include/simfil/environment.h
       include/simfil/expression.h
-      include/simfil/ext-geo.h
       include/simfil/function.h
       include/simfil/operator.h
       include/simfil/parser.h
@@ -78,7 +77,6 @@ target_sources(simfil PUBLIC
 
       include/simfil/model/arena.h
       include/simfil/model/fields.h
-      include/simfil/model/point.h
       include/simfil/model/model.h
       include/simfil/model/nodes.h
       include/simfil/model/bitsery-traits.h)
