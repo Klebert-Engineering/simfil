@@ -8,6 +8,10 @@ if (SIMFIL_CONAN)
     find_package(nlohmann_json REQUIRED)
   endif()
 else()
+  if (SIMFIL_SHARED)
+    set (CMAKE_POSITION_INDEPENDENT_CODE ON)
+  endif ()
+
   if (NOT TARGET sfl::sfl)
     FetchContent_Declare(sfl
       GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
