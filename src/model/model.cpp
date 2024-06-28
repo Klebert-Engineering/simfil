@@ -278,7 +278,7 @@ ModelNode::Ptr Model::newSmallValue(uint16_t value)
     return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
 }
 
-std::optional<std::string_view> Model::lookupFieldId(FieldId) const
+std::optional<std::string_view> Model::lookupFieldId(const FieldId) const
 {
     return {};
 }
@@ -339,7 +339,7 @@ void ModelPool::setFieldNames(std::shared_ptr<Fields> const& newDict)
     impl_->fieldNames_ = newDict;
 }
 
-std::optional<std::string_view> ModelPool::lookupFieldId(FieldId id) const
+std::optional<std::string_view> ModelPool::lookupFieldId(const FieldId id) const
 {
     return impl_->fieldNames_->resolve(id);
 }
@@ -371,8 +371,10 @@ void ModelPool::read(std::istream& inputStream) {
 nlohmann::json ModelPool::toJson() const
 {
     auto roots = nlohmann::json::array();
-    for (auto i = 0u; i < numRoots(); ++i)
+    const auto n = numRoots();
+    for (auto i = 0u; i < n; ++i) {
         roots.push_back(root(i)->toJson());
+    }
 
     return roots;
 }

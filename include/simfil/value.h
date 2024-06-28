@@ -62,7 +62,7 @@ struct ValueToString
         return "<transient>"s;
     }
 
-    auto operator()(const ModelNode& node) const
+    auto operator()([[maybe_unused]] const ModelNode& node) const
     {
 #if defined(SIMFIL_WITH_MODEL_JSON)
         return nlohmann::to_string(node.toJson());

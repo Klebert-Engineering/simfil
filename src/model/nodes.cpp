@@ -75,15 +75,17 @@ nlohmann::json ModelNode::toJson() const
     if (type() == ValueType::Object) {
         auto j = nlohmann::json::object();
         for (const auto& [fieldId, childNode] : fields()) {
-            if (auto resolvedField = model_->lookupFieldId(fieldId))
+            if (auto resolvedField = model_->lookupFieldId(fieldId)) {
                 j[*resolvedField] = childNode->toJson();
+            }
         }
         return j;
     }
     else if (type() == ValueType::Array) {
         auto j = nlohmann::json::array();
-        for (const auto& i : *this)
+        for (const auto& i : *this) {
             j.push_back(i->toJson());
+        }
         return j;
     }
     else {
@@ -91,11 +93,12 @@ nlohmann::json ModelNode::toJson() const
         std::visit(
             [&j](auto&& v)
             {
-                if constexpr (!std::is_same_v<std::decay_t<decltype(v)>, std::monostate>)
-                    j = v;
-                else
+                using T = decltype(v);
+                if constexpr (!std::is_same_v<std::decay_t<T>, std::monostate>) {
+                    j = std::forward<T>(v);
+                } else {
                     j = nullptr;
-
+                }
             }, value());
         return j;
     }
