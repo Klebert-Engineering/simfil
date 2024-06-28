@@ -122,7 +122,7 @@ if (SIMFIL_WITH_MODEL_JSON)
         include/simfil/model/json.h)
 
   target_link_libraries(simfil
-    PRIVATE
+    PUBLIC
       nlohmann_json::nlohmann_json)
 endif()
 

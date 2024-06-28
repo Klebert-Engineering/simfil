@@ -1,10 +1,13 @@
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
-
 #pragma once
 
-#include "simfil/value.h"
+#include "simfil/model/fields.h"
+#if defined(SIMFIL_WITH_MODEL_JSON)
+#  include "nlohmann/json.hpp"
+#endif
 
 #include <memory>
+#include <string_view>
 #include <vector>
 #include <istream>
 #include <ostream>
@@ -55,6 +58,14 @@ public:
     ModelNode::Ptr newSmallValue(bool value);
     ModelNode::Ptr newSmallValue(int16_t value);
     ModelNode::Ptr newSmallValue(uint16_t value);
+
+    /// Lookup a field name for a field-id.
+    ///
+    /// This is in the base Model class to allow JSON
+    /// serialization, without having to downcast to ModelPool;
+    /// which contains the `fieldNames()` function. The base
+    /// implementation returns an unset optional.
+    virtual std::optional<std::string_view> lookupFieldId(FieldId) const;
 };
 
 /**
@@ -137,9 +148,16 @@ public:
     /// for field names which were not there before.
     virtual void setFieldNames(std::shared_ptr<simfil::Fields> const& newDict);
 
+    std::optional<std::string_view> lookupFieldId(FieldId) const override;
+
     /// Serialization
     virtual void write(std::ostream& outputStream);
     virtual void read(std::istream& inputStream);
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+    /// JSON Serialization
+    virtual nlohmann::json toJson() const;
+#endif
 
 protected:
     struct Impl;

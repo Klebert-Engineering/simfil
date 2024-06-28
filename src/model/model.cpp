@@ -1,8 +1,11 @@
 #include "simfil/model/model.h"
 #include "simfil/model/arena.h"
 #include "simfil/model/bitsery-traits.h"
+#include "simfil/model/nodes.h"
 
 #include <memory>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include <fmt/format.h>
@@ -275,6 +278,11 @@ ModelNode::Ptr Model::newSmallValue(uint16_t value)
     return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
 }
 
+std::optional<std::string_view> Model::lookupFieldId(FieldId) const
+{
+    return {};
+}
+
 ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 {
     if (value < 0 && value >= std::numeric_limits<int16_t>::min())
@@ -331,6 +339,11 @@ void ModelPool::setFieldNames(std::shared_ptr<Fields> const& newDict)
     impl_->fieldNames_ = newDict;
 }
 
+std::optional<std::string_view> ModelPool::lookupFieldId(FieldId id) const
+{
+    return impl_->fieldNames_->resolve(id);
+}
+
 Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
@@ -353,5 +366,16 @@ void ModelPool::read(std::istream& inputStream) {
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
 }
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+nlohmann::json ModelPool::toJson() const
+{
+    auto roots = nlohmann::json::array();
+    for (auto i = 0u; i < numRoots(); ++i)
+        roots.push_back(root(i)->toJson());
+
+    return roots;
+}
+#endif
 
 }  // namespace simfil
