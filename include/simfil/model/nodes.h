@@ -9,6 +9,10 @@
 
 #include <sfl/small_vector.hpp>
 
+#if defined(SIMFIL_WITH_MODEL_JSON)
+#  include "nlohmann/json.hpp"
+#endif
+
 namespace bitsery {
     // Pre-declare bitsery protected member accessor.
     class Access;
@@ -293,6 +297,10 @@ struct ModelNode
     };
     [[nodiscard]] ChildIterator begin() const { return {0, this}; }
     [[nodiscard]] ChildIterator end() const { return {size(), this}; }
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+    [[nodiscard]] virtual nlohmann::json toJson() const;
+#endif
 
 protected:
     ModelNode() = default;

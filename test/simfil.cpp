@@ -238,11 +238,9 @@ static auto joined_result(std::string_view query)
     REQUIRE(joined_result(query) == result)
 
 TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
-    REQUIRE_RESULT("sub.*", "sub a|sub b|model");
-    /*                                   ^- sub.sub */
-    REQUIRE_RESULT("sub.**", "model|sub a|sub b|model|sub sub a|sub sub b");
-    /*                        ^- sub            ^- sub.sub */
-
+    REQUIRE_RESULT("sub.*", R"(sub a|sub b|{"a":"sub sub a","b":"sub sub b"})");
+    REQUIRE_RESULT("sub.**", R"({"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}|sub a|sub b|)"
+                             R"({"a":"sub sub a","b":"sub sub b"}|sub sub a|sub sub b)");
     REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
     REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
     REQUIRE_RESULT("count(*)", "8");
@@ -261,10 +259,10 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
     REQUIRE_RESULT("c[-1]","null"); /* Out of bounds */
     REQUIRE_RESULT("c[4]", "null"); /* Out of bounds */
 
-    REQUIRE_RESULT("c",    "model");
-    REQUIRE_RESULT("c._",  "model"); /* No implicit child traversal! */
+    REQUIRE_RESULT("c",    R"(["a","b","c"])");
+    REQUIRE_RESULT("c._",  R"(["a","b","c"])"); /* No implicit child traversal! */
     REQUIRE_RESULT("c.*",  "a|b|c");
-    REQUIRE_RESULT("c.**", "model|a|b|c");
+    REQUIRE_RESULT("c.**", R"(["a","b","c"]|a|b|c)");
 
     REQUIRE_RESULT("c[arr(0,2)]",      "a|c");
     REQUIRE_RESULT("c[range(0,2)...]", "a|b|c");
@@ -275,14 +273,19 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
 }
 
 TEST_CASE("Single Values", "[yaml.single-values]") {
-    REQUIRE_RESULT("_", "model");
-    REQUIRE_RESULT("_._", "model");
+
+    auto json = R"({"a":1,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
+    auto sub_json = R"({"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}})";
+    auto sub_sub_json = R"({"a":"sub sub a","b":"sub sub b"})";
+
+    REQUIRE_RESULT("_", json);
+    REQUIRE_RESULT("_._", json);
     REQUIRE_RESULT("a", "1");
     REQUIRE_RESULT("['a']", "1");
     REQUIRE_RESULT("b", "2");
-    REQUIRE_RESULT("sub", "model");
+    REQUIRE_RESULT("sub", sub_json);
     REQUIRE_RESULT("sub.a", "sub a");
-    REQUIRE_RESULT("sub.sub", "model");
+    REQUIRE_RESULT("sub.sub", sub_sub_json);
     REQUIRE_RESULT("sub.sub.a", "sub sub a");
 }
 

@@ -69,6 +69,42 @@ bool ModelNode::iterate(const IterCallback& cb) const {
     return result;
 }
 
+#if defined(SIMFIL_WITH_MODEL_JSON)
+nlohmann::json ModelNode::toJson() const
+{
+    if (type() == ValueType::Object) {
+        auto j = nlohmann::json::object();
+        for (const auto& [fieldId, childNode] : fields()) {
+            if (auto resolvedField = model_->lookupFieldId(fieldId)) {
+                j[*resolvedField] = childNode->toJson();
+            }
+        }
+        return j;
+    }
+    else if (type() == ValueType::Array) {
+        auto j = nlohmann::json::array();
+        for (const auto& i : *this) {
+            j.push_back(i->toJson());
+        }
+        return j;
+    }
+    else {
+        auto j = nlohmann::json{};
+        std::visit(
+            [&j](auto&& v)
+            {
+                using T = decltype(v);
+                if constexpr (!std::is_same_v<std::decay_t<T>, std::monostate>) {
+                    j = std::forward<T>(v);
+                } else {
+                    j = nullptr;
+                }
+            }, value());
+        return j;
+    }
+}
+#endif
+
 /** Model Node Base Impl. */
 
 ModelNodeBase::ModelNodeBase(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data)
