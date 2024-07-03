@@ -53,7 +53,7 @@ struct Fields
     ///  nullopt if the given ID is invalid.
     /// Virtual to allow defining an inherited StringPool which understands
     /// additional StaticFieldIds.
-    virtual std::optional<std::string_view> resolve(FieldId const& id);
+    virtual std::optional<std::string_view> resolve(FieldId const& id) const;
 
     /// Get highest stored field id
     FieldId highest() const;

@@ -80,7 +80,7 @@ FieldId Fields::get(std::string_view const& str)
     return Fields::Empty;
 }
 
-std::optional<std::string_view> Fields::resolve(FieldId const& id)
+std::optional<std::string_view> Fields::resolve(FieldId const& id) const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     auto it = stringForId_.find(id);
