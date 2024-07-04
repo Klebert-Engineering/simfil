@@ -369,9 +369,8 @@ struct MandatoryDerivedModelNodeBase : public ModelNodeBase
 protected:
     template<class ModelType_ = ModelType>
     inline ModelType_* modelPtr() const {
-        static_assert(std::is_base_of<ModelType, ModelType_>::value);
-        return reinterpret_cast<ModelType_*>(const_cast<Model*>(model_.get()));
-    }  // NOLINT
+        return static_cast<ModelType_*>(const_cast<Model*>(model_.get()));
+    }
 
     MandatoryDerivedModelNodeBase() = default;
     MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
@@ -532,7 +531,7 @@ class ProceduralObject : public Object
 public:
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
-            return fields_[i].second(reinterpret_cast<LambdaThisType const&>(*this));
+            return fields_[i].second(static_cast<LambdaThisType const&>(*this));
         return Object::at(i - fields_.size());
     }
 
@@ -543,7 +542,7 @@ public:
     [[nodiscard]] ModelNode::Ptr get(const FieldId & field) const override {
         for (auto const& [k, v] : fields_)
             if (k == field)
-                return v(reinterpret_cast<LambdaThisType const&>(*this));
+                return v(static_cast<LambdaThisType const&>(*this));
         return Object::get(field);
     }
 
@@ -555,7 +554,7 @@ public:
 
     bool iterate(IterCallback const& cb) const override {  // NOLINT (allow discard)
         for (auto const& [k, v] : fields_) {
-            auto vv = v(reinterpret_cast<LambdaThisType const&>(*this));
+            auto vv = v(static_cast<LambdaThisType const&>(*this));
             if (!cb(*vv))
                 return false;
         }
