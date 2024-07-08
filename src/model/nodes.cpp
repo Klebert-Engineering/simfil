@@ -28,7 +28,7 @@ ValueType ModelNode::type() const {
 }
 
 /// Get a child by name
-ModelNode::Ptr ModelNode::get(const FieldId& field) const {
+ModelNode::Ptr ModelNode::get(const StringId& field) const {
     ModelNode::Ptr result;
     if (model_)
         model_
@@ -46,8 +46,8 @@ ModelNode::Ptr ModelNode::at(int64_t index) const {
 }
 
 /// Get an Object model's field names
-FieldId ModelNode::keyAt(int64_t i) const {
-    FieldId result = 0;
+StringId ModelNode::keyAt(int64_t i) const {
+    StringId result = 0;
     if (model_)
         model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.keyAt(i); }));
     return result;
@@ -75,7 +75,7 @@ nlohmann::json ModelNode::toJson() const
     if (type() == ValueType::Object) {
         auto j = nlohmann::json::object();
         for (const auto& [fieldId, childNode] : fields()) {
-            if (auto resolvedField = model_->lookupFieldId(fieldId)) {
+            if (auto resolvedField = model_->lookupStringId(fieldId)) {
                 j[*resolvedField] = childNode->toJson();
             }
         }
@@ -127,7 +127,7 @@ ValueType ModelNodeBase::type() const
     return ValueType::Null;
 }
 
-ModelNode::Ptr ModelNodeBase::get(const FieldId&) const
+ModelNode::Ptr ModelNodeBase::get(const StringId&) const
 {
     return nullptr;
 }
@@ -137,7 +137,7 @@ ModelNode::Ptr ModelNodeBase::at(int64_t) const
     return nullptr;
 }
 
-FieldId ModelNodeBase::keyAt(int64_t) const
+StringId ModelNodeBase::keyAt(int64_t) const
 {
     return 0;
 }
@@ -170,7 +170,7 @@ ValueType ValueNode::type() const {
 /** Model Node impls. for SmallValueNode */
 
 template<> ScalarValueType SmallValueNode<int16_t>::value() const {
-    return (int64_t)addr_.int16();
+    return static_cast<int64_t>(addr_.int16());
 }
 
 template<> ValueType SmallValueNode<int16_t>::type() const {
@@ -183,7 +183,7 @@ SmallValueNode<int16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
 {}
 
 template<> ScalarValueType SmallValueNode<uint16_t>::value() const {
-    return (int64_t)addr_.uint16();
+    return static_cast<int64_t>(addr_.uint16());
 }
 
 template<> ValueType SmallValueNode<uint16_t>::type() const {
@@ -196,7 +196,7 @@ SmallValueNode<uint16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
 {}
 
 template<> ScalarValueType SmallValueNode<bool>::value() const {
-    return (bool)addr_.uint16();
+    return addr_.uint16() != 0;
 }
 
 template<> ValueType SmallValueNode<bool>::type() const {
@@ -288,7 +288,7 @@ ModelNode::Ptr Object::at(int64_t i) const
     return ModelNode::Ptr::make(model_, storage_->at(members_, i).node_);
 }
 
-FieldId Object::keyAt(int64_t i) const {
+StringId Object::keyAt(int64_t i) const {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
     return storage_->at(members_, i).name_;
@@ -299,7 +299,7 @@ uint32_t Object::size() const
     return (uint32_t)storage_->size(members_);
 }
 
-ModelNode::Ptr Object::get(const FieldId & field) const
+ModelNode::Ptr Object::get(const StringId & field) const
 {
     ModelNode::Ptr result;
     storage_->iterate(members_, [&field, &result, this](auto&& member){
@@ -313,48 +313,48 @@ ModelNode::Ptr Object::get(const FieldId & field) const
 }
 
 ModelNode::Ptr Object::get(std::string_view const& fieldName) const {
-    auto fieldId = model().fieldNames()->emplace(fieldName);
+    auto fieldId = model().strings()->emplace(fieldName);
     return get(fieldId);
 }
 
 Object& Object::addBool(std::string_view const& name, bool value) {
-    auto fieldId = model().fieldNames()->emplace(name);
+    auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, uint16_t value) {
-    auto fieldId = model().fieldNames()->emplace(name);
+    auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, int16_t value) {
-    auto fieldId = model().fieldNames()->emplace(name);
+    auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, int64_t const& value) {
-    auto fieldId = model().fieldNames()->emplace(name);
+    auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, double const& value) {
-    auto fieldId = model().fieldNames()->emplace(name);
+    auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, std::string_view const& value) {
-    auto fieldId = model().fieldNames()->emplace(name);
+    auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
     return *this;
 }
 
 Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& value) {
-    auto fieldId = model().fieldNames()->emplace(name);
+    auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, value->addr());
     return *this;
 }

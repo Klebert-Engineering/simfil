@@ -6,7 +6,7 @@
 
 using namespace simfil;
 
-static const auto StaticTestKey = Fields::NextStaticId;
+static const auto StaticTestKey = StringPool::NextStaticId;
 
 
 static auto getASTString(std::string_view input)
@@ -218,7 +218,7 @@ static const char* doc = R"json(
 static auto joined_result(std::string_view query)
 {
     auto model = simfil::json::parse(doc);
-    Environment env(model->fieldNames());
+    Environment env(model->strings());
 
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
@@ -388,7 +388,7 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
 
 TEST_CASE("Procedural Object Node", "[model.procedural]") {
     auto pool = std::make_shared<ModelPool>();
-    pool->fieldNames()->addStaticKey(StaticTestKey, "test");
+    pool->strings()->addStaticKey(StaticTestKey, "test");
 
     struct DerivedProceduralObject : public ProceduralObject<2, DerivedProceduralObject> {
         DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
@@ -404,7 +404,7 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
     baseObj->addField("mood", "blue");
 
     auto proceduralObj = shared_model_ptr<DerivedProceduralObject>::make(pool, baseObj->addr());
-    REQUIRE(proceduralObj->get(pool->fieldNames()->get("mood"))->value() == ScalarValueType(std::string_view("blue")));
+    REQUIRE(proceduralObj->get(pool->strings()->get("mood"))->value() == ScalarValueType(std::string_view("blue")));
     REQUIRE(proceduralObj->get(StaticTestKey)->value() == ScalarValueType(std::string_view("static")));
 }
 
@@ -465,21 +465,21 @@ TEST_CASE("Object/Array Extend", "[model.extend]") {
     }
 }
 
-TEST_CASE("Switch Model Fields Dict", "[model.setfieldnames]")
+TEST_CASE("Switch Model String Pool", "[model.setStrings]")
 {
     auto pool = std::make_shared<ModelPool>();
-    auto oldFieldDict = pool->fieldNames();
-    auto newFieldDict = std::make_shared<simfil::Fields>(*oldFieldDict);
-    pool->setFieldNames(newFieldDict);
-    REQUIRE(pool->fieldNames() == newFieldDict);
+    auto oldFieldDict = pool->strings();
+    auto newFieldDict = std::make_shared<simfil::StringPool>(*oldFieldDict);
+    pool->setStrings(newFieldDict);
+    REQUIRE(pool->strings() == newFieldDict);
 
     auto obj = pool->newObject();
     obj->addField("hello", "world");
 
     oldFieldDict->emplace("gobbledigook");
-    pool->setFieldNames(oldFieldDict);
+    pool->setStrings(oldFieldDict);
 
-    REQUIRE(pool->fieldNames() == oldFieldDict);
+    REQUIRE(pool->strings() == oldFieldDict);
     REQUIRE_NOTHROW(pool->validate());
     REQUIRE(oldFieldDict->size() != newFieldDict->size());
 }

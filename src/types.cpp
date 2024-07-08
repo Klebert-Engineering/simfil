@@ -33,7 +33,7 @@ auto IRangeType::unaryOp(std::string_view op, const IRange& self) const -> Value
         return Value::make(fmt::format("{}..{}", self.begin, self.end));
 
     if (op == OperatorLen::name())
-        return Value::make((int64_t)self.high() - self.low());
+        return Value::make(static_cast<int64_t>(self.high() - self.low()));
 
     raise<InvalidOperandsError>(op);
 }

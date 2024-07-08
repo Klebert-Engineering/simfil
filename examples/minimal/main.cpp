@@ -3,12 +3,12 @@
 
 #include "simfil/simfil.h"
 #include "simfil/model/model.h"
-#include "simfil/model/fields.h"
+#include "simfil/model/string-pool.h"
 
 int main()
 {
     // Shared string pool.
-    auto strings = std::make_shared<simfil::Fields>();
+    auto strings = std::make_shared<simfil::StringPool>();
 
     // Data model pool
     auto model = std::make_shared<simfil::ModelPool>(strings);

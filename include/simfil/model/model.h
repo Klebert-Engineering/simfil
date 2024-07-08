@@ -1,7 +1,7 @@
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 #pragma once
 
-#include "simfil/model/fields.h"
+#include "simfil/model/string-pool.h"
 #if defined(SIMFIL_WITH_MODEL_JSON)
 #  include "nlohmann/json.hpp"
 #endif
@@ -66,10 +66,10 @@ public:
      *
      * This is in the base Model class to allow JSON
      * serialization, without having to downcast to ModelPool;
-     * which contains the `fieldNames()` function. The base
+     * which contains the `strings()` function. The base
      * implementation returns an unset optional.
      */
-    virtual std::optional<std::string_view> lookupFieldId(FieldId id) const;
+    virtual std::optional<std::string_view> lookupStringId(StringId id) const;
 };
 
 /**
@@ -102,7 +102,7 @@ public:
     ~ModelPool();
 
     /** Ctor with shared string storage */
-    explicit ModelPool(std::shared_ptr<Fields> stringStore);
+    explicit ModelPool(std::shared_ptr<StringPool> stringStore);
 
     /**
      * Validate that all internal string/node references are valid
@@ -149,20 +149,23 @@ public:
     ModelNode::Ptr newValue(std::string_view const& value);
 
     /** Node-type-specific resolve-functions */
+    [[nodiscard]]
     shared_model_ptr<Object> resolveObject(ModelNode::Ptr const& n) const;
+    [[nodiscard]]
     shared_model_ptr<Array> resolveArray(ModelNode::Ptr const& n) const;
 
     /** Access the field name storage */
-    std::shared_ptr<Fields> fieldNames() const;
+    [[nodiscard]]
+    std::shared_ptr<StringPool> strings() const;
 
     /**
      * Change the fields dict of this model to a different one.
      * Note: This will potentially create new field entries in the newDict,
      * for field names which were not there before.
      */
-    virtual void setFieldNames(std::shared_ptr<simfil::Fields> const& newDict);
+    virtual void setStrings(std::shared_ptr<simfil::StringPool> const& strings);
 
-    std::optional<std::string_view> lookupFieldId(FieldId id) const override;
+    std::optional<std::string_view> lookupStringId(StringId id) const override;
 
     /** Serialization */
     virtual void write(std::ostream& outputStream);
