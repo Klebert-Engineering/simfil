@@ -55,7 +55,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/exception-handler.cpp
   src/model/model.cpp
   src/model/nodes.cpp
-  src/model/fields.cpp)
+  src/model/string-pool.cpp)
 
 target_sources(simfil PUBLIC
   FILE_SET public_headers
@@ -75,7 +75,7 @@ target_sources(simfil PUBLIC
       include/simfil/exception-handler.h
 
       include/simfil/model/arena.h
-      include/simfil/model/fields.h
+      include/simfil/model/string-pool.h
       include/simfil/model/model.h
       include/simfil/model/nodes.h
       include/simfil/model/bitsery-traits.h)

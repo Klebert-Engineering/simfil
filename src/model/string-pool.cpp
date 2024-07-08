@@ -1,4 +1,4 @@
-#include "simfil/model/fields.h"
+#include "simfil/model/string-pool.h"
 #include "simfil/exception-handler.h"
 
 #include <algorithm>
@@ -7,11 +7,13 @@
 #include <bitsery/traits/string.h>
 #include <fmt/core.h>
 #include <cmath>
+#include <mutex>
+#include <locale>
 
 namespace simfil
 {
 
-Fields::Fields()
+StringPool::StringPool()
 {
     addStaticKey(Empty, "");
     addStaticKey(OverlaySum, "$sum");
@@ -19,7 +21,7 @@ Fields::Fields()
     addStaticKey(OverlayIndex, "$idx");
 }
 
-Fields::Fields(const Fields& other) :
+StringPool::StringPool(const StringPool& other) :
     idForString_(other.idForString_),
     stringForId_(other.stringForId_),
     nextId_(other.nextId_),
@@ -29,7 +31,7 @@ Fields::Fields(const Fields& other) :
 {
 }
 
-FieldId Fields::emplace(std::string_view const& str)
+StringId StringPool::emplace(std::string_view const& str)
 {
     /// Unfortunately, we have to create a copy of the string here
     /// on the heap for lower-casing.
@@ -40,7 +42,7 @@ FieldId Fields::emplace(std::string_view const& str)
         lowerCaseStr.begin(),
         lowerCaseStr.end(),
         lowerCaseStr.begin(),
-        [](auto ch) { return std::tolower(ch); });
+        [](auto ch) { return std::tolower(ch, std::locale{}); });
 
     {
         std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
@@ -52,10 +54,10 @@ FieldId Fields::emplace(std::string_view const& str)
     }
     {
         std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
-        auto [it, insertionTookPlace] = idForString_.emplace(lowerCaseStr, nextId_);
+        auto [it, insertionTookPlace] = idForString_.try_emplace(lowerCaseStr, nextId_);
         if (insertionTookPlace) {
-            stringForId_.emplace(nextId_, str);
-            byteSize_ += (int64_t)str.size();
+            (void)stringForId_.try_emplace(nextId_, str);
+            byteSize_ += static_cast<int64_t>(str.size());
             ++cacheMisses_;
             ++nextId_;
         }
@@ -63,109 +65,110 @@ FieldId Fields::emplace(std::string_view const& str)
     }
 }
 
-FieldId Fields::get(std::string_view const& str)
+StringId StringPool::get(std::string_view const& str)
 {
     auto lowerCaseStr = std::string(str);
     std::transform(
         lowerCaseStr.begin(),
         lowerCaseStr.end(),
         lowerCaseStr.begin(),
-        [](auto ch) { return std::tolower(ch); });
+        [](auto ch) { return std::tolower(ch, std::locale{}); });
 
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     auto it = idForString_.find(lowerCaseStr);
     if (it != idForString_.end())
         return it->second;
 
-    return Fields::Empty;
+    return StringPool::Empty;
 }
 
-std::optional<std::string_view> Fields::resolve(FieldId const& id) const
+std::optional<std::string_view> StringPool::resolve(const StringId& id) const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
-    auto it = stringForId_.find(id);
+    const auto it = stringForId_.find(id);
     if (it != stringForId_.end())
         return it->second;
 
     return std::nullopt;
 }
 
-FieldId Fields::highest() const {
+StringId StringPool::highest() const {
     return nextId_ - 1;
 }
 
-size_t Fields::size() const
+size_t StringPool::size() const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     return idForString_.size();
 }
 
-size_t Fields::bytes() const
+size_t StringPool::bytes() const
 {
     return byteSize_;
 }
 
-size_t Fields::hits() const
+size_t StringPool::hits() const
 {
     return cacheHits_;
 }
 
-size_t Fields::misses() const
+size_t StringPool::misses() const
 {
     return cacheMisses_;
 }
 
-void Fields::addStaticKey(FieldId k, std::string const& v) {
+void StringPool::addStaticKey(StringId k, std::string const& v) {
     auto lowerCaseStr = v;
     std::transform(
         lowerCaseStr.begin(),
         lowerCaseStr.end(),
         lowerCaseStr.begin(),
-        [](auto ch) { return std::tolower(ch); });
+        [](auto ch) { return std::tolower(ch, std::locale{}); });
 
     idForString_[lowerCaseStr] = k;
     stringForId_[k] = v;
 }
 
-void Fields::write(std::ostream& outputStream, FieldId offset) const  // NOLINT
+void StringPool::write(std::ostream& outputStream, const StringId offset) const // NOLINT
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
 
     // Calculate how many fields will be sent
-    FieldId sendFieldCount = 0;
-    for (FieldId fieldId = offset; fieldId <= highest(); ++fieldId) {
-        auto it = stringForId_.find(fieldId);
+    StringId sendStrCount = 0;
+    const auto high = highest();
+    for (auto strId = offset; strId <= high; ++strId) {
+        auto it = stringForId_.find(strId);
         if (it != stringForId_.end())
-            ++sendFieldCount;
+            ++sendStrCount;
     }
-    s.value2b(sendFieldCount);
+    s.value2b(sendStrCount);
 
     // Send the field key-name pairs
-    for (FieldId fieldId = offset; fieldId <= highest(); ++fieldId) {
-        auto it = stringForId_.find(fieldId);
+    for (auto strId = offset; strId <= high; ++strId) {
+        auto it = stringForId_.find(strId);
         if (it != stringForId_.end()) {
-            s.value2b(fieldId);
+            s.value2b(strId);
             // Don't support field names longer than 64kB.
             s.text1b(it->second, std::numeric_limits<uint16_t>::max());
         }
     }
 }
 
-void Fields::read(std::istream& inputStream)
+void StringPool::read(std::istream& inputStream)
 {
     std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
 
     // Determine how many fields are to be received
-    FieldId rcvFieldCount{};
+    StringId rcvFieldCount{};
     s.value2b(rcvFieldCount);
 
     // Read fields
     for (auto i = 0; i < rcvFieldCount; ++i)
     {
         // Read field key
-        FieldId fieldId{};
+        StringId fieldId{};
         s.value2b(fieldId);
 
         // Don't support field names longer than 64kB.
@@ -178,18 +181,18 @@ void Fields::read(std::istream& inputStream)
             lowerCaseFieldName.begin(),
             lowerCaseFieldName.end(),
             lowerCaseFieldName.begin(),
-            [](auto ch) { return std::tolower(ch); });
-        auto [it, insertionTookPlace] = idForString_.emplace(lowerCaseFieldName, fieldId);
+            [](auto ch) { return std::tolower(ch, std::locale{}); });
+        auto [it, insertionTookPlace] = idForString_.try_emplace(lowerCaseFieldName, fieldId);
         if (insertionTookPlace) {
-            stringForId_.emplace(fieldId, fieldName);
-            byteSize_ += (int64_t)fieldName.size();
-            nextId_ = std::max((FieldId)nextId_, (FieldId)(fieldId + 1));
+            stringForId_.try_emplace(fieldId, fieldName);
+            byteSize_ += static_cast<int64_t>(fieldName.size());
+            nextId_ = std::max<StringId>(nextId_, fieldId + 1);
         }
     }
 
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
         raise<std::runtime_error>(fmt::format(
-            "Failed to read Fields: Error {}",
+            "Failed to read StringPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
 }

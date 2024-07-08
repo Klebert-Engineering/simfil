@@ -258,7 +258,7 @@ public:
             return res(ctx, Value::null());
 
         if (!nameId_)
-            nameId_ = ctx.env->fieldNames()->get(name_);
+            nameId_ = ctx.env->strings()->get(name_);
 
         if (!nameId_)
             /* If the field name is not in the string cache, then there
@@ -281,7 +281,7 @@ public:
     }
 
     std::string name_;
-    mutable FieldId nameId_ = {};
+    mutable StringId nameId_ = {};
 };
 
 class MultiConstExpr : public Expr
@@ -388,7 +388,7 @@ public:
                     /* String subscript */
                     else if (ival.isa(ValueType::String)) {
                         auto key = ival.as<ValueType::String>();
-                        if (auto keyStrId = ctx.env->fieldNames()->get(key))
+                        if (auto keyStrId = ctx.env->strings()->get(key))
                             node = lval.node->get(keyStrId);
                     }
 
@@ -1318,7 +1318,7 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
 
 auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t rootIndex) -> std::vector<Value>
 {
-    if (env.fieldNames() != model.fieldNames())
+    if (env.strings() != model.strings())
         raise<std::runtime_error>("Environment must use same field name resource as model.");
 
     return eval(env, ast, *model.root(rootIndex));

@@ -563,12 +563,12 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
     (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         if (subexpr) {
             auto ov = shared_model_ptr<OverlayNode>::make(vv);
-            ov->set(Fields::OverlaySum, sum);
-            ov->set(Fields::OverlayValue, vv);
-            ov->set(Fields::OverlayIndex, Value::make((int64_t)n++));
+            ov->set(StringPool::OverlaySum, sum);
+            ov->set(StringPool::OverlayValue, vv);
+            ov->set(StringPool::OverlayIndex, Value::make((int64_t)n++));
 
             subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, auto vv) {
-                ov->set(Fields::OverlaySum, vv);
+                ov->set(StringPool::OverlaySum, vv);
                 sum = vv;
                 return Result::Continue;
             }));
@@ -612,7 +612,7 @@ auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, cons
 
         if (vv.node)
             for (auto&& fieldName : vv.node->fieldNames()) {
-                if (auto key = ctx.env->fieldNames_->resolve(fieldName)) {
+                if (auto key = ctx.env->stringPool->resolve(fieldName)) {
                     if (res(ctx, Value::strref(*key)) == Result::Stop)
                         return Result::Stop;
                 }
