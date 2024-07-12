@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <type_traits>
 #include <unordered_map>
 #include <shared_mutex>
 #include <atomic>
@@ -14,6 +15,7 @@ namespace simfil
 {
 
 using StringId = uint16_t;
+static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
 
 /**
  * Fast and efficient case-insensitive string interner,

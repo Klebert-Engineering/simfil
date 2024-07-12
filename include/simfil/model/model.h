@@ -159,7 +159,7 @@ public:
     std::shared_ptr<StringPool> strings() const;
 
     /**
-     * Change the fields dict of this model to a different one.
+     * Change the string pool of this model to a different one.
      * Note: This will potentially create new field entries in the newDict,
      * for field names which were not there before.
      */
