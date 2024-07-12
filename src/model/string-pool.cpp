@@ -9,6 +9,7 @@
 #include <cmath>
 #include <mutex>
 #include <locale>
+#include <stdexcept>
 
 namespace simfil
 {
@@ -60,6 +61,9 @@ StringId StringPool::emplace(std::string_view const& str)
             byteSize_ += static_cast<int64_t>(str.size());
             ++cacheMisses_;
             ++nextId_;
+            if (nextId_ < it->second) {
+                raise<std::overflow_error>("StringPool id overflow!");
+            }
         }
         return it->second;
     }
@@ -134,7 +138,7 @@ void StringPool::write(std::ostream& outputStream, const StringId offset) const 
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
 
-    // Calculate how many fields will be sent
+    // Calculate how many strings will be sent
     StringId sendStrCount = 0;
     const auto high = highest();
     for (auto strId = offset; strId <= high; ++strId) {
@@ -144,12 +148,12 @@ void StringPool::write(std::ostream& outputStream, const StringId offset) const 
     }
     s.value2b(sendStrCount);
 
-    // Send the field key-name pairs
+    // Send the pool's key-string pairs
     for (auto strId = offset; strId <= high; ++strId) {
         auto it = stringForId_.find(strId);
         if (it != stringForId_.end()) {
             s.value2b(strId);
-            // Don't support field names longer than 64kB.
+            // Don't support strings longer than 64kB.
             s.text1b(it->second, std::numeric_limits<uint16_t>::max());
         }
     }
@@ -160,33 +164,33 @@ void StringPool::read(std::istream& inputStream)
     std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
 
-    // Determine how many fields are to be received
-    StringId rcvFieldCount{};
-    s.value2b(rcvFieldCount);
+    // Determine how many strings are to be received
+    StringId rcvStringCount{};
+    s.value2b(rcvStringCount);
 
-    // Read fields
-    for (auto i = 0; i < rcvFieldCount; ++i)
+    // Read strings
+    for (auto i = 0; i < rcvStringCount; ++i)
     {
-        // Read field key
-        StringId fieldId{};
-        s.value2b(fieldId);
+        // Read string key
+        StringId stringId{};
+        s.value2b(stringId);
 
-        // Don't support field names longer than 64kB.
-        std::string fieldName;
-        s.text1b(fieldName, std::numeric_limits<uint16_t>::max());
-        auto lowerCaseFieldName = std::string(fieldName);
+        // Don't support strings longer than 64kB.
+        std::string stringValue;
+        s.text1b(stringValue, std::numeric_limits<uint16_t>::max());
+        auto lowerCaseStringValue = std::string(stringValue);
 
-        // Insert field name into pool
+        // Insert string into the pool
         std::transform(
-            lowerCaseFieldName.begin(),
-            lowerCaseFieldName.end(),
-            lowerCaseFieldName.begin(),
+            lowerCaseStringValue.begin(),
+            lowerCaseStringValue.end(),
+            lowerCaseStringValue.begin(),
             [](auto ch) { return std::tolower(ch, std::locale{}); });
-        auto [it, insertionTookPlace] = idForString_.try_emplace(lowerCaseFieldName, fieldId);
+        auto [it, insertionTookPlace] = idForString_.try_emplace(lowerCaseStringValue, stringId);
         if (insertionTookPlace) {
-            stringForId_.try_emplace(fieldId, fieldName);
-            byteSize_ += static_cast<int64_t>(fieldName.size());
-            nextId_ = std::max<StringId>(nextId_, fieldId + 1);
+            stringForId_.try_emplace(stringId, stringValue);
+            byteSize_ += static_cast<int64_t>(stringValue.size());
+            nextId_ = std::max<StringId>(nextId_, stringId + 1);
         }
     }
 
