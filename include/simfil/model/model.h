@@ -177,7 +177,8 @@ protected:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
-    /* Protected object/array member storage access,
+    /**
+     * Protected object/array member storage access,
      * so derived ModelPools can create Object/Array-derived nodes.
      */
     Object::Storage& objectMemberStorage();
