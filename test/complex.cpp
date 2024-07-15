@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <sstream>
-#include <iostream>
 
+#include "simfil/model/string-pool.h"
 #include "simfil/simfil.h"
 #include "simfil/model/json.h"
 
@@ -55,7 +55,7 @@ static const auto invoice = R"json(
 static auto joined_result(std::string_view query)
 {
     auto model = json::parse(invoice);
-    Environment env(model->fieldNames());
+    Environment env(model->strings());
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 
@@ -126,15 +126,15 @@ TEST_CASE("Serialization", "[yaml.complex.serialization]") {
     SECTION("Test Fields write/read")
     {
         std::stringstream stream;
-        model->fieldNames()->write(stream);
+        model->strings()->write(stream);
 
-        auto recoveredFields = std::make_shared<Fields>();
+        const auto recoveredFields = std::make_shared<StringPool>();
         recoveredFields->read(stream);
 
-        REQUIRE(model->fieldNames()->size() == recoveredFields->size());
-        REQUIRE(model->fieldNames()->highest() == recoveredFields->highest());
-        REQUIRE(model->fieldNames()->bytes() == recoveredFields->bytes());
-        for (FieldId fieldId = 0; fieldId <= recoveredFields->highest(); ++fieldId)
-            REQUIRE(model->fieldNames()->resolve(fieldId) == recoveredFields->resolve(fieldId));
+        REQUIRE(model->strings()->size() == recoveredFields->size());
+        REQUIRE(model->strings()->highest() == recoveredFields->highest());
+        REQUIRE(model->strings()->bytes() == recoveredFields->bytes());
+        for (StringId sId = 0; sId <= recoveredFields->highest(); ++sId)
+            REQUIRE(model->strings()->resolve(sId) == recoveredFields->resolve(StringId(sId)));
     }
 }

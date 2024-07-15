@@ -4,13 +4,12 @@
 namespace simfil
 {
 
-Environment::Environment(std::shared_ptr<Fields> fieldNames)
+Environment::Environment(std::shared_ptr<StringPool> strings)
     : warnMtx(std::make_unique<std::mutex>())
     , traceMtx(std::make_unique<std::mutex>())
-    ,
-      fieldNames_(std::move(fieldNames))
+    , stringPool(std::move(strings))
 {
-    if (!fieldNames_)
+    if (!stringPool)
         raise<std::runtime_error>("The string cache must not be null.");
 
     functions["any"]    = &AnyFn::Fn;
@@ -26,8 +25,8 @@ Environment::Environment(std::shared_ptr<Fields> fieldNames)
     functions["trace"]  = &TraceFn::Fn;
 }
 
-Environment::Environment(NewStringCache_) :
-    Environment(std::make_shared<Fields>()) {}
+Environment::Environment(NewStringCache_)
+    : Environment(std::make_shared<StringPool>()) {}
 
 Environment::~Environment()
 {}
@@ -51,8 +50,8 @@ auto Environment::findFunction(std::string name) const -> const Function*
     return nullptr;
 }
 
-auto Environment::fieldNames() const -> std::shared_ptr<Fields> {
-    return fieldNames_;
+auto Environment::strings() const -> std::shared_ptr<StringPool> {
+    return stringPool;
 }
 
 Context::Context(Environment* env, Context::Phase phase)

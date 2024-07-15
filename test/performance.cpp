@@ -112,7 +112,7 @@ static auto generate_model(std::size_t n)
 
 static auto result(const ModelPoolPtr& model, std::string_view query)
 {
-    Environment env(model->fieldNames());
+    Environment env(model->strings());
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 

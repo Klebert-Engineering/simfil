@@ -165,10 +165,10 @@ target_link_libraries(<my-app> PUBLIC simfil)
 ```c++
 #include "simfil/simfil.h"
 #include "simfil/model/model.h"
-#include "simfil/model/fields.h"
+#include "simfil/model/string-pool.h"
 
 // Shared string pool used for string interning
-auto strings = std::make_shared<simfil::Fields>();
+auto strings = std::make_shared<simfil::StringPool>();
 
 // Declare a model with one object
 auto model = std::make_shared<simfil::ModelPool>(strings);

@@ -1,8 +1,11 @@
 #include "simfil/model/model.h"
 #include "simfil/model/arena.h"
 #include "simfil/model/bitsery-traits.h"
+#include "simfil/model/nodes.h"
 
 #include <memory>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include <fmt/format.h>
@@ -40,8 +43,8 @@ void Model::resolve(const ModelNode& n, const ResolveFn& cb) const
 
 struct ModelPool::Impl
 {
-    explicit Impl(std::shared_ptr<Fields> fieldNames) :
-        fieldNames_(std::move(fieldNames))
+    explicit Impl(std::shared_ptr<StringPool> strings) :
+        strings_(std::move(strings))
     {
         columns_.stringData_.reserve(detail::ColumnPageSize*4);
     }
@@ -58,7 +61,7 @@ struct ModelPool::Impl
     };
 
     /// This model pool's field name store
-    std::shared_ptr<Fields> fieldNames_;
+    std::shared_ptr<StringPool> strings_;
 
     struct {
         sfl::segmented_vector<ModelNodeAddress, detail::ColumnPageSize> roots_;
@@ -89,10 +92,10 @@ struct ModelPool::Impl
 };
 
 ModelPool::ModelPool()
-    : impl_(std::make_unique<ModelPool::Impl>(std::make_shared<Fields>()))
+    : impl_(std::make_unique<ModelPool::Impl>(std::make_shared<StringPool>()))
 {}
 
-ModelPool::ModelPool(std::shared_ptr<Fields> stringStore)
+ModelPool::ModelPool(std::shared_ptr<StringPool> stringStore)
     : impl_(std::make_unique<ModelPool::Impl>(std::move(stringStore)))
 {}
 
@@ -111,11 +114,11 @@ std::vector<std::string> ModelPool::checkForErrors() const
         return true;
     };
 
-    auto validateFieldName = [&, this](FieldId const& str)
+    auto validateFieldName = [&, this](StringId const& str)
     {
-        if (!impl_->fieldNames_)
+        if (!impl_->strings_)
             return;
-        if (!impl_->fieldNames_->resolve(str))
+        if (!impl_->strings_->resolve(str))
             errors.push_back(fmt::format("Bad string ID: {}", str));
     };
 
@@ -275,6 +278,11 @@ ModelNode::Ptr Model::newSmallValue(uint16_t value)
     return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
 }
 
+std::optional<std::string_view> Model::lookupStringId(const StringId) const
+{
+    return {};
+}
+
 ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 {
     if (value < 0 && value >= std::numeric_limits<int16_t>::min())
@@ -314,21 +322,26 @@ shared_model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
     return Array(shared_from_this(), n->addr_);
 }
 
-std::shared_ptr<Fields> ModelPool::fieldNames() const
+std::shared_ptr<StringPool> ModelPool::strings() const
 {
-    return impl_->fieldNames_;
+    return impl_->strings_;
 }
 
-void ModelPool::setFieldNames(std::shared_ptr<Fields> const& newDict)
+void ModelPool::setStrings(std::shared_ptr<StringPool> const& strings)
 {
     // Translate object field IDs to the new dictionary.
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
         for (auto& member : memberArray) {
-            if (auto resolvedName = impl_->fieldNames_->resolve(member.name_))
-                member.name_ = newDict->emplace(*resolvedName);
+            if (auto resolvedName = impl_->strings_->resolve(member.name_))
+                member.name_ = strings->emplace(*resolvedName);
         }
     }
-    impl_->fieldNames_ = newDict;
+    impl_->strings_ = strings;
+}
+
+std::optional<std::string_view> ModelPool::lookupStringId(const StringId id) const
+{
+    return impl_->strings_->resolve(id);
 }
 
 Object::Storage& ModelPool::objectMemberStorage() {
@@ -353,5 +366,18 @@ void ModelPool::read(std::istream& inputStream) {
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
 }
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+nlohmann::json ModelPool::toJson() const
+{
+    auto roots = nlohmann::json::array();
+    const auto n = numRoots();
+    for (auto i = 0u; i < n; ++i) {
+        roots.push_back(root(i)->toJson());
+    }
+
+    return roots;
+}
+#endif
 
 }  // namespace simfil

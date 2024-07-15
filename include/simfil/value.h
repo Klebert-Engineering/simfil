@@ -4,10 +4,6 @@
 #include <string>
 #include <cstdint>
 #include <cassert>
-#include <functional>
-#include <optional>
-#include <memory>
-#include <vector>
 
 #include "model/nodes.h"
 #include "transient.h"
@@ -66,9 +62,13 @@ struct ValueToString
         return "<transient>"s;
     }
 
-    auto operator()(const ModelNode&) const
+    auto operator()([[maybe_unused]] const ModelNode& node) const
     {
-        return "model"s;
+#if defined(SIMFIL_WITH_MODEL_JSON)
+        return nlohmann::to_string(node.toJson());
+#else
+        return "<model>"s;
+#endif
     }
 };
 }

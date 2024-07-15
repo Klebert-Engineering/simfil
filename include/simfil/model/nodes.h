@@ -5,9 +5,13 @@
 #include <functional>
 
 #include "arena.h"
-#include "fields.h"
+#include "string-pool.h"
 
 #include <sfl/small_vector.hpp>
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+#  include "nlohmann/json.hpp"
+#endif
 
 namespace bitsery {
     // Pre-declare bitsery protected member accessor.
@@ -179,13 +183,13 @@ struct ModelNode
     [[nodiscard]] virtual ValueType type() const;
 
     /// Get a child by name
-    [[nodiscard]] virtual Ptr get(FieldId const& f) const;
+    [[nodiscard]] virtual Ptr get(StringId const& f) const;
 
     /// Get a child by index
     [[nodiscard]] virtual Ptr at(int64_t i) const;
 
     /// Get an Object model's field names
-    [[nodiscard]] virtual FieldId keyAt(int64_t i) const;
+    [[nodiscard]] virtual StringId keyAt(int64_t i) const;
 
     /// Get the number of children
     [[nodiscard]] virtual uint32_t size() const;
@@ -212,38 +216,38 @@ struct ModelNode
     virtual bool iterate(IterCallback const& cb) const; // NOLINT (allow discard)
 
     /// Iterator Support
-    /// * `fieldNames()`: Returns range object which supports `for(FieldId const& f: node.fieldNames())`
+    /// * `fieldNames()`: Returns range object which supports `for(StringId const& f: node.fieldNames())`
     /// * `fields()`: Returns range object which supports `for(auto const& [fieldId, value] : node.fields())`
     /// * Normal `begin()`/`end()`: Supports `for(ModelNode::Ptr child : node)`
 
-    // Implement fieldNames() by creating an iterator for FieldId
-    class FieldIdIterator
+    // Implement fieldNames() by creating an iterator for StringId
+    class StringIdIterator
     {
         int64_t index;
         ModelNode const* parent;
     public:
         using iterator_category = std::input_iterator_tag;
-        using value_type = FieldId;
+        using value_type = StringId;
         using difference_type = std::ptrdiff_t;
-        using pointer = FieldId*;
-        using reference = FieldId&;
-        FieldIdIterator(int64_t idx, ModelNode const* p) : index(idx), parent(p) {}
-        FieldIdIterator& operator++() { ++index; return *this; }
-        bool operator==(const FieldIdIterator& other) const { return index == other.index; }
-        bool operator!=(const FieldIdIterator& other) const { return index != other.index; }
-        FieldId operator*() const { return parent->keyAt(index); }
+        using pointer = StringId*;
+        using reference = StringId&;
+        StringIdIterator(int64_t idx, ModelNode const* p) : index(idx), parent(p) {}
+        StringIdIterator& operator++() { ++index; return *this; }
+        bool operator==(const StringIdIterator& other) const { return index == other.index; }
+        bool operator!=(const StringIdIterator& other) const { return index != other.index; }
+        StringId operator*() const { return parent->keyAt(index); }
     };
-    class FieldIdRange
+    class StringIdRange
     {
         ModelNode const* node;
     public:
-        explicit FieldIdRange(ModelNode const* n) : node(n) {}
-        [[nodiscard]] FieldIdIterator begin() const { return node->fieldNamesBegin(); }
-        [[nodiscard]] FieldIdIterator end() const { return node->fieldNamesEnd(); }
+        explicit StringIdRange(ModelNode const* const n) : node(n) {}
+        [[nodiscard]] StringIdIterator begin() const { return node->fieldNamesBegin(); }
+        [[nodiscard]] StringIdIterator end() const { return node->fieldNamesEnd(); }
     };
-    [[nodiscard]] FieldIdIterator fieldNamesBegin() const { return {0, this}; }
-    [[nodiscard]] FieldIdIterator fieldNamesEnd() const { return {size(), this}; }
-    [[nodiscard]] auto fieldNames() const { return FieldIdRange{this}; }
+    [[nodiscard]] StringIdIterator fieldNamesBegin() const { return {0, this}; }
+    [[nodiscard]] StringIdIterator fieldNamesEnd() const { return {size(), this}; }
+    [[nodiscard]] auto fieldNames() const { return StringIdRange{this}; }
 
     // Implement fields() by creating an iterator for field-value pairs
     class FieldIterator
@@ -252,21 +256,21 @@ struct ModelNode
         ModelNode const* parent;
     public:
         using iterator_category = std::input_iterator_tag;
-        using value_type = std::pair<FieldId, Ptr>;
+        using value_type = std::pair<StringId, Ptr>;
         using difference_type = std::ptrdiff_t;
         using pointer = value_type*;
         using reference = value_type&;
-        FieldIterator(int64_t idx, ModelNode const* p) : index(idx), parent(p) {}
+        FieldIterator(int64_t const idx, ModelNode const* const p) : index(idx), parent(p) {}
         FieldIterator& operator++() { ++index; return *this; }
         bool operator==(const FieldIterator& other) const { return index == other.index; }
         bool operator!=(const FieldIterator& other) const { return index != other.index; }
-        std::pair<FieldId, Ptr> operator*() const { return std::make_pair(parent->keyAt(index), parent->at(index)); }
+        std::pair<StringId, Ptr> operator*() const { return std::make_pair(parent->keyAt(index), parent->at(index)); }
     };
     class FieldRange
     {
         ModelNode const* node;
     public:
-        explicit FieldRange(ModelNode const* n) : node(n) {}
+        explicit FieldRange(ModelNode const* const n) : node(n) {}
         [[nodiscard]] FieldIterator begin() const { return node->fieldsBegin(); }
         [[nodiscard]] FieldIterator end() const { return node->fieldsEnd(); }
     };
@@ -285,7 +289,7 @@ struct ModelNode
         using difference_type = std::ptrdiff_t;
         using pointer = value_type*;
         using reference = value_type&;
-        ChildIterator(int64_t idx, ModelNode const* p) : index(idx), parent(p) {}
+        ChildIterator(int64_t const idx, ModelNode const* const p) : index(idx), parent(p) {}
         ChildIterator& operator++() { ++index; return *this; }
         bool operator==(const ChildIterator& other) const { return index == other.index; }
         bool operator!=(const ChildIterator& other) const { return index != other.index; }
@@ -293,6 +297,10 @@ struct ModelNode
     };
     [[nodiscard]] ChildIterator begin() const { return {0, this}; }
     [[nodiscard]] ChildIterator end() const { return {size(), this}; }
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+    [[nodiscard]] virtual nlohmann::json toJson() const;
+#endif
 
 protected:
     ModelNode() = default;
@@ -325,9 +333,9 @@ struct ModelNodeBase : public ModelNode
 
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
-    [[nodiscard]] ModelNode::Ptr get(const FieldId&) const override;
+    [[nodiscard]] ModelNode::Ptr get(const StringId&) const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
-    [[nodiscard]] FieldId keyAt(int64_t) const override;
+    [[nodiscard]] StringId keyAt(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
 
@@ -361,9 +369,8 @@ struct MandatoryDerivedModelNodeBase : public ModelNodeBase
 protected:
     template<class ModelType_ = ModelType>
     inline ModelType_* modelPtr() const {
-        static_assert(std::is_base_of<ModelType, ModelType_>::value);
-        return reinterpret_cast<ModelType_*>(const_cast<Model*>(model_.get()));
-    }  // NOLINT
+        return static_cast<ModelType_*>(const_cast<Model*>(model_.get()));
+    }
 
     MandatoryDerivedModelNodeBase() = default;
     MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
@@ -463,8 +470,8 @@ struct Object : public MandatoryModelPoolNodeBase
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] ModelNode::Ptr get(const FieldId &) const override;
-    [[nodiscard]] FieldId keyAt(int64_t) const override;
+    [[nodiscard]] ModelNode::Ptr get(const StringId &) const override;
+    [[nodiscard]] StringId keyAt(int64_t) const override;
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
 
     template<class ModelNodeType>
@@ -495,8 +502,8 @@ protected:
     struct Field
     {
         Field() = default;
-        Field(FieldId name, ModelNodeAddress a) : name_(name), node_(a) {}
-        FieldId name_ = Fields::Empty;
+        Field(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
+        StringId name_ = StringPool::Empty;
         ModelNodeAddress node_;
 
         template<typename S>
@@ -524,7 +531,7 @@ class ProceduralObject : public Object
 public:
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
-            return fields_[i].second(reinterpret_cast<LambdaThisType const&>(*this));
+            return fields_[i].second(static_cast<LambdaThisType const&>(*this));
         return Object::at(i - fields_.size());
     }
 
@@ -532,14 +539,14 @@ public:
         return fields_.size() + Object::size();
     }
 
-    [[nodiscard]] ModelNode::Ptr get(const FieldId & field) const override {
+    [[nodiscard]] ModelNode::Ptr get(const StringId & field) const override {
         for (auto const& [k, v] : fields_)
             if (k == field)
-                return v(reinterpret_cast<LambdaThisType const&>(*this));
+                return v(static_cast<LambdaThisType const&>(*this));
         return Object::get(field);
     }
 
-    [[nodiscard]] FieldId keyAt(int64_t i) const override {
+    [[nodiscard]] StringId keyAt(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].first;
         return Object::keyAt(i - fields_.size());
@@ -547,7 +554,7 @@ public:
 
     bool iterate(IterCallback const& cb) const override {  // NOLINT (allow discard)
         for (auto const& [k, v] : fields_) {
-            auto vv = v(reinterpret_cast<LambdaThisType const&>(*this));
+            auto vv = v(static_cast<LambdaThisType const&>(*this));
             if (!cb(*vv))
                 return false;
         }
@@ -560,7 +567,7 @@ protected:
         : Object(i, pool, a) {}
 
     sfl::small_vector<
-        std::pair<FieldId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
+        std::pair<StringId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
         MaxProceduralFields> fields_;
 };
 
