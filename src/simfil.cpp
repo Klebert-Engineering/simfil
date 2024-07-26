@@ -1316,14 +1316,6 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     return expr;
 }
 
-auto eval(Environment& env, const Expr& ast, ModelPool const& model, size_t rootIndex) -> std::vector<Value>
-{
-    if (env.strings() != model.strings())
-        raise<std::runtime_error>("Environment must use same field name resource as model.");
-
-    return eval(env, ast, *model.root(rootIndex));
-}
-
 auto eval(Environment& env, const Expr& ast, const ModelNode& node) -> std::vector<Value>
 {
     if (!node.model_)
