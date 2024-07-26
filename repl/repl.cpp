@@ -96,7 +96,7 @@ static std::string input(const char* prompt = "> ")
     free(buf);
 #else
     std::cout << prompt << std::flush;
-    std::cin >> r;
+    std::getline(std::cin, r);
 #endif
     return r;
 }
