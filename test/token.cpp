@@ -78,6 +78,19 @@ TEST_CASE("Tokenize strings", "[token.string]") {
     REQUIRE(asStr("\"abc\"") == "abc");
     REQUIRE(asStr("\"\\\"abc\\\"\"") == "\"abc\"");
 
+    /* r"..." */
+    REQUIRE(asStr("r\"\"") == "");
+    REQUIRE(asStr("R\"\"") == "");
+    REQUIRE(asStr("r\"abc\"") == "abc");
+    REQUIRE(asStr("r\"\\\"abc\\\"\"") == "\"abc\"");
+    REQUIRE(asStr("r\"\\\\\"\"") == "\\\"");
+    REQUIRE(asStr("r\"\\a\"") == "\\a");
+
+    /* r'...' */
+    REQUIRE(asStr("r''") == "");
+    REQUIRE(asStr("R''") == "");
+    REQUIRE(asStr("r'\"'") == "\"");
+
     /* Quote mismatch */
     CHECK_THROWS(asStr("'abc"));
     CHECK_THROWS(asStr("abc'"));
