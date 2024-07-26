@@ -134,6 +134,17 @@ public:
     auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
 };
 
+class ReFn : public Function
+{
+public:
+    static ReFn Fn;
+
+    ReFn();
+
+    auto ident() const -> const FnInfo& override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
+};
+
 class ArrFn : public Function
 {
 public:

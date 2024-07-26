@@ -1,5 +1,6 @@
 #include "simfil/function.h"
 
+#include "simfil/model/nodes.h"
 #include "simfil/result.h"
 #include "simfil/operator.h"
 #include "simfil/environment.h"
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <optional>
 #include <ranges>
+#include <stdexcept>
 
 namespace simfil
 {
@@ -367,6 +369,43 @@ auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
     auto ibegin = begin.as<ValueType::Int>();
     auto iend = end.as<ValueType::Int>();
     return res(ctx, IRangeType::Type.make(ibegin, iend));
+}
+
+ReFn ReFn::Fn;
+ReFn::ReFn()
+{}
+
+auto ReFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{
+        "re",
+        "Returns a compiled regular expression.",
+        "re(expr) -> <re>"
+    };
+    return info;
+}
+
+auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+{
+    if (args.size() != 1)
+        raise<std::runtime_error>("re(expr) expects 1 arguments; got "s + std::to_string(args.size()));
+
+    auto subctx = ctx;
+    return args[0]->eval(subctx, val, LambdaResultFn([&](Context, Value vv) {
+        if (vv.isa(ValueType::Undef))
+            return res(ctx, Value::undef());
+
+        if (vv.isa(ValueType::String))
+            return res(ctx, ReType:: Type.make(vv.as<ValueType::String>()));
+
+        // Passing another <re> object is a no-op
+        if (vv.isa(ValueType::TransientObject))
+            if (auto obj = vv.as<ValueType::TransientObject>(); obj.meta == &ReType::Type)
+                return res(ctx, std::move(vv));
+
+        raise<std::runtime_error>("re: invalid value type for argument 'expr'"s);
+        return res(ctx, Value::undef());
+    }));
 }
 
 ArrFn ArrFn::Fn;

@@ -284,3 +284,12 @@ Returns all sub-element keys of object `object`
 ```
 keys(a.b) => 'c', 'd', ...
 ```
+
+### `re(str)`
+
+Compiles a regular expression string to an `re` object, which holds a compiled regular expression.
+
+*Example*
+```
+a.b =~ re("prefix.*")
+```
