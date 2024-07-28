@@ -34,8 +34,6 @@ public:
     static constexpr size_t MaxIndex = (~static_cast<size_t>(0u)) >> (sizeof(size_t) * 8u - IndexBits);
     static constexpr size_t MaxSize  = (~static_cast<size_t>(0u)) >> (sizeof(size_t) * 8u - SizeBits);
 
-    static_assert((IndexBits + SizeBits) % 8 == 0,
-        "IndexBits and SizeBits must be a multiple of 8");
     static_assert((IndexBits + SizeBits) <= 64,
         "IndexBits + SizeBits must not exceed 64 bit");
 
