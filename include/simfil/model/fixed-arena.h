@@ -11,10 +11,12 @@ namespace simfil
 {
 
 /**
- * TinyArrayArena is an append-only container that stores
+ * FixedArrayArena is an append-only container that stores
  * multiple sub-arrays in a memory efficient manner.
  *
- * Sub-arrays are immutable in size, once created.
+ * Once created, sub-arrays are immutable in size and accessible
+ * via their handle only. The arena itself does not store information
+ * about any of the sub-arrays.
  */
 template <
     class ElementType_,
@@ -22,7 +24,7 @@ template <
     uint8_t SizeBits_ = 8u,
     size_t PageSize_ = 1024
 >
-class TinyArrayArena
+class FixedArrayArena
 {
 public:
     using ElementType = ElementType_;
@@ -148,13 +150,13 @@ public:
     }
     auto at(const Handle h, const size_t index) const -> const ElementType&
     {
-        return const_cast<TinyArrayArena&>(*this).at(h, index);
+        return const_cast<FixedArrayArena&>(*this).at(h, index);
     }
 
     /**
      * C++ std compatible iterator for the items of a sub-array.
      *
-     * NOTE: The iterate keeps a reference to the TinyArrayArena
+     * NOTE: The iterate keeps a reference to the FixedArrayArena
      *   it refers to!
      */
     template <bool Const_>
@@ -165,10 +167,10 @@ public:
         using difference_type = std::ptrdiff_t;
         using pointer = value_type*;
         using reference = value_type&;
-        using ArenaType = std::conditional_t<Const_, const TinyArrayArena, TinyArrayArena>;
+        using ArenaType = std::conditional_t<Const_, const FixedArrayArena, FixedArrayArena>;
 
         ArenaType& arena;
-        const TinyArrayArena::Handle handle;
+        const FixedArrayArena::Handle handle;
         size_t index;
 
         IteratorBase(ArenaType& arena, const Handle h, const size_t i)
@@ -198,18 +200,18 @@ public:
     };
 
     /**
-     * Proxy type representing a single array of a TinyArrayArena.
+     * Proxy type representing a single array of a FixedArrayArena.
      */
     template <bool Const_>
     struct ArrayRefBase
     {
-        friend class TinyArrayArena;
+        friend class FixedArrayArena;
 
         using iterator = IteratorBase<false>;
         using const_iterator = IteratorBase<true>;
 
         using IteratorType = std::conditional_t<Const_, const_iterator, iterator>;
-        using ArenaType = std::conditional_t<Const_, const TinyArrayArena, TinyArrayArena>;
+        using ArenaType = std::conditional_t<Const_, const FixedArrayArena, FixedArrayArena>;
 
         ArenaType& arena;
         const Handle handle;
@@ -250,12 +252,12 @@ public:
      * Returns a reference to a single array useful for use in
      * C++ range based for-loops.
      *
-     * NOTE: Make sure the TinyArrayArena the ArrayRef refers to
+     * NOTE: Make sure the FixedArrayArena the ArrayRef refers to
      *   is alive as long the ArrayRef is!
      *
      * @param h Handle of the array.
      * @return An object representing the sub-array, holding a reference
-     *   to the TinyArrayArena.
+     *   to the FixedArrayArena.
      */
     auto array(Handle h) & -> ArrayRef
     {

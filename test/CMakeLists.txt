@@ -8,7 +8,7 @@ add_executable(test.simfil
   complex.cpp
   performance.cpp
   arena.cpp
-  tiny-arena.cpp)
+  fixed-arena.cpp)
 
 target_link_libraries(test.simfil
   PUBLIC
