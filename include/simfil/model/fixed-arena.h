@@ -39,9 +39,9 @@ public:
 
     /* Find the smallest matching integer type to use as handle */
     using HandleValueType =
-        std::conditional_t<IndexBits + SizeBits <=  8, uint8_t,
-        std::conditional_t<IndexBits + SizeBits <= 16, uint16_t,
-        std::conditional_t<IndexBits + SizeBits <= 32, uint32_t, uint64_t>>>;
+        std::conditional_t<(IndexBits + SizeBits) <=  8, uint8_t,
+        std::conditional_t<(IndexBits + SizeBits) <= 16, uint16_t,
+        std::conditional_t<(IndexBits + SizeBits) <= 32, uint32_t, uint64_t>>>;
 
     static constexpr HandleValueType HandleIndexMask = MaxIndex << SizeBits;
     static constexpr HandleValueType HandleSizeMask = MaxSize;
@@ -76,10 +76,12 @@ public:
     auto newArray(const size_t size, const ElementType& value = {}) -> Handle
     {
         const auto index = data.size();
-        if (index > MaxIndex)
+        if (index > MaxIndex) {
             throw std::out_of_range("Index out of range");
-        if (size > MaxSize)
+        }
+        if (size > MaxSize) {
             throw std::out_of_range("Size out of range");
+        }
 
         data.insert(data.end(), size, value);
         return Handle(index, size);
@@ -97,11 +99,13 @@ public:
     auto newArray(Iter_ begin, Iter_ end) -> std::enable_if_t<!std::is_same_v<typename std::iterator_traits<Iter_>::value_type, void>, Handle>
     {
         const auto index = data.size();
-        if (index > MaxIndex)
+        if (index > MaxIndex) {
             throw std::out_of_range("Index out of range");
+        }
         const auto size = std::distance(begin, end);
-        if (size > MaxSize)
+        if (size > MaxSize) {
             throw std::out_of_range("Size out of range");
+        }
 
         data.insert(data.end(), begin, end);
         return Handle(index, size);
@@ -129,8 +133,9 @@ public:
      */
     auto at(const Handle h, const size_t index) -> ElementType&
     {
-        if (index >= h.size)
+        if (index >= h.size) {
             throw std::out_of_range("Index out of range");
+        }
         return data.at(h.index + index);
     }
     auto at(const Handle h, const size_t index) const -> const ElementType&
@@ -175,7 +180,7 @@ public:
 
         auto operator==(const IteratorBase& other) const -> bool
         {
-            return &arena == &other.arena && handle.index == other.handle.index && handle.size == other.handle.size;
+            return (&arena == &other.arena) && (handle.index == other.handle.index) && (handle.size == other.handle.size);
         }
 
         auto operator!=(const IteratorBase& other) const -> bool
@@ -202,7 +207,7 @@ public:
         const Handle handle;
 
         ArrayRefBase(const ArrayRefBase&) = delete;
-        ArrayRefBase(ArrayRefBase&&) = default;
+        ArrayRefBase(ArrayRefBase&&) noexcept = default;
 
         auto at(size_t index) const
         {

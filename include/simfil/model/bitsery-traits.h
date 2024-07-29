@@ -54,8 +54,9 @@ struct ArrayArenaExt
         for (simfil::ArrayIndex i = 0; i < numArrays; ++i) {
             auto size = arena.size(i);
             s.value4b(size);
-            for (size_t j = 0; j < size; ++j)
+            for (size_t j = 0; j < size; ++j) {
                 fnc(s, const_cast<ElementType&>(arena.at(i, j)));
+            }
         }
     }
 
@@ -68,8 +69,9 @@ struct ArrayArenaExt
             typename std::decay_t<decltype(arena)>::SizeType size;
             s.value4b(size);
             auto arrayIndex = arena.new_array(size);
-            for (size_t j = 0; j < size; ++j)
+            for (size_t j = 0; j < size; ++j) {
                 fnc(s, arena.emplace_back(arrayIndex));
+            }
         }
     }
 };
@@ -103,14 +105,15 @@ void serialize(S& s, ::simfil::FixedArrayArena<ElementType_, IndexBits_, SizeBit
 template <class S, class ElementType_, uint8_t IndexBits_, uint8_t SizeBits_, size_t PageSize_>
 void serialize(S& s, typename ::simfil::FixedArrayArena<ElementType_, IndexBits_, SizeBits_, PageSize_>::Handle& handle)
 {
-    if constexpr (sizeof(handle.value) <= 8)
+    if constexpr (sizeof(handle.value) <= 8) {
         s.value1b(handle.value);
-    else if constexpr (sizeof(handle.value) <= 16)
+    } else if constexpr (sizeof(handle.value) <= 16) {
         s.value2b(handle.value);
-    else if constexpr (sizeof(handle.value) <= 32)
+    } else if constexpr (sizeof(handle.value) <= 32) {
         s.value4b(handle.value);
-    else
+    } else {
         s.value8b(handle.value);
+    }
 }
 
 }
