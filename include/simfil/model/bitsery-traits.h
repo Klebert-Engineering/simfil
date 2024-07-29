@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <iostream>
 #include <bitsery/traits/core/std_defaults.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/ext/std_map.h>
@@ -9,6 +8,7 @@
 
 #include "nodes.h"
 #include "arena.h"
+#include "fixed-arena.h"
 
 namespace bitsery
 {
@@ -24,7 +24,7 @@ struct ContainerTraits<sfl::segmented_vector<T, N, Allocator>>
 }
 
 template <typename S>
-void serialize(S& s, simfil::ArrayIndex& v)
+void serialize(S& s, ::simfil::ArrayIndex& v)
 {
     s.value4b(v);
 }
@@ -47,7 +47,7 @@ namespace ext
 struct ArrayArenaExt
 {
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
-    void serialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize> const& arena, Fnc&& fnc) const
+    void serialize(S& s, ::simfil::ArrayArena<ElementType, PageSize, ChunkPageSize> const& arena, Fnc&& fnc) const
     {
         auto numArrays = static_cast<simfil::ArrayIndex>(arena.heads_.size());
         s.value4b(numArrays);
@@ -60,7 +60,7 @@ struct ArrayArenaExt
     }
 
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
-    void deserialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>& arena, Fnc&& fnc) const
+    void deserialize(S& s, ::simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>& arena, Fnc&& fnc) const
     {
         simfil::ArrayIndex numArrays;
         s.value4b(numArrays);
@@ -88,9 +88,29 @@ struct ExtensionTraits<ext::ArrayArenaExt, T>
 }
 
 template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize>
-void serialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>& arena)
+void serialize(S& s, ::simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>& arena)
 {
     s.ext(arena, ext::ArrayArenaExt{});
+}
+
+template <class S, class ElementType_, uint8_t IndexBits_, uint8_t SizeBits_, size_t PageSize_>
+void serialize(S& s, ::simfil::FixedArrayArena<ElementType_, IndexBits_, SizeBits_, PageSize_>& arena)
+{
+    constexpr size_t maxSize = std::numeric_limits<uint32_t>::max();
+    s.container(arena.data, maxSize);
+}
+
+template <class S, class ElementType_, uint8_t IndexBits_, uint8_t SizeBits_, size_t PageSize_>
+void serialize(S& s, typename ::simfil::FixedArrayArena<ElementType_, IndexBits_, SizeBits_, PageSize_>::Handle& handle)
+{
+    if constexpr (sizeof(handle.value) <= 8)
+        s.value1b(handle.value);
+    else if constexpr (sizeof(handle.value) <= 16)
+        s.value2b(handle.value);
+    else if constexpr (sizeof(handle.value) <= 32)
+        s.value4b(handle.value);
+    else
+        s.value8b(handle.value);
 }
 
 }

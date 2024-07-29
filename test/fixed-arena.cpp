@@ -122,12 +122,14 @@ TEST_CASE("FixedArrayArena handle size", "[FixedArrayArena]") {
 TEST_CASE("FixedArrayArena bitsery", "[FixedArrayArena]") {
     FixedArrayArena<int, 16, 16> arena;
     auto h0 = arena.newArray(12, 123);
-    auto h1 = arena.newArray(2, 7);
+    auto h1 = arena.newArray({2, 7});
     auto h2 = arena.newArray(0);
 
     using Buffer = std::vector<uint8_t>;
     using OutputAdapter = bitsery::OutputBufferAdapter<Buffer>;
     using InputAdapter = bitsery::InputBufferAdapter<Buffer>;
+
+
     Buffer buffer;
     auto writtenSize = bitsery::quickSerialization<OutputAdapter>(buffer, arena);
 
@@ -140,6 +142,8 @@ TEST_CASE("FixedArrayArena bitsery", "[FixedArrayArena]") {
     // Check the deserialization state and the content of the deserialized arena
     REQUIRE(state.first == bitsery::ReaderError::NoError);
     REQUIRE(state.second);
-    //REQUIRE(arena.size(array1) == deserializedArena.size(array1));
-    //REQUIRE(arena.size(array2) == deserializedArena.size(array2));
+
+    // Check deserialized values
+    REQUIRE(arena.at(h0, 0) == deserializedArena.at(h0, 0));
+    REQUIRE(arena.at(h1, 0) == deserializedArena.at(h1, 0));
 }

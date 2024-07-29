@@ -60,19 +60,6 @@ public:
         Handle(HandleValueType index, HandleValueType size)
             : index(index), size(size)
         {}
-
-        template <class Bitsery_>
-        auto serialize(Bitsery_& s)
-        {
-            if constexpr (sizeof(HandleValueType) <= 8)
-                s.value1b(value);
-            else if constexpr (sizeof(HandleValueType) <= 16)
-                s.value2b(value);
-            else if constexpr (sizeof(HandleValueType) <= 32)
-                s.value4b(value);
-            else
-                s.value8b(value);
-        }
     };
 
     static_assert(sizeof(Handle) == sizeof(HandleValueType),
@@ -88,13 +75,13 @@ public:
      */
     auto newArray(const size_t size, const ElementType& value = {}) -> Handle
     {
-        const auto index = data_.size();
+        const auto index = data.size();
         if (index > MaxIndex)
             throw std::out_of_range("Index out of range");
         if (size > MaxSize)
             throw std::out_of_range("Size out of range");
 
-        data_.insert(data_.end(), size, value);
+        data.insert(data.end(), size, value);
         return Handle(index, size);
     }
 
@@ -109,14 +96,14 @@ public:
     template <class Iter_>
     auto newArray(Iter_ begin, Iter_ end) -> std::enable_if_t<!std::is_same_v<typename std::iterator_traits<Iter_>::value_type, void>, Handle>
     {
-        const auto index = data_.size();
+        const auto index = data.size();
         if (index > MaxIndex)
             throw std::out_of_range("Index out of range");
         const auto size = std::distance(begin, end);
         if (size > MaxSize)
             throw std::out_of_range("Size out of range");
 
-        data_.insert(data_.end(), begin, end);
+        data.insert(data.end(), begin, end);
         return Handle(index, size);
     }
 
@@ -144,7 +131,7 @@ public:
     {
         if (index >= h.size)
             throw std::out_of_range("Index out of range");
-        return data_.at(h.index + index);
+        return data.at(h.index + index);
     }
     auto at(const Handle h, const size_t index) const -> const ElementType&
     {
@@ -266,17 +253,7 @@ public:
         return {*this, h};
     }
 
-    /**
-     * Bitsery encoding/decoding interface
-     */
-    template <class Bitsery_>
-    auto serialize(Bitsery_& s)
-    {
-        s.container(data_);
-    }
-
-private:
-    sfl::segmented_vector<ElementType, PageSize> data_;
+    sfl::segmented_vector<ElementType, PageSize> data;
 };
 
 }
