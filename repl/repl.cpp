@@ -96,7 +96,7 @@ static std::string input(const char* prompt = "> ")
     free(buf);
 #else
     std::cout << prompt << std::flush;
-    std::cin >> r;
+    std::getline(std::cin, r);
 #endif
     return r;
 }
@@ -108,7 +108,7 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
 
     if (!model->numRoots()) {
         model->addRoot(simfil::ModelNode::Ptr());
-        result[0] = simfil::eval(env, expr, *model);
+        result[0] = simfil::eval(env, expr, *model->root(0));
         return result;
     }
 
@@ -126,7 +126,7 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
             size_t next;
             while ((next = idx++) < model->numRoots()) {
                 try {
-                    result[next] = simfil::eval(env, expr, *model, next);
+                    result[next] = simfil::eval(env, expr, *model->root(next));
                 } catch (...) {
                     return;
                 }

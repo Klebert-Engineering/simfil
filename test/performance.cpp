@@ -116,7 +116,7 @@ static auto result(const ModelPoolPtr& model, std::string_view query)
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->toString());
 
-    return eval(env, *ast, *model);
+    return eval(env, *ast, *model->root(0));
 }
 
 static auto joined_result(const ModelPoolPtr& model, std::string_view query)
