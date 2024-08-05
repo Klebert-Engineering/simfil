@@ -9,6 +9,10 @@ class SimfilTestPackageConanFile(ConanFile):
     generators = "CMakeDeps", "CMakeToolchain", "VirtualRunEnv"
     test_type = "explicit"
 
+    default_options = {
+        "simfil/*:with_json": True,
+    }
+
     def requirements(self):
         self.requires(self.tested_reference_str)
 
