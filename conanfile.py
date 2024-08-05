@@ -82,3 +82,5 @@ class SimfilRecipe(ConanFile):
 
     def package_info(self):
         self.cpp_info.libs = ["simfil"]
+        if self.options.with_json:
+            self.cpp_info.defines = ["SIMFIL_WITH_MODEL_JSON=1"]
