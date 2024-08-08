@@ -223,6 +223,13 @@ std::optional<Token> scanWord(Scanner& s)
 
 std::optional<Token> scanStringLiteral(Scanner& s)
 {
+    // Test for raw strings
+    const auto raw =
+        s.match("r'") || s.match("R'") ||
+        s.match("r\"") || s.match("R\"");
+    if (raw)
+        s.skip();
+
     const auto quote = s.at(0);
     if (quote == '"' || quote == '\'') {
         auto begin = s.pos();
@@ -232,20 +239,31 @@ std::optional<Token> scanStringLiteral(Scanner& s)
         while (s) {
             if (s.at(0) == quote)
                 break;
+
             if (s.match("\\", Scanner::Skip)) {
                 if (!s)
                     s.fail("Unfinished escape sequence");
 
-                switch (s.at(0)) {
-                    case 'n': text.push_back('\n'); break;
-                    case 'r': text.push_back('\r'); break;
-                    case 't': text.push_back('\t'); break;
-                    default:  text.push_back(s.at(0)); break;
-                }
+                if (raw) {
+                    if (s.at(0) == quote)
+                        text.push_back(s.pop());
+                    else
+                        text.push_back('\\');
+                } else {
+                    switch (s.at(0)) {
+                        case 'n': text.push_back('\n'); break;
+                        case 'r': text.push_back('\r'); break;
+                        case 't': text.push_back('\t'); break;
+                        default:  text.push_back(s.at(0)); break;
+                    }
 
-                s.skip();
+                    s.skip();
+                }
                 continue;
             }
+
+            if (!s)
+                break;
 
             text.push_back(s.pop());
         }
@@ -400,9 +418,9 @@ std::vector<Token> tokenize(std::string_view expr)
         skipWhitespace(s);
         if (auto t = scanNumber(s))
             tokens.push_back(std::move(*t));
-        else if (auto t = scanWord(s))
-            tokens.push_back(std::move(*t));
         else if (auto t = scanStringLiteral(s))
+            tokens.push_back(std::move(*t));
+        else if (auto t = scanWord(s))
             tokens.push_back(std::move(*t));
         else if (auto t = scanSyntax(s))
             tokens.push_back(std::move(*t));
