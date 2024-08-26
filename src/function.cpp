@@ -143,8 +143,7 @@ auto boolify(Value v) -> bool
 }
 
 AnyFn AnyFn::Fn;
-AnyFn::AnyFn()
-{}
+AnyFn::AnyFn() = default;
 
 auto AnyFn::ident() const -> const FnInfo&
 {
@@ -188,8 +187,7 @@ auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
 }
 
 EachFn EachFn::Fn;
-EachFn::EachFn()
-{}
+EachFn::EachFn() = default;
 
 auto EachFn::ident() const -> const FnInfo&
 {
@@ -232,8 +230,7 @@ auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, cons
 }
 
 CountFn CountFn::Fn;
-CountFn::CountFn()
-{}
+CountFn::CountFn() = default;
 
 auto CountFn::ident() const -> const FnInfo&
 {
@@ -276,8 +273,7 @@ auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
 }
 
 TraceFn TraceFn::Fn;
-TraceFn::TraceFn()
-{}
+TraceFn::TraceFn() = default;
 
 auto TraceFn::ident() const -> const FnInfo&
 {
@@ -337,8 +333,7 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
 
 
 RangeFn RangeFn::Fn;
-RangeFn::RangeFn()
-{}
+RangeFn::RangeFn() = default;
 
 auto RangeFn::ident() const -> const FnInfo&
 {
@@ -372,8 +367,7 @@ auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
 }
 
 ReFn ReFn::Fn;
-ReFn::ReFn()
-{}
+ReFn::ReFn() = default;
 
 auto ReFn::ident() const -> const FnInfo&
 {
@@ -400,7 +394,7 @@ auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const 
 
         // Passing another <re> object is a no-op
         if (vv.isa(ValueType::TransientObject))
-            if (auto obj = vv.as<ValueType::TransientObject>(); obj.meta == &ReType::Type)
+            if (const auto obj = vv.as<ValueType::TransientObject>(); obj.meta == &ReType::Type)
                 return res(ctx, std::move(vv));
 
         raise<std::runtime_error>("re: invalid value type for argument 'expr'"s);
@@ -409,8 +403,7 @@ auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const 
 }
 
 ArrFn ArrFn::Fn;
-ArrFn::ArrFn()
-{}
+ArrFn::ArrFn() = default;
 
 auto ArrFn::ident() const -> const FnInfo&
 {
@@ -439,8 +432,7 @@ auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
 }
 
 SplitFn SplitFn::Fn;
-SplitFn::SplitFn()
-{}
+SplitFn::SplitFn() = default;
 
 auto SplitFn::ident() const -> const FnInfo&
 {
@@ -523,8 +515,7 @@ auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
 };
 
 SelectFn SelectFn::Fn;
-SelectFn::SelectFn()
-{}
+SelectFn::SelectFn() = default;
 
 auto SelectFn::ident() const -> const FnInfo&
 {
@@ -571,8 +562,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, co
 }
 
 SumFn SumFn::Fn;
-SumFn::SumFn()
-{}
+SumFn::SumFn() = default;
 
 auto SumFn::ident() const -> const FnInfo&
 {
@@ -626,8 +616,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
 }
 
 KeysFn KeysFn::Fn;
-KeysFn::KeysFn()
-{}
+KeysFn::KeysFn() = default;
 
 auto KeysFn::ident() const -> const FnInfo&
 {

@@ -23,11 +23,11 @@ static auto getFirst(std::string_view input, Token::Type t) -> Type
     return std::get<Type>(tokens.at(0).value);
 }
 
-static auto asInt(std::string_view input)   {return getFirst<int64_t>(input, Token::Type::INT);}
-static auto asFloat(std::string_view input) {return getFirst<double>(input, Token::Type::FLOAT);}
-static auto asStr(std::string_view input)   {return getFirst<std::string>(input, Token::Type::STRING);}
-static auto asRegexp(std::string_view input)   {return getFirst<std::string>(input, Token::Type::REGEXP);}
-static auto asWord(std::string_view input)  {return getFirst<std::string>(input, Token::Type::WORD);}
+static auto asInt(const std::string_view input)   {return getFirst<int64_t>(input, Token::Type::INT);}
+static auto asFloat(const std::string_view input) {return getFirst<double>(input, Token::Type::FLOAT);}
+static auto asStr(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::STRING);}
+static auto asRegexp(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::REGEXP);}
+static auto asWord(const std::string_view input)  {return getFirst<std::string>(input, Token::Type::WORD);}
 
 TEST_CASE("Tokenize integers", "[token.integer]") {
     /* Decimal */
