@@ -43,6 +43,8 @@ auto Token::toString() const -> std::string
         return std::to_string(std::get<double>(value));
     case Token::STRING:
         return "'"s + std::get<std::string>(value) + "'"s;
+    case Token::REGEXP:
+        return "re'"s + std::get<std::string>(value) + "'"s;
     case Token::WORD:
         return std::get<std::string>(value);
     default:
@@ -99,6 +101,7 @@ auto Token::toString(Type t) -> std::string
     case Token::INT:          return "<int>";
     case Token::FLOAT:        return "<float>";
     case Token::STRING:       return "<string>";
+    case Token::REGEXP:       return "<regexp>";
     case Token::WORD:         return "<word>";
     };
     return "";
@@ -227,8 +230,16 @@ std::optional<Token> scanStringLiteral(Scanner& s)
     const auto raw =
         s.match("r'") || s.match("R'") ||
         s.match("r\"") || s.match("R\"");
+
+    // Test for regexp
+    const auto regexp =
+        s.match("re'") || s.match("RE'") ||
+        s.match("re\"") || s.match("RE\"");
+
     if (raw)
-        s.skip();
+        s.skip(1);
+    else if (regexp)
+        s.skip(2);
 
     const auto quote = s.at(0);
     if (quote == '"' || quote == '\'') {
@@ -244,7 +255,7 @@ std::optional<Token> scanStringLiteral(Scanner& s)
                 if (!s)
                     s.fail("Unfinished escape sequence");
 
-                if (raw) {
+                if (raw || regexp) {
                     if (s.at(0) == quote)
                         text.push_back(s.pop());
                     else
@@ -271,6 +282,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
         if (!s || s.pop() != quote)
             s.fail("Quote mismatch");
 
+        if (regexp)
+            return Token(Token::REGEXP, text, begin, s.pos());
         return Token(Token::STRING, text, begin, s.pos());
     }
 

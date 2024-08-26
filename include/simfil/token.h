@@ -27,7 +27,8 @@ struct Token
         WILDCARD,       // **
         INT,            //
         FLOAT,          //
-        STRING,         // "..." or '...'
+        STRING,         // [r]"..." or [r]'...'
+        REGEXP,         // A string prefixed by re or RE
         WORD,           //
         SELF,           // _
         /* Constants */

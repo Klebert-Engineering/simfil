@@ -117,7 +117,7 @@ count(mylist.*)
 
 ## Types
 
-Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision) and `string`.
+Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string` and `re`.
 Additionally, the `model` type represents compound object/array container nodes.
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
@@ -288,6 +288,7 @@ keys(a.b) => 'c', 'd', ...
 ### `re(str)`
 
 Compiles a regular expression string to an `re` object, which holds a compiled regular expression.
+For regular expression literals you can also use a string literal prefixed by `re` as a short form: `re'prefix.*'`.
 
 *Example*
 ```

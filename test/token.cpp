@@ -26,6 +26,7 @@ static auto getFirst(std::string_view input, Token::Type t) -> Type
 static auto asInt(std::string_view input)   {return getFirst<int64_t>(input, Token::Type::INT);}
 static auto asFloat(std::string_view input) {return getFirst<double>(input, Token::Type::FLOAT);}
 static auto asStr(std::string_view input)   {return getFirst<std::string>(input, Token::Type::STRING);}
+static auto asRegexp(std::string_view input)   {return getFirst<std::string>(input, Token::Type::REGEXP);}
 static auto asWord(std::string_view input)  {return getFirst<std::string>(input, Token::Type::WORD);}
 
 TEST_CASE("Tokenize integers", "[token.integer]") {
@@ -90,6 +91,11 @@ TEST_CASE("Tokenize strings", "[token.string]") {
     REQUIRE(asStr("r''") == "");
     REQUIRE(asStr("R''") == "");
     REQUIRE(asStr("r'\"'") == "\"");
+
+    /* re'...' */
+    REQUIRE(asRegexp("re''") == "");
+    REQUIRE(asRegexp("RE''") == "");
+    REQUIRE(asRegexp("re'\"'") == "\"");
 
     /* Quote mismatch */
     CHECK_THROWS(asStr("'abc"));

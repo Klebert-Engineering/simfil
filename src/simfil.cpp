@@ -1,4 +1,5 @@
 #include "simfil/simfil.h"
+#include "simfil/model/nodes.h"
 #include "simfil/token.h"
 #include "simfil/operator.h"
 #include "simfil/value.h"
@@ -7,6 +8,7 @@
 #include "simfil/parser.h"
 #include "simfil/environment.h"
 #include "simfil/model/model.h"
+#include "simfil/types.h"
 #include "fmt/core.h"
 
 #include <algorithm>
@@ -18,8 +20,6 @@
 #include <type_traits>
 #include <deque>
 #include <unordered_map>
-#include <ostream>
-#include <iostream>
 #include <stdexcept>
 #include <cassert>
 #include <vector>
@@ -1073,6 +1073,20 @@ class ScalarParser : public PrefixParselet
 };
 
 /**
+ * Parser for parsing regular expression literals.
+ *
+ * <token>
+ */
+class RegExpParser : public PrefixParselet
+{
+    auto parse(Parser& p, Token t) const -> ExprPtr override
+    {
+        auto value = ReType::Type.make(std::get<std::string>(t.value));
+        return std::make_unique<ConstExpr>(std::move(value));
+    }
+};
+
+/**
  * Parser emitting constant expressions.
  */
 class ConstParser : public PrefixParselet
@@ -1243,6 +1257,7 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     p.prefixParsers[Token::INT]     = std::make_unique<ScalarParser<int64_t>>();
     p.prefixParsers[Token::FLOAT]   = std::make_unique<ScalarParser<double>>();
     p.prefixParsers[Token::STRING]  = std::make_unique<ScalarParser<std::string>>();
+    p.prefixParsers[Token::REGEXP]  = std::make_unique<RegExpParser>();
 
     /* Unary Operators */
     p.prefixParsers[Token::OP_SUB]    = std::make_unique<UnaryOpParser<OperatorNegate>>();
