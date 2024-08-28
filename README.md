@@ -4,7 +4,7 @@
 [![](https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/0ae49c7509dea18b4c110b8bf416f2715a214933/badge.svg)](https://github.com/Klebert-Engineering/simfil)
 [![Conan Center](https://img.shields.io/conan/v/simfil)](https://conan.io/center/recipes/simfil)
 
-`simfil` is a C++ 17 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the `simfil` query language, along with a query interpreter to query the actual data.
+`simfil` is a C++ 20 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the `simfil` query language, along with a query interpreter to query the actual data.
 
 Although `simfil` is made for querying map feature data, it is easy to plug in custom data models, such as the generic JSON interface the library also comes with.
 
