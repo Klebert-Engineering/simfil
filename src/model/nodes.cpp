@@ -1,5 +1,7 @@
 #include "simfil/model/model.h"
+#include "simfil/model/string-pool.h"
 #include "simfil/value.h"
+#include <unordered_set>
 #include "simfil/model/nodes.h"
 
 namespace simfil
@@ -74,9 +76,21 @@ nlohmann::json ModelNode::toJson() const
 {
     if (type() == ValueType::Object) {
         auto j = nlohmann::json::object();
+        std::unordered_set<StringId> multiKeys;
         for (const auto& [fieldId, childNode] : fields()) {
             if (auto resolvedField = model_->lookupStringId(fieldId)) {
-                j[*resolvedField] = childNode->toJson();
+                const auto isMultiKey = multiKeys.contains(fieldId);
+                if (!isMultiKey && j.contains(*resolvedField)) {
+                    j[*resolvedField] = nlohmann::json::array({
+                        std::move(j[*resolvedField]),
+                        childNode->toJson()
+                    });
+                    multiKeys.insert(fieldId);
+                } else if (isMultiKey) {
+                    j[*resolvedField].push_back(childNode->toJson());
+                } else {
+                    j[*resolvedField] = childNode->toJson();
+                }
             }
         }
         return j;

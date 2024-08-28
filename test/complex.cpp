@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <sstream>
 
+#include "simfil/model/model.h"
 #include "simfil/model/string-pool.h"
 #include "simfil/simfil.h"
 #include "simfil/model/json.h"
@@ -95,6 +96,28 @@ TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
     REQUIRE_THROWS(joined_result("1 / (nonexisting as int)")); /* Division by zero */
     REQUIRE_THROWS(joined_result("not nonexisting == 0"));     /* Invalid operands int and bool */
     REQUIRE_THROWS(joined_result("not *.nonexisting == 0"));   /* Invalid operands int and bool */
+}
+
+TEST_CASE("Multimap JSON", "[yaml.multimap.serialization]") {
+    auto model = std::make_shared<simfil::ModelPool>();
+    auto root = model->newObject(6);
+    model->addRoot(root);
+
+    // Add a single key
+    root->addField("a", static_cast<uint16_t>(1));
+
+    // Add a single key multiple times
+    root->addField("b", static_cast<uint16_t>(1));
+    root->addField("b", static_cast<uint16_t>(2));
+    root->addField("b", static_cast<uint16_t>(3));
+
+    // Make sure existing arrays do not get appended to
+    auto array = model->newArray(1);
+    array->append(static_cast<uint16_t>(1));
+    root->addField("c", array);
+    root->addField("c", static_cast<uint16_t>(2));
+
+    REQUIRE(model->toJson() == nlohmann::json::parse(R"([{"a":1,"b":[1,2,3],"c":[[1],2]}])"));
 }
 
 TEST_CASE("Serialization", "[yaml.complex.serialization]") {
