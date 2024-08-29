@@ -1,5 +1,6 @@
 #include "simfil/types.h"
 
+#include "simfil/model/nodes.h"
 #include "simfil/operator.h"
 #include "fmt/core.h"
 
@@ -87,6 +88,58 @@ auto IRangeType::unpack(const IRange& self, std::function<bool(Value)> res) cons
         if (!res(Value(ValueType::Int, static_cast<int64_t>(i))))
             return;
     } while (i != end);
+}
+
+ReType ReType::Type;
+ReType::ReType()
+    : TypedMetaType("re")
+{}
+
+auto ReType::make(std::string_view expr) -> Value
+{
+    auto obj = TransientObject(&ReType::Type);
+    auto re = get(obj);
+    re->str = expr;
+    re->re = std::regex(std::string(expr));
+
+    return Value(ValueType::TransientObject, std::move(obj));
+}
+
+auto ReType::unaryOp(std::string_view op, const Re& self) const -> Value
+{
+    if (op == OperatorTypeof::name())
+        return Value::make(ident);
+
+    if (op == OperatorBool::name())
+        return Value::t();
+
+    if (op == OperatorAsString::name())
+        return Value::make(self.str);
+
+    raise<InvalidOperandsError>(op);
+}
+
+auto ReType::binaryOp(std::string_view op, const Re& l, const Value& r) const -> Value
+{
+    return binaryOp(op, r, l);
+}
+
+auto ReType::binaryOp(std::string_view op, const Value& l, const Re& r) const -> Value
+{
+    if (l.isa(ValueType::Null))
+        return Value::null();
+
+    if (l.isa(ValueType::String)) {
+        const auto& str = l.as<ValueType::String>();
+
+        if (op == OperatorEq::name())
+            return std::regex_match(str, r.re) ? Value::make(str) : Value::f();
+
+        if (op == OperatorNeq::name())
+            return std::regex_match(str, r.re) ? Value::f() : Value::make(str);
+    }
+
+    raise<InvalidOperandsError>(op);
 }
 
 }

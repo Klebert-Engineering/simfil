@@ -27,7 +27,8 @@ struct Token
         WILDCARD,       // **
         INT,            //
         FLOAT,          //
-        STRING,         // "..." or '...'
+        STRING,         // [r]"..." or [r]'...'
+        REGEXP,         // A string prefixed by re or RE
         WORD,           //
         SELF,           // _
         /* Constants */
@@ -58,8 +59,6 @@ struct Token
         OP_BOOL,        // ?
         /* Regexp */
         OP_LEN,         // #
-        OP_MATCH,       // =~
-        OP_NOT_MATCH,   // !~
         /* Path */
         OP_TYPEOF,      // typeof
         /* Cast/Type */

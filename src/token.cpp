@@ -43,6 +43,8 @@ auto Token::toString() const -> std::string
         return std::to_string(std::get<double>(value));
     case Token::STRING:
         return "'"s + std::get<std::string>(value) + "'"s;
+    case Token::REGEXP:
+        return "re'"s + std::get<std::string>(value) + "'"s;
     case Token::WORD:
         return std::get<std::string>(value);
     default:
@@ -90,8 +92,6 @@ auto Token::toString(Type t) -> std::string
     case Token::OP_GTEQ:      return ">=";
     case Token::OP_BOOL:      return "?";
     case Token::OP_LEN:       return "#";
-    case Token::OP_MATCH:     return "=~";
-    case Token::OP_NOT_MATCH: return "!~";
     case Token::OP_TYPEOF:    return "typeof";
     case Token::OP_CAST:      return "as";
     case Token::OP_UNPACK:    return "...";
@@ -99,6 +99,7 @@ auto Token::toString(Type t) -> std::string
     case Token::INT:          return "<int>";
     case Token::FLOAT:        return "<float>";
     case Token::STRING:       return "<string>";
+    case Token::REGEXP:       return "<regexp>";
     case Token::WORD:         return "<word>";
     };
     return "";
@@ -223,6 +224,21 @@ std::optional<Token> scanWord(Scanner& s)
 
 std::optional<Token> scanStringLiteral(Scanner& s)
 {
+    // Test for raw strings
+    const auto raw =
+        s.match("r'") || s.match("R'") ||
+        s.match("r\"") || s.match("R\"");
+
+    // Test for regexp
+    const auto regexp =
+        s.match("re'") || s.match("RE'") ||
+        s.match("re\"") || s.match("RE\"");
+
+    if (raw)
+        s.skip(1);
+    else if (regexp)
+        s.skip(2);
+
     const auto quote = s.at(0);
     if (quote == '"' || quote == '\'') {
         auto begin = s.pos();
@@ -232,20 +248,31 @@ std::optional<Token> scanStringLiteral(Scanner& s)
         while (s) {
             if (s.at(0) == quote)
                 break;
+
             if (s.match("\\", Scanner::Skip)) {
                 if (!s)
                     s.fail("Unfinished escape sequence");
 
-                switch (s.at(0)) {
-                    case 'n': text.push_back('\n'); break;
-                    case 'r': text.push_back('\r'); break;
-                    case 't': text.push_back('\t'); break;
-                    default:  text.push_back(s.at(0)); break;
-                }
+                if (raw || regexp) {
+                    if (s.at(0) == quote)
+                        text.push_back(s.pop());
+                    else
+                        text.push_back('\\');
+                } else {
+                    switch (s.at(0)) {
+                        case 'n': text.push_back('\n'); break;
+                        case 'r': text.push_back('\r'); break;
+                        case 't': text.push_back('\t'); break;
+                        default:  text.push_back(s.at(0)); break;
+                    }
 
-                s.skip();
+                    s.skip();
+                }
                 continue;
             }
+
+            if (!s)
+                break;
 
             text.push_back(s.pop());
         }
@@ -253,6 +280,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
         if (!s || s.pop() != quote)
             s.fail("Quote mismatch");
 
+        if (regexp)
+            return Token(Token::REGEXP, text, begin, s.pos());
         return Token(Token::STRING, text, begin, s.pos());
     }
 
@@ -372,8 +401,6 @@ std::optional<Token> scanSyntax(Scanner& s)
         {"#", Token::OP_LEN},
         {"^", Token::OP_BITXOR},
         {"?", Token::OP_BOOL},
-        {"=~",Token::OP_MATCH},
-        {"!~",Token::OP_NOT_MATCH},
         {"<=",Token::OP_LTEQ},
         {"<", Token::OP_LT},
         {">=",Token::OP_GTEQ},
@@ -400,9 +427,9 @@ std::vector<Token> tokenize(std::string_view expr)
         skipWhitespace(s);
         if (auto t = scanNumber(s))
             tokens.push_back(std::move(*t));
-        else if (auto t = scanWord(s))
-            tokens.push_back(std::move(*t));
         else if (auto t = scanStringLiteral(s))
+            tokens.push_back(std::move(*t));
+        else if (auto t = scanWord(s))
             tokens.push_back(std::move(*t));
         else if (auto t = scanSyntax(s))
             tokens.push_back(std::move(*t));

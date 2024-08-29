@@ -1,4 +1,5 @@
 #include "simfil/simfil.h"
+#include "simfil/model/nodes.h"
 #include "simfil/token.h"
 #include "simfil/operator.h"
 #include "simfil/value.h"
@@ -7,6 +8,7 @@
 #include "simfil/parser.h"
 #include "simfil/environment.h"
 #include "simfil/model/model.h"
+#include "simfil/types.h"
 #include "fmt/core.h"
 
 #include <algorithm>
@@ -18,8 +20,6 @@
 #include <type_traits>
 #include <deque>
 #include <unordered_map>
-#include <ostream>
-#include <iostream>
 #include <stdexcept>
 #include <cassert>
 #include <vector>
@@ -55,7 +55,7 @@ enum Precedence {
     TERM        = 5,  // +, -
     BITWISE     = 4,  // <<, >>, &, |, ^
     COMPARISON  = 3,  // <, <=, >, >=
-    EQUALITY    = 2,  // ==, !=, =~, !~
+    EQUALITY    = 2,  // =, ==, !=
     LOGIC       = 1,  // and, or
 };
 
@@ -1073,6 +1073,20 @@ class ScalarParser : public PrefixParselet
 };
 
 /**
+ * Parser for parsing regular expression literals.
+ *
+ * <token>
+ */
+class RegExpParser : public PrefixParselet
+{
+    auto parse(Parser& p, Token t) const -> ExprPtr override
+    {
+        auto value = ReType::Type.make(std::get<std::string>(t.value));
+        return std::make_unique<ConstExpr>(std::move(value));
+    }
+};
+
+/**
  * Parser emitting constant expressions.
  */
 class ConstParser : public PrefixParselet
@@ -1243,6 +1257,7 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     p.prefixParsers[Token::INT]     = std::make_unique<ScalarParser<int64_t>>();
     p.prefixParsers[Token::FLOAT]   = std::make_unique<ScalarParser<double>>();
     p.prefixParsers[Token::STRING]  = std::make_unique<ScalarParser<std::string>>();
+    p.prefixParsers[Token::REGEXP]  = std::make_unique<RegExpParser>();
 
     /* Unary Operators */
     p.prefixParsers[Token::OP_SUB]    = std::make_unique<UnaryOpParser<OperatorNegate>>();
@@ -1275,8 +1290,6 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     p.infixParsers[Token::OP_LTEQ]   = std::make_unique<BinaryOpParser<OperatorLtEq, Precedence::EQUALITY>>();
     p.infixParsers[Token::OP_GT]     = std::make_unique<BinaryOpParser<OperatorGt,   Precedence::EQUALITY>>();
     p.infixParsers[Token::OP_GTEQ]   = std::make_unique<BinaryOpParser<OperatorGtEq, Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_MATCH]  = std::make_unique<BinaryOpParser<OperatorMatch,Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_NOT_MATCH] = std::make_unique<BinaryOpParser<OperatorNotMatch, Precedence::EQUALITY>>();
     p.infixParsers[Token::OP_AND]    = std::make_unique<AndOrParser>();
     p.infixParsers[Token::OP_OR]     = std::make_unique<AndOrParser>();
 

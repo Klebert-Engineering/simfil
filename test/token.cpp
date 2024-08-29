@@ -23,10 +23,11 @@ static auto getFirst(std::string_view input, Token::Type t) -> Type
     return std::get<Type>(tokens.at(0).value);
 }
 
-static auto asInt(std::string_view input)   {return getFirst<int64_t>(input, Token::Type::INT);}
-static auto asFloat(std::string_view input) {return getFirst<double>(input, Token::Type::FLOAT);}
-static auto asStr(std::string_view input)   {return getFirst<std::string>(input, Token::Type::STRING);}
-static auto asWord(std::string_view input)  {return getFirst<std::string>(input, Token::Type::WORD);}
+static auto asInt(const std::string_view input)   {return getFirst<int64_t>(input, Token::Type::INT);}
+static auto asFloat(const std::string_view input) {return getFirst<double>(input, Token::Type::FLOAT);}
+static auto asStr(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::STRING);}
+static auto asRegexp(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::REGEXP);}
+static auto asWord(const std::string_view input)  {return getFirst<std::string>(input, Token::Type::WORD);}
 
 TEST_CASE("Tokenize integers", "[token.integer]") {
     /* Decimal */
@@ -78,6 +79,24 @@ TEST_CASE("Tokenize strings", "[token.string]") {
     REQUIRE(asStr("\"abc\"") == "abc");
     REQUIRE(asStr("\"\\\"abc\\\"\"") == "\"abc\"");
 
+    /* r"..." */
+    REQUIRE(asStr("r\"\"") == "");
+    REQUIRE(asStr("R\"\"") == "");
+    REQUIRE(asStr("r\"abc\"") == "abc");
+    REQUIRE(asStr("r\"\\\"abc\\\"\"") == "\"abc\"");
+    REQUIRE(asStr("r\"\\\\\"\"") == "\\\"");
+    REQUIRE(asStr("r\"\\a\"") == "\\a");
+
+    /* r'...' */
+    REQUIRE(asStr("r''") == "");
+    REQUIRE(asStr("R''") == "");
+    REQUIRE(asStr("r'\"'") == "\"");
+
+    /* re'...' */
+    REQUIRE(asRegexp("re''") == "");
+    REQUIRE(asRegexp("RE''") == "");
+    REQUIRE(asRegexp("re'\"'") == "\"");
+
     /* Quote mismatch */
     CHECK_THROWS(asStr("'abc"));
     CHECK_THROWS(asStr("abc'"));
@@ -99,7 +118,6 @@ TEST_CASE("Tokenize symbols", "[token.symbol]") {
     /* Some random tokens */
     REQUIRE(getFirstType("_")      == Token::Type::SELF);
     REQUIRE(getFirstType("+")      == Token::Type::OP_ADD);
-    REQUIRE(getFirstType("=~")     == Token::Type::OP_MATCH);
     REQUIRE(getFirstType("==")     == Token::Type::OP_EQ);
     REQUIRE(getFirstType("=")      == Token::Type::OP_EQ);
     REQUIRE(getFirstType("<")      == Token::Type::OP_LT);

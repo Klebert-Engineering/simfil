@@ -587,34 +587,6 @@ struct OperatorGtEq
     }
 };
 
-struct OperatorMatch
-{
-    NAME("=~")
-    DENY_OTHER()
-
-    auto operator()(const std::string& s, const std::string& pattern) const -> Value
-    {
-        std::regex re(pattern);
-        return std::regex_match(s, re) ? Value::make(s) : Value::f();
-    }
-
-    NULL_AS_NULL()
-};
-
-struct OperatorNotMatch
-{
-    NAME("!~")
-    DENY_OTHER()
-
-    auto operator()(const std::string& s, const std::string& pattern) const -> Value
-    {
-        std::regex re(pattern);
-        return std::regex_match(s, re) ? Value::f() : Value::make(s);
-    }
-
-    NULL_AS_NULL()
-};
-
 struct OperatorSubscript
 {
     NAME("[]")

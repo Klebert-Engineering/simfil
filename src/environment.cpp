@@ -23,6 +23,7 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
     functions["sum"]    = &SumFn::Fn;
     functions["keys"]   = &KeysFn::Fn;
     functions["trace"]  = &TraceFn::Fn;
+    functions["re"]     = &ReFn::Fn;
 }
 
 Environment::Environment(NewStringCache_)

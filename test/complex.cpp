@@ -84,6 +84,13 @@ TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
                             "336.360000");
 }
 
+TEST_CASE("Regular Expression", "[complex.regexp]") {
+    REQUIRE_RESULT("re'a.c' = 'abc'", "abc");
+    REQUIRE_RESULT("'abc' = re'a.c'", "abc");
+    REQUIRE_RESULT("re'a.x' != 'abc'", "abc");
+    REQUIRE_RESULT("'abc' != re'a.x'", "abc");
+}
+
 TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
     REQUIRE_THROWS(joined_result("1 / (nonexisting as int)")); /* Division by zero */
     REQUIRE_THROWS(joined_result("not nonexisting == 0"));     /* Invalid operands int and bool */

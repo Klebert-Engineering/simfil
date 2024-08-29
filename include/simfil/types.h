@@ -4,6 +4,7 @@
 
 #include "value.h"
 #include "typed-meta-type.h"
+#include <string_view>
 
 namespace simfil
 {
@@ -38,6 +39,26 @@ public:
     auto binaryOp(std::string_view op, const Value& l, const IRange& r) const -> Value override;
 
     auto unpack(const IRange& , std::function<bool(Value)> res) const -> void override;
+};
+
+struct Re
+{
+    std::string str;
+    std::regex re;
+};
+
+class ReType : public TypedMetaType<Re>
+{
+public:
+    static ReType Type;
+
+    ReType();
+
+    auto make(std::string_view expr) -> Value;
+
+    auto unaryOp(std::string_view op, const Re&) const -> Value override;
+    auto binaryOp(std::string_view op, const Re&, const Value&) const -> Value override;
+    auto binaryOp(std::string_view op, const Value&, const Re&) const -> Value override;
 };
 
 }
