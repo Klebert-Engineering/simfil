@@ -1,4 +1,5 @@
 #include "simfil/model/model.h"
+#include "simfil/model/string-pool.h"
 #include "simfil/value.h"
 #include "simfil/model/nodes.h"
 
@@ -74,11 +75,31 @@ nlohmann::json ModelNode::toJson() const
 {
     if (type() == ValueType::Object) {
         auto j = nlohmann::json::object();
+        auto isMultiMap = false;
         for (const auto& [fieldId, childNode] : fields()) {
             if (auto resolvedField = model_->lookupStringId(fieldId)) {
-                j[*resolvedField] = childNode->toJson();
+                // As soon as we find the first duplicate key,
+                // change all existing values to arrays.
+                if (!isMultiMap && j.contains(*resolvedField)) {
+                    isMultiMap = true;
+                    for (auto&& [key, value] : j.items()) {
+                        j[std::move(key)] = nlohmann::json::array({std::move(value)});
+                    }
+                }
+
+                if (isMultiMap) {
+                    if (!j.contains(*resolvedField))
+                        j[*resolvedField] = nlohmann::json::array({childNode->toJson()});
+                    else
+                        j[*resolvedField].push_back(childNode->toJson());
+                } else {
+                    j[*resolvedField] = childNode->toJson();
+                }
             }
         }
+
+        if (isMultiMap)
+            j["_multimap"] = true;
         return j;
     }
     else if (type() == ValueType::Array) {
