@@ -74,7 +74,7 @@ static auto joined_result(std::string_view query)
 #define REQUIRE_RESULT(query, result) \
     REQUIRE(joined_result(query) == (result))
 
-TEST_CASE("Invoice", "[yaml.complex.invoice-sum]") {
+TEST_CASE("Invoice", "[complex.invoice-sum]") {
     REQUIRE_RESULT("account.order.*.product.*.(price * quantity)",
                             "68.900000|21.670000|137.800000|107.990000");
     REQUIRE_RESULT("sum(account.order.*.product.*.(price * quantity))",
@@ -92,13 +92,13 @@ TEST_CASE("Regular Expression", "[complex.regexp]") {
     REQUIRE_RESULT("'abc' != re'a.x'", "abc");
 }
 
-TEST_CASE("Runtime Error", "[yaml.complex.runtime-error]") {
+TEST_CASE("Runtime Error", "[complex.runtime-error]") {
     REQUIRE_THROWS(joined_result("1 / (nonexisting as int)")); /* Division by zero */
     REQUIRE_THROWS(joined_result("not nonexisting == 0"));     /* Invalid operands int and bool */
     REQUIRE_THROWS(joined_result("not *.nonexisting == 0"));   /* Invalid operands int and bool */
 }
 
-TEST_CASE("Multimap JSON", "[yaml.multimap.serialization]") {
+TEST_CASE("Multimap JSON", "[multimap.serialization]") {
     auto model = std::make_shared<simfil::ModelPool>();
     auto root = model->newObject(6);
     model->addRoot(root);
@@ -117,10 +117,11 @@ TEST_CASE("Multimap JSON", "[yaml.multimap.serialization]") {
     root->addField("c", array);
     root->addField("c", static_cast<uint16_t>(2));
 
-    REQUIRE(model->toJson() == nlohmann::json::parse(R"([{"a":1,"b":[1,2,3],"c":[[1],2]}])"));
+    INFO(model->toJson().dump(2));
+    REQUIRE(model->toJson() == nlohmann::json::parse(R"([{"a":[1],"b":[1,2,3],"c":[[1],2],"_multimap":true}])"));
 }
 
-TEST_CASE("Serialization", "[yaml.complex.serialization]") {
+TEST_CASE("Serialization", "[complex.serialization]") {
     auto model = json::parse(invoice);
 
     SECTION("Test Model write/read")

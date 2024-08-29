@@ -1,7 +1,6 @@
 #include "simfil/model/model.h"
 #include "simfil/model/string-pool.h"
 #include "simfil/value.h"
-#include <unordered_set>
 #include "simfil/model/nodes.h"
 
 namespace simfil
@@ -76,23 +75,31 @@ nlohmann::json ModelNode::toJson() const
 {
     if (type() == ValueType::Object) {
         auto j = nlohmann::json::object();
-        std::unordered_set<StringId> multiKeys;
+        auto isMultiMap = false;
         for (const auto& [fieldId, childNode] : fields()) {
             if (auto resolvedField = model_->lookupStringId(fieldId)) {
-                const auto isMultiKey = multiKeys.contains(fieldId);
-                if (!isMultiKey && j.contains(*resolvedField)) {
-                    j[*resolvedField] = nlohmann::json::array({
-                        std::move(j[*resolvedField]),
-                        childNode->toJson()
-                    });
-                    multiKeys.insert(fieldId);
-                } else if (isMultiKey) {
-                    j[*resolvedField].push_back(childNode->toJson());
+                // As soon as we find the first duplicate key,
+                // change all existing values to arrays.
+                if (!isMultiMap && j.contains(*resolvedField)) {
+                    isMultiMap = true;
+                    for (auto&& [key, value] : j.items()) {
+                        j[std::move(key)] = nlohmann::json::array({std::move(value)});
+                    }
+                }
+
+                if (isMultiMap) {
+                    if (!j.contains(*resolvedField))
+                        j[*resolvedField] = nlohmann::json::array({childNode->toJson()});
+                    else
+                        j[*resolvedField].push_back(childNode->toJson());
                 } else {
                     j[*resolvedField] = childNode->toJson();
                 }
             }
         }
+
+        if (isMultiMap)
+            j["_multimap"] = true;
         return j;
     }
     else if (type() == ValueType::Array) {
