@@ -55,7 +55,7 @@ enum Precedence {
     TERM        = 5,  // +, -
     BITWISE     = 4,  // <<, >>, &, |, ^
     COMPARISON  = 3,  // <, <=, >, >=
-    EQUALITY    = 2,  // ==, !=, =~, !~
+    EQUALITY    = 2,  // =, ==, !=
     LOGIC       = 1,  // and, or
 };
 
@@ -1290,8 +1290,6 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     p.infixParsers[Token::OP_LTEQ]   = std::make_unique<BinaryOpParser<OperatorLtEq, Precedence::EQUALITY>>();
     p.infixParsers[Token::OP_GT]     = std::make_unique<BinaryOpParser<OperatorGt,   Precedence::EQUALITY>>();
     p.infixParsers[Token::OP_GTEQ]   = std::make_unique<BinaryOpParser<OperatorGtEq, Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_MATCH]  = std::make_unique<BinaryOpParser<OperatorMatch,Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_NOT_MATCH] = std::make_unique<BinaryOpParser<OperatorNotMatch, Precedence::EQUALITY>>();
     p.infixParsers[Token::OP_AND]    = std::make_unique<AndOrParser>();
     p.infixParsers[Token::OP_OR]     = std::make_unique<AndOrParser>();
 

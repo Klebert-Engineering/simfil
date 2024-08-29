@@ -132,10 +132,10 @@ auto ReType::binaryOp(std::string_view op, const Value& l, const Re& r) const ->
     if (l.isa(ValueType::String)) {
         const auto& str = l.as<ValueType::String>();
 
-        if (op == OperatorMatch::name())
+        if (op == OperatorEq::name())
             return std::regex_match(str, r.re) ? Value::make(str) : Value::f();
 
-        if (op == OperatorNotMatch::name())
+        if (op == OperatorNeq::name())
             return std::regex_match(str, r.re) ? Value::f() : Value::make(str);
     }
 

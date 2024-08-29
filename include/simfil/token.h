@@ -59,8 +59,6 @@ struct Token
         OP_BOOL,        // ?
         /* Regexp */
         OP_LEN,         // #
-        OP_MATCH,       // =~
-        OP_NOT_MATCH,   // !~
         /* Path */
         OP_TYPEOF,      // typeof
         /* Cast/Type */

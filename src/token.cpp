@@ -92,8 +92,6 @@ auto Token::toString(Type t) -> std::string
     case Token::OP_GTEQ:      return ">=";
     case Token::OP_BOOL:      return "?";
     case Token::OP_LEN:       return "#";
-    case Token::OP_MATCH:     return "=~";
-    case Token::OP_NOT_MATCH: return "!~";
     case Token::OP_TYPEOF:    return "typeof";
     case Token::OP_CAST:      return "as";
     case Token::OP_UNPACK:    return "...";
@@ -403,8 +401,6 @@ std::optional<Token> scanSyntax(Scanner& s)
         {"#", Token::OP_LEN},
         {"^", Token::OP_BITXOR},
         {"?", Token::OP_BOOL},
-        {"=~",Token::OP_MATCH},
-        {"!~",Token::OP_NOT_MATCH},
         {"<=",Token::OP_LTEQ},
         {"<", Token::OP_LT},
         {">=",Token::OP_GTEQ},

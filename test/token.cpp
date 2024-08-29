@@ -118,7 +118,6 @@ TEST_CASE("Tokenize symbols", "[token.symbol]") {
     /* Some random tokens */
     REQUIRE(getFirstType("_")      == Token::Type::SELF);
     REQUIRE(getFirstType("+")      == Token::Type::OP_ADD);
-    REQUIRE(getFirstType("=~")     == Token::Type::OP_MATCH);
     REQUIRE(getFirstType("==")     == Token::Type::OP_EQ);
     REQUIRE(getFirstType("=")      == Token::Type::OP_EQ);
     REQUIRE(getFirstType("<")      == Token::Type::OP_LT);

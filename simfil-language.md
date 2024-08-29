@@ -160,7 +160,6 @@ The following types can be target types for a cast:
 | `a < b` / `a <= b`  | Less than / less than or equal to.                                                                      |
 | `a > b` / `a >= b`  | Greater than / greater than or equal to.                                                                |
 | `a == b` / `a != b` | Equal to / not equal to. `a = b` is an alias for `a == b`.                                              |
-| `a =~ b` / `a !~ b` | `a` matches regular expression `b` / `a` does not match regular expression `b`. Returns `a` or `false`  |
 | `a or b`            | Logical or, returning the first non-false argument (like JavaScript).                                   |
 | `a and b`           | Logical and, returning the first false argument (like JavaScript).                                      |
 
@@ -178,7 +177,7 @@ The following types can be target types for a cast:
 | `+`, `-`                               | 5          |
 | `<<`, `>>`, `&`, `\|`, `^`             | 4          |
 | `<`, `<=`, `>`, `>=`                   | 3          |
-| `==`/`=`, `!=`, `=~`, `!~`             | 2          |
+| `==`/`=`, `!=`,                        | 2          |
 | `and`, `or`                            | 1          |
 
 ## Functions
@@ -292,5 +291,9 @@ For regular expression literals you can also use a string literal prefixed by `r
 
 *Example*
 ```
-a.b =~ re("prefix.*")
+-- Test if a.b matches the regular expression "prefix.*"
+a.b = re("prefix.*")
+
+-- Test if a.b does not match "prefix.*"
+a.b != re("prefix.*")
 ```
