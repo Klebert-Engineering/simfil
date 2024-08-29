@@ -121,7 +121,7 @@ auto ReType::unaryOp(std::string_view op, const Re& self) const -> Value
 
 auto ReType::binaryOp(std::string_view op, const Re& l, const Value& r) const -> Value
 {
-    raise<InvalidOperandsError>(op);
+    return binaryOp(op, r, l);
 }
 
 auto ReType::binaryOp(std::string_view op, const Value& l, const Re& r) const -> Value
