@@ -51,13 +51,46 @@ StringPool::StringPool()
 }
 
 StringPool::StringPool(const StringPool& other)
-    : idForString_(other.idForString_),
-      stringForId_(other.stringForId_),
-      nextId_(other.nextId_),
-      byteSize_(other.byteSize_.load()),
-      cacheHits_(other.cacheHits_.load()),
-      cacheMisses_(other.cacheMisses_.load())
 {
+    std::unique_lock lockThis(stringStoreMutex_, std::defer_lock);
+    std::shared_lock lockOther(other.stringStoreMutex_, std::defer_lock);
+    std::lock(lockThis, lockOther);
+
+    // Copy storedStrings_.
+    storedStrings_ = other.storedStrings_;
+
+    // Map from old string data pointer to new string_view.
+    std::unordered_map<const char*, std::string_view> strDataToNewStrView;
+
+    // Build the mapping from old string data pointers to new string_views.
+    for (size_t i = 0; i < other.storedStrings_.size(); ++i) {
+        const std::string& oldStr = other.storedStrings_[i];
+        const std::string& newStr = storedStrings_[i];
+        strDataToNewStrView[oldStr.data()] = std::string_view(newStr);
+    }
+
+    // Rebuild idForString_ with new string_views pointing into this->storedStrings_.
+    idForString_.clear();
+    for (const auto& [oldStrView, id] : other.idForString_) {
+        // Get the new string_view corresponding to the old string data pointer.
+        auto it = strDataToNewStrView.find(oldStrView.data());
+        if (it != strDataToNewStrView.end()) {
+            const std::string_view& newStrView = it->second;
+            idForString_.emplace(newStrView, id);
+        } else {
+            // This should not happen if everything is consistent.
+            raise<std::runtime_error>("Failed to rebuild idForString_ in StringPool copy constructor");
+        }
+    }
+
+    // Copy stringForId_.
+    stringForId_ = other.stringForId_;
+
+    // Copy other member variables.
+    nextId_ = other.nextId_;
+    byteSize_ = other.byteSize_.load();
+    cacheHits_ = other.cacheHits_.load();
+    cacheMisses_ = other.cacheMisses_.load();
 }
 
 StringId StringPool::emplace(std::string_view const& str)
