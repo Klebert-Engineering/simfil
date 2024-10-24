@@ -20,7 +20,6 @@ struct ContainerTraits<sfl::segmented_vector<T, N, Allocator>>
     : public StdContainer<sfl::segmented_vector<T, N, Allocator>, true, true>
 {
 };
-
 }
 
 template <typename S>
