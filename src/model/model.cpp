@@ -329,14 +329,21 @@ std::shared_ptr<StringPool> ModelPool::strings() const
 
 void ModelPool::setStrings(std::shared_ptr<StringPool> const& strings)
 {
+    if (!strings)
+        raise<std::runtime_error>("Attempt to call ModelPool::setStrings(nullptr)!");
+
+    auto oldStrings = impl_->strings_;
+    impl_->strings_ = strings;
+    if (!oldStrings || *strings == *oldStrings)
+        return;
+
     // Translate object field IDs to the new dictionary.
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
         for (auto& member : memberArray) {
-            if (auto resolvedName = impl_->strings_->resolve(member.name_))
+            if (auto resolvedName = oldStrings->resolve(member.name_))
                 member.name_ = strings->emplace(*resolvedName);
         }
     }
-    impl_->strings_ = strings;
 }
 
 std::optional<std::string_view> ModelPool::lookupStringId(const StringId id) const

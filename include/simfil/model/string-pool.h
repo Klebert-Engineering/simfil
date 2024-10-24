@@ -89,6 +89,9 @@ struct StringPool
     virtual void write(std::ostream& outputStream, StringId offset = {}) const;  // NOLINT
     virtual void read(std::istream& inputStream);
 
+    /// Check if the content of the string pools is logically identical.
+    bool operator== (StringPool const& other) const;
+
 private:
     mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<

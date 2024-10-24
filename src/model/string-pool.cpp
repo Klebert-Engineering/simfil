@@ -209,6 +209,10 @@ void StringPool::read(std::istream& inputStream)
     }
 }
 
+bool StringPool::operator==(const StringPool &other) const {
+    return idForString_ == other.idForString_;
+}
+
 size_t detail::CaseInsensitiveHash::operator()(const std::string_view& str) const
 {
     size_t hash = 14695981039346656037ull;  // FNV offset basis for 64-bit size_t.
