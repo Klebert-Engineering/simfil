@@ -9,6 +9,7 @@
 #include <cmath>
 #include <mutex>
 #include <stdexcept>
+#include <locale>
 
 namespace bitsery
 {
@@ -64,9 +65,7 @@ StringPool::StringPool(const StringPool& other)
 
     // Build the mapping from old string data pointers to new string_views.
     for (size_t i = 0; i < other.storedStrings_.size(); ++i) {
-        const std::string& oldStr = other.storedStrings_[i];
-        const std::string& newStr = storedStrings_[i];
-        strDataToNewStrView[oldStr.data()] = std::string_view(newStr);
+        strDataToNewStrView[other.storedStrings_[i].data()] = storedStrings_[i];
     }
 
     // Rebuild idForString_ with new string_views pointing into this->storedStrings_.
@@ -75,9 +74,9 @@ StringPool::StringPool(const StringPool& other)
         // Get the new string_view corresponding to the old string data pointer.
         auto it = strDataToNewStrView.find(oldStrView.data());
         if (it != strDataToNewStrView.end()) {
-            const std::string_view& newStrView = it->second;
-            idForString_.emplace(newStrView, id);
-        } else {
+            idForString_.emplace(it->second, id);
+        }
+        else {
             // This should not happen if everything is consistent.
             raise<std::runtime_error>("Failed to rebuild idForString_ in StringPool copy constructor");
         }
@@ -248,15 +247,12 @@ bool StringPool::operator==(const StringPool &other) const {
 
 size_t detail::CaseInsensitiveHash::operator()(const std::string_view& str) const
 {
-    size_t hash = 14695981039346656037ull;  // FNV offset basis for 64-bit size_t.
-    for (unsigned char c : str) {
-        // ASCII lowercase conversion.
-        if (c >= 'A' && c <= 'Z') {
-            constexpr auto lowercaseOffset = 'a' - 'A';
-            c += lowercaseOffset;
-        }
+    std::locale locale{};
+    auto hash = static_cast<size_t>(14695981039346656037ULL);  // FNV offset basis for 64-bit size_t.
+    for (auto c : str) {
+        c = std::tolower(c, locale);
         hash ^= c;
-        hash *= 1099511628211ull;  // FNV prime for 64-bit size_t.
+        hash *= static_cast<size_t>(1099511628211ULL);  // FNV prime for 64-bit size_t.
     }
     return hash;
 }
@@ -265,12 +261,13 @@ bool detail::CaseInsensitiveEqual::operator()(
     const std::string_view& lhs,
     const std::string_view& rhs) const
 {
+    std::locale locale{};
     return std::equal(
         lhs.begin(),
         lhs.end(),
         rhs.begin(),
         rhs.end(),
-        [](unsigned char l, unsigned char r)
-        { return std::tolower(l) == std::tolower(r); });
+        [&locale](auto l, auto r)
+        { return std::tolower(l, locale) == std::tolower(r, locale); });
 }
 }  // namespace simfil
