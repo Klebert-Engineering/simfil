@@ -558,7 +558,9 @@ public:
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].second(static_cast<LambdaThisType const&>(*this));
-        return Object::at(i - fields_.size());
+        if (members_ != InvalidArrayIndex)
+            return Object::at(i - fields_.size());
+        return {};
     }
 
     [[nodiscard]] uint32_t size() const override {
@@ -569,13 +571,17 @@ public:
         for (auto const& [k, v] : fields_)
             if (k == field)
                 return v(static_cast<LambdaThisType const&>(*this));
-        return Object::get(field);
+        if (members_ != InvalidArrayIndex)
+            return Object::get(field);
+        return {};
     }
 
     [[nodiscard]] StringId keyAt(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].first;
-        return Object::keyAt(i - fields_.size());
+        if (members_ != InvalidArrayIndex)
+            return Object::keyAt(i - fields_.size());
+        return StringPool::Empty;
     }
 
     bool iterate(IterCallback const& cb) const override {  // NOLINT (allow discard)
@@ -584,13 +590,17 @@ public:
             if (!cb(*vv))
                 return false;
         }
-        return Object::iterate(cb);
+        if (members_ != InvalidArrayIndex)
+            return Object::iterate(cb);
+        return true;
     }
 
 protected:
     ProceduralObject() = default;
     ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a)
         : Object(i, pool, a) {}
+    ProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
+        : Object(InvalidArrayIndex, pool, a) {}
 
     sfl::small_vector<
         std::pair<StringId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
