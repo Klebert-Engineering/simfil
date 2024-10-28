@@ -551,7 +551,7 @@ protected:
 
 /** Object with extra procedural fields */
 
-template<uint16_t MaxProceduralFields, class LambdaThisType=Object>
+template<uint16_t MaxProceduralFields, class LambdaThisType=Object, class ModelPoolDerivedModel=ModelPool>
 class ProceduralObject : public Object
 {
 public:
@@ -594,6 +594,8 @@ public:
             return Object::iterate(cb);
         return true;
     }
+
+    inline ModelPoolDerivedModel& model() const {return *modelPtr<ModelPoolDerivedModel>();}  // NOLINT
 
 protected:
     ProceduralObject() = default;
