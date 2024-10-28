@@ -419,9 +419,9 @@ template<> [[nodiscard]] ValueType SmallValueNode<bool>::type() const;
 template<>
 SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
-/** Model Node for an array. */
+/** Model Node for an array from which typed/untyped arrays may be derived. */
 
-struct Array : public MandatoryModelPoolNodeBase
+struct BaseArray : public MandatoryModelPoolNodeBase
 {
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
@@ -432,6 +432,21 @@ struct Array : public MandatoryModelPoolNodeBase
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
+
+protected:
+    BaseArray() = default;
+    BaseArray(ModelConstPtr pool, ModelNodeAddress);
+
+    Storage* storage_ = nullptr;
+    ArrayIndex members_ = 0;
+};
+
+/** Model Node for a mixed-type array. */
+
+struct Array : public BaseArray
+{
+    template<typename> friend struct shared_model_ptr;
+    friend class ModelPool;
 
     template<class ModelNodeType>
     Array& append(shared_model_ptr<ModelNodeType> const& value) {
@@ -453,15 +468,12 @@ struct Array : public MandatoryModelPoolNodeBase
 
 protected:
     Array() = default;
-    Array(ModelConstPtr pool, ModelNodeAddress);
-
-    Storage* storage_ = nullptr;
-    ArrayIndex members_ = 0;
+    using BaseArray::BaseArray;
 };
 
-/** Model Node for an object. */
+/** Model Node for an object from which typed/untyped object may be derived. */
 
-struct Object : public MandatoryModelPoolNodeBase
+struct BaseObject : public MandatoryModelPoolNodeBase
 {
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
@@ -473,26 +485,6 @@ struct Object : public MandatoryModelPoolNodeBase
     [[nodiscard]] ModelNode::Ptr get(const StringId &) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
     bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
-
-    template<class ModelNodeType>
-    Object& addField(std::string_view const& name, shared_model_ptr<ModelNodeType> const& value) {
-        return addField(name, static_cast<ModelNode::Ptr>(value));
-    }
-
-    Object& addBool(std::string_view const& name, bool value);
-    Object& addField(std::string_view const& name, uint16_t value);
-    Object& addField(std::string_view const& name, int16_t value);
-    Object& addField(std::string_view const& name, int64_t const& value);
-    Object& addField(std::string_view const& name, double const& value);
-    Object& addField(std::string_view const& name, std::string_view const& value);
-    Object& addField(std::string_view const& name, ModelNode::Ptr const& value={});
-
-    [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
-
-    /**
-     * Adopt all fields from the `other` object into this one.
-     */
-    Object& extend(shared_model_ptr<Object> const& other);
 
 protected:
     /**
@@ -515,12 +507,46 @@ protected:
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
 
-    Object() = default;
-    Object(ModelConstPtr pool, ModelNodeAddress);
-    Object(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
+    BaseObject() = default;
+    BaseObject(ModelConstPtr pool, ModelNodeAddress);
+    BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
 
     Storage* storage_ = nullptr;
     ArrayIndex members_ = 0;
+};
+
+/** Model Node for an object. */
+
+struct Object : public BaseObject
+{
+    template<typename> friend struct shared_model_ptr;
+    friend class ModelPool;
+    friend class bitsery::Access;
+
+    template<class ModelNodeType>
+    Object& addField(std::string_view const& name, shared_model_ptr<ModelNodeType> const& value) {
+        return addField(name, static_cast<ModelNode::Ptr>(value));
+    }
+
+    Object& addBool(std::string_view const& name, bool value);
+    Object& addField(std::string_view const& name, uint16_t value);
+    Object& addField(std::string_view const& name, int16_t value);
+    Object& addField(std::string_view const& name, int64_t const& value);
+    Object& addField(std::string_view const& name, double const& value);
+    Object& addField(std::string_view const& name, std::string_view const& value);
+    Object& addField(std::string_view const& name, ModelNode::Ptr const& value={});
+
+    using BaseObject::get;
+    [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
+
+    /**
+     * Adopt all fields from the `other` object into this one.
+     */
+    Object& extend(shared_model_ptr<Object> const& other);
+
+protected:
+    Object() = default;
+    using BaseObject::BaseObject;
 };
 
 /** Object with extra procedural fields */

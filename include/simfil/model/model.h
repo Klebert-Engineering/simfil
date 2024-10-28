@@ -78,8 +78,8 @@ public:
  */
 class ModelPool : public Model
 {
-    friend struct Object;
-    friend struct Array;
+    friend struct BaseObject;
+    friend struct BaseArray;
 
 public:
     /**
