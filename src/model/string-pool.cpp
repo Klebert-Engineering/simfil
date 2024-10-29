@@ -11,11 +11,14 @@
 #include <stdexcept>
 #include <locale>
 
+/**
+ * Note: This code is taken from bitsery traits/string.h and adopted
+ * to handle (de-)serialization of a string view.
+ */
 namespace bitsery
 {
 namespace traits
 {
-
 template<typename CharT, typename Traits>
 struct ContainerTraits<std::basic_string_view<CharT, Traits>>
     : public StdContainer<std::basic_string_view<CharT, Traits>, true, true>
@@ -27,11 +30,7 @@ struct TextTraits<std::basic_string_view<CharT, Traits>>
 {
     using TValue = typename ContainerTraits<
         std::basic_string_view<CharT, Traits>>::TValue;
-    // string is automatically null-terminated
     static constexpr bool addNUL = false;
-
-    // is is not 100% accurate, but for performance reasons assume that string
-    // stores text, not binary data
     static size_t length(const std::basic_string_view<CharT, Traits>& str)
     {
         return str.size();
@@ -247,13 +246,22 @@ bool StringPool::operator==(const StringPool &other) const {
 
 size_t detail::CaseInsensitiveHash::operator()(const std::string_view& str) const
 {
+    // FNV-1a Hash (Fowler–Noll–Vo) for case-insensitive hashing.
+    // Reference: http://www.isthe.com/chongo/tech/comp/fnv/#FNV-reference-source
+    // Selects 64-bit FNV-1a offset basis and prime if size_t is 8 bytes,
+    // and 32-bit FNV values if size_t is 4 bytes.
+    constexpr size_t offsetBasis = sizeof(size_t) == 4 ? 2166136261U : 14695981039346656037ULL;
+    constexpr size_t prime = sizeof(size_t) == 4 ? 16777619U : 1099511628211ULL;
+
+    size_t hash = offsetBasis;
     std::locale locale{};
-    auto hash = static_cast<size_t>(14695981039346656037ULL);  // FNV offset basis for 64-bit size_t.
+
     for (auto c : str) {
         c = std::tolower(c, locale);
         hash ^= c;
-        hash *= static_cast<size_t>(1099511628211ULL);  // FNV prime for 64-bit size_t.
+        hash *= prime;
     }
+
     return hash;
 }
 
