@@ -435,6 +435,8 @@ struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
         return append(static_cast<ModelNode::Ptr>(value));
     }
 
+    bool forEach(std::function<bool(ModelNodeType const&)> const& callback) const;
+
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
