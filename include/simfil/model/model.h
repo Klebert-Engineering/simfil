@@ -78,7 +78,7 @@ public:
  */
 class ModelPool : public Model
 {
-    friend struct BaseObject;
+    template<typename, typename> friend struct BaseObject;
     template<typename, typename> friend struct BaseArray;
 
 public:

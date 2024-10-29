@@ -478,20 +478,27 @@ protected:
     using BaseArray::BaseArray;
 };
 
-/** Model Node for an object from which typed/untyped object may be derived. */
+/** Model Node for an object from which typed/untyped objects may be derived. */
 
-struct BaseObject : public MandatoryModelPoolNodeBase
+template <class ModelType, class ModelNodeType>
+struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
 {
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
+
+    template<class OtherModelNodeType>
+    requires std::derived_from<OtherModelNodeType, ModelNodeType>
+    BaseObject& addField(std::string_view const& name, shared_model_ptr<ModelNodeType> const& value) {
+        return addField(name, static_cast<ModelNode::Ptr>(value));
+    }
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const StringId &) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
+    bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
     /**
@@ -513,10 +520,14 @@ protected:
     };
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
+    using ModelNode::model_;
+    using MandatoryDerivedModelNodeBase<ModelType>::model;
 
     BaseObject() = default;
     BaseObject(ModelConstPtr pool, ModelNodeAddress);
     BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
+
+    BaseObject& addField(std::string_view const& name, ModelNode::Ptr const& value={});
 
     Storage* storage_ = nullptr;
     ArrayIndex members_ = 0;
@@ -524,16 +535,11 @@ protected:
 
 /** Model Node for an object. */
 
-struct Object : public BaseObject
+struct Object : public BaseObject<ModelPool, ModelNode>
 {
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
-
-    template<class ModelNodeType>
-    Object& addField(std::string_view const& name, shared_model_ptr<ModelNodeType> const& value) {
-        return addField(name, static_cast<ModelNode::Ptr>(value));
-    }
 
     Object& addBool(std::string_view const& name, bool value);
     Object& addField(std::string_view const& name, uint16_t value);
@@ -541,9 +547,9 @@ struct Object : public BaseObject
     Object& addField(std::string_view const& name, int64_t const& value);
     Object& addField(std::string_view const& name, double const& value);
     Object& addField(std::string_view const& name, std::string_view const& value);
-    Object& addField(std::string_view const& name, ModelNode::Ptr const& value={});
 
     using BaseObject::get;
+    using BaseObject::addField;
     [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
 
     /**
