@@ -231,49 +231,12 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
 
 /** Model Node impls for an array. */
 
-BaseArray::BaseArray(ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_((ArrayIndex)a.index())
-{
-    storage_ = &model().arrayMemberStorage();
-}
-
-ValueType BaseArray::type() const
-{
-    return ValueType::Array;
-}
-
-ModelNode::Ptr BaseArray::at(int64_t i) const
-{
-    if (i < 0 || i >= (int64_t)storage_->size(members_))
-        return {};
-    return ModelNode::Ptr::make(model_, storage_->at(members_, i));
-}
-
-uint32_t BaseArray::size() const
-{
-    return (uint32_t)storage_->size(members_);
-}
-
-bool BaseArray::iterate(const ModelNode::IterCallback& cb) const
-{
-    auto cont = true;
-    auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
-        cont = cb(node);
-    });
-    storage_->iterate(members_, [&, this](auto&& member){
-            model_->resolve(*ModelNode::Ptr::make(model_, member), resolveAndCb);
-        return cont;
-    });
-    return cont;
-}
-
 Array& Array::append(bool value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
 Array& Array::append(uint16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
 Array& Array::append(int16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
 Array& Array::append(int64_t const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 Array& Array::append(double const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 Array& Array::append(std::string_view const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
-Array& Array::append(ModelNode::Ptr const& value) {storage_->push_back(members_, value->addr()); return *this;}
 
 Array& Array::extend(shared_model_ptr<Array> const& other) {
     auto otherSize = other->size();

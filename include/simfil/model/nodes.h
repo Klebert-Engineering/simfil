@@ -421,21 +421,32 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
 /** Model Node for an array from which typed/untyped arrays may be derived. */
 
-struct BaseArray : public MandatoryModelPoolNodeBase
+template <class ModelType, class ModelNodeType>
+struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
 {
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
 
+    template<class OtherModelNodeType>
+    requires std::derived_from<OtherModelNodeType, ModelNodeType>
+    BaseArray& append(shared_model_ptr<OtherModelNodeType> const& value) {
+        return append(static_cast<ModelNode::Ptr>(value));
+    }
+
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
+    bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
     BaseArray() = default;
     BaseArray(ModelConstPtr pool, ModelNodeAddress);
+    BaseArray& append(ModelNode::Ptr const& value={});
+
+    using ModelNode::model_;
+    using MandatoryDerivedModelNodeBase<ModelType>::model;
 
     Storage* storage_ = nullptr;
     ArrayIndex members_ = 0;
@@ -443,15 +454,10 @@ protected:
 
 /** Model Node for a mixed-type array. */
 
-struct Array : public BaseArray
+struct Array : public BaseArray<ModelPool, ModelNode>
 {
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
-
-    template<class ModelNodeType>
-    Array& append(shared_model_ptr<ModelNodeType> const& value) {
-        return append(static_cast<ModelNode::Ptr>(value));
-    }
 
     Array& append(bool value);
     Array& append(uint16_t value);
@@ -459,7 +465,8 @@ struct Array : public BaseArray
     Array& append(int64_t const& value);
     Array& append(double const& value);
     Array& append(std::string_view const& value);
-    Array& append(ModelNode::Ptr const& value={});
+
+    using BaseArray::append;
 
     /**
      * Append all elements from `other` to this array.

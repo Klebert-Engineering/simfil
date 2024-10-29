@@ -79,7 +79,7 @@ public:
 class ModelPool : public Model
 {
     friend struct BaseObject;
-    friend struct BaseArray;
+    template<typename, typename> friend struct BaseArray;
 
 public:
     /**
@@ -189,3 +189,5 @@ protected:
 };
 
 }
+
+#include "nodes.impl.h"
