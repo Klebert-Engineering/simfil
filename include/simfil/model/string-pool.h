@@ -10,12 +10,28 @@
 #include <string>
 #include <istream>
 #include <ostream>
+#include <deque>
 
 namespace simfil
 {
 
 using StringId = uint16_t;
 static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
+
+namespace detail
+{
+// Custom hash function for case-insensitive string hashing.
+struct CaseInsensitiveHash
+{
+    size_t operator()(const std::string_view& str) const;
+};
+
+// Custom equality comparison for case-insensitive string comparison.
+struct CaseInsensitiveEqual
+{
+    bool operator()(const std::string_view& lhs, const std::string_view& rhs) const;
+};
+}  // namespace detail
 
 /**
  * Fast and efficient case-insensitive string interner,
@@ -70,17 +86,26 @@ struct StringPool
 
     /// Serialization - write to stream, starting from a specific
     ///  id offset if necessary (for partial serialisation).
-    virtual void write(std::ostream& outputStream, StringId offset = {}) const; // NOLINT
+    virtual void write(std::ostream& outputStream, StringId offset = {}) const;  // NOLINT
     virtual void read(std::istream& inputStream);
+
+    /// Check if the content of the string pools is logically identical.
+    bool operator== (StringPool const& other) const;
 
 private:
     mutable std::shared_mutex stringStoreMutex_;
-    std::unordered_map<std::string, StringId> idForString_;
-    std::unordered_map<StringId, std::string> stringForId_;
+    std::unordered_map<
+        std::string_view,
+        StringId,
+        detail::CaseInsensitiveHash,
+        detail::CaseInsensitiveEqual>
+        idForString_;
+    std::unordered_map<StringId, std::string_view> stringForId_;
+    std::deque<std::string> storedStrings_;
     StringId nextId_ = FirstDynamicId;
     std::atomic_int64_t byteSize_{0};
     std::atomic_int64_t cacheHits_{0};
     std::atomic_int64_t cacheMisses_{0};
 };
 
-}
+}  // namespace simfil
