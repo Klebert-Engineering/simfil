@@ -58,7 +58,7 @@ bool BaseArray<ModelType, ModelNodeType>::forEach(
 
 template <class ModelType, class ModelNodeType>
 BaseArray<ModelType, ModelNodeType>&
-BaseArray<ModelType, ModelNodeType>::append(ModelNode::Ptr const& value)
+BaseArray<ModelType, ModelNodeType>::appendInternal(ModelNode::Ptr const& value)
 {
     storage_->push_back(members_, value->addr());
     return *this;
@@ -146,7 +146,7 @@ bool BaseObject<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback
 }
 
 template <class ModelType, class ModelNodeType>
-BaseObject<ModelType, ModelNodeType>& BaseObject<ModelType, ModelNodeType>::addField(
+BaseObject<ModelType, ModelNodeType>& BaseObject<ModelType, ModelNodeType>::addFieldInternal(
     std::string_view const& name,
     ModelNode::Ptr const& value)
 {

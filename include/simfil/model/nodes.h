@@ -432,7 +432,7 @@ struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
     BaseArray& append(shared_model_ptr<OtherModelNodeType> const& value) {
-        return append(static_cast<ModelNode::Ptr>(value));
+        return appendInternal(static_cast<ModelNode::Ptr>(value));
     }
 
     bool forEach(std::function<bool(ModelNodeType const&)> const& callback) const;
@@ -445,7 +445,7 @@ struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
 protected:
     BaseArray() = default;
     BaseArray(ModelConstPtr pool, ModelNodeAddress);
-    BaseArray& append(ModelNode::Ptr const& value={});
+    BaseArray& appendInternal(ModelNode::Ptr const& value={});
 
     using ModelNode::model_;
     using MandatoryDerivedModelNodeBase<ModelType>::model;
@@ -461,14 +461,14 @@ struct Array : public BaseArray<ModelPool, ModelNode>
     template<typename> friend struct shared_model_ptr;
     friend class ModelPool;
 
+    using BaseArray::append;
+
     Array& append(bool value);
     Array& append(uint16_t value);
     Array& append(int16_t value);
     Array& append(int64_t const& value);
     Array& append(double const& value);
     Array& append(std::string_view const& value);
-
-    using BaseArray::append;
 
     /**
      * Append all elements from `other` to this array.
@@ -491,8 +491,8 @@ struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
 
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
-    BaseObject& addField(std::string_view const& name, shared_model_ptr<ModelNodeType> const& value) {
-        return addField(name, static_cast<ModelNode::Ptr>(value));
+    BaseObject& addField(std::string_view const& name, shared_model_ptr<OtherModelNodeType> const& value) {
+        return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
     }
 
     [[nodiscard]] ValueType type() const override;
@@ -529,7 +529,7 @@ protected:
     BaseObject(ModelConstPtr pool, ModelNodeAddress);
     BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
 
-    BaseObject& addField(std::string_view const& name, ModelNode::Ptr const& value={});
+    BaseObject& addFieldInternal(std::string_view const& name, ModelNode::Ptr const& value={});
 
     Storage* storage_ = nullptr;
     ArrayIndex members_ = 0;
@@ -543,6 +543,9 @@ struct Object : public BaseObject<ModelPool, ModelNode>
     friend class ModelPool;
     friend class bitsery::Access;
 
+    using BaseObject<ModelPool, ModelNode>::get;
+    using BaseObject<ModelPool, ModelNode>::addField;
+
     Object& addBool(std::string_view const& name, bool value);
     Object& addField(std::string_view const& name, uint16_t value);
     Object& addField(std::string_view const& name, int16_t value);
@@ -550,8 +553,6 @@ struct Object : public BaseObject<ModelPool, ModelNode>
     Object& addField(std::string_view const& name, double const& value);
     Object& addField(std::string_view const& name, std::string_view const& value);
 
-    using BaseObject::get;
-    using BaseObject::addField;
     [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
 
     /**
@@ -561,7 +562,7 @@ struct Object : public BaseObject<ModelPool, ModelNode>
 
 protected:
     Object() = default;
-    using BaseObject::BaseObject;
+    using BaseObject<ModelPool, ModelNode>::BaseObject;
 };
 
 /** Object with extra procedural fields */
@@ -579,7 +580,7 @@ public:
     }
 
     [[nodiscard]] uint32_t size() const override {
-        return fields_.size() + Object::size();
+        return fields_.size() + (members_ != InvalidArrayIndex ? Object::size() : 0);
     }
 
     [[nodiscard]] ModelNode::Ptr get(const StringId & field) const override {
