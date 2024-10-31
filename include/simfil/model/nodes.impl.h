@@ -53,7 +53,7 @@ bool BaseArray<ModelType, ModelNodeType>::forEach(
     std::function<bool(ModelNodeType const&)> const& callback) const
 {
     return iterate(ModelNode::IterLambda(
-        [&callback](auto&& node) { return callback(static_cast<ModelNodeType&>(node)); }));
+        [&callback](auto&& node) { return callback(static_cast<ModelNodeType const&>(node)); }));
 }
 
 template <class ModelType, class ModelNodeType>
