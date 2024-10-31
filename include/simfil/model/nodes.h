@@ -101,14 +101,36 @@ struct model_ptr
     static_assert(std::is_base_of<ModelNode, T>::value, "T must inherit from ModelNode.");
 
     template<typename... Args>
-    static shared_model_ptr<T> make(Args&&... args) {
-        return shared_model_ptr(std::in_place, std::forward<Args>(args)...);
+    static model_ptr<T> make(Args&&... args) {
+        return model_ptr(std::in_place, std::forward<Args>(args)...);
     }
 
-    inline T& operator* () {return data_;}
-    inline T* operator-> () {return &data_;}
-    inline T const& operator* () const {return data_;}
-    inline T const* operator-> () const {return &data_;}
+    inline void ensureModelIsNotNull() const {
+        if (!data_.model_ || !data_.addr_) {
+            raise<std::runtime_error>("Attempt to dereference null model_ptr!");
+        }
+    }
+
+    inline T& operator* () {
+        ensureModelIsNotNull();
+        return data_;
+    }
+
+    inline T* operator-> () {
+        ensureModelIsNotNull();
+        return &data_;
+    }
+
+    inline T const& operator* () const {
+        ensureModelIsNotNull();
+        return data_;
+    }
+
+    inline T const* operator-> () const {
+        ensureModelIsNotNull();
+        return &data_;
+    }
+
     inline operator bool () const {return data_.addr_;}  // NOLINT (allow implicit bool cast)
 
 private:
