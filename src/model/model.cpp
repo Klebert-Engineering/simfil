@@ -247,7 +247,7 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
     impl_->columns_.roots_.emplace_back(rootNode->addr_);
 }
 
-shared_model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
+model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
 {
     auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
     return Object(
@@ -255,7 +255,7 @@ shared_model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
         {Objects, (uint32_t)memberArrId});
 }
 
-shared_model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
+model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
 {
     auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
     return Array(
@@ -309,13 +309,13 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
-shared_model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
+model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
     if (n->addr_.column() != Objects)
         raise<std::runtime_error>("Cannot cast this node to an object.");
     return Object(shared_from_this(), n->addr_);
 }
 
-shared_model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
+model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
 {
     if (n->addr_.column() != Arrays)
         raise<std::runtime_error>("Cannot cast this node to an array.");

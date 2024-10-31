@@ -59,44 +59,44 @@ using ScalarValueType = std::variant<
     std::string_view>;
 
 /**
- * Why is shared_model_ptr's value on the stack?
+ * Why is model_ptr's value on the stack?
  *
  * All ModelNode types are actually pointers into a ModelPool, via their
  * nested ModelNodeAddress. They keep the ModelPool which they reference
- * alive. The shared_model_ptr wrapper ensures that the user has
- * a better sense of the object they are dealing with. Only shared_model_ptr
+ * alive. The model_ptr wrapper ensures that the user has
+ * a better sense of the object they are dealing with. Only model_ptr
  * is allowed to copy ModelNodes - so e.g. `auto node = *nodePtr` is not possible.
  */
 template<typename T>
-struct shared_model_ptr
+struct model_ptr
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
 
-    shared_model_ptr(::nullptr_t) {}  // NOLINT
-    shared_model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
-    explicit shared_model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
+    model_ptr(::nullptr_t) {}  // NOLINT
+    model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
+    explicit model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
 
-    shared_model_ptr() = default;
-    shared_model_ptr(const shared_model_ptr&) = default;
-    shared_model_ptr(shared_model_ptr&&) = default;
+    model_ptr() = default;
+    model_ptr(const model_ptr&) = default;
+    model_ptr(model_ptr&&) = default;
 
-    shared_model_ptr& operator=(shared_model_ptr const&) = default;
-    shared_model_ptr& operator=(shared_model_ptr&&) = default;
-
-    template<typename OtherT>
-    shared_model_ptr(shared_model_ptr<OtherT> const& other) : data_(other.data_) {}  // NOLINT
+    model_ptr& operator=(model_ptr const&) = default;
+    model_ptr& operator=(model_ptr&&) = default;
 
     template<typename OtherT>
-    shared_model_ptr(shared_model_ptr<OtherT>&& other) : data_(std::move(other.data_)) {}  // NOLINT
+    model_ptr(model_ptr<OtherT> const& other) : data_(other.data_) {}  // NOLINT
 
     template<typename OtherT>
-    shared_model_ptr& operator= (shared_model_ptr<OtherT> const& other) {data_ = other.data_; return *this;}
+    model_ptr(model_ptr<OtherT>&& other) : data_(std::move(other.data_)) {}  // NOLINT
 
     template<typename OtherT>
-    shared_model_ptr& operator= (shared_model_ptr<OtherT>&& other) {data_ = std::move(other.data_); return *this;}
+    model_ptr& operator= (model_ptr<OtherT> const& other) {data_ = other.data_; return *this;}
+
+    template<typename OtherT>
+    model_ptr& operator= (model_ptr<OtherT>&& other) {data_ = std::move(other.data_); return *this;}
 
     template<typename... Args>
-    explicit shared_model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
+    explicit model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
 
     static_assert(std::is_base_of<ModelNode, T>::value, "T must inherit from ModelNode.");
 
@@ -168,9 +168,9 @@ struct ModelNodeAddress
 /** Semantic view onto a particular node in a ModelPool. */
 struct ModelNode
 {
-    using Ptr = shared_model_ptr<ModelNode>;
+    using Ptr = model_ptr<ModelNode>;
 
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
     friend class Model;
     friend class OverlayNode;
@@ -397,7 +397,7 @@ namespace detail
 template<typename T>
 struct SmallValueNode final : public ModelNodeBase
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class Model;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
@@ -426,12 +426,12 @@ struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
 {
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
 
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
-    BaseArray& append(shared_model_ptr<OtherModelNodeType> const& value) {
+    BaseArray& append(model_ptr<OtherModelNodeType> const& value) {
         return appendInternal(static_cast<ModelNode::Ptr>(value));
     }
 
@@ -458,7 +458,7 @@ protected:
 
 struct Array : public BaseArray<ModelPool, ModelNode>
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
 
     using BaseArray::append;
@@ -473,7 +473,7 @@ struct Array : public BaseArray<ModelPool, ModelNode>
     /**
      * Append all elements from `other` to this array.
      */
-    Array& extend(shared_model_ptr<Array> const& other);
+    Array& extend(model_ptr<Array> const& other);
 
 protected:
     Array() = default;
@@ -485,13 +485,13 @@ protected:
 template <class ModelType, class ModelNodeType>
 struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
 
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
-    BaseObject& addField(std::string_view const& name, shared_model_ptr<OtherModelNodeType> const& value) {
+    BaseObject& addField(std::string_view const& name, model_ptr<OtherModelNodeType> const& value) {
         return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
     }
 
@@ -539,7 +539,7 @@ protected:
 
 struct Object : public BaseObject<ModelPool, ModelNode>
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
 
@@ -558,7 +558,7 @@ struct Object : public BaseObject<ModelPool, ModelNode>
     /**
      * Adopt all fields from the `other` object into this one.
      */
-    Object& extend(shared_model_ptr<Object> const& other);
+    Object& extend(model_ptr<Object> const& other);
 
 protected:
     Object() = default;

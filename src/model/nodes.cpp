@@ -238,7 +238,7 @@ Array& Array::append(int64_t const& value) {storage_->push_back(members_, model(
 Array& Array::append(double const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 Array& Array::append(std::string_view const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 
-Array& Array::extend(shared_model_ptr<Array> const& other) {
+Array& Array::extend(model_ptr<Array> const& other) {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
         storage_->push_back(members_, storage_->at(other->members_, i));
@@ -289,7 +289,7 @@ Object& Object::addField(std::string_view const& name, std::string_view const& v
     return *this;
 }
 
-Object& Object::extend(shared_model_ptr<Object> const& other)
+Object& Object::extend(model_ptr<Object> const& other)
 {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
