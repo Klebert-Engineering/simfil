@@ -396,14 +396,14 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
         {
             fields_.emplace_back(
                 StaticTestKey,
-                [] (const auto& self) { return shared_model_ptr<ValueNode>::make(std::string_view("static"), self.model_); }); //NOSONAR
+                [] (const auto& self) { return model_ptr<ValueNode>::make(std::string_view("static"), self.model_); }); //NOSONAR
         }
     };
 
     auto baseObj = pool->newObject();
     baseObj->addField("mood", "blue");
 
-    auto proceduralObj = shared_model_ptr<DerivedProceduralObject>::make(pool, baseObj->addr());
+    auto proceduralObj = model_ptr<DerivedProceduralObject>::make(pool, baseObj->addr());
     REQUIRE(proceduralObj->get(pool->strings()->get("mood"))->value() == ScalarValueType(std::string_view("blue")));
     REQUIRE(proceduralObj->get(StaticTestKey)->value() == ScalarValueType(std::string_view("static")));
 }

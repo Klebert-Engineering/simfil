@@ -24,6 +24,9 @@ namespace simfil
 /// Address of an array within an ArrayArena
 using ArrayIndex = int32_t;
 
+/// Array index which can be used to indicate a default/invalid value.
+constexpr static ArrayIndex InvalidArrayIndex = -1;
+
 /**
  * ArrayArena - An arena allocator for append-only vectors.
  *
@@ -60,7 +63,9 @@ public:
         size_t offset = data_.size();
         data_.resize(offset + initialCapacity);
         auto index = static_cast<ArrayIndex>(heads_.size());
-        heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0, -1, -1});
+        heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0,
+             InvalidArrayIndex,
+             InvalidArrayIndex});
         return index;
     }
 
@@ -316,7 +321,7 @@ public:
                     lambda(data_[current->offset + i]);
                 ++globalIndex;
             }
-            current = (current->next != -1) ? &continuations_[current->next] : nullptr;
+            current = (current->next != InvalidArrayIndex) ? &continuations_[current->next] : nullptr;
         }
     }
 
@@ -329,8 +334,8 @@ private:
         SizeType_ size = 0;        // The current number of elements in the chunk,
                                   // or the total number of elements of the whole array if this is a head chunk.
 
-        ArrayIndex next = -1;  // The index of the next chunk in the sequence, or -1 if none.
-        ArrayIndex last = -1;  // The index of the last chunk in the sequence, or -1 if none.
+        ArrayIndex next = InvalidArrayIndex;  // The index of the next chunk in the sequence, or InvalidArrayIndex if none.
+        ArrayIndex last = InvalidArrayIndex;  // The index of the last chunk in the sequence, or InvalidArrayIndex if none.
     };
 
     sfl::segmented_vector<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
@@ -357,7 +362,7 @@ private:
         std::shared_lock read_guard(lock_);
         #endif
         Chunk& head = heads_[a];
-        Chunk& last = (head.last == -1) ? head : continuations_[head.last];
+        Chunk& last = (head.last == InvalidArrayIndex) ? head : continuations_[head.last];
         if (last.size < last.capacity)
             return last;
         #ifdef ARRAY_ARENA_THREAD_SAFE
@@ -373,7 +378,7 @@ private:
             return head;
         }
         auto newIndex = static_cast<ArrayIndex>(continuations_.size());
-        continuations_.push_back({(SizeType_)offset, (SizeType_)newCapacity, 0, -1, -1});
+        continuations_.push_back({(SizeType_)offset, (SizeType_)newCapacity, 0, InvalidArrayIndex, InvalidArrayIndex});
         last.next = newIndex;
         head.last = newIndex;
         return continuations_[newIndex];
@@ -390,7 +395,7 @@ private:
         while (true) {
             if (remaining < current->capacity && remaining < current->size)
                 return self.data_[current->offset + remaining];
-            if (current->next == -1)
+            if (current->next == InvalidArrayIndex)
                 raise<std::out_of_range>("Index out of range");
             remaining -= current->capacity;
             current = &self.continuations_[current->next];

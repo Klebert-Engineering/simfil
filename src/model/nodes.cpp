@@ -231,51 +231,14 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
 
 /** Model Node impls for an array. */
 
-Array::Array(ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_((ArrayIndex)a.index())
-{
-    storage_ = &model().arrayMemberStorage();
-}
-
-ValueType Array::type() const
-{
-    return ValueType::Array;
-}
-
-ModelNode::Ptr Array::at(int64_t i) const
-{
-    if (i < 0 || i >= (int64_t)storage_->size(members_))
-        return {};
-    return ModelNode::Ptr::make(model_, storage_->at(members_, i));
-}
-
-uint32_t Array::size() const
-{
-    return (uint32_t)storage_->size(members_);
-}
-
 Array& Array::append(bool value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
 Array& Array::append(uint16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
 Array& Array::append(int16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
 Array& Array::append(int64_t const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 Array& Array::append(double const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 Array& Array::append(std::string_view const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
-Array& Array::append(ModelNode::Ptr const& value) {storage_->push_back(members_, value->addr()); return *this;}
 
-bool Array::iterate(const ModelNode::IterCallback& cb) const
-{
-    auto cont = true;
-    auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
-        cont = cb(node);
-    });
-    storage_->iterate(members_, [&, this](auto&& member){
-            model_->resolve(*ModelNode::Ptr::make(model_, member), resolveAndCb);
-        return cont;
-    });
-    return cont;
-}
-
-Array& Array::extend(shared_model_ptr<Array> const& other) {
+Array& Array::extend(model_ptr<Array> const& other) {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
         storage_->push_back(members_, storage_->at(other->members_, i));
@@ -284,54 +247,6 @@ Array& Array::extend(shared_model_ptr<Array> const& other) {
 }
 
 /** Model Node impls for an object. */
-
-Object::Object(ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_((ArrayIndex)a.index())
-{
-    storage_ = &model().objectMemberStorage();
-}
-
-Object::Object(ArrayIndex members, ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryModelPoolNodeBase(std::move(pool_), a), storage_(nullptr), members_(members)
-{
-    storage_ = &model().objectMemberStorage();
-}
-
-ValueType Object::type() const
-{
-    return ValueType::Object;
-}
-
-ModelNode::Ptr Object::at(int64_t i) const
-{
-    if (i < 0 || i >= (int64_t)storage_->size(members_))
-        return {};
-    return ModelNode::Ptr::make(model_, storage_->at(members_, i).node_);
-}
-
-StringId Object::keyAt(int64_t i) const {
-    if (i < 0 || i >= (int64_t)storage_->size(members_))
-        return {};
-    return storage_->at(members_, i).name_;
-}
-
-uint32_t Object::size() const
-{
-    return (uint32_t)storage_->size(members_);
-}
-
-ModelNode::Ptr Object::get(const StringId & field) const
-{
-    ModelNode::Ptr result;
-    storage_->iterate(members_, [&field, &result, this](auto&& member){
-        if (member.name_ == field) {
-            result = ModelNode::Ptr::make(model_, member.node_);
-            return false;
-        }
-        return true;
-    });
-    return result;
-}
 
 ModelNode::Ptr Object::get(std::string_view const& fieldName) const {
     auto fieldId = model().strings()->emplace(fieldName);
@@ -374,26 +289,7 @@ Object& Object::addField(std::string_view const& name, std::string_view const& v
     return *this;
 }
 
-Object& Object::addField(std::string_view const& name, ModelNode::Ptr const& value) {
-    auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, value->addr());
-    return *this;
-}
-
-bool Object::iterate(const ModelNode::IterCallback& cb) const
-{
-    auto cont = true;
-    auto resolveAndCb = Model::Lambda([&cb, &cont](auto && node){
-        cont = cb(node);
-    });
-    storage_->iterate(members_, [&, this](auto&& member) {
-        model_->resolve(*ModelNode::Ptr::make(model_, member.node_), resolveAndCb);
-        return cont;
-    });
-    return cont;
-}
-
-Object& Object::extend(shared_model_ptr<Object> const& other)
+Object& Object::extend(model_ptr<Object> const& other)
 {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {

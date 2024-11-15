@@ -78,8 +78,8 @@ public:
  */
 class ModelPool : public Model
 {
-    friend struct Object;
-    friend struct Array;
+    template<typename, typename> friend struct BaseObject;
+    template<typename, typename> friend struct BaseArray;
 
 public:
     /**
@@ -135,13 +135,13 @@ public:
      * Adopt members from the given vector and obtain a new object
      * model index which has these members.
      */
-    shared_model_ptr<Object> newObject(size_t initialFieldCapacity = 2);
+    model_ptr<Object> newObject(size_t initialFieldCapacity = 2);
 
     /**
      * Adopt members from the given vector and obtain a new array
      * model index which has these members.
      */
-    shared_model_ptr<Array> newArray(size_t initialFieldCapacity = 2);
+    model_ptr<Array> newArray(size_t initialFieldCapacity = 2);
 
     /** Add a scalar value and get its new model node index. */
     ModelNode::Ptr newValue(int64_t const& value);
@@ -150,9 +150,9 @@ public:
 
     /** Node-type-specific resolve-functions */
     [[nodiscard]]
-    shared_model_ptr<Object> resolveObject(ModelNode::Ptr const& n) const;
+    model_ptr<Object> resolveObject(ModelNode::Ptr const& n) const;
     [[nodiscard]]
-    shared_model_ptr<Array> resolveArray(ModelNode::Ptr const& n) const;
+    model_ptr<Array> resolveArray(ModelNode::Ptr const& n) const;
 
     /** Access the field name storage */
     [[nodiscard]]
@@ -189,3 +189,5 @@ protected:
 };
 
 }
+
+#include "nodes.impl.h"
