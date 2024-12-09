@@ -42,7 +42,7 @@ bool BaseArray<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback&
         members_,
         [&, this](auto&& member)
         {
-            model_->resolve(*ModelNode::Ptr::make(model_, member), resolveAndCb);
+            (*model_).resolve(*ModelNode::Ptr::make(model_, member), resolveAndCb);
             return cont;
         });
     return cont;
@@ -139,7 +139,7 @@ bool BaseObject<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback
         members_,
         [&, this](auto&& member)
         {
-            model_->resolve(*ModelNode::Ptr::make(model_, member.node_), resolveAndCb);
+            (*model_).resolve(*ModelNode::Ptr::make(model_, member.node_), resolveAndCb);
             return cont;
         });
     return cont;
