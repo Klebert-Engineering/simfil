@@ -245,16 +245,16 @@ public:
 
     static auto field(const ModelNode& node) -> Value
     {
-        return {node.type(), node.value(), shared_model_ptr<ModelNode>(node)};
+        return {node.type(), node.value(), model_ptr<ModelNode>(node)};
     }
 
     static auto field(ModelNode&& node) -> Value
     {
-        return {node.type(), node.value(), shared_model_ptr<ModelNode>(std::move(node))};
+        return {node.type(), node.value(), model_ptr<ModelNode>(std::move(node))};
     }
 
     template <class ModelNodeT>
-    static auto field(const shared_model_ptr<ModelNodeT>& node) -> Value
+    static auto field(const model_ptr<ModelNodeT>& node) -> Value
     {
         return {node->type(), node->value(), node};
     }

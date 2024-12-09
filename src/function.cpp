@@ -591,7 +591,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
 
     (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         if (subexpr) {
-            auto ov = shared_model_ptr<OverlayNode>::make(vv);
+            auto ov = model_ptr<OverlayNode>::make(vv);
             ov->set(StringPool::OverlaySum, sum);
             ov->set(StringPool::OverlayValue, vv);
             ov->set(StringPool::OverlayIndex, Value::make((int64_t)n++));

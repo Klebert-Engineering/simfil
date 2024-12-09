@@ -59,56 +59,78 @@ using ScalarValueType = std::variant<
     std::string_view>;
 
 /**
- * Why is shared_model_ptr's value on the stack?
+ * Why is model_ptr's value on the stack?
  *
  * All ModelNode types are actually pointers into a ModelPool, via their
  * nested ModelNodeAddress. They keep the ModelPool which they reference
- * alive. The shared_model_ptr wrapper ensures that the user has
- * a better sense of the object they are dealing with. Only shared_model_ptr
+ * alive. The model_ptr wrapper ensures that the user has
+ * a better sense of the object they are dealing with. Only model_ptr
  * is allowed to copy ModelNodes - so e.g. `auto node = *nodePtr` is not possible.
  */
 template<typename T>
-struct shared_model_ptr
+struct model_ptr
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
 
-    shared_model_ptr(::nullptr_t) {}  // NOLINT
-    shared_model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
-    explicit shared_model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
+    model_ptr(::nullptr_t) {}  // NOLINT
+    model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
+    explicit model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
 
-    shared_model_ptr() = default;
-    shared_model_ptr(const shared_model_ptr&) = default;
-    shared_model_ptr(shared_model_ptr&&) = default;
+    model_ptr() = default;
+    model_ptr(const model_ptr&) = default;
+    model_ptr(model_ptr&&) = default;
 
-    shared_model_ptr& operator=(shared_model_ptr const&) = default;
-    shared_model_ptr& operator=(shared_model_ptr&&) = default;
-
-    template<typename OtherT>
-    shared_model_ptr(shared_model_ptr<OtherT> const& other) : data_(other.data_) {}  // NOLINT
+    model_ptr& operator=(model_ptr const&) = default;
+    model_ptr& operator=(model_ptr&&) = default;
 
     template<typename OtherT>
-    shared_model_ptr(shared_model_ptr<OtherT>&& other) : data_(std::move(other.data_)) {}  // NOLINT
+    model_ptr(model_ptr<OtherT> const& other) : data_(other.data_) {}  // NOLINT
 
     template<typename OtherT>
-    shared_model_ptr& operator= (shared_model_ptr<OtherT> const& other) {data_ = other.data_; return *this;}
+    model_ptr(model_ptr<OtherT>&& other) : data_(std::move(other.data_)) {}  // NOLINT
 
     template<typename OtherT>
-    shared_model_ptr& operator= (shared_model_ptr<OtherT>&& other) {data_ = std::move(other.data_); return *this;}
+    model_ptr& operator= (model_ptr<OtherT> const& other) {data_ = other.data_; return *this;}
+
+    template<typename OtherT>
+    model_ptr& operator= (model_ptr<OtherT>&& other) {data_ = std::move(other.data_); return *this;}
 
     template<typename... Args>
-    explicit shared_model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
+    explicit model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
 
     static_assert(std::is_base_of<ModelNode, T>::value, "T must inherit from ModelNode.");
 
     template<typename... Args>
-    static shared_model_ptr<T> make(Args&&... args) {
-        return shared_model_ptr(std::in_place, std::forward<Args>(args)...);
+    static model_ptr<T> make(Args&&... args) {
+        return model_ptr(std::in_place, std::forward<Args>(args)...);
     }
 
-    inline T& operator* () {return data_;}
-    inline T* operator-> () {return &data_;}
-    inline T const& operator* () const {return data_;}
-    inline T const* operator-> () const {return &data_;}
+    inline void ensureModelIsNotNull() const {
+        if (!data_.model_ || !data_.addr_) {
+            raise<std::runtime_error>("Attempt to dereference null model_ptr!");
+        }
+    }
+
+    inline T& operator* () {
+        ensureModelIsNotNull();
+        return data_;
+    }
+
+    inline T* operator-> () {
+        ensureModelIsNotNull();
+        return &data_;
+    }
+
+    inline T const& operator* () const {
+        ensureModelIsNotNull();
+        return data_;
+    }
+
+    inline T const* operator-> () const {
+        ensureModelIsNotNull();
+        return &data_;
+    }
+
     inline operator bool () const {return data_.addr_;}  // NOLINT (allow implicit bool cast)
 
 private:
@@ -168,9 +190,9 @@ struct ModelNodeAddress
 /** Semantic view onto a particular node in a ModelPool. */
 struct ModelNode
 {
-    using Ptr = shared_model_ptr<ModelNode>;
+    using Ptr = model_ptr<ModelNode>;
 
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
     friend class Model;
     friend class OverlayNode;
@@ -397,7 +419,7 @@ namespace detail
 template<typename T>
 struct SmallValueNode final : public ModelNodeBase
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class Model;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
@@ -419,24 +441,49 @@ template<> [[nodiscard]] ValueType SmallValueNode<bool>::type() const;
 template<>
 SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
 
-/** Model Node for an array. */
+/** Model Node for an array from which typed/untyped arrays may be derived. */
 
-struct Array : public MandatoryModelPoolNodeBase
+template <class ModelType, class ModelNodeType>
+struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
 {
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
+
+    template<class OtherModelNodeType>
+    requires std::derived_from<OtherModelNodeType, ModelNodeType>
+    BaseArray& append(model_ptr<OtherModelNodeType> const& value) {
+        return appendInternal(static_cast<ModelNode::Ptr>(value));
+    }
+
+    bool forEach(std::function<bool(ModelNodeType const&)> const& callback) const;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
+    bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
 
-    template<class ModelNodeType>
-    Array& append(shared_model_ptr<ModelNodeType> const& value) {
-        return append(static_cast<ModelNode::Ptr>(value));
-    }
+protected:
+    BaseArray() = default;
+    BaseArray(ModelConstPtr pool, ModelNodeAddress);
+    BaseArray& appendInternal(ModelNode::Ptr const& value={});
+
+    using ModelNode::model_;
+    using MandatoryDerivedModelNodeBase<ModelType>::model;
+
+    Storage* storage_ = nullptr;
+    ArrayIndex members_ = 0;
+};
+
+/** Model Node for a mixed-type array. */
+
+struct Array : public BaseArray<ModelPool, ModelNode>
+{
+    template<typename> friend struct model_ptr;
+    friend class ModelPool;
+
+    using BaseArray::append;
 
     Array& append(bool value);
     Array& append(uint16_t value);
@@ -444,55 +491,38 @@ struct Array : public MandatoryModelPoolNodeBase
     Array& append(int64_t const& value);
     Array& append(double const& value);
     Array& append(std::string_view const& value);
-    Array& append(ModelNode::Ptr const& value={});
 
     /**
      * Append all elements from `other` to this array.
      */
-    Array& extend(shared_model_ptr<Array> const& other);
+    Array& extend(model_ptr<Array> const& other);
 
 protected:
     Array() = default;
-    Array(ModelConstPtr pool, ModelNodeAddress);
-
-    Storage* storage_ = nullptr;
-    ArrayIndex members_ = 0;
+    using BaseArray::BaseArray;
 };
 
-/** Model Node for an object. */
+/** Model Node for an object from which typed/untyped objects may be derived. */
 
-struct Object : public MandatoryModelPoolNodeBase
+template <class ModelType, class ModelNodeType>
+struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
 {
-    template<typename> friend struct shared_model_ptr;
+    template<typename> friend struct model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
+
+    template<class OtherModelNodeType>
+    requires std::derived_from<OtherModelNodeType, ModelNodeType>
+    BaseObject& addField(std::string_view const& name, model_ptr<OtherModelNodeType> const& value) {
+        return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
+    }
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const StringId &) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
-    bool iterate(IterCallback const& cb) const override;  // NOLINT (allow discard)
-
-    template<class ModelNodeType>
-    Object& addField(std::string_view const& name, shared_model_ptr<ModelNodeType> const& value) {
-        return addField(name, static_cast<ModelNode::Ptr>(value));
-    }
-
-    Object& addBool(std::string_view const& name, bool value);
-    Object& addField(std::string_view const& name, uint16_t value);
-    Object& addField(std::string_view const& name, int16_t value);
-    Object& addField(std::string_view const& name, int64_t const& value);
-    Object& addField(std::string_view const& name, double const& value);
-    Object& addField(std::string_view const& name, std::string_view const& value);
-    Object& addField(std::string_view const& name, ModelNode::Ptr const& value={});
-
-    [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
-
-    /**
-     * Adopt all fields from the `other` object into this one.
-     */
-    Object& extend(shared_model_ptr<Object> const& other);
+    bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
     /**
@@ -514,42 +544,82 @@ protected:
     };
 
     using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
+    using ModelNode::model_;
+    using MandatoryDerivedModelNodeBase<ModelType>::model;
 
-    Object() = default;
-    Object(ModelConstPtr pool, ModelNodeAddress);
-    Object(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
+    BaseObject() = default;
+    BaseObject(ModelConstPtr pool, ModelNodeAddress);
+    BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
+
+    BaseObject& addFieldInternal(std::string_view const& name, ModelNode::Ptr const& value={});
 
     Storage* storage_ = nullptr;
     ArrayIndex members_ = 0;
 };
 
+/** Model Node for an object. */
+
+struct Object : public BaseObject<ModelPool, ModelNode>
+{
+    template<typename> friend struct model_ptr;
+    friend class ModelPool;
+    friend class bitsery::Access;
+
+    using BaseObject<ModelPool, ModelNode>::get;
+    using BaseObject<ModelPool, ModelNode>::addField;
+
+    Object& addBool(std::string_view const& name, bool value);
+    Object& addField(std::string_view const& name, uint16_t value);
+    Object& addField(std::string_view const& name, int16_t value);
+    Object& addField(std::string_view const& name, int64_t const& value);
+    Object& addField(std::string_view const& name, double const& value);
+    Object& addField(std::string_view const& name, std::string_view const& value);
+
+    [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
+
+    /**
+     * Adopt all fields from the `other` object into this one.
+     */
+    Object& extend(model_ptr<Object> const& other);
+
+protected:
+    Object() = default;
+    using BaseObject<ModelPool, ModelNode>::BaseObject;
+};
+
 /** Object with extra procedural fields */
 
-template<uint16_t MaxProceduralFields, class LambdaThisType=Object>
+template<uint16_t MaxProceduralFields, class LambdaThisType=Object, class ModelPoolDerivedModel=ModelPool>
 class ProceduralObject : public Object
 {
 public:
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].second(static_cast<LambdaThisType const&>(*this));
-        return Object::at(i - fields_.size());
+        if (members_ != InvalidArrayIndex)
+            return Object::at(i - fields_.size());
+        return {};
     }
 
     [[nodiscard]] uint32_t size() const override {
-        return fields_.size() + Object::size();
+        return fields_.size() + (members_ != InvalidArrayIndex ? Object::size() : 0);
     }
 
     [[nodiscard]] ModelNode::Ptr get(const StringId & field) const override {
         for (auto const& [k, v] : fields_)
             if (k == field)
                 return v(static_cast<LambdaThisType const&>(*this));
-        return Object::get(field);
+        if (members_ != InvalidArrayIndex)
+            return Object::get(field);
+        return {};
     }
 
     [[nodiscard]] StringId keyAt(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].first;
-        return Object::keyAt(i - fields_.size());
+        if (members_ != InvalidArrayIndex)
+            return Object::keyAt(i - fields_.size());
+        return StringPool::Empty;
     }
 
     bool iterate(IterCallback const& cb) const override {  // NOLINT (allow discard)
@@ -558,13 +628,19 @@ public:
             if (!cb(*vv))
                 return false;
         }
-        return Object::iterate(cb);
+        if (members_ != InvalidArrayIndex)
+            return Object::iterate(cb);
+        return true;
     }
+
+    inline ModelPoolDerivedModel& model() const {return *modelPtr<ModelPoolDerivedModel>();}  // NOLINT
 
 protected:
     ProceduralObject() = default;
     ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a)
         : Object(i, pool, a) {}
+    ProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
+        : Object(InvalidArrayIndex, pool, a) {}
 
     sfl::small_vector<
         std::pair<StringId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
