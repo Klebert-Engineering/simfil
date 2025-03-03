@@ -4,7 +4,9 @@
 
 #include "value.h"
 #include "typed-meta-type.h"
+
 #include <string_view>
+#include <regex>
 
 namespace simfil
 {

@@ -8,8 +8,6 @@
 #include <cstdint>
 #include <string_view>
 #include <string>
-#include <regex>
-#include <type_traits>
 
 namespace simfil
 {
@@ -17,7 +15,7 @@ namespace simfil
 using namespace std::string_literals;
 
 /**
- * Special return type for Operator type mismatch.
+ * Special return type for operator type mismatch.
  */
 struct InvalidOperands {
     auto operator!() const -> InvalidOperands

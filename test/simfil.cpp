@@ -23,6 +23,7 @@ TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a.b", "(. a b)");
     REQUIRE_AST("a.b.c", "(. (. a b) c)");
 }
+
 TEST_CASE("Wildcard", "[ast.wildcard]") {
     REQUIRE_AST("*", "*");
     REQUIRE_AST("**", "**");
