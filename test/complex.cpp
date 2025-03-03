@@ -94,8 +94,6 @@ TEST_CASE("Regular Expression", "[complex.regexp]") {
 
 TEST_CASE("Runtime Error", "[complex.runtime-error]") {
     REQUIRE_THROWS(joined_result("1 / (nonexisting as int)")); /* Division by zero */
-    REQUIRE_THROWS(joined_result("not nonexisting == 0"));     /* Invalid operands int and bool */
-    REQUIRE_THROWS(joined_result("not *.nonexisting == 0"));   /* Invalid operands int and bool */
 }
 
 TEST_CASE("Multimap JSON", "[multimap.serialization]") {

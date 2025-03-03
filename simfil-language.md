@@ -163,6 +163,9 @@ The following types can be target types for a cast:
 | `a or b`            | Logical or, returning the first non-false argument (like JavaScript).                                   |
 | `a and b`           | Logical and, returning the first false argument (like JavaScript).                                      |
 
+*Note:* When comparing values of incompatible types (e.g. `1 == "a"` or `"text" > 1`), the result is always `false`.
+The `!=` operator will always return `true` in such cases.
+
 ### Precedence
 
 | Operators                              | Precedence |
@@ -185,8 +188,8 @@ The following types can be target types for a cast:
 ### `trace(expr, limit=<...>, name=<...>)`
 
 Counts and measures all calls to its expression under the identifier `name` or the string
-representation of `expr`, if no name is given. Returnts the value of `expr`. Result values
-of `expr` are stored for debugging reasons; see `limit`.
+representation of `expr` if no name is given. Returns the value of `expr`. The result values
+of `expr` are stored for debugging purposes; see `limit`.
 
 *Example*
 ```
@@ -194,15 +197,15 @@ trace(a.**.b{trace("sub", c == "test")})
 ```
 
 Arguments:
-- `expr` Expression to trace
-- `limit` Limit of values of `expr` to store with the trace entry
-- `name` Human readable name of the trace entry; defaults to the string repr. of `expr`.
+- `expr` The expression to trace
+- `limit` The maximum number of values of `expr` to store with the trace entry
+- `name` A human-readable name of the trace entry; defaults to the string representation of `expr`.
 
 ### `range(begin, end)`
 
-The function returns a value of type `irange` which overloads the following operators:
-- `==` Tests if an element is insides the range
-- `!=` Tests if an element is outsides the range
+The function returns a value of type `irange`, which overloads the following operators:
+- `==` Tests if an element is inside the range
+- `!=` Tests if an element is outside the range
 - `...` Unpacks the range to its values (e.G. `range(1,5)... => {1, 2, 3, 4, 5}`)
 - `string` Converts the range to a string representation (`'begin..end'`)
 

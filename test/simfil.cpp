@@ -12,11 +12,14 @@ static const auto StaticTestKey = StringPool::NextStaticId;
 static auto getASTString(std::string_view input)
 {
     Environment env(Environment::WithNewStringCache);
-    return compile(env, input, false)->toString();
+    return compile(env, input, false);
 }
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(getASTString(input) == output);
+    REQUIRE(getASTString(input)->toString() == output);
+
+#define REQUIRE_UNDEF(input) \
+    REQUIRE(getASTString(input)-> == output);
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -133,6 +136,60 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("a{1}",     "(sub a 1)");
     REQUIRE_AST("1{a}",     "(sub 1 a)");
     REQUIRE_AST("a{a}",     "(sub a a)");
+}
+
+TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
+    REQUIRE_AST("1=\"A\"", "false");
+    REQUIRE_AST("1!=\"A\"", "true");
+    REQUIRE_AST("1>\"A\"", "false");
+    REQUIRE_AST("1>=\"A\"", "false");
+    REQUIRE_AST("1<\"A\"", "false");
+    REQUIRE_AST("1<=\"A\"", "false");
+
+    /* Regular Expressions */
+    REQUIRE_AST("re\"A\"=1", "false");
+    REQUIRE_AST("re\"A\"!=1", "true");
+    REQUIRE_AST("1==re\"A\"", "false");
+    REQUIRE_AST("1!=re\"A\"", "true");
+
+    /* Ranges */
+    REQUIRE_AST("range(0,10)=\"A\"", "false");
+    REQUIRE_AST("range(0,10)!=\"A\"", "true");
+}
+
+TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fields]") {
+    static const char* doc = R"json(
+        [
+            {"field": 1, "another": 1.5},
+            {"field": "text"},
+            {"field": true, "another": false}
+        ]
+    )json";
+
+    auto model = simfil::json::parse(doc);
+    Environment env(model->strings());
+
+    auto test = [&](auto query) {
+        auto ast = compile(env, query, false);
+        INFO("AST: " << ast->toString());
+
+        return eval(env, *ast, *model->root(0)).front().template as<ValueType::Bool>();
+    };
+
+    /* Test some field with different value types for different objects */
+    REQUIRE(test("any(*.field=1)") == true);
+    REQUIRE(test("any(*.field!=1)") == true);
+    REQUIRE(test("any(*.field>1)") == false);
+    REQUIRE(test("any(*.field>=1)") == true);
+    REQUIRE(test("any(*.field<100)") == true);
+
+    /* Test some field that does not exist for every object */
+    REQUIRE(test("any(*.another>1)") == true);
+    REQUIRE(test("any(*.another=false)") == true);
+    REQUIRE(test("any(*.another=\"text\")") == false);
+
+    /* Test that all-expressions need to hold true for all objects */
+    REQUIRE(test("all(*.another=1)") == false);
 }
 
 TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
