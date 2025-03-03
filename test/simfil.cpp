@@ -158,7 +158,7 @@ TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
 }
 
 TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fields]") {
-    static const char* doc = R"json(
+    const char* const doc = R"json(
         [
             {"field": 1, "another": 1.5},
             {"field": "text"},
@@ -166,10 +166,10 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
         ]
     )json";
 
-    auto model = simfil::json::parse(doc);
-    Environment env(model->strings());
+    const auto model = simfil::json::parse(doc);
+    auto test = [&model](auto query) {
+        Environment env(model->strings());
 
-    auto test = [&](auto query) {
         auto ast = compile(env, query, false);
         INFO("AST: " << ast->toString());
 
@@ -238,7 +238,7 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
     REQUIRE_AST("Trace(1)",      "(trace 1)");
 }
 
-static const char* doc = R"json(
+static const char* const doc = R"json(
 {
   "a": 1,
   "b": 2,
