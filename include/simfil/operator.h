@@ -8,8 +8,6 @@
 #include <cstdint>
 #include <string_view>
 #include <string>
-#include <regex>
-#include <type_traits>
 
 namespace simfil
 {
@@ -17,7 +15,7 @@ namespace simfil
 using namespace std::string_literals;
 
 /**
- * Special return type for Operator type mismatch.
+ * Special return type for operator type mismatch.
  */
 struct InvalidOperands {
     auto operator!() const -> InvalidOperands
@@ -317,6 +315,13 @@ struct OperatorAsString
         return {};                                                      \
     }
 
+#define IGNORE_INCOMPATIBLE()                                           \
+    template <class Left, class Right>                                  \
+    auto operator()(const Left&, const Right&) const                    \
+    {                                                                   \
+        return false;                                                   \
+    }
+
 #define NULL_AS_NULL()                              \
     template <class Right>                          \
     auto operator()(NullType, const Right& b) const \
@@ -472,25 +477,13 @@ struct OperatorMod
 struct OperatorEq
 {
     NAME("==")
-    DENY_OTHER()
+    IGNORE_INCOMPATIBLE()
     DECL_OPERATION(bool,               bool,               ==)
     DECL_OPERATION(int64_t,            int64_t,            ==)
     DECL_OPERATION(int64_t,            double,             ==)
     DECL_OPERATION(double,             int64_t,            ==)
     DECL_OPERATION(double,             double,             ==)
     DECL_OPERATION(const std::string&, const std::string&, ==)
-
-    template <class Right>
-    auto operator()(NullType, const Right&) const
-    {
-        return false;
-    }
-
-    template <class Left>
-    auto operator()(const Left&, NullType) const
-    {
-        return false;
-    }
 
     auto operator()(NullType, NullType) const
     {
@@ -512,24 +505,12 @@ struct OperatorNeq
 struct OperatorLt
 {
     NAME("<")
-    DENY_OTHER()
+    IGNORE_INCOMPATIBLE()
     DECL_OPERATION(int64_t,            int64_t,            <)
     DECL_OPERATION(int64_t,            double,             <)
     DECL_OPERATION(double,             int64_t,            <)
     DECL_OPERATION(double,             double,             <)
     DECL_OPERATION(const std::string&, const std::string&, <)
-
-    template <class Right>
-    auto operator()(NullType, const Right&) const
-    {
-        return false;
-    }
-
-    template <class Left>
-    auto operator()(const Left&, NullType) const
-    {
-        return false;
-    }
 
     auto operator()(NullType, NullType) const
     {
@@ -540,24 +521,12 @@ struct OperatorLt
 struct OperatorLtEq
 {
     NAME("<=")
-    DENY_OTHER()
+    IGNORE_INCOMPATIBLE()
     DECL_OPERATION(int64_t,            int64_t,            <=)
     DECL_OPERATION(int64_t,            double,             <=)
     DECL_OPERATION(double,             int64_t,            <=)
     DECL_OPERATION(double,             double,             <=)
     DECL_OPERATION(const std::string&, const std::string&, <=)
-
-    template <class Right>
-    auto operator()(NullType, const Right&) const
-    {
-        return false;
-    }
-
-    template <class Left>
-    auto operator()(const Left&, NullType) const
-    {
-        return false;
-    }
 
     auto operator()(NullType, NullType) const
     {

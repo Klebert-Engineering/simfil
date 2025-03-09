@@ -57,7 +57,7 @@ struct Token
         OP_LT, OP_LTEQ, // < <=
         OP_GT, OP_GTEQ, // > >=
         OP_BOOL,        // ?
-        /* Regexp */
+        /* Special */
         OP_LEN,         // #
         /* Path */
         OP_TYPEOF,      // typeof

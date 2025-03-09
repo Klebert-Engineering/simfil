@@ -674,7 +674,7 @@ public:
         return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
             return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) {
                 return res(ctx, BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv),
-                                                                              std::move(rv)));
+                                                                             std::move(rv)));
             }));
         }));
     }
@@ -757,7 +757,7 @@ public:
                 }
 
                 raise<std::runtime_error>(fmt::format("Invalid operator '{}' for values of type {} and {}",
-                                                     ident_, valueType2String(lval.type), valueType2String(rval.type)));
+                                                      ident_, valueType2String(lval.type), valueType2String(rval.type)));
             }));
         }));
     }
@@ -858,7 +858,7 @@ public:
 
 /**
  * Tries to evaluate the input expression on a stub context.
- * Returns the evaluated result on success, erwise the original expression is returned.
+ * Returns the evaluated result on success, otherwise the original expression is returned.
  */
 static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
 {
@@ -977,7 +977,7 @@ public:
     {
         auto right = p.parsePrecedence(precedence());
         return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(std::move(left),
-                                                                                std::move(right)));
+                                                                               std::move(right)));
     }
 
     int precedence() const override

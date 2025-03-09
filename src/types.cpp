@@ -53,14 +53,13 @@ auto IRangeType::binaryOp(std::string_view op, const IRange& l, const Value& r) 
         auto inRange = [&](auto v) {
             return Value::make(l.low() <= v && v <= l.high());
         };
-        if (r.isa(ValueType::Null))
-            return Value::f();
         if (r.isa(ValueType::Int))
             return inRange(r.as<ValueType::Int>());
         if (r.isa(ValueType::Float))
             return inRange(r.as<ValueType::Float>());
         if (auto o = getObject<IRange>(r, &IRangeType::Type))
             return Value::make(l.begin == o->begin && l.end == o->end);
+        return Value::f();
     }
 
     raise<InvalidOperandsError>(op);
@@ -138,6 +137,12 @@ auto ReType::binaryOp(std::string_view op, const Value& l, const Re& r) const ->
         if (op == OperatorNeq::name())
             return std::regex_match(str, r.re) ? Value::f() : Value::make(str);
     }
+
+    // Just ignore incompatible types
+    if (op == OperatorEq::name())
+        return Value::f();
+    if (op == OperatorNeq::name())
+        return Value::t();
 
     raise<InvalidOperandsError>(op);
 }

@@ -90,7 +90,7 @@ jobs:
       run: |
         valgrind --tool=callgrind --instr-atstart=no ./test.simfil
     - name: Publish Callgrind Output
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: Callgrind Output
         path: build/test/callgrind.out.*
