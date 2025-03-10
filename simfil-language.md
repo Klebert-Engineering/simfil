@@ -27,6 +27,9 @@ The path `_` (underscore) represents the current node.
 The path `*` (asterisk) represents any direct child node.
 The path `**` (double asterisk) represents any child (recursive) plus the current element.
 
+If you need to access field names dynamically, you can use the subscript operator `[<expression>]`.
+Example: `*.["field name with spaces"]`.
+
 ### Sub-Queries
 
 Sub-queries can be written as a brace-enclosed expression. Path modifications inside
@@ -61,6 +64,8 @@ To check the existence of the string `"hello"` inside an array `b` you could wri
 ```
 a.b.*{_ == "hello"}
 ```
+
+Specific array elements can be accessed using the subscript `[<expression>]` operator.
 
 ## Modes
 

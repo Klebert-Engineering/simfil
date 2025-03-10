@@ -72,7 +72,12 @@ public:
     /**
      * Query function by name.
      */
-    auto findFunction(std::string) const -> const Function*;
+    auto findFunction(const std::string&) const -> const Function*;
+
+    /**
+     * Query constant by name.
+     */
+    auto findConstant(const std::string&) const -> const Value*;
 
     /**
      * Obtain a strong reference to this environment's string cache.
@@ -90,6 +95,9 @@ public:
 
     /* lower-case function ident -> function */
     std::map<std::string, const Function*> functions;
+
+    /* lower-case constant ident -> value */
+    std::map<std::string, Value> constants;
 
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;

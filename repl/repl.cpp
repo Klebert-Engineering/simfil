@@ -141,6 +141,17 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
     return result;
 }
 
+void show_help()
+{
+    std::cout << "Usage: simfil-repl [OPTIONS] [--] FILENAME...\n"
+        << "\n"
+        << "Options:\n"
+        << "  -D <identifier=value>\n"
+        << "          Define a constant variable, set to value\n"
+        << "  -h\n"
+        << "          Show this help"
+        << "\n";
+}
 
 int main(int argc, char *argv[])
 {
@@ -149,13 +160,46 @@ int main(int argc, char *argv[])
 #endif
 
     auto model = std::make_shared<simfil::ModelPool>();
+    std::map<std::string, simfil::Value> constants;
+
+    auto load_json = [&](std::string_view filename) {
 #if defined(SIMFIL_WITH_MODEL_JSON)
-    for (auto arg = argv + 1; *arg; ++arg) {
-        std::cout << "Parsing " << *arg << "\n";
-        auto f = std::ifstream(*arg);
+        std::cout << "Parsing " << filename << "\n";
+        auto f = std::ifstream(std::string(filename));
         simfil::json::parse(f, model);
-    }
 #endif
+    };
+
+    auto tail_args = false;
+    while (*++argv) {
+        std::string_view arg = *argv;
+        if (!tail_args && arg[0] == '-') {
+            switch (arg[1]) {
+            case '-':
+                tail_args = true;
+                break;
+            case 'h':
+                show_help();
+                return 0;
+            case 'D':
+                arg.remove_prefix(2);
+                if (arg.empty())
+                    arg = *++argv;
+                if (auto pos = arg.find("="); pos != std::string::npos && pos > 0) {
+                    constants.emplace(std::string(arg.substr(0, pos)), simfil::Value::make(std::string(arg.substr(pos + 1))));
+                } else {
+                    std::cerr << "Invalid definition: " << arg << "\n";
+                    return 1;
+                }
+                break;
+            default:
+                std::cerr << "Unknown option: " << arg << "\n";
+                return 1;
+            }
+        } else {
+            load_json(arg);
+        }
+    }
 
     for (;;) {
         auto cmd = input("> ");
@@ -169,6 +213,8 @@ int main(int argc, char *argv[])
         }
 
         simfil::Environment env(model->strings());
+        env.constants = constants;
+
         simfil::ExprPtr expr;
         try {
             expr = simfil::compile(env, cmd, options.auto_any);

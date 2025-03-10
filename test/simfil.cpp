@@ -1,6 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/exception-handler.h"
 #include "simfil/model/json.h"
+#include "simfil/value.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -12,6 +13,7 @@ static const auto StaticTestKey = StringPool::NextStaticId;
 static auto getASTString(std::string_view input)
 {
     Environment env(Environment::WithNewStringCache);
+    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
     return compile(env, input, false);
 }
 
@@ -204,6 +206,10 @@ TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
     REQUIRE_AST("1 and null", "null");
     REQUIRE_AST("1 and 2",    "2");
     REQUIRE_AST("a and b",    "(and a b)");
+}
+
+TEST_CASE("Constants", "[ast.constant]") {
+    REQUIRE_AST("a_number", "123");
 }
 
 TEST_CASE("ModeSetter", "[ast.mode-setter]") {
