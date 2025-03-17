@@ -10,18 +10,21 @@ using namespace simfil;
 static const auto StaticTestKey = StringPool::NextStaticId;
 
 
-static auto getASTString(std::string_view input)
+static auto getASTString(std::string_view input, bool autoWildcard = false)
 {
     Environment env(Environment::WithNewStringCache);
     env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
-    return compile(env, input, false);
+    return compile(env, input, false, autoWildcard);
 }
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(getASTString(input)->toString() == output);
+    REQUIRE(getASTString(input, false)->toString() == output);
+
+#define REQUIRE_AST_AUTOWILDCARD(input, output) \
+    REQUIRE(getASTString(input, true)->toString() == output);
 
 #define REQUIRE_UNDEF(input) \
-    REQUIRE(getASTString(input)-> == output);
+    REQUIRE(getASTString(input, false)-> == output);
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -157,6 +160,14 @@ TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
     /* Ranges */
     REQUIRE_AST("range(0,10)=\"A\"", "false");
     REQUIRE_AST("range(0,10)!=\"A\"", "true");
+}
+
+TEST_CASE("Auto Expand Constant", "[ast.auto-expand-constant]") {
+    REQUIRE_AST_AUTOWILDCARD("a = 1",   "(== a 1)");
+    REQUIRE_AST_AUTOWILDCARD("a.* = 1", "(== (. a *) 1)");
+    REQUIRE_AST_AUTOWILDCARD("** = 1",  "(== ** 1)");
+    REQUIRE_AST_AUTOWILDCARD("1",       "(== ** 1)");
+    REQUIRE_AST_AUTOWILDCARD("1+4",     "(== ** 5)");
 }
 
 TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fields]") {

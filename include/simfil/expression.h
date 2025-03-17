@@ -29,6 +29,10 @@ public:
 
     /* Category */
     virtual auto type() const -> Type = 0;
+    virtual auto constant() const -> bool
+    {
+        return false;
+    }
 
     /* Debug */
     virtual auto toString() const -> std::string = 0;

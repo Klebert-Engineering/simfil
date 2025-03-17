@@ -26,6 +26,7 @@ using namespace std::string_literals;
 struct
 {
     bool auto_any = false;
+    bool auto_wildcard = false;
     bool verbose = true;
     bool multi_threaded = true;
 } options;
@@ -208,6 +209,7 @@ int main(int argc, char *argv[])
             continue;
         if (cmd[0] == '/') {
             set_option("any", options.auto_any, cmd);
+            set_option("wildcard", options.auto_wildcard, cmd);
             set_option("verbose", options.verbose, cmd);
             set_option("mt", options.multi_threaded, cmd);
             continue;
@@ -218,7 +220,7 @@ int main(int argc, char *argv[])
 
         simfil::ExprPtr expr;
         try {
-            expr = simfil::compile(env, cmd, options.auto_any);
+            expr = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
         } catch (const std::exception& e) {
             std::cout << "Compile:\n  " << e.what() << "\n";
             continue;

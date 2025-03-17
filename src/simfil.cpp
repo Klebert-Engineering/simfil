@@ -307,6 +307,11 @@ public:
         return Type::VALUE;
     }
 
+    auto constant() const -> bool override
+    {
+        return true;
+    }
+
     auto ieval(Context ctx, Value, const ResultFn& res) const -> Result override
     {
         for (const auto& v : values_) {
@@ -348,6 +353,11 @@ public:
     auto type() const -> Type override
     {
         return Type::VALUE;
+    }
+
+    auto constant() const -> bool override
+    {
+        return true;
     }
 
     auto ieval(Context ctx, Value, const ResultFn& res) const -> Result override
@@ -1254,7 +1264,7 @@ class PathParser : public InfixParselet
     }
 };
 
-auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
+auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard) -> ExprPtr
 {
     Parser p(&env, sv);
 
@@ -1323,12 +1333,20 @@ auto compile(Environment& env, std::string_view sv, bool any) -> ExprPtr
     p.infixParsers[Token::DOT]  = std::make_unique<PathParser>();
 
     auto expr = [&](){
+        auto root = p.parse();
+
+        /* Expand a single value to `** == <value>` */
+        if (autoWildcard && root && root->constant()) {
+            root = std::make_unique<BinaryExpr<OperatorEq>>(
+                std::make_unique<WildcardExpr>(), std::move(root));
+        }
+
         if (any) {
-            std::vector<ExprPtr> root;
-            root.emplace_back(p.parse());
-            return simplifyOrForward(p.env, std::make_unique<CallExpression>("any"s, std::move(root)));
+            std::vector<ExprPtr> args;
+            args.emplace_back(std::move(root));
+            return simplifyOrForward(p.env, std::make_unique<CallExpression>("any"s, std::move(args)));
         } else {
-            return p.parse();
+            return root;
         }
     }();
 
