@@ -141,7 +141,7 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
     return result;
 }
 
-void show_help()
+static void show_help()
 {
     std::cout << "Usage: simfil-repl [OPTIONS] [--] FILENAME...\n"
         << "\n"
@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
     auto model = std::make_shared<simfil::ModelPool>();
     std::map<std::string, simfil::Value> constants;
 
-    auto load_json = [&](std::string_view filename) {
+    auto load_json = [&model](const std::string_view& filename) {
 #if defined(SIMFIL_WITH_MODEL_JSON)
         std::cout << "Parsing " << filename << "\n";
         auto f = std::ifstream(std::string(filename));
@@ -171,9 +171,9 @@ int main(int argc, char *argv[])
     };
 
     auto tail_args = false;
-    while (*++argv) {
+    while (*++argv != nullptr) {
         std::string_view arg = *argv;
-        if (!tail_args && arg[0] == '-') {
+        if ((!tail_args) && (arg[0] == '-')) {
             switch (arg[1]) {
             case '-':
                 tail_args = true;
@@ -183,10 +183,11 @@ int main(int argc, char *argv[])
                 return 0;
             case 'D':
                 arg.remove_prefix(2);
-                if (arg.empty())
+                if (arg.empty()) {
                     arg = *++argv;
-                if (auto pos = arg.find("="); pos != std::string::npos && pos > 0) {
-                    constants.emplace(std::string(arg.substr(0, pos)), simfil::Value::make(std::string(arg.substr(pos + 1))));
+                }
+                if (auto pos = arg.find("="); (pos != std::string::npos) && (pos > 0)) {
+                    constants.try_emplace(std::string(arg.substr(0, pos)), simfil::Value::make(std::string(arg.substr(pos + 1))));
                 } else {
                     std::cerr << "Invalid definition: " << arg << "\n";
                     return 1;
