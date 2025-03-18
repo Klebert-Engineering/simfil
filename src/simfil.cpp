@@ -450,7 +450,7 @@ public:
         auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
         auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value lv) {
-            return sub_->eval(ctx, lv, LambdaResultFn([this, &res, &lv](Context ctx, Value vv) {
+            return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](Context ctx, Value vv) {
                 auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
                 if (bv.isa(ValueType::Undef))
                     return Result::Continue;
@@ -682,7 +682,7 @@ public:
     auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
     {
         return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
-            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) {
+            return right_->eval(ctx, val, LambdaResultFn([&res, &lv](Context ctx, Value rv) {
                 return res(ctx, BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv),
                                                                              std::move(rv)));
             }));
@@ -954,6 +954,8 @@ public:
 
         auto name = std::get<std::string>(type.value);
         return simplifyOrForward(p.env, [&]() -> ExprPtr {
+            if (name == strings::TypenameNull)
+                return std::make_unique<ConstExpr>(Value::null());
             if (name == strings::TypenameBool)
                 return std::make_unique<UnaryExpr<OperatorBool>>(std::move(left));
             if (name == strings::TypenameInt)
