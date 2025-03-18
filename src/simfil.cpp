@@ -60,15 +60,6 @@ enum Precedence {
 };
 
 /**
- * Downcase string.
- */
-static auto downcase(std::string s) -> std::string
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](auto c) { return tolower(c); });
-    return s;
-}
-
-/**
  *
  */
 template <class ...Type>
@@ -1233,10 +1224,10 @@ class WordParser : public PrefixParselet
             p.consume();
 
             auto arguments = p.parseList(Token::RPAREN);
-            return simplifyOrForward(p.env, std::make_unique<CallExpression>(downcase(word), std::move(arguments)));
+            return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
         }
         /* Constant */
-        else if (auto constant = p.env->findConstant(downcase(word))) {
+        else if (auto constant = p.env->findConstant(word)) {
             return std::make_unique<ConstExpr>(*constant);
         }
 

@@ -221,6 +221,8 @@ TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
 
 TEST_CASE("Constants", "[ast.constant]") {
     REQUIRE_AST("a_number", "123");
+    REQUIRE_AST("A_number", "123");
+    REQUIRE_AST("A_NUMBER", "123");
 }
 
 TEST_CASE("ModeSetter", "[ast.mode-setter]") {
@@ -251,8 +253,8 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
     REQUIRE_AST("trace('test', a.b)", "(trace \"test\" (. a b))");
 
     /* Test case-insensitivity */
-    REQUIRE_AST("TRACE(1)",      "(trace 1)");
-    REQUIRE_AST("Trace(1)",      "(trace 1)");
+    REQUIRE_AST("TRACE(1)",      "(TRACE 1)");
+    REQUIRE_AST("Trace(1)",      "(Trace 1)");
 }
 
 static const char* const doc = R"json(

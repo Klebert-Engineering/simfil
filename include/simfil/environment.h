@@ -5,12 +5,14 @@
 #include "simfil/value.h"
 #include "simfil/model/model.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <vector>
 #include <chrono>
 #include <functional>
 #include <mutex>
+#include <string>
 
 namespace simfil
 {
@@ -19,6 +21,17 @@ class Expr;
 class Function;
 struct ResultFn;
 struct Debug;
+
+/** Case-insensitive comparator. */
+struct CaseInsensitiveCompare
+{
+    auto operator()(const std::string& l, const std::string& r) const -> bool
+    {
+        return std::lexicographical_compare(l.begin(), l.end(), r.begin(), r.end(), [](auto lc, auto rc) {
+            return tolower(lc) < tolower(rc);
+        });
+    }
+};
 
 /** Trace call stats. */
 struct Trace
@@ -94,10 +107,10 @@ public:
     std::map<std::string, Trace> traces;
 
     /* lower-case function ident -> function */
-    std::map<std::string, const Function*> functions;
+    std::map<std::string, const Function*, CaseInsensitiveCompare> functions;
 
     /* lower-case constant ident -> value */
-    std::map<std::string, Value> constants;
+    std::map<std::string, Value, CaseInsensitiveCompare> constants;
 
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;
