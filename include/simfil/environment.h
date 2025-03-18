@@ -12,7 +12,7 @@
 #include <chrono>
 #include <functional>
 #include <mutex>
-#include <string>
+#include <string_view>
 
 namespace simfil
 {
@@ -25,7 +25,7 @@ struct Debug;
 /** Case-insensitive comparator. */
 struct CaseInsensitiveCompare
 {
-    auto operator()(const std::string& l, const std::string& r) const -> bool
+    auto operator()(const std::string_view& l, const std::string_view& r) const -> bool
     {
         return std::lexicographical_compare(l.begin(), l.end(), r.begin(), r.end(), [](auto lc, auto rc) {
             return tolower(lc) < tolower(rc);
@@ -85,12 +85,12 @@ public:
     /**
      * Query function by name.
      */
-    auto findFunction(const std::string&) const -> const Function*;
+    auto findFunction(const std::string& name) const -> const Function*;
 
     /**
      * Query constant by name.
      */
-    auto findConstant(const std::string&) const -> const Value*;
+    auto findConstant(const std::string& name) const -> const Value*;
 
     /**
      * Obtain a strong reference to this environment's string cache.
