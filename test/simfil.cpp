@@ -23,9 +23,6 @@ static auto getASTString(std::string_view input, bool autoWildcard = false)
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
     REQUIRE(getASTString(input, true)->toString() == output);
 
-#define REQUIRE_UNDEF(input) \
-    REQUIRE(getASTString(input, false)-> == output);
-
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
     REQUIRE_AST("a.b", "(. a b)");
@@ -221,8 +218,6 @@ TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
 
 TEST_CASE("Constants", "[ast.constant]") {
     REQUIRE_AST("a_number", "123");
-    REQUIRE_AST("A_number", "123");
-    REQUIRE_AST("A_NUMBER", "123");
 }
 
 TEST_CASE("ModeSetter", "[ast.mode-setter]") {

@@ -109,8 +109,8 @@ public:
     /* lower-case function ident -> function */
     std::map<std::string, const Function*, CaseInsensitiveCompare> functions;
 
-    /* lower-case constant ident -> value */
-    std::map<std::string, Value, CaseInsensitiveCompare> constants;
+    /* case-sensitive constant ident -> value */
+    std::map<std::string, Value> constants;
 
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;
