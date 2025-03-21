@@ -12,6 +12,7 @@
 #include "fmt/core.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -95,6 +96,43 @@ static auto expect(const ExprPtr& e, Type... types)
 
         raise<std::runtime_error>("Expected "s + typeNames + " got "s + type2str(e->type()));
     }
+}
+
+/**
+ * Returns if a word should be parsed as a symbol (string).
+ * This is true for all UPPER_CASE words.
+ */
+static auto isSymbolWord(std::string_view sv) -> bool
+{
+    return std::all_of(sv.begin(), sv.end(), [](auto c) {
+       return c == '_' || std::isupper(c);
+    });
+}
+
+/**
+ * RIIA Helper for calling function at destruction.
+ */
+struct scoped {
+    std::function<void()> f;
+
+    template <class Fun>
+    scoped(Fun&& f) : f(std::move(f)) {}
+    scoped(scoped&& s) : f(std::move(s.f)) { s.f = nullptr; }
+    scoped(const scoped& s) = delete;
+    ~scoped() { if (f) { f(); }}
+};
+
+/**
+ * Temporarily set the parser context to be not in a path expression.
+ */
+[[nodiscard]]
+static auto scopedNotInPath(Parser& p) {
+    auto inPath = false;
+    std::swap(p.ctx.inPath, inPath);
+
+    return scoped([&p, inPath] {
+        p.ctx.inPath = inPath;
+    });
 }
 
 /**
@@ -1130,6 +1168,7 @@ class ParenParser : public PrefixParselet
 {
     auto parse(Parser& p, Token t) const -> ExprPtr override
     {
+        auto _ = scopedNotInPath(p);
         return p.parseTo(Token::RPAREN);
     }
 };
@@ -1144,6 +1183,7 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
 {
     auto parse(Parser& p, Token t) const -> ExprPtr override
     {
+        auto _ = scopedNotInPath(p);
         return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::make_unique<FieldExpr>("_"),
                                                                         p.parseTo(Token::RBRACK)));
     }
@@ -1155,6 +1195,7 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
                Expr::Type::VALUE,
                Expr::Type::SUBEXPR,
                Expr::Type::SUBSCRIPT);
+        auto _ = scopedNotInPath(p);
         return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::move(left),
                                                                         p.parseTo(Token::RBRACK)));
     }
@@ -1175,6 +1216,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
 {
     auto parse(Parser& p, Token t) const -> ExprPtr override
     {
+        auto _ = scopedNotInPath(p);
         /* Prefix sub-selects are transformed to a right side path expression,
          * with the current node on the left. As "standalone" sub-selects are not useful. */
         return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
@@ -1188,6 +1230,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
                Expr::Type::VALUE,
                Expr::Type::SUBEXPR,
                Expr::Type::SUBSCRIPT);
+        auto _ = scopedNotInPath(p);
         return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::move(left),
                                                                   p.parseTo(Token::RBRACE)));
     }
@@ -1223,14 +1266,20 @@ class WordParser : public PrefixParselet
 
         /* Function call */
         if (p.match(Token::LPAREN)) {
+            auto _ = scopedNotInPath(p);
             p.consume();
 
             auto arguments = p.parseList(Token::RPAREN);
             return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
-        }
-        /* Constant */
-        else if (auto constant = p.env->findConstant(word)) {
-            return std::make_unique<ConstExpr>(*constant);
+        } else if (!p.ctx.inPath) {
+            /* Parse Symbols (words in upper-case) */
+            if (isSymbolWord(word)) {
+                return std::make_unique<ConstExpr>(Value::make<std::string>(std::move(word)));
+            }
+            /* Constant */
+            else if (auto constant = p.env->findConstant(word)) {
+                return std::make_unique<ConstExpr>(*constant);
+            }
         }
 
         /* Single field name */
@@ -1247,6 +1296,13 @@ class PathParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
+        auto inPath = true;
+        std::swap(p.ctx.inPath, inPath);
+
+        scoped _([&p, inPath]() {
+            p.ctx.inPath = inPath;
+        });
+
         auto right = p.parsePrecedence(precedence());
         return std::make_unique<PathExpr>(std::move(left), std::move(right));
     }

@@ -106,11 +106,11 @@ public:
     std::unique_ptr<std::mutex> traceMtx;
     std::map<std::string, Trace> traces;
 
-    /* lower-case function ident -> function */
+    /* function ident -> function */
     std::map<std::string, const Function*, CaseInsensitiveCompare> functions;
 
-    /* case-sensitive constant ident -> value */
-    std::map<std::string, Value> constants;
+    /* constant ident -> value */
+    std::map<std::string, Value, CaseInsensitiveCompare> constants;
 
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;

@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
 #endif
 
     auto model = std::make_shared<simfil::ModelPool>();
-    std::map<std::string, simfil::Value> constants;
+    std::map<std::string, simfil::Value, simfil::CaseInsensitiveCompare> constants;
 
     auto load_json = [&model](const std::string_view& filename) {
 #if defined(SIMFIL_WITH_MODEL_JSON)

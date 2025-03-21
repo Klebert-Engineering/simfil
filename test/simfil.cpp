@@ -220,6 +220,19 @@ TEST_CASE("Constants", "[ast.constant]") {
     REQUIRE_AST("a_number", "123");
 }
 
+TEST_CASE("Symbols", "[ast.symbol]") {
+    REQUIRE_AST("ABC", "\"ABC\"");
+    REQUIRE_AST("ABC == ABC", "true");
+    REQUIRE_AST("a.ABC", "(. a ABC)");
+    REQUIRE_AST("a.ABC.DEF", "(. (. a ABC) DEF)");
+    REQUIRE_AST("a.(ABC)", "(. a \"ABC\")");
+    REQUIRE_AST("a.(_.ABC)", "(. a (. _ ABC))");
+    REQUIRE_AST("a[ABC]", "(index a \"ABC\")");
+    REQUIRE_AST("a[_.ABC]", "(index a (. _ ABC))");
+    REQUIRE_AST("a{ABC}", "(sub a \"ABC\")");
+    REQUIRE_AST("a{_.ABC}", "(sub a (. _ ABC))");
+}
+
 TEST_CASE("ModeSetter", "[ast.mode-setter]") {
     REQUIRE_AST("any(true)",   "true");
     REQUIRE_AST("any(a.b)",    "(any (. a b))");

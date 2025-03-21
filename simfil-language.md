@@ -7,7 +7,7 @@ structured data.
 
 ### Syntax
 
-The syntax of simfil is case-insensitive. This means that `any(...)`, `ANY(...)` and `Any(...)` all compile
+The syntax of simfil is case-insensitive in all cases but for symbols. This means that `any(...)`, `ANY(...)` and `Any(...)` all compile
 to the same function.
 
 ### Paths
@@ -29,6 +29,17 @@ The path `**` (double asterisk) represents any child (recursive) plus the curren
 
 If you need to access field names dynamically, you can use the subscript operator `[<expression>]`.
 Example: `*.["field name with spaces"]`.
+
+### Symbols
+
+Simfil parses identifiers containing only uppercase letters and underscores
+as strings, but only if not on either side of a path operator `.`.
+This means, that expressions like `**.field = ABC` get parsed as
+`**.field = "ABC"`. Note that this is not the case if a symbol appears on 
+either side of `.`, such as `ABC.field`!
+
+To force parsing a symbol as a field, you can put it in a path expression:
+`_.FIELD` or use the subscript operator `[FIELD]`.
 
 ### Sub-Queries
 
