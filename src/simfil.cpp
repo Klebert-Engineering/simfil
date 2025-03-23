@@ -105,7 +105,7 @@ static auto expect(const ExprPtr& e, Type... types)
 static auto isSymbolWord(std::string_view sv) -> bool
 {
     return std::all_of(sv.begin(), sv.end(), [](auto c) {
-       return c == '_' || std::isupper(c);
+       return c == '_' || (std::isupper(c) != 0);
     });
 }
 
@@ -115,11 +115,12 @@ static auto isSymbolWord(std::string_view sv) -> bool
 struct scoped {
     std::function<void()> f;
 
-    template <class Fun>
-    scoped(Fun&& f) : f(std::move(f)) {}
+    scoped(std::function<void()> f) : f(std::move(f)) {}
     scoped(scoped&& s) : f(std::move(s.f)) { s.f = nullptr; }
     scoped(const scoped& s) = delete;
-    ~scoped() { if (f) { f(); }}
+    ~scoped() {
+        try { if (f) { f(); } } catch (...) {}
+    }
 };
 
 /**
@@ -130,7 +131,7 @@ static auto scopedNotInPath(Parser& p) {
     auto inPath = false;
     std::swap(p.ctx.inPath, inPath);
 
-    return scoped([&p, inPath] {
+    return scoped([&p, inPath]() {
         p.ctx.inPath = inPath;
     });
 }
