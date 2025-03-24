@@ -5,12 +5,14 @@
 #include "simfil/value.h"
 #include "simfil/model/model.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <vector>
 #include <chrono>
 #include <functional>
 #include <mutex>
+#include <string_view>
 
 namespace simfil
 {
@@ -19,6 +21,17 @@ class Expr;
 class Function;
 struct ResultFn;
 struct Debug;
+
+/** Case-insensitive comparator. */
+struct CaseInsensitiveCompare
+{
+    auto operator()(const std::string_view& l, const std::string_view& r) const -> bool
+    {
+        return std::lexicographical_compare(l.begin(), l.end(), r.begin(), r.end(), [](auto lc, auto rc) {
+            return tolower(lc) < tolower(rc);
+        });
+    }
+};
 
 /** Trace call stats. */
 struct Trace
@@ -72,7 +85,12 @@ public:
     /**
      * Query function by name.
      */
-    auto findFunction(std::string) const -> const Function*;
+    auto findFunction(const std::string& name) const -> const Function*;
+
+    /**
+     * Query constant by name.
+     */
+    auto findConstant(const std::string& name) const -> const Value*;
 
     /**
      * Obtain a strong reference to this environment's string cache.
@@ -88,8 +106,11 @@ public:
     std::unique_ptr<std::mutex> traceMtx;
     std::map<std::string, Trace> traces;
 
-    /* lower-case function ident -> function */
-    std::map<std::string, const Function*> functions;
+    /* function ident -> function */
+    std::map<std::string, const Function*, CaseInsensitiveCompare> functions;
+
+    /* constant ident -> value */
+    std::map<std::string, Value, CaseInsensitiveCompare> constants;
 
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;

@@ -1,6 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/exception-handler.h"
 #include "simfil/model/json.h"
+#include "simfil/value.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -9,17 +10,18 @@ using namespace simfil;
 static const auto StaticTestKey = StringPool::NextStaticId;
 
 
-static auto getASTString(std::string_view input)
+static auto getASTString(std::string_view input, bool autoWildcard = false)
 {
     Environment env(Environment::WithNewStringCache);
-    return compile(env, input, false);
+    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
+    return compile(env, input, false, autoWildcard);
 }
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(getASTString(input)->toString() == output);
+    REQUIRE(getASTString(input, false)->toString() == output);
 
-#define REQUIRE_UNDEF(input) \
-    REQUIRE(getASTString(input)-> == output);
+#define REQUIRE_AST_AUTOWILDCARD(input, output) \
+    REQUIRE(getASTString(input, true)->toString() == output);
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -157,6 +159,15 @@ TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
     REQUIRE_AST("range(0,10)!=\"A\"", "true");
 }
 
+TEST_CASE("Auto Expand Constant", "[ast.auto-expand-constant]") {
+    REQUIRE_AST_AUTOWILDCARD("a = 1",   "(== a 1)");
+    REQUIRE_AST_AUTOWILDCARD("a.* = 1", "(== (. a *) 1)");
+    REQUIRE_AST_AUTOWILDCARD("** = 1",  "(== ** 1)");
+    REQUIRE_AST_AUTOWILDCARD("1",       "(== ** 1)");
+    REQUIRE_AST_AUTOWILDCARD("1+4",     "(== ** 5)");
+    REQUIRE_AST_AUTOWILDCARD("ABC",     "(== ** \"ABC\")");
+}
+
 TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fields]") {
     const char* const doc = R"json(
         [
@@ -206,6 +217,23 @@ TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
     REQUIRE_AST("a and b",    "(and a b)");
 }
 
+TEST_CASE("Constants", "[ast.constant]") {
+    REQUIRE_AST("a_number", "123");
+}
+
+TEST_CASE("Symbols", "[ast.symbol]") {
+    REQUIRE_AST("ABC", "\"ABC\"");
+    REQUIRE_AST("ABC == ABC", "true");
+    REQUIRE_AST("a.ABC", "(. a ABC)");
+    REQUIRE_AST("a.ABC.DEF", "(. (. a ABC) DEF)");
+    REQUIRE_AST("a.(ABC)", "(. a \"ABC\")");
+    REQUIRE_AST("a.(_.ABC)", "(. a (. _ ABC))");
+    REQUIRE_AST("a[ABC]", "(index a \"ABC\")");
+    REQUIRE_AST("a[_.ABC]", "(index a (. _ ABC))");
+    REQUIRE_AST("a{ABC}", "(sub a \"ABC\")");
+    REQUIRE_AST("a{_.ABC}", "(sub a (. _ ABC))");
+}
+
 TEST_CASE("ModeSetter", "[ast.mode-setter]") {
     REQUIRE_AST("any(true)",   "true");
     REQUIRE_AST("any(a.b)",    "(any (. a b))");
@@ -234,8 +262,8 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
     REQUIRE_AST("trace('test', a.b)", "(trace \"test\" (. a b))");
 
     /* Test case-insensitivity */
-    REQUIRE_AST("TRACE(1)",      "(trace 1)");
-    REQUIRE_AST("Trace(1)",      "(trace 1)");
+    REQUIRE_AST("TRACE(1)",      "(TRACE 1)");
+    REQUIRE_AST("Trace(1)",      "(Trace 1)");
 }
 
 static const char* const doc = R"json(

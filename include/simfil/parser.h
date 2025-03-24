@@ -51,6 +51,10 @@ public:
 class Parser
 {
 public:
+    struct Context {
+        bool inPath = false;
+    };
+
     Parser(Environment*, std::vector<Token> tokens);
     Parser(Environment*, std::string_view expr);
 
@@ -87,6 +91,7 @@ public:
      */
     auto precedence(Token token) const -> int;
 
+    Context ctx;
     Environment* const env;
     std::unordered_map<Token::Type, std::unique_ptr<PrefixParselet>> prefixParsers;
     std::unordered_map<Token::Type, std::unique_ptr<InfixParselet>> infixParsers;
