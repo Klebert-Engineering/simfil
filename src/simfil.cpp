@@ -104,9 +104,14 @@ static auto expect(const ExprPtr& e, Type... types)
  */
 static auto isSymbolWord(std::string_view sv) -> bool
 {
-    return std::all_of(sv.begin(), sv.end(), [](auto c) {
-       return c == '_' || (std::isupper(c) != 0);
-    });
+    auto numUpperCaseLetters = 0;
+    return std::all_of(sv.begin(), sv.end(), [&numUpperCaseLetters](auto c) {
+       if (std::isupper(c)) {
+           ++numUpperCaseLetters;
+           return true;
+       }
+       return c == '_' || std::isdigit(c) != 0;
+    }) && numUpperCaseLetters > 0;
 }
 
 /**
