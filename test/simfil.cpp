@@ -165,6 +165,7 @@ TEST_CASE("Auto Expand Constant", "[ast.auto-expand-constant]") {
     REQUIRE_AST_AUTOWILDCARD("** = 1",  "(== ** 1)");
     REQUIRE_AST_AUTOWILDCARD("1",       "(== ** 1)");
     REQUIRE_AST_AUTOWILDCARD("1+4",     "(== ** 5)");
+    REQUIRE_AST_AUTOWILDCARD("ABC",     "(== ** \"ABC\"");
 }
 
 TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fields]") {
