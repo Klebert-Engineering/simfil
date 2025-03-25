@@ -581,8 +581,8 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
 
     Value sum = Value::make((int64_t)0);
 
-    const Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
-    const Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
+    Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
+    Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
     if (initval)
         (void)initval->eval(ctx, val, LambdaResultFn([&](Context ctx, Value vv) {
             sum = std::move(vv);

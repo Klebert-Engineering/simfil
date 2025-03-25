@@ -92,6 +92,9 @@ struct StringPool
     /// Check if the content of the string pools is logically identical.
     bool operator== (StringPool const& other) const;
 
+    /// Get the stored strings
+    const std::deque<std::string>& strings() const;
+
 private:
     mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<

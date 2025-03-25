@@ -49,6 +49,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/parser.cpp
   src/token.cpp
   src/types.cpp
+  src/expressions.cpp
   src/simfil.cpp
   src/value.cpp
   src/overlay.cpp

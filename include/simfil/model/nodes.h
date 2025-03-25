@@ -26,9 +26,9 @@ class ModelPool;
 class Model;
 struct ModelNode;
 struct Environment;
+struct Diagnostics;
+class AST;
 class Expr;
-
-std::vector<Value> eval(Environment& env, const Expr& ast, const ModelNode& node);
 
 using ModelConstPtr = std::shared_ptr<const Model>;
 using ModelPoolConstPtr = std::shared_ptr<const ModelPool>;
@@ -196,7 +196,7 @@ struct ModelNode
     friend class ModelPool;
     friend class Model;
     friend class OverlayNode;
-    friend std::vector<Value> eval(Environment& env, const Expr& ast, const ModelNode& node);
+    friend std::vector<Value> eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics*);
 
     /// Get the node's scalar value if it has one
     [[nodiscard]] virtual ScalarValueType value() const;

@@ -6,8 +6,10 @@
 #include "simfil/model/model.h"
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 #include <chrono>
 #include <functional>
@@ -31,6 +33,27 @@ struct CaseInsensitiveCompare
             return tolower(lc) < tolower(rc);
         });
     }
+};
+
+
+struct SourceLocation
+{
+    size_t begin = 0, size = 0;
+};
+
+/** Query Diagnostics. */
+struct Diagnostics
+{
+    struct Message
+    {
+        std::string message;
+        SourceLocation location;
+    };
+
+    explicit Diagnostics(const AST& ast);
+
+    using ExprId = size_t;
+    std::unordered_map<ExprId, std::atomic_uint32_t> fieldHits;
 };
 
 /** Trace call stats. */

@@ -18,10 +18,10 @@ static auto getASTString(std::string_view input, bool autoWildcard = false)
 }
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(getASTString(input, false)->toString() == output);
+    REQUIRE(getASTString(input, false)->expr().toString() == output);
 
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
-    REQUIRE(getASTString(input, true)->toString() == output);
+    REQUIRE(getASTString(input, true)->expr().toString() == output);
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -182,9 +182,9 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
         Environment env(model->strings());
 
         auto ast = compile(env, query, false);
-        INFO("AST: " << ast->toString());
+        INFO("AST: " << ast->expr().toString());
 
-        return eval(env, *ast, *model->root(0)).front().template as<ValueType::Bool>();
+        return eval(env, *ast, *model->root(0), nullptr).front().template as<ValueType::Bool>();
     };
 
     /* Test some field with different value types for different objects */
@@ -307,9 +307,9 @@ static auto joined_result(std::string_view query)
     Environment env(model->strings());
 
     auto ast = compile(env, query, false);
-    INFO("AST: " << ast->toString());
+    INFO("AST: " << ast->expr().toString());
 
-    auto res = eval(env, *ast, *model->root(0));
+    auto res = eval(env, *ast, *model->root(0), nullptr);
 
     std::string vals;
     for (const auto& vv : res) {

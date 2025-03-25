@@ -1,5 +1,6 @@
 #include "simfil/simfil.h"
 #include "simfil/model/nodes.h"
+#include "simfil/model/string-pool.h"
 #include "simfil/token.h"
 #include "simfil/operator.h"
 #include "simfil/value.h"
@@ -11,20 +12,24 @@
 #include "simfil/types.h"
 #include "fmt/core.h"
 
+#include "expressions.h"
+#include "levenshtein.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <deque>
 #include <unordered_map>
 #include <stdexcept>
 #include <cassert>
 #include <vector>
 #include <deque>
+#include <iostream>
 
 
 namespace simfil
@@ -140,775 +145,6 @@ static auto scopedNotInPath(Parser& p) {
         p.ctx.inPath = inPath;
     });
 }
-
-/**
- * Helper for calling the result function if it has never been executed
- * at the time of destruction.
- */
-template <class InnerFn = const ResultFn&>
-struct CountedResultFn : ResultFn
-{
-    mutable std::size_t calls = 0;
-    bool finished = false;
-    InnerFn fn;
-    Context nonctx;
-
-    CountedResultFn(InnerFn fn, Context ctx)
-        : fn(fn)
-        , nonctx(std::move(ctx))
-    {}
-
-    CountedResultFn(const CountedResultFn&) = delete;
-    CountedResultFn(CountedResultFn&&) = delete;
-
-    auto operator()(Context ctx, Value vv) const -> Result override
-    {
-        assert(!finished);
-        ++calls;
-        return fn(std::move(ctx), std::move(vv));
-    }
-
-    /* NOTE: You _must_ call finish before destruction! */
-    auto ensureCall()
-    {
-        assert(!finished);
-        if (calls == 0 && !finished) {
-            finished = true;
-            if (nonctx.phase == Context::Phase::Compilation)
-                fn(nonctx, Value::undef());
-            else
-                fn(nonctx, Value::null());
-        }
-    }
-};
-
-class WildcardExpr : public Expr
-{
-public:
-    WildcardExpr()
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::PATH;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
-    {
-        if (ctx.phase == Context::Phase::Compilation)
-            return ores(ctx, Value::undef());
-
-        CountedResultFn<const ResultFn&> res(ores, ctx);
-
-        struct Iterate
-        {
-            Context& ctx;
-            ResultFn& res;
-
-            auto iterate(ModelNode const& val, int depth)
-            {
-                if (val.type() == ValueType::Null)
-                    return Result::Continue;
-
-                if (res(ctx, Value::field(val)) == Result::Stop)
-                    return Result::Stop;
-
-                auto result = Result::Continue;
-                val.iterate(ModelNode::IterLambda([&, this](auto&& subNode) {
-                    if (iterate(subNode, depth + 1) == Result::Stop) {
-                        result = Result::Stop;
-                        return false;
-                    }
-                    return true;
-                }));
-
-                return result;
-            };
-        };
-
-        auto r = Iterate{ctx, res}.iterate(*val.node, 0);
-        res.ensureCall();
-        return r;
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "**";
-    }
-};
-
-/**
- * Returns every child of the current node or null.
- */
-class AnyChildExpr : public Expr
-{
-public:
-    AnyChildExpr()
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::PATH;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        if (ctx.phase == Context::Phase::Compilation)
-            return res(ctx, Value::undef());
-
-        if (!val.node || !val.node->size())
-            return res(ctx, Value::null());
-
-        auto result = Result::Continue;
-        val.node->iterate(ModelNode::IterLambda([&](auto&& subNode) {
-            if (res(ctx, Value::field(std::move(subNode))) == Result::Stop) {
-                result = Result::Stop;
-                return false;
-            }
-            return true;
-        }));
-
-        return Result::Continue;
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "*";
-    }
-};
-
-class FieldExpr : public Expr
-{
-public:
-    FieldExpr(std::string name)
-        : name_(std::move(name))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::PATH;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        if (val.isa(ValueType::Undef))
-            return res(ctx, std::move(val));
-
-        /* Special case: _ points to the current node */
-        if (name_ == "_")
-            return res(ctx, val);
-
-        if (!val.node)
-            return res(ctx, Value::null());
-
-        if (!nameId_)
-            nameId_ = ctx.env->strings()->get(name_);
-
-        if (!nameId_)
-            /* If the field name is not in the string cache, then there
-               is no field with that name. */
-            return res(ctx, Value::null());
-
-        /* Enter sub-node */
-        if (auto sub = val.node->get(nameId_)) {
-            return res(ctx, Value::field(*sub));
-        }
-
-        if (ctx.phase == Context::Phase::Compilation)
-            return res(ctx, Value::undef());
-        return res(ctx, Value::null());
-    }
-
-    auto toString() const -> std::string override
-    {
-        return name_;
-    }
-
-    std::string name_;
-    mutable StringId nameId_ = {};
-};
-
-class MultiConstExpr : public Expr
-{
-public:
-    static constexpr size_t Limit = 10000;
-
-    MultiConstExpr(std::vector<Value>&& vec)
-        : values_(std::move(vec))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto constant() const -> bool override
-    {
-        return true;
-    }
-
-    auto ieval(Context ctx, Value, const ResultFn& res) const -> Result override
-    {
-        for (const auto& v : values_) {
-            if (res(ctx, v) == Result::Stop)
-                return Result::Stop;
-        }
-
-        return Result::Continue;
-    }
-
-    auto toString() const -> std::string override
-    {
-        auto list = ""s;
-        for (const auto& v : values_) {
-            if (!list.empty())
-                list += " ";
-            list += v.toString();
-        }
-
-        return "{"s + list + "}"s;
-    }
-
-protected:
-    const std::vector<Value> values_;
-};
-
-class ConstExpr : public Expr
-{
-public:
-    template <class _CType>
-    explicit ConstExpr(_CType&& value)
-        : value_(Value::make(std::forward<_CType>(value)))
-    {}
-
-    explicit ConstExpr(Value value)
-        : value_(std::move(value))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto constant() const -> bool override
-    {
-        return true;
-    }
-
-    auto ieval(Context ctx, Value, const ResultFn& res) const -> Result override
-    {
-        return res(ctx, value_);
-    }
-
-    auto toString() const -> std::string override
-    {
-        if (value_.isa(ValueType::String))
-            return "\""s + value_.toString() + "\""s;
-        return value_.toString();
-    }
-
-protected:
-    const Value value_;
-};
-
-class SubscriptExpr : public Expr
-{
-public:
-    SubscriptExpr(ExprPtr left, ExprPtr index)
-        : left_(std::move(left))
-        , index_(std::move(index))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::SUBSCRIPT;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
-    {
-        auto res = CountedResultFn<const ResultFn&>(ores, ctx);
-
-        auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, Value lval) {
-            return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, Value ival) {
-                /* Field subscript */
-                if (lval.node) {
-                    ModelNode::Ptr node;
-
-                    /* Array subscript */
-                    if (ival.isa(ValueType::Int)) {
-                        auto index = ival.as<ValueType::Int>();
-                        node = lval.node->at(index);
-                    }
-                    /* String subscript */
-                    else if (ival.isa(ValueType::String)) {
-                        auto key = ival.as<ValueType::String>();
-                        if (auto keyStrId = ctx.env->strings()->get(key))
-                            node = lval.node->get(keyStrId);
-                    }
-
-                    if (node)
-                        return res(ctx, Value::field(*node));
-                    else
-                        ctx.env->warn("Invalid subscript index type "s + valueType2String(ival.type), this->toString());
-                } else {
-                    return res(ctx, BinaryOperatorDispatcher<OperatorSubscript>::dispatch(lval, ival));
-                }
-
-                return Result::Continue;
-            }));
-        }));
-        res.ensureCall();
-        return r;
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "(index "s + left_->toString() + " "s + index_->toString() + ")"s;
-    }
-
-    ExprPtr left_;
-    ExprPtr index_;
-};
-
-class SubExpr : public Expr
-{
-public:
-    explicit SubExpr(ExprPtr sub)
-        : left_(std::make_unique<FieldExpr>("_"))
-        , sub_(std::move(sub))
-    {}
-
-    SubExpr(ExprPtr left, ExprPtr sub)
-        : left_(std::move(left))
-        , sub_(std::move(sub))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::SUBEXPR;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
-    {
-        /* Do not return null unless we have _no_ matching value. */
-        auto res = CountedResultFn<const ResultFn&>(ores, ctx);
-
-        auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value lv) {
-            return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](Context ctx, Value vv) {
-                auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
-                if (bv.isa(ValueType::Undef))
-                    return Result::Continue;
-
-                if (bv.isa(ValueType::Bool) && bv.template as<ValueType::Bool>())
-                    return res(ctx, lv);
-
-                return Result::Continue;
-            }));
-        }));
-        res.ensureCall();
-        return r;
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "(sub "s + left_->toString() + " "s + sub_->toString() + ")"s;
-    }
-
-    ExprPtr left_, sub_;
-};
-
-class CallExpression : public Expr
-{
-public:
-    CallExpression(std::string name, std::vector<ExprPtr> args)
-        : name_(std::move(name))
-        , args_(std::move(args))
-        , fn_(nullptr)
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        if (!fn_)
-            fn_ = ctx.env->findFunction(name_);
-        if (!fn_)
-            raise<std::runtime_error>("Unknown function "s + name_);
-
-        auto anyval = false;
-        auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](Context ctx, Value vv) {
-            anyval = true;
-            return res(ctx, std::move(vv));
-        }));
-
-        if (!anyval)
-            return res(ctx, Value::null()); /* Expressions _must_ return at least one value! */
-        return result;
-    }
-
-    auto toString() const -> std::string override
-    {
-        if (args_.empty())
-            return "("s + name_ + ")"s;
-
-        std::string s = "("s + name_;
-        for (const auto& arg : args_) {
-            s += " "s + arg->toString();
-        }
-        return s + ")"s;
-    }
-
-    std::string name_;
-    std::vector<ExprPtr> args_;
-    mutable const Function* fn_;
-};
-
-class PathExpr : public Expr
-{
-public:
-    PathExpr(ExprPtr right)
-        : left_(std::make_unique<FieldExpr>("_"))
-        , right_(std::move(right))
-    {}
-
-    PathExpr(ExprPtr left, ExprPtr right)
-        : left_(std::move(left))
-        , right_(std::move(right))
-    {
-        assert(left_.get());
-        assert(right_.get());
-    }
-
-    auto type() const -> Type override
-    {
-        return Type::PATH;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& ores) const -> Result override
-    {
-        auto res = CountedResultFn<const ResultFn&>(ores, ctx);
-
-        auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value v) {
-            if (v.isa(ValueType::Undef))
-                return Result::Continue;
-
-            if (v.isa(ValueType::Null) && !v.node)
-                return Result::Continue;
-
-            return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value vv) {
-                if (vv.isa(ValueType::Undef))
-                    return Result::Continue;
-
-                if (vv.isa(ValueType::Null) && !vv.node)
-                    return Result::Continue;
-
-                return res(ctx, std::move(vv));
-            }));
-        }));
-        res.ensureCall();
-        return r;
-    };
-
-    auto toString() const -> std::string override
-    {
-        return "(. "s + left_->toString() + " "s + right_->toString() + ")"s;
-    }
-
-    ExprPtr left_, right_;
-};
-
-/** Calls `unpack` onto values of type Object. Forwards the value(s) otherwise.
- *
- * 1... => 1
- * range(1, 10)... => 1,2,3,4,5,6,7,8,9,10
- */
-class UnpackExpr : public Expr
-{
-public:
-    UnpackExpr(ExprPtr sub)
-        : sub_(std::move(sub))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        auto anyval = false;
-        auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value v) {
-            if (v.isa(ValueType::TransientObject)) {
-                const auto& obj = v.as<ValueType::TransientObject>();
-                auto r = Result::Continue;
-                obj.meta->unpack(obj, [&](Value vv) {
-                    anyval = true;
-                    return res(ctx, std::move(vv)) == Result::Continue;
-                });
-
-                if (r == Result::Stop)
-                    return Result::Stop;
-            } else {
-                anyval = true;
-                if (res(ctx, std::move(v)) == Result::Stop)
-                    return Result::Stop;
-            }
-            return Result::Continue;
-        }));
-
-        if (!anyval)
-            r = res(ctx, Value::null());
-        return r;
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "(... "s + sub_->toString() + ")"s;
-    }
-
-    ExprPtr sub_;
-};
-
-/**
- * Generic unary operator expression.
- */
-template <class Operator>
-class UnaryExpr : public Expr
-{
-public:
-    UnaryExpr(ExprPtr sub)
-        : sub_(std::move(sub))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        return sub_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value vv) {
-            return res(ctx, UnaryOperatorDispatcher<Operator>::dispatch(std::move(vv)));
-        }));
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "("s + Operator::name() + " "s + sub_->toString() + ")"s;
-    }
-
-    ExprPtr sub_;
-};
-
-/**
- * Generic binary operator expression.
- */
-template <class Operator>
-class BinaryExpr : public Expr
-{
-public:
-    BinaryExpr(ExprPtr left, ExprPtr right)
-        : left_(std::move(left))
-        , right_(std::move(right))
-    {
-        assert(left_.get());
-        assert(right_.get());
-    }
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
-            return right_->eval(ctx, val, LambdaResultFn([&res, &lv](Context ctx, Value rv) {
-                return res(ctx, BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv),
-                                                                             std::move(rv)));
-            }));
-        }));
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "("s + Operator::name() + " "s + left_->toString() + " "s + right_->toString() + ")"s;
-    }
-
-    ExprPtr left_, right_;
-};
-
-class UnaryWordOpExpr : public Expr
-{
-public:
-    UnaryWordOpExpr(Token t, ExprPtr left)
-        : ident_(std::get<std::string>(t.value))
-        , left_(std::move(left))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        return left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value val) {
-            if (val.isa(ValueType::Undef))
-                return res(ctx, std::move(val));
-
-            if (val.isa(ValueType::TransientObject)) {
-                const auto& obj = val.as<ValueType::TransientObject>();
-                return res(ctx, obj.meta->unaryOp(ident_, obj));
-            }
-
-            raise<std::runtime_error>(fmt::format("Invalid operator '{}' for value of type {}",
-                                                 ident_, valueType2String(val.type)));
-        }));
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "("s + ident_ + " "s + left_->toString() + ")"s;
-    }
-
-    std::string ident_;
-    ExprPtr left_;
-};
-
-class BinaryWordOpExpr : public Expr
-{
-public:
-    BinaryWordOpExpr(Token t, ExprPtr left, ExprPtr right)
-        : ident_(std::get<std::string>(t.value))
-        , left_(std::move(left))
-        , right_(std::move(right))
-    {}
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
-            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, Value rval) {
-                if (lval.isa(ValueType::Undef) || rval.isa(ValueType::Undef))
-                    return res(ctx, Value::undef());
-
-                if (lval.isa(ValueType::TransientObject)) {
-                    const auto& obj = lval.template as<ValueType::TransientObject>();
-                    return res(ctx, obj.meta->binaryOp(ident_, obj, rval));
-                }
-
-                if (rval.isa(ValueType::TransientObject)) {
-                    const auto& obj = rval.template as<ValueType::TransientObject>();
-                    return res(ctx, obj.meta->binaryOp(ident_, lval, obj));
-                }
-
-                raise<std::runtime_error>(fmt::format("Invalid operator '{}' for values of type {} and {}",
-                                                      ident_, valueType2String(lval.type), valueType2String(rval.type)));
-            }));
-        }));
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "("s + ident_ + " "s + left_->toString() + " "s + right_->toString() + ")"s;
-    }
-
-    std::string ident_;
-    ExprPtr left_, right_;
-};
-
-class AndExpr : public Expr
-{
-public:
-    AndExpr(ExprPtr left, ExprPtr right)
-        : left_(std::move(left))
-        , right_(std::move(right))
-    {
-        assert(left_.get());
-        assert(right_.get());
-    }
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        /* Operator and behaves like in lua:
-         * 'a and b' returns a if 'not a?' else b is returned */
-        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
-            if (lval.isa(ValueType::Undef))
-                return res(ctx, lval);
-
-            if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-                if (!v.template as<ValueType::Bool>())
-                    return res(ctx, std::move(lval));
-
-            return right_->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value rval) {
-                return res(ctx, std::move(rval));
-            }));
-        }));
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "(and "s + left_->toString() + " "s + right_->toString() + ")"s;
-    }
-
-    ExprPtr left_, right_;
-};
-
-class OrExpr : public Expr
-{
-public:
-    OrExpr(ExprPtr left, ExprPtr right)
-        : left_(std::move(left))
-        , right_(std::move(right))
-    {
-        assert(left_.get());
-        assert(right_.get());
-    }
-
-    auto type() const -> Type override
-    {
-        return Type::VALUE;
-    }
-
-    auto ieval(Context ctx, Value val, const ResultFn& res) const -> Result override
-    {
-        /* Operator or behaves like in lua:
-         * 'a or b' returns a if 'a?' else b is returned */
-        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
-            if (lval.isa(ValueType::Undef))
-                return res(ctx, lval);
-
-            if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-                if (v.template as<ValueType::Bool>())
-                    return res(ctx, std::move(lval));
-
-            return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value rval) {
-                return res(ctx, std::move(rval));
-            }));
-        }));
-
-    }
-
-    auto toString() const -> std::string override
-    {
-        return "(or "s + left_->toString() + " "s + right_->toString() + ")"s;
-    }
-
-    ExprPtr left_, right_;
-};
 
 /**
  * Tries to evaluate the input expression on a stub context.
@@ -1100,11 +336,11 @@ class WordOpParser : public InfixParselet
         /* Try parse as binary operator */
         auto right = p.parsePrecedence(precedence(), true);
         if (right)
-            return simplifyOrForward(p.env, std::make_unique<BinaryWordOpExpr>(std::move(t),
+            return simplifyOrForward(p.env, std::make_unique<BinaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                std::move(left),
                                                                                std::move(right)));
         /* Parse as unary operator */
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryWordOpExpr>(std::move(t),
+        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                        std::move(left))), 0);
     }
 
@@ -1258,7 +494,7 @@ class WordParser : public PrefixParselet
     {
         /* Self */
         if (t.type == Token::SELF)
-            return std::make_unique<FieldExpr>("_");
+            return std::make_unique<FieldExpr>("_", t);
 
         /* Any Child */
         if (t.type == Token::OP_TIMES)
@@ -1289,7 +525,7 @@ class WordParser : public PrefixParselet
         }
 
         /* Single field name */
-        return std::make_unique<FieldExpr>(std::move(word));
+        return std::make_unique<FieldExpr>(std::move(word), t);
     }
 };
 
@@ -1319,7 +555,7 @@ class PathParser : public InfixParselet
     }
 };
 
-auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard) -> ExprPtr
+auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard) -> ASTPtr
 {
     Parser p(&env, sv);
 
@@ -1407,23 +643,133 @@ auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard)
 
     if (!p.match(Token::Type::NIL))
         raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());
-    return expr;
+
+    return std::make_unique<AST>(std::string(sv), std::move(expr));
 }
 
-auto eval(Environment& env, const Expr& ast, const ModelNode& node) -> std::vector<Value>
+auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diagnostics) -> std::vector<Value>
 {
     if (!node.model_)
         raise<std::runtime_error>("ModelNode must have a model!");
 
     Context ctx(&env);
 
+    auto mutableAST = ast.expr().clone();
+
     std::vector<Value> res;
-    ast.eval(ctx, Value::field(node), LambdaResultFn([&res](Context ctx, Value vv) {
+    mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&res](Context ctx, Value vv) {
         res.push_back(std::move(vv));
         return Result::Continue;
     }));
 
+    if (diagnostics) {
+        /* NOTE: Make sure everything here is thread-safe! Preinitialize maps in the Diagnostics ctor etc.
+         *       Try to be lock-free, as locking here can hurt performance.
+         */
+        struct MergeDiagnostics : ExprVisitor
+        {
+            Diagnostics& diagnostics;
+
+            MergeDiagnostics(Diagnostics& diag)
+                : diagnostics(diag)
+            {}
+
+            auto visit(FieldExpr& e) -> void override {
+                ExprVisitor::visit(e);
+                diagnostics.fieldHits[index()] += e.hits_;
+            }
+        };
+
+        MergeDiagnostics visitor(*diagnostics);
+        mutableAST->accept(visitor);
+    }
+
     return res;
+}
+
+static auto findSimilarString(std::string_view source, const StringPool& pool)
+{
+    std::string_view best;
+    auto bestScore = std::numeric_limits<int>::max();
+
+    const auto isDollar = source[0] == '$';
+    for (const auto& target : pool.strings()) {
+        const auto targetIsDollar = target[0] == '$';
+        if (isDollar != targetIsDollar)
+            continue;
+
+        const auto score = levenshtein(source, target);
+        if (score < bestScore) {
+            bestScore = score;
+            best = target;
+        }
+    }
+
+    return best;
+}
+
+auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Diagnostics::Message>
+{
+    struct Visitor : ExprVisitor
+    {
+        const Environment& env;
+        const Diagnostics& diagnonstics;
+        std::vector<Diagnostics::Message> messages;
+
+        Visitor(const Environment& env, const Diagnostics& diagnonstics)
+            : env(env)
+            , diagnonstics(diagnonstics)
+        {}
+
+        void visit(FieldExpr& e)
+        {
+            ExprVisitor::visit(e);
+
+            // Generate "did you mean ...?" messages for missing fields
+            if (auto iter = diagnonstics.fieldHits.find(index()); iter != diagnonstics.fieldHits.end() && iter->second == 0) {
+                auto guess = findSimilarString(e.name_, *env.strings());
+                if (!guess.empty())
+                    addMessage(fmt::format("No matches for field '{}'. Did you mean '{}'?", e.name_, guess), e);
+                else
+                    addMessage(fmt::format("No matches for field '{}'.", e.name_, guess), e);
+            }
+        }
+
+        void addMessage(std::string text, const Expr& e)
+        {
+            Diagnostics::Message msg;
+            msg.message = std::move(text);
+            msg.location = e.sourceLocation();
+
+            messages.push_back(std::move(msg));
+        }
+    };
+
+    Visitor visitor(env, diag);
+    ast.expr().accept(visitor);
+
+    return visitor.messages;
+}
+
+Diagnostics::Diagnostics(const AST& ast)
+{
+    struct InitDiagnostics : ExprVisitor
+    {
+        Diagnostics& self;
+
+        InitDiagnostics(Diagnostics& self)
+            : self(self)
+        {}
+
+        auto visit(FieldExpr& e) -> void override
+        {
+            ExprVisitor::visit(e);
+            self.fieldHits[index()] = 0;
+        }
+    };
+
+    InitDiagnostics visitor(*this);
+    ast.expr().accept(visitor);
 }
 
 }
