@@ -5,12 +5,27 @@
 #include "simfil/token.h"
 #include "simfil/expression.h"
 
+#include <stdexcept>
 #include <unordered_map>
 #include <memory>
 #include <vector>
+#include <tuple>
 
 namespace simfil
 {
+
+struct ParserError : std::runtime_error
+{
+    using RangeType = std::tuple<int, int>;
+
+    explicit ParserError(const std::string& msg);
+    ParserError(const std::string& msg, const Token& token);
+    ParserError(const std::string& msg, RangeType range);
+
+    auto range() const noexcept -> RangeType;
+
+    RangeType range_;
+};
 
 struct Environment;
 class Parser;

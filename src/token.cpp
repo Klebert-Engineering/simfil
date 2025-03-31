@@ -439,7 +439,7 @@ std::vector<Token> tokenize(std::string_view expr)
             break;
         }
     }
-    tokens.emplace_back(Token(Token::NIL, 0, 0));
+    tokens.emplace_back(Token(Token::NIL, expr.size(), expr.size()));
 
     return tokens;
 }
