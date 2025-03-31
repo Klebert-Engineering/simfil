@@ -27,14 +27,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update && sudo apt-get install ninja-build
-      - name: Install Conan 2
-        run: |
-          pip install conan
-          conan profile detect
       - name: Build
         run: |
           mkdir build
-          conan install . -of build --build=missing -s compiler.cppstd=20
           cmake . -B build -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
           cmake --build build
       - name: Perform CodeQL Analysis
