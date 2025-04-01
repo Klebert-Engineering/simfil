@@ -2,25 +2,27 @@
 
 ## 1. Overview
 
-### Purpose and Scope
+### 1.1. Purpose and Scope
 
-Simfil is a C++ library designed for efficiently querying and manipulating hierarchical data structures, similar in nature to JSON. It provides a concise query language to filter, transform, and extract information from data models. Key features include:
+Simfil is a C++20 library designed for efficiently querying and manipulating hierarchical data structures, similar to JSON. It provides a concise query language (detailed in `simfil-language.md`) to filter, transform, and extract information from data models.
 
-*   **Efficient Data Representation:** Uses a columnar, arena-based storage (`ModelPool`) for memory efficiency, especially with large datasets containing repetitive structures or values.
-*   **Expressive Query Language:** Offers a path-based syntax with functions, operators, and sub-expressions for complex data navigation and manipulation. (See `simfil-language.md` for details).
-*   **Extensibility:** Allows defining custom functions and data types (`MetaType`) to integrate domain-specific logic.
-*   **Performance:** Aims for high performance through optimized data storage and evaluation strategies.
+**Key Features:**
 
-The library is suitable for scenarios where querying structured data (like configuration files, API responses, or specialized data formats) is required within a C++ application, prioritizing memory usage and query speed.
+*   **Efficient Data Representation:** Employs a columnar, arena-based storage (`ModelPool`) optimized for memory efficiency, particularly with large datasets containing repetitive structures or values.
+*   **Expressive Query Language:** Offers a path-based syntax (`a.b`), functions (`count(...)`), operators (`==`, `+`), and sub-expressions (`{...}`) for complex data navigation and manipulation.
+*   **Extensibility:** Supports custom functions and transient data types (`MetaType`) for integrating domain-specific logic.
+*   **Performance:** Aims for high performance through optimized data storage and query evaluation.
 
-### High-Level Architecture
+Simfil is ideal for C++ applications needing to query structured data (e.g., configuration files, API responses, specialized formats) where memory usage and query speed are priorities.
 
-Simfil processes queries in several stages:
+### 1.2. High-Level Architecture
 
-1.  **Parsing:** The input query string is tokenized (`tokenize`) and parsed into an Abstract Syntax Tree (AST) using a Pratt parser (`Parser`).
-2.  **Compilation (Optional Simplification):** The AST might undergo minor simplifications where constant expressions are pre-evaluated.
-3.  **Evaluation:** The AST (`Expr` tree) is evaluated against a data model (`ModelNode` within a `ModelPool`) using an `Environment` that provides context (functions, constants, string interning).
-4.  **Results:** The evaluation yields a sequence of `Value` objects representing the query results.
+Simfil processes queries through the following stages:
+
+1.  **Tokenization:** The input query string is broken into tokens (`tokenize`).
+2.  **Parsing:** Tokens are parsed into an Abstract Syntax Tree (AST) using a Pratt parser (`Parser`).
+3.  **Evaluation:** The AST (`Expr` tree) is evaluated against a data model (`ModelNode` within a `ModelPool`). An `Environment` provides context (functions, constants, string interning). Constant sub-expressions may be simplified during this phase.
+4.  **Result Generation:** Evaluation yields a sequence of `Value` objects representing the query results.
 
 ```mermaid
 flowchart LR
@@ -28,9 +30,9 @@ flowchart LR
     B --> C(Parser);
     C --> D{AST};
     D --> E(Evaluator);
-    F[Data Model\n(ModelPool)] --> E;
+    F[Data Model<br>ModelPool] --> E;
     G[Environment] --> E;
-    E --> H[Results\n(Value Sequence)];
+    E --> H[Results<br>Value Sequence];
 
     subgraph Parsing
         B; C; D;
@@ -40,24 +42,26 @@ flowchart LR
         E; F; G; H;
     end
 ```
+*Diagram illustrating the flow from query string to results.*
 
 ## 2. Setup and Prerequisites
 
-### Dependencies
+### 2.1. Dependencies
 
-*   **CMake:** Version 3.19 or higher (required by `CMakeLists.txt`).
-*   **Conan:** Version >=1.62.0 (required by `conanfile.py`).
-*   **C++ Compiler:** A compiler supporting C++20 standard (required by `CMakeLists.txt` and validated in `conanfile.py`).
-*   **Core Dependencies (Managed by Conan):**
-    *   `sfl/[~1]`: Segmented containers library (used in `ArrayArena`).
-    *   `fmt/[~10]`: For string formatting.
-    *   `bitsery/[~5]`: For serialization/deserialization.
-    *   `nlohmann_json/[~3]` (Optional, if `with_json` option is True): For JSON parsing and serialization.
-*   **Test/Dev Dependencies (Not included in library install):**
-    *   `catch2` (Likely used, based on common C++ practices, though not explicitly in `conanfile.py` requirements).
-    *   `readline` (Optional, if `SIMFIL_WITH_REPL` CMake option is enabled and platform supports it).
+*   **Build System:**
+    *   **CMake:** Version 3.19 or higher.
+    *   **Conan:** Version 1.62.0 or higher (`required_conan_version = ">=1.62.0"` in `conanfile.py`).
+*   **Compiler:** A C++ compiler supporting the C++20 standard (enforced by CMake and Conan).
+*   **Core Libraries (Managed by Conan):**
+    *   `sfl/[~1]`: Segmented containers library (used for `ArrayArena`).
+    *   `fmt/[~10]`: String formatting library.
+    *   `bitsery/[~5]`: Serialization library.
+    *   `nlohmann_json/[~3]`: JSON library (required if `SIMFIL_WITH_MODEL_JSON=ON`).
+*   **Optional Runtime/Development Libraries:**
+    *   `catch2/[~3]`: Testing framework (required if `SIMFIL_WITH_TESTS=ON`).
+    *   `readline`: Command-line editing library (used by `simfil-repl` if `SIMFIL_WITH_REPL=ON` and available on the system).
 
-### Environment Setup
+### 2.2. Environment Setup
 
 1.  **Install Prerequisites:** Ensure CMake (>=3.19), Conan (>=1.62.0), and a suitable C++20 compiler are installed and accessible in your PATH.
 2.  **Clone Repository:** Clone the simfil repository and initialize its submodules:
@@ -73,48 +77,48 @@ flowchart LR
     # Example: Install for Release build
     conan install .. --build=missing -s build_type=Release
     # Example: Install for Debug build
-    # conan install .. --build=missing -s build_type=Debug
+    # conan install .. --build=missing -s build_type=Debug --profile <your_profile>
     ```
-    *   Adjust `-s build_type` as needed.
-    *   Conan profiles might be necessary depending on your specific compiler and OS setup.
+    *   Adjust `-s build_type` as needed (e.g., `Release`, `Debug`).
+    *   Conan profiles (`--profile`) might be necessary for specific compiler/OS configurations.
 
-### Configuration & Building
+### 2.3. Configuration & Building
 
-1.  **Configure with CMake:** From the `build` directory created above:
+1.  **Configure with CMake:** From the `build` directory:
     ```bash
     # Example: Configure for Release build
-    cmake .. -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+    cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 
     # Example: Configure for Debug build
-    # cmake .. -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug
+    # cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug
     ```
     *   Ensure `CMAKE_BUILD_TYPE` matches the `build_type` used during `conan install`.
-    *   The `conan_toolchain.cmake` file (generated by `conan install`) integrates Conan dependencies with CMake.
-    *   You can customize the build with CMake options defined in `CMakeLists.txt`:
-        *   `-DSIMFIL_SHARED=ON/OFF` (Default: ON): Build shared or static library.
-        *   `-DSIMFIL_FPIC=ON/OFF` (Default: ON): Enable Position Independent Code (relevant for static builds linked into shared libs).
-        *   `-DSIMFIL_WITH_MODEL_JSON=ON/OFF` (Default: ON): Include nlohmann_json support.
-        *   `-DSIMFIL_WITH_REPL=ON/OFF` (Default: ON if main project): Build the `simfil-repl` executable.
-        *   `-DSIMFIL_WITH_EXAMPLES=ON/OFF` (Default: ON if main project): Build examples (like `minimal`).
-        *   `-DSIMFIL_WITH_TESTS=ON/OFF` (Default: ON if main project): Build tests (`test.simfil` executable).
-        *   `-DSIMFIL_WITH_COVERAGE=ON/OFF` (Default: OFF unless GCC/Debug): Enable code coverage instrumentation (requires gcovr).
+    *   The `conan_toolchain.cmake` file (generated by `conan install` in the build dir) integrates Conan dependencies.
+    *   **CMake Options** (defined in `CMakeLists.txt`):
+        *   `SIMFIL_SHARED` (Default: `ON`): Build a shared (`.so`, `.dll`) or static (`.a`, `.lib`) library.
+        *   `SIMFIL_FPIC` (Default: `ON`): Enable Position Independent Code (important for static libraries linked into shared libraries).
+        *   `SIMFIL_WITH_MODEL_JSON` (Default: `ON`): Include `nlohmann_json` support for JSON parsing/serialization. Requires the `nlohmann_json` Conan dependency.
+        *   `SIMFIL_WITH_REPL` (Default: `ON` if main project): Build the `simfil-repl` command-line tool. May require `readline`.
+        *   `SIMFIL_WITH_EXAMPLES` (Default: `ON` if main project): Build example programs (e.g., `minimal`).
+        *   `SIMFIL_WITH_TESTS` (Default: `ON` if main project): Build the test executable (`test.simfil`). Requires the `catch2` Conan dependency.
+        *   `SIMFIL_WITH_COVERAGE` (Default: `OFF` unless GCC/Debug): Enable code coverage instrumentation (requires `gcovr`).
 2.  **Build:**
     ```bash
     cmake --build .
     ```
-    This will compile the library (`libsimfil.so` or `simfil.dll` or `libsimfil.a`) and any enabled executables (tests, repl, examples), typically placed in a `bin` or `lib` subdirectory within `build`.
+    This compiles the library (e.g., `lib/libsimfil.so`, `bin/simfil.dll`) and any enabled executables (tests, repl, examples) within the `build` directory.
 
 ## 3. Core Concepts and Components
 
 ### 3.1. Data Model (`simfil::model`)
 
-The core of data representation in simfil.
+Simfil's data model is designed for memory efficiency and fast access.
 
-*   **`ModelPool`:** The main container for the data (`include/simfil/model/model.h`). It uses specialized, columnar storage for different data types (integers, floats, strings, objects, arrays) to optimize memory usage. It manages the lifetime of all nodes. It relies heavily on `ArrayArena` and `StringPool`.
-*   **`ModelNode`:** A view or handle to a node within the `ModelPool` (`include/simfil/model/nodes.h`). It doesn't own the data itself but provides an interface to access it (type, value, children). It holds a `ModelNodeAddress` and a `shared_ptr` to its `Model` (usually the `ModelPool`).
-*   **`ModelNodeAddress`:** A compact 32-bit identifier for a node (`include/simfil/model/nodes.h`), encoding its column (type) and index within that column. Small scalar values (small integers, booleans) can be stored directly within the address, avoiding separate storage allocation.
-*   **`ArrayArena`:** A specialized allocator (`include/simfil/model/arena.h`) built on `sfl::segmented_vector`. It efficiently manages append-only collections of data (like object fields or array elements). When an array grows, it allocates larger chunks, linking them together, minimizing reallocations and fragmentation. This is fundamental to `ModelPool`'s efficiency.
-*   **`StringPool`:** Interns strings (primarily object keys) to save memory (`include/simfil/model/string-pool.h`). Maps strings to `StringId`s (uint16_t) and ensures that identical strings are stored only once. Case-insensitive by default. `ModelPool` uses a `StringPool` to manage field names.
+*   **`ModelPool` (`include/simfil/model/model.h`):** The primary container holding the actual data. It uses specialized, columnar storage for different data types (integers, floats, strings, objects, arrays) and manages the lifetime of all nodes. It relies on `ArrayArena` for object/array structures and `StringPool` for field names.
+*   **`ModelNode` (`include/simfil/model/nodes.h`):** A lightweight handle or view onto a node within the `ModelPool`. It does *not* own the data but provides an interface to access its type, value, and children. It contains a `ModelNodeAddress` and a `shared_ptr` to its owning `Model` (typically the `ModelPool`).
+*   **`ModelNodeAddress` (`include/simfil/model/nodes.h`):** A compact 32-bit identifier encoding a node's location and type within the `ModelPool`. It uses the lower 8 bits for the column ID (type) and the upper 24 bits for an index *or* the value itself (for small value optimization).
+*   **`ArrayArena` (`include/simfil/model/arena.h`):** A specialized allocator using `sfl::segmented_vector` to efficiently manage the append-only lists required for object fields and array elements. See [Advanced Topics](#41-model-representation--arena-allocation) for details.
+*   **`StringPool` (`include/simfil/model/string-pool.h`):** Interns strings (primarily object keys) using case-insensitive comparison by default. It maps unique strings to `StringId`s (uint16_t), saving memory by storing identical strings only once. `ModelPool` requires a `StringPool` to manage field names.
 
 ```mermaid
 classDiagram
@@ -129,116 +133,177 @@ classDiagram
     ModelNodeBase <|-- SmallValueNode
 
     class ModelNode{
-        +ModelConstPtr model_
-        +ModelNodeAddress addr_
-        +ScalarValueType data_
-        +type() ValueType
-        +value() ScalarValueType
-        +get(StringId) Ptr
-        +at(int64_t) Ptr
-        +size() uint32_t
-        +iterate(IterCallback) bool
+      +ModelConstPtr model_
+      +ModelNodeAddress addr_
+      +ScalarValueType data_ // Used by ValueNode, potentially others
+      +type() ValueType
+      +value() ScalarValueType
+      +get(StringId) Ptr
+      +at(int64_t) Ptr
+      +size() uint32_t
+      +iterate(IterCallback) bool
     }
     class ModelPool{
-        +Impl* impl_
-        +newObject() model_ptr~Object~
-        +newArray() model_ptr~Array~
-        +newValue(...) ModelNode::Ptr
-        +addRoot(ModelNode::Ptr)
-        +resolve(ModelNode, ResolveFn)
-        +strings() shared_ptr~StringPool~
+      +Impl* impl_ // PIMPL idiom
+      +newObject() model_ptr~Object~
+      +newArray() model_ptr~Array~
+      +newValue(...) ModelNode::Ptr
+      +addRoot(ModelNode::Ptr)
+      +resolve(ModelNode, ResolveFn)
+      +strings() shared_ptr~StringPool~
     }
     class ArrayArena~T~{
-        +new_array(size_t) ArrayIndex
-        +push_back(ArrayIndex, T) T&
-        +at(ArrayIndex, size_t) T&
-        +size(ArrayIndex) SizeType
+      +new_array(size_t) ArrayIndex
+      +push_back(ArrayIndex, T) T&
+      +at(ArrayIndex, size_t) T&
+      +size(ArrayIndex) SizeType
     }
     class StringPool{
-        +emplace(string_view) StringId
-        +resolve(StringId) optional~string_view~
+      +emplace(string_view) StringId
+      +resolve(StringId) optional~string_view~
     }
 ```
+*Class diagram showing key relationships in the data model.*
 
 ### 3.2. Values (`simfil::Value`)
 
-Represents data during query evaluation (`include/simfil/value.h`). It can hold:
+Represents data during query evaluation (`include/simfil/value.h`). A `Value` object can hold:
 
-*   Primitive types: `null`, `bool`, `int64_t`, `double`, `std::string`, `std::string_view`.
-*   Model nodes: `ModelNode::Ptr` (references into a `ModelPool`).
-*   Transient objects: `TransientObject` (custom types created during evaluation, see Advanced Topics).
-*   Special `Undef` type (represented by `UndefinedType` struct, distinct from `null`).
+*   **Primitive Types:** `null` (represented by `std::monostate`), `bool`, `int64_t`, `double`, `std::string`, `std::string_view`.
+*   **Model Nodes:** `ModelNode::Ptr` (a smart pointer wrapping a `ModelNode`, referencing data within a `ModelPool`).
+*   **Transient Objects:** `TransientObject` (custom types created during evaluation, see [Extensibility](#42-extensibility-functions-and-metatypes)).
+*   **Special `Undef` Type:** Represented by the `UndefinedType` struct, distinct from `null`. Used internally, e.g., during constant folding checks.
 
-It uses a `std::variant` internally to store the actual data. `Value` objects are typically returned by expression evaluation via the `ResultFn` callback.
+It uses a `std::variant` internally to store the actual data. `Value` objects are the primary unit of data passed between expression evaluation steps and yielded via the `ResultFn` callback.
 
 ### 3.3. Tokenizer (`simfil::tokenize`)
 
-Located in `src/token.cpp`, the `tokenize` function takes a query string (`std::string_view`) and breaks it down into a `std::vector<Token>` (`include/simfil/token.h`). It recognizes keywords (`and`, `or`, `not`), operators (`+`, `-`, `*`, `/`, `.`, `**`, `==`, etc.), literals (numbers, strings, regexps like `re'...'`), and punctuation (`(`, `)`, `[`, `]`, `{`, `}`).
+The `tokenize` function (`src/token.cpp`) converts a query string (`std::string_view`) into a `std::vector<Token>` (`include/simfil/token.h`). It identifies:
+
+*   **Keywords:** `and`, `or`, `not`, `as`, `null`, `true`, `false`, `typeof`.
+*   **Operators:** `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `.`, `**`, `*`, `&`, `|`, `^`, `~`, `<<`, `>>`, `#`, `?`, `...`.
+*   **Literals:** Numbers (integer, float), strings (`'...'`, `"..."`, raw `r'...'`), regular expressions (`re'...'`).
+*   **Identifiers/Words:** Field names, function names (e.g., `myField`, `count`).
+*   **Punctuation:** `(`, `)`, `[`, `]`, `{`, `}`, `,`, `:`.
+*   **Special Symbols:** `_` (self).
 
 ### 3.4. Parser (`simfil::Parser`)
 
-Simfil uses a Pratt parser (`src/parser.cpp`, `include/simfil/parser.h`). This type of parser elegantly handles operator precedence and associativity by associating parsing logic (parselets) with tokens.
+Simfil employs a Pratt parser (`src/parser.cpp`, `include/simfil/parser.h`), which efficiently handles operator precedence and associativity.
 
-*   **`PrefixParselet`:** Handles tokens that start an expression (e.g., literals, unary operators like `-`, `not`, function names, `(`, `[`).
-*   **`InfixParselet`:** Handles tokens that appear between operands (e.g., binary operators like `+`, `==`, path operator `.`, subscript `[`, sub-expression `{`). Each infix parselet has a `precedence()`.
-*   The parser consumes tokens and uses registered parselets (stored in `prefixParsers` and `infixParsers` maps within the `Parser` instance) to build an Abstract Syntax Tree (AST). It manages precedence by calling `parsePrecedence`.
+*   **Parselets:** Parsing logic is associated with tokens:
+    *   `PrefixParselet`: Handles tokens starting an expression (e.g., literals, unary `-`, `not`, function names, `(`, `[`).
+    *   `InfixParselet`: Handles tokens appearing between operands (e.g., binary `+`, `==`, path `.`, subscript `[`, sub-expression `{`). Each has a `precedence()`.
+*   **Process:** The parser consumes tokens and uses registered parselets (stored in `prefixParsers` and `infixParsers` maps) to build the Abstract Syntax Tree (AST). It manages operator precedence by calling `parsePrecedence`.
 
 ### 3.5. Expressions (`simfil::Expr`)
 
-The AST is composed of nodes inheriting from `simfil::Expr` (`include/simfil/expression.h`). Each `Expr` node represents a part of the query and has an `eval` method. Key implementations (found in `src/simfil.cpp`):
+The AST consists of nodes inheriting from `simfil::Expr` (`include/simfil/expression.h`). Each `Expr` node represents a part of the query and defines an `eval` method for execution. Key implementations (mostly in `src/simfil.cpp`):
 
-*   `ConstExpr`: Represents a literal value.
-*   `FieldExpr`: Represents accessing a field by name (e.g., `.foo`, `_`).
-*   `WildcardExpr`: Represents `**`.
-*   `AnyChildExpr`: Represents `*`.
-*   `PathExpr`: Represents chained field access (e.g., `.foo.bar`).
-*   `SubscriptExpr`: Represents array/object access by index/key (e.g., `[0]`, `['key']`).
-*   `SubExpr`: Represents sub-queries (`{...}`).
-*   `CallExpression`: Represents a function call (e.g., `count(...)`).
-*   `BinaryExpr`, `UnaryExpr`: Represent standard operations.
-*   `UnpackExpr`: Represents the unpack operator (`...`).
+*   `ConstExpr`: A literal value (number, string, boolean, null, transient).
+*   `FieldExpr`: Accessing a field by name (e.g., `.foo`, `_`).
+*   `WildcardExpr`: Recursive descent (`**`).
+*   `AnyChildExpr`: Any direct child (`*`).
+*   `PathExpr`: Chained field access (e.g., `.foo.bar`).
+*   `SubscriptExpr`: Array/object access by index/key (e.g., `[0]`, `['key']`).
+*   `SubExpr`: Filtering sub-expression (`{...}`).
+*   `CallExpression`: Function call (e.g., `count(...)`).
+*   `BinaryExpr`, `UnaryExpr`: Standard arithmetic, logical, bitwise operations.
+*   `UnpackExpr`: Unpack operator (`...`).
 
 ### 3.6. Environment (`simfil::Environment`)
 
-Holds the context required for parsing and evaluation (`include/simfil/environment.h`). It contains:
+Provides the context for parsing and evaluation (`include/simfil/environment.h`). It manages:
 
-*   Registered functions (`std::map<std::string, const Function*, CaseInsensitiveCompare> functions`).
-*   Registered constants (`std::map<std::string, Value, CaseInsensitiveCompare> constants`).
-*   A shared pointer to the `StringPool` used for field name interning. This *must* be the same `StringPool` used by the `ModelPool` being queried.
-*   Mechanisms for collecting runtime warnings (`warnings`) and trace information (`traces`).
+*   **Functions:** A map (`functions`) from names to `Function` implementations (case-insensitive lookup).
+*   **Constants:** A map (`constants`) from names to constant `Value`s (case-insensitive lookup).
+*   **String Pool:** A `shared_ptr<StringPool>` for field name interning. This **must** be the same `StringPool` instance used by the `ModelPool` being queried to ensure correct field lookups.
+*   **Runtime Information:** Mechanisms for collecting warnings (`warnings`) and trace data (`traces`).
 
-A `Context` object (`include/simfil/result.h`) is passed during evaluation, containing a pointer to the `Environment` and the current evaluation phase (`Compilation` or `Evaluation`).
+A `Context` object (`include/simfil/environment.h`) is passed during evaluation, containing a pointer to the `Environment` and the current evaluation `Phase` (`Compilation` or `Evaluation`).
 
 ### 3.7. Functions (`simfil::Function`)
 
-Built-in and custom functions inherit from the `simfil::Function` interface (`include/simfil/function.h`). They define:
-*   `ident()`: Returns `FnInfo` (name, description, signature) for metadata.
-*   `eval()`: Executes the function's logic. It takes the current `Context`, the input `Value`, a vector of unevaluated argument expressions (`std::vector<ExprPtr>`), and a `ResultFn` callback to yield results.
+Functions (built-in and custom) inherit from `simfil::Function` (`include/simfil/function.h`).
 
-Functions are registered in the `Environment::functions` map. Implementations for built-ins are in `src/function.cpp`.
+*   **Interface:**
+    *   `ident()`: Returns `FnInfo` (name, description, signature) for metadata.
+    *   `eval()`: Executes the function's logic. It receives the `Context`, the current input `Value`, a vector of *unevaluated* argument expressions (`std::vector<ExprPtr>`), and a `ResultFn` callback to yield results.
+*   **Evaluation:** Functions control *when* and *how* their arguments are evaluated by calling `arg->eval(...)` within their `eval` implementation. This allows for features like short-circuiting or processing arguments lazily.
+*   **Registration:** Functions are registered in the `Environment::functions` map. Built-in implementations are in `src/function.cpp`.
+
+**Conceptual Example (`Function::eval`):**
+```c++
+// Simplified concept for a function like 'myFunc(arg1, arg2)'
+Result MyFunc::eval(Context ctx, Value inputVal,
+                    const std::vector<ExprPtr>& args,
+                    const ResultFn& yieldResult) const {
+    // 1. Validate argument count
+    if (args.size() != 2) { /* ... throw error ... */ }
+
+    // 2. Evaluate the first argument (arg1) using the input value
+    Value arg1Value;
+    size_t arg1Count = 0;
+    args[0]->eval(ctx, inputVal, LambdaResultFn([&](Context, Value v) {
+        // Collect or process result(s) of arg1
+        arg1Value = std::move(v);
+        arg1Count++;
+        return Result::Continue; // Or Stop if needed
+    }));
+    // Check arg1Count, handle errors if necessary...
+
+    // 3. Evaluate the second argument (arg2) - maybe using arg1's result?
+    Value arg2Value;
+    // Example: Evaluate arg2 using the *original* input value
+    args[1]->eval(ctx, inputVal, LambdaResultFn([&](Context, Value v) {
+        arg2Value = std::move(v);
+        return Result::Continue;
+    }));
+
+    // 4. Compute the function's final result(s) based on evaluated args
+    Value finalResult = /* ... compute using arg1Value, arg2Value ... */;
+
+    // 5. Yield the final result(s)
+    return yieldResult(ctx, std::move(finalResult));
+}
+```
 
 ### 3.8. Operators (`simfil::Operator*`)
 
-Operators (`+`, `-`, `==`, `!=`, `<`, `>`, etc.) are implemented using template dispatch (`include/simfil/operator.h`).
-*   Template structs (e.g., `OperatorAdd`, `OperatorEq`, `OperatorNegate`) define `operator()` overloads for valid combinations of primitive C++ types corresponding to `Value` types.
-*   `UnaryOperatorDispatcher` and `BinaryOperatorDispatcher` are template classes that take an operator struct (e.g., `OperatorAdd`) as a template parameter. Their `dispatch` static methods take `Value` objects as input.
-*   Inside `dispatch`, `std::visit` is used on the `Value`'s internal `std::variant` to determine the runtime types of the operands.
-*   The appropriate `operator()` overload from the operator struct (e.g., `OperatorAdd::operator()(int64_t, double)`) is called.
-*   If no suitable overload exists, `InvalidOperands` is returned, which is caught and translated into an `InvalidOperandsError` or a runtime error message.
-*   This approach keeps the operator logic separate from the `Expr` evaluation code and handles type checking systematically.
+Operators (`+`, `-`, `==`, etc.) use a template-based dispatch mechanism (`include/simfil/operator.h`).
+
+*   **Operator Structs:** Each operator (e.g., `OperatorAdd`, `OperatorEq`) is a struct defining `operator()` overloads for valid combinations of primitive C++ types (corresponding to `Value` types).
+*   **Dispatchers:** `UnaryOperatorDispatcher` and `BinaryOperatorDispatcher` are template classes parameterized by an operator struct (e.g., `BinaryOperatorDispatcher<OperatorAdd>`). Their static `dispatch` methods accept `Value` objects.
+*   **Runtime Type Handling:** Inside `dispatch`, `std::visit` inspects the `std::variant` within the input `Value`(s) to determine the runtime types.
+*   **Execution:** The appropriate `operator()` overload from the operator struct is invoked (e.g., `OperatorAdd()(int64_t_value, double_value)`).
+*   **Error Handling:** If no matching overload exists, a special `InvalidOperands` type is returned internally, which the dispatcher catches and converts into an `InvalidOperandsError` exception or a runtime error message detailing the type mismatch.
+*   **Transient Objects:** If an operand is a `TransientObject`, the dispatcher calls the `unaryOp` or `binaryOp` method defined by its `MetaType`.
+
+This design separates operator logic from `Expr` evaluation and provides systematic type checking.
 
 ### 3.9. Evaluation Flow
 
-The `simfil::eval` function (or calling `Expr::eval` directly) initiates the process.
+Evaluation, typically initiated by `simfil::eval`, proceeds as follows:
 
-1.  Evaluation starts at the root of the AST (`ExprPtr`).
-2.  Each `Expr` node's `eval` method is called recursively.
-3.  `eval` takes the current `Context`, the current input `Value` (representing the data node being processed), and a `ResultFn` callback.
-4.  **Data Flow:** Nodes like `PathExpr` or `SubscriptExpr` typically evaluate their "left" part first. Each `Value` yielded by the left side is then used as the input `Value` for evaluating the "right" part.
-5.  **Operator Evaluation:** Operator expressions (e.g., `BinaryExpr<OperatorAdd>`) evaluate their operands (left and right children) recursively. They collect the resulting `Value`s and then use the appropriate `OperatorDispatcher` (e.g., `BinaryOperatorDispatcher<OperatorAdd>::dispatch(leftValue, rightValue)`) to compute the result.
-6.  **Function Evaluation:** `CallExpression` finds the `Function*` in the `Environment` and calls its `eval` method, passing the unevaluated argument `ExprPtr`s. The function implementation controls how and when arguments are evaluated using `arg->eval(...)`.
-7.  **Result Yielding:** All evaluation paths ultimately yield results by calling the `ResultFn` callback passed down the chain. A single `Expr::eval` call might invoke the callback multiple times if the expression naturally produces multiple results (e.g., pathing through an array).
-8.  **Control Flow:** The `ResultFn` callback returns `Result::Continue` or `Result::Stop`, allowing consumers (like the `any` or `each` functions, or the final result collector) to terminate evaluation early.
+1.  **Start:** Evaluation begins at the root of the AST (`ExprPtr`).
+2.  **Recursion:** Each `Expr` node's `eval` method is called recursively. `eval` receives the `Context`, the current input `Value` (representing the data context for that step), and a `ResultFn` callback.
+3.  **Data Flow Example (Path):** For `a.b`, the `PathExpr` first evaluates `a` using the initial input `Value`. For *each* `Value` yielded by `a`, it then evaluates `b` using that yielded value as the *new* input `Value`. Results from evaluating `b` are yielded via the `ResultFn`.
+4.  **Operator Evaluation:** `BinaryExpr<Op>` evaluates its left child, then its right child. For each pair of resulting `Value`s (one from left, one from right), it calls `BinaryOperatorDispatcher<Op>::dispatch(leftValue, rightValue)` and yields the computed result via `ResultFn`.
+5.  **Function Evaluation:** `CallExpression` finds the `Function*` in the `Environment` and calls its `eval` method, passing the *unevaluated* argument `ExprPtr`s. The function implementation controls argument evaluation.
+6.  **Result Yielding:** All evaluation paths ultimately yield results by invoking the `ResultFn` callback. A single `Expr::eval` call might invoke the callback multiple times (e.g., iterating over an array).
+7.  **Control Flow:** The `ResultFn` returns `Result::Continue` or `Result::Stop`, allowing early termination (used by functions like `any`, `each`, or the final result collector).
+
+**Simple Query Example Trace (`.a.b == 3`):**
+
+1.  `eval` starts with the `BinaryExpr<OperatorEq>`.
+2.  Left child (`PathExpr` for `.a.b`) is evaluated with the initial input `Value` (root node).
+    *   `.a` is evaluated, yielding `Value(nodeA)`.
+    *   `.b` is evaluated with `Value(nodeA)` as input, yielding `Value(nodeB)`.
+3.  Right child (`ConstExpr` for `3`) is evaluated, yielding `Value(3)`.
+4.  `BinaryOperatorDispatcher<OperatorEq>::dispatch(Value(nodeB), Value(3))` is called.
+    *   Assume `nodeB` holds the integer `3`. The dispatcher calls `OperatorEq()(int64_t(3), int64_t(3))`.
+    *   This returns `true`.
+5.  The `ResultFn` is called with `Value(true)`.
 
 ```mermaid
 sequenceDiagram
@@ -270,272 +335,262 @@ sequenceDiagram
     AST-->>E: Return Result::Continue
     E-->>C: Return collected results from RF
 
-    Note over AST,Env: Function Calls:\nCallExpr finds Function in Env\nCalls Function::eval()\nFunction::eval() calls Expr::eval() on args
+    Note over AST,Env: Function Calls:\nCallExpr finds Function in Env\nCalls Function::eval()\nFunction::eval() calls Expr::eval() on args as needed
     Note over AST,V: Operators:\nBinaryExpr calls eval() on children\nUses OperatorDispatcher::dispatch(leftVal, rightVal)\nYields result via RF
 ```
+*Sequence diagram illustrating the evaluation process.*
 
 ## 4. Advanced Topics
 
 ### 4.1. Model Representation & Arena Allocation
 
-Simfil's `ModelPool` is designed for memory efficiency, particularly when dealing with potentially large, JSON-like structures that might have significant repetition.
+Simfil's `ModelPool` optimizes memory usage for large, potentially repetitive JSON-like structures.
 
-**Columnar Storage:** Instead of storing each object or array as a contiguous block, `ModelPool` uses separate, type-specific containers (columns) for different primitive types (`int64_t`, `double`, `string`) and for the structures of objects and arrays. This improves data locality for type-specific operations.
+**Columnar Storage:** `ModelPool` uses separate containers (columns) for different data types (`int64_t`, `double`, `string`, object structures, array structures) rather than storing each node contiguously. This improves data locality for type-specific operations and enables efficient storage techniques.
 
-**`ModelNodeAddress`:** This 32-bit struct is key to the storage strategy (`include/simfil/model/nodes.h`).
+**`ModelNodeAddress` (`include/simfil/model/nodes.h`):** This compact 32-bit struct identifies a node's type and location:
 ```c++
-struct ModelNodeAddress
-{
+struct ModelNodeAddress {
     uint32_t value_ = 0;
-
-    // Lower 8 bits: Column ID (type enum like Objects, Arrays, Int64, UInt16, etc.)
+    // Lower 8 bits: Column ID (e.g., Model::Objects, Model::Int64, Model::Bool)
     [[nodiscard]] uint8_t column() const;
-    // Upper 24 bits: Index within the column OR the value itself for small types
+    // Upper 24 bits: Index into column OR the value itself
     [[nodiscard]] uint32_t index() const;
-
-    // Special accessors for small value optimization
-    [[nodiscard]] uint16_t uint16() const; // Used for UInt16 column type and Bool
-    [[nodiscard]] int16_t int16() const;  // Used for Int16 column type
+    // Accessors for small value optimization
+    [[nodiscard]] uint16_t uint16() const; // For UInt16, Bool
+    [[nodiscard]] int16_t int16() const;  // For Int16
 };
 ```
-*   **Small Value Optimization:** For `Bool`, `Int16`, and `UInt16`, the actual value is stored directly in the upper bits (`index()` part) of the address, eliminating the need for separate storage in a column vector. The `column()` ID identifies the type. `Null` type also uses a specific column ID with index 0.
-*   **Column Index:** For other types (Objects, Arrays, Int64, Double, String), the `index()` points into the corresponding column vector managed within `ModelPool::Impl` (e.g., `impl_->columns_.i64_`, `impl_->columns_.objectMemberArrays_`).
+*   **Small Value Optimization:** `Bool`, `Int16`, `UInt16`, and `Null` types store their value/presence directly within the `ModelNodeAddress` (using the upper 24 bits and specific `column()` IDs), avoiding separate memory allocation.
+*   **Column Index:** For larger types (`Objects`, `Arrays`, `Int64`, `Double`, `String`), the `index()` part points into the corresponding storage vector within the `ModelPool` (e.g., `ModelPool::Impl::columns_.i64_`, `ModelPool::Impl::columns_.objectMemberArrays_`).
 
-**`ArrayArena` (`include/simfil/model/arena.h`):**
-This class provides the backbone for storing the variable-sized lists needed for object fields (`Object::Field` structs containing `StringId` and `ModelNodeAddress`) and array elements (`ModelNodeAddress`).
+**`ArrayArena` (`include/simfil/model/arena.h`):** This specialized allocator manages the storage for object fields and array elements.
 ```c++
 // Simplified structure
-template <class ElementType_, size_t PageSize = 4096, ...>
+template <class ElementType, size_t PageSize, ...>
 class ArrayArena {
-    struct Chunk {
-        SizeType_ offset;    // Start offset in data_ vector for this chunk's elements
-        SizeType_ capacity;  // Max elements this chunk can hold
-        SizeType_ size;      // Current elements in this chunk (or total elements if head chunk)
-        ArrayIndex next;    // Index of next chunk in continuations_ (-1 if none)
-        ArrayIndex last;    // Index of the *last* chunk in the sequence (only stored in head chunk)
-    };
-
-    // Head chunks (one per logical array, stores metadata like total size and last chunk index)
-    sfl::segmented_vector<Chunk, ...> heads_;
-    // Continuation chunks (allocated when an array outgrows its previous chunk)
-    sfl::segmented_vector<Chunk, ...> continuations_;
-    // Actual element data stored contiguously within segments
-    sfl::segmented_vector<ElementType_, PageSize> data_;
-
-    #ifdef ARRAY_ARENA_THREAD_SAFE
-    mutable std::shared_mutex lock_; // Optional locking
-    #endif
-
-    // Ensures capacity for one more element, potentially allocating a new chunk
-    Chunk& ensure_capacity_and_get_last_chunk(ArrayIndex a);
-    // ... at(), push_back(), emplace_back(), iterate(), size(), iterators ...
+    struct Chunk { /* ... metadata ... */ };
+    sfl::segmented_vector<Chunk, ...> heads_;         // Metadata for each array start
+    sfl::segmented_vector<Chunk, ...> continuations_; // Additional chunks for growth
+    sfl::segmented_vector<ElementType, PageSize> data_; // Actual element storage
+    // Optional thread safety via std::shared_mutex
 };
 ```
-*   **Segmented Vectors:** It uses `sfl::segmented_vector` for `heads_`, `continuations_`, and `data_`. This container allocates memory in fixed-size pages (segments), avoiding large contiguous allocations and reducing reallocation overhead compared to `std::vector` when growing significantly.
-*   **Chunk Linking:** Each logical array managed by the arena starts with a `Chunk` in `heads_`. When an array (`ArrayIndex`) needs to grow beyond its current chunk's capacity, `ensure_capacity_and_get_last_chunk` allocates a *new*, larger chunk (typically double the size) from `continuations_`. It links the previous chunk to the new one via the `next` index and updates the `last` index in the corresponding `heads_` chunk to point to the new chunk.
-*   **Append Operation:** `push_back` or `emplace_back` first gets the *last* chunk using the `last` index stored in the head chunk (O(1) access). If there's space in that chunk, the element is added directly to the `data_` vector at the correct offset (`last_chunk.offset + last_chunk.size`). If not, `ensure_capacity_and_get_last_chunk` handles allocating/linking a new chunk before the element is added. The `size` in the head chunk (total elements) and the last chunk are incremented.
-*   **Element Access (`at`):** Accessing an element at a specific index `i` requires traversing the linked list of chunks starting from the head, subtracting each chunk's capacity from `i` until the correct chunk is found, and then accessing `data_[chunk.offset + remaining_i]`.
-*   **Iteration:** Iterating an array involves traversing the linked list of chunks (`heads_` -> `continuations_[next]` -> ...) and accessing the elements within each chunk in `data_`. The `iterate` method provides an efficient callback-based mechanism.
-*   **Thread Safety (Optional):** If `ARRAY_ARENA_THREAD_SAFE` is defined, a `std::shared_mutex` protects against race conditions. Chunk allocation (`ensure_capacity_and_get_last_chunk`) requires an exclusive lock (`std::unique_lock`). Reads (`at`, iteration) and appends that *don't* require new chunk allocation typically use shared locks (`std::shared_lock`), allowing concurrent reads and simple appends.
+*   **Segmented Storage:** Uses `sfl::segmented_vector` to allocate memory in fixed-size pages (segments), reducing fragmentation and reallocation overhead compared to `std::vector`.
+*   **Chunk Linking:** Each logical array (object fields or array elements) is represented as a linked list of `Chunk`s. The first chunk is in `heads_`, subsequent chunks (allocated when needed) are in `continuations_`. This allows arrays to grow efficiently without moving existing data.
+*   **Append Efficiency:** Appending often only involves adding an element to the current last chunk's space in `data_`. Allocating a new, larger chunk only happens when the current one is full.
+*   **Access/Iteration:** Accessing elements by index or iterating involves traversing the linked list of chunks.
 
-This design makes appending elements very fast (often lock-free or only requiring shared locks if thread-safe) and memory-efficient for the dynamic lists used by objects and arrays within the `ModelPool`.
+This combination of columnar storage, small value optimization, and arena allocation makes `ModelPool` memory-efficient and performant for its target data structures.
 
 ### 4.2. Extensibility: Functions and MetaTypes
 
-Simfil allows extending its capabilities in two main ways:
+Simfil can be extended with custom logic:
 
 **1. Custom Functions:**
 
-*   **Interface:** Inherit from `simfil::Function` (`include/simfil/function.h`).
+*   **Interface:** Inherit from `simfil::Function` (`include/simfil/function.h`). Implement `ident()` for metadata and `eval()` for logic.
+*   **`eval` Signature:**
     ```c++
-    class Function {
-    public:
-        virtual ~Function() = default;
-        // Metadata for documentation/introspection
-        virtual auto ident() const -> const FnInfo& = 0;
-        // Evaluation logic
-        virtual auto eval(Context ctx, Value inputVal,
-                          const std::vector<ExprPtr>& args, // Arguments as unevaluated expressions
-                          const ResultFn& resultCallback) const -> Result = 0;
-    };
+    virtual auto eval(Context ctx, Value inputVal,
+                      const std::vector<ExprPtr>& args, // Unevaluated arguments
+                      const ResultFn& yieldResult) const -> Result = 0;
     ```
-*   **Implementation:** Implement `ident()` to provide function name, description, and signature. Implement `eval()` to perform the function's logic. Arguments (`args`) are provided as unevaluated `ExprPtr`s, allowing functions to control *how* and *if* arguments are evaluated (e.g., for short-circuiting or special handling like in `sum`). Use `Expr::eval()` to evaluate arguments as needed, passing down the `Context` and providing a lambda `ResultFn` to collect the argument's results. Yield the function's final results by calling the main `resultCallback`.
-*   **Registration:** Add a static instance (or other managed instance) of your function implementation to the `Environment::functions` map, keyed by the function name.
-    ```c++
-    // In your setup code:
-    MyCustomFn MyCustomFn::Fn; // Static instance recommended for built-ins
-    myEnvironment.functions["myCustomFunc"] = &MyCustomFn::Fn;
-    ```
-*   **Argument Handling:** Use helpers like `ArgParser` (internal to `function.cpp`) or `simfil::util::evalArg1Any`/`evalArg1` (`function.h`) to simplify evaluating arguments and handling type/count errors.
+*   **Argument Evaluation:** The `eval` implementation controls *how* and *when* arguments (`args`) are evaluated using `arg->eval(...)`. This allows for lazy evaluation, short-circuiting, etc.
+*   **Result Yielding:** Use the `yieldResult` callback to return one or more `Value`s.
+*   **Registration:** Add an instance of your function to `Environment::functions`.
+*   **Example:** See the conceptual example in [Section 3.7](#37-functions-simfilfunction).
 
-**2. Custom Data Types (`MetaType`):**
+**2. Custom Transient Data Types (`MetaType`):**
 
-Simfil allows creating temporary, custom data types during evaluation using `TransientObject` and `MetaType`. These are useful for representing intermediate results or concepts not native to the core data model (like the built-in `IRange` or `Re` types for ranges and regular expressions).
+Simfil supports temporary, custom data types created during evaluation (e.g., `IRange`, `Re` for ranges and regexes). These are represented by `TransientObject`s managed by a `MetaType`.
 
-*   **`MetaType` Interface (`include/simfil/transient.h`):** Defines the behavior of a custom type.
-    ```c++
-    struct MetaType {
-        const std::string ident; // Type name (e.g., "irange", "re")
+*   **`MetaType` Interface (`include/simfil/transient.h`):** Defines the behavior:
+    *   `ident`: The type name (e.g., "irange").
+    *   Memory Management: `init()`, `copy(void*)`, `deinit(void*)` for the custom data payload (`void*`).
+    *   Operator Overloading: `unaryOp(...)`, `binaryOp(...)` define how the type interacts with simfil operators.
+    *   Unpacking: `unpack(...)` defines behavior for the `...` operator.
+*   **`TransientObject`:** A wrapper stored in a `Value`, holding a pointer to the `MetaType` singleton and the `void*` data payload.
+*   **`TypedMetaType` Helper (`include/simfil/typed-meta-type.h`):** A CRTP base class simplifying `MetaType` implementation for a specific C++ struct/class `T`. It handles memory management (`new`/`delete`) and provides strongly-typed signatures for operator/unpack methods (e.g., `unaryOp(std::string_view opName, const T& self)`).
+*   **Usage:**
+    1.  Define your data struct (e.g., `MyData`).
+    2.  Define a class `MyDataType : public TypedMetaType<MyData>` implementing the required methods (operators, unpack). Define a static singleton instance (`MyDataType::Type`).
+    3.  Create a factory function (e.g., `makeMyData(...) -> Value`) that constructs a `TransientObject(&MyDataType::Type)` and initializes its data.
+    4.  Register a simfil function (e.g., `myDataFunc`) that calls this factory.
+    5.  When a `Value` containing this `TransientObject` is used in an operation, the `OperatorDispatcher` calls the corresponding method on `MyDataType::Type`.
 
-        // Memory management for the custom data payload
-        virtual auto init() const -> void* = 0; // Allocate data
-        virtual auto copy(void*) const -> void* = 0; // Deep copy data
-        virtual auto deinit(void*) const -> void = 0; // Free data
+**Conceptual Example (`MetaType` for a simple Point):**
+```c++
+// 1. Data Struct
+struct PointData { double x = 0, y = 0; };
 
-        // Operator behavior: Implement how this type interacts with operators
-        virtual auto unaryOp(std::string_view opName, const TransientObject&) const -> Value = 0;
-        virtual auto binaryOp(std::string_view opName, const TransientObject& self, const Value& other) const -> Value = 0;
-        virtual auto binaryOp(std::string_view opName, const Value& other, const TransientObject& self) const -> Value = 0;
+// 2. MetaType Implementation
+class PointType : public simfil::TypedMetaType<PointData> {
+public:
+    static PointType Type; // Singleton
+    PointType() : TypedMetaType("point") {}
 
-        // Unpacking behavior (for the ... operator)
-        virtual auto unpack(const TransientObject& self, std::function<bool(Value)> yieldResult) const -> void = 0;
-    };
-    ```
-*   **`TransientObject`:** A wrapper holding a pointer to the `MetaType` singleton and a `void*` to the custom data payload managed by `init`/`copy`/`deinit`. `Value` can store a `TransientObject`.
-*   **`TypedMetaType` Helper (`include/simfil/typed-meta-type.h`):** A CRTP (Curiously Recurring Template Pattern) base class to simplify implementing `MetaType` for a specific C++ struct/class (`Type`). It handles memory management (`new`/`delete`) and casts `void*` data automatically to `Type*` or `const Type*`. You only need to implement the operator and unpack logic using the strongly-typed `Type&` or `const Type&`.
-    ```c++
-    // Example: Structure of IRangeType using TypedMetaType
-    struct IRange { /* ... data ... */ };
+    // Factory
+    simfil::Value make(double x, double y) {
+        auto obj = simfil::TransientObject(&PointType::Type);
+        auto* data = static_cast<PointData*>(obj.data);
+        data->x = x; data->y = y;
+        return simfil::Value(simfil::ValueType::TransientObject, std::move(obj));
+    }
 
-    class IRangeType : public TypedMetaType<IRange> {
-    public:
-        static IRangeType Type; // Singleton instance
-        IRangeType() : TypedMetaType("irange") {} // Pass identifier to base
+    // Example: Define '+' operator (Point + Point = Point)
+    simfil::Value binaryOp(std::string_view opName, const PointData& self, const simfil::Value& other) const override {
+        if (opName == simfil::OperatorAdd::name()) {
+            if (auto* otherPoint = simfil::getObject<PointData>(other, &PointType::Type)) {
+                return make(self.x + otherPoint->x, self.y + otherPoint->y);
+            }
+        }
+        // Handle other operators or return error/null
+        simfil::raise<simfil::InvalidOperandsError>(opName);
+    }
+    // Implement other binaryOp overload, unaryOp, unpack as needed...
+    simfil::Value unaryOp(std::string_view opName, const PointData& self) const override { /*...*/ simfil::raise<simfil::InvalidOperandsError>(opName); }
+    simfil::Value binaryOp(std::string_view opName, const simfil::Value& other, const PointData& self) const override { /*...*/ simfil::raise<simfil::InvalidOperandsError>(opName); }
+    void unpack(const PointData& self, std::function<bool(simfil::Value)> yieldResult) const override { /*...*/ }
+};
+PointType PointType::Type; // Define singleton
 
-        // Factory method to create a Value containing the TransientObject
-        auto make(int64_t a, int64_t b) -> Value;
+// 3. Simfil Function using the factory
+class MakePointFn : public simfil::Function { /* ... implement ident() ... */
+    simfil::Result eval(simfil::Context ctx, simfil::Value input,
+                        const std::vector<simfil::ExprPtr>& args,
+                        const simfil::ResultFn& yield) const override {
+        // Evaluate args to get x and y values...
+        double x_val = /* ... */;
+        double y_val = /* ... */;
+        return yield(ctx, PointType::Type.make(x_val, y_val));
+    }
+};
+// Register MakePointFn in Environment...
+```
 
-        // Implement operator logic using the typed data (const IRange& self)
-        auto unaryOp(std::string_view opName, const IRange& self) const -> Value override;
-        auto binaryOp(std::string_view opName, const IRange& self, const Value& other) const -> Value override;
-        auto binaryOp(std::string_view opName, const Value& other, const IRange& self) const -> Value override;
-        auto unpack(const IRange& self, std::function<bool(Value)> yieldResult) const -> void override;
-    };
-    IRangeType IRangeType::Type; // Define the singleton instance
-    ```
-*   **Usage:** Functions (like `range()` or `re()`) create `Value` objects containing `TransientObject`s by calling the `MetaType`'s factory method (`make`). When these `Value`s are used in operations (e.g., `range(1, 5) == 3`, `myString == re(...)`, `range(1, 3)...`), the `OperatorDispatcher` detects the `TransientObject`, retrieves its `MetaType*`, and calls the corresponding `unaryOp`, `binaryOp`, or `unpack` method on the `MetaType` instance, passing the `TransientObject` itself.
-
-This mechanism allows seamless integration of custom types with custom behavior (including operator overloading and unpacking) into the simfil query language evaluation process without modifying the core parser or expression types.
+This allows custom types to integrate seamlessly with simfil's evaluation engine.
 
 ## 5. Development Workflow
 
-### Building
+### 5.1. Building
 
-As described in [Setup and Prerequisites](#setup-and-prerequisites), the standard workflow uses Conan and CMake:
+Follow the standard Conan and CMake workflow outlined in [Setup and Prerequisites](#2-setup-and-prerequisites):
 
-1.  `mkdir build && cd build`
-2.  `conan install .. [--profile ...] [-s build_type=...]`
-3.  `cmake .. -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake [-DCMAKE_BUILD_TYPE=...] [-DOPTION=VALUE ...]` (See Setup section for options)
-4.  `cmake --build . [--target <target_name>]`
+1.  Create a build directory (e.g., `mkdir build && cd build`).
+2.  Run `conan install ..` with appropriate settings (`-s build_type=...`, `--profile ...`).
+3.  Run `cmake ..` with the Conan toolchain file and matching `CMAKE_BUILD_TYPE`. Include any desired `-DOPTION=VALUE` flags (see [Configuration & Building](#23-configuration--building)).
+4.  Run `cmake --build .` to compile the library and any enabled targets (tests, repl, examples).
 
-Common targets include the library itself (`simfil`), tests (`test.simfil`), the REPL (`repl`), and examples (`minimal`).
+### 5.2. Running Tests
 
-### Running Tests
+Simfil uses the Catch2 testing framework. Tests reside in the `test/` directory and are compiled into the `test.simfil` executable if `SIMFIL_WITH_TESTS=ON`.
 
-Simfil uses Catch2 for unit testing (assumed, common practice). Tests are located in the `test/` directory and built into the `test.simfil` executable (based on `CMakeLists.txt` coverage setup).
-
-*   Ensure tests are enabled during CMake configuration (`-DSIMFIL_WITH_TESTS=ON`).
-*   Build the `test.simfil` target (or build all).
-*   Run tests using CTest from the `build` directory:
+*   **Using CTest:** After building, run CTest from the `build` directory:
     ```bash
-    ctest # Runs tests for the configured build type
-    # Or specify configuration explicitly:
+    # Run tests for the configured build type
+    ctest
+    # Explicitly specify configuration (e.g., if using multi-config generator)
     # ctest -C Debug
-    # ctest -C Release
     ```
-*   For more detailed output or to run specific tests, execute the test binary directly (path might vary slightly based on CMake/platform):
+*   **Direct Execution:** For more control or detailed output, run the test executable directly (path relative to `build` dir):
     ```bash
-    # From the build directory
-    ./bin/test.simfil [Catch2 arguments, e.g., -s to list tests, or specific test names]
+    ./bin/test.simfil [Catch2 arguments...]
+    # Example: List all tests
+    # ./bin/test.simfil -s
+    # Example: Run tests matching a tag
+    # ./bin/test.simfil "[model.procedural]"
     ```
 
-### Code Coverage (Optional)
+### 5.3. Code Coverage (Optional)
 
-If the project is configured with `-DSIMFIL_WITH_COVERAGE=ON` (typically requires GCC/Clang and `gcovr` to be installed), you can generate an HTML code coverage report after running the tests.
+If configured with `SIMFIL_WITH_COVERAGE=ON` (requires GCC/Clang and `gcovr`), generate an HTML coverage report after running tests:
 
-1.  Ensure tests have been run at least once via `ctest` or by running `test.simfil`.
-2.  Build the `coverage` target from the `build` directory:
+1.  Ensure tests have been executed (e.g., via `ctest`).
+2.  Build the `coverage` target:
     ```bash
     cmake --build . --target coverage
     ```
-3.  This will typically generate the report in a `coverage/` subdirectory within your `build` directory. Open the `index.html` file in a web browser.
+3.  Open the generated `coverage/index.html` file in the `build` directory.
 
-### Debugging
+### 5.4. Debugging
 
-*   Configure CMake with `Debug` build type: `cmake .. -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug ...`
-*   Build the debug version: `cmake --build .`
-*   Use standard C++ debuggers like GDB or LLDB to attach to or run the desired executable (e.g., `test.simfil`, `repl` if built).
+1.  Configure CMake with `-DCMAKE_BUILD_TYPE=Debug`.
+2.  Build the project: `cmake --build .`.
+3.  Use a debugger (like GDB or LLDB) to run or attach to the desired executable (e.g., `test.simfil`, `repl`).
     ```bash
     gdb ./bin/test.simfil
     (gdb) run
+    # Set breakpoints, inspect variables, etc.
     ```
-*   Set breakpoints, inspect variables, and step through the code as usual.
 
-### Contributing
+### 5.5. Contributing
 
-1.  **Fork & Clone:** Fork the repository on its hosting platform (e.g., GitHub) and clone your fork locally. Remember to initialize submodules (`git submodule update --init --recursive`).
-2.  **Branch:** Create a new feature or bugfix branch from an up-to-date `main` or `develop` branch: `git checkout -b my-feature-branch`.
-3.  **Code:** Implement your changes. Adhere to the existing coding style and conventions (see below).
-4.  **Test:** Add new unit tests for your changes in the `test/` directory to cover new functionality or bug fixes. Ensure all tests pass (`ctest`).
-5.  **Commit:** Commit your changes with clear and concise messages. Follow conventional commit message formats if applicable to the project.
-6.  **Push:** Push your branch to your fork: `git push origin my-feature-branch`.
-7.  **Pull Request (PR):** Create a Pull Request from your branch on your fork to the main repository's `main` (or appropriate target) branch. Describe your changes clearly in the PR, referencing any related issues.
+1.  **Fork & Clone:** Fork the repository and clone your fork locally. Initialize submodules: `git submodule update --init --recursive`.
+2.  **Branch:** Create a feature or bugfix branch from the main development branch (e.g., `main` or `develop`): `git checkout -b my-new-feature`.
+3.  **Code:** Implement changes, adhering to the project's style and conventions (see below).
+4.  **Test:** Add unit tests for new functionality or bug fixes in `test/`. Ensure all tests pass (`ctest`).
+5.  **Commit:** Make clear, concise commits. Consider using conventional commit message formats if the project uses them.
+6.  **Push:** Push your branch to your fork: `git push origin my-new-feature`.
+7.  **Pull Request (PR):** Create a PR from your fork's branch to the upstream repository's target branch. Clearly describe the changes and reference any related issues.
 
-### Best Practices & Coding Conventions
+### 5.6. Best Practices & Coding Conventions
 
-*   **C++ Standard:** Adhere to C++20, as required by `CMakeLists.txt`.
-*   **Style:** Follow the existing coding style. The `.editorconfig` file provides basic settings (UTF-8, LF line endings, final newline, 4-space indents for C++/headers, 2-space for CMake). Generally observe:
-    *   Naming: `snake_case` for variables and functions, `PascalCase` for classes/structs/enums, `ALL_CAPS` for compile-time constants/macros.
-    *   Pointers/Null: Use `nullptr`.
-    *   Includes: Use `#pragma once` for header guards. Organize includes (standard, external, project).
-    *   Const Correctness: Use `const` where applicable.
-    *   Modern C++: Prefer smart pointers (`std::unique_ptr`, `std::shared_ptr`) over raw pointers for ownership. Use range-based for loops, structured bindings, etc., where appropriate.
-*   **Clarity & Simplicity:** Write code that is easy to understand and maintain. Add comments for non-obvious logic. Keep functions focused.
-*   **Testing:** Ensure adequate test coverage for all code contributions.
-*   **Dependencies:** Manage external dependencies exclusively via `conanfile.py`.
-*   **Documentation:** Update relevant documentation (README, developer guide, code comments, language spec) if your changes affect usage, architecture, or the language itself.
+*   **C++ Standard:** Use C++20 features where appropriate.
+*   **Style:** Follow the existing coding style. Refer to `.editorconfig` for basic settings (UTF-8, LF, 4-space indent for C++/headers). Key conventions include:
+    *   Naming: `snake_case` for variables/functions, `PascalCase` for types (classes, structs, enums), `ALL_CAPS` for compile-time constants/macros.
+    *   Pointers: Use `nullptr`. Prefer smart pointers (`std::unique_ptr`, `std::shared_ptr`) for ownership management.
+    *   Headers: Use `#pragma once`. Organize includes (standard, external, project).
+    *   `const`: Apply `const` correctness diligently.
+    *   Modern C++: Utilize features like range-based for loops, structured bindings, `auto`, etc., where they improve clarity and safety.
+*   **Clarity:** Write readable and maintainable code. Comment non-obvious logic. Keep functions focused on a single responsibility.
+*   **Testing:** Provide thorough test coverage for contributions.
+*   **Dependencies:** Manage external dependencies strictly via `conanfile.py`.
+*   **Documentation:** Update relevant documentation (README, this guide, code comments, language spec) if changes impact usage, architecture, or the language.
 
 ## 6. Reference
 
-### Documentation
+### 6.1. Documentation Files
 
-*   **README.md:** Provides a general overview, build instructions, and basic usage examples. (Located in the repository root).
-*   **simfil-language.md:** Detailed specification of the Simfil query language syntax, operators, functions, and semantics. (Included in the chat).
-*   **LICENSE:** Contains the license information for the library. (Located in the repository root).
-*   **Code Comments:** Refer to comments within the header (`include/`) and source (`src/`) files for implementation-specific details.
+*   **`README.md`:** General overview, build instructions, basic usage. (Repository root).
+*   **`simfil-language.md`:** Detailed specification of the Simfil query language syntax, operators, functions, and semantics. (Repository root).
+*   **`developer_guide.md` (This document):** In-depth guide to the library's architecture, components, and development practices. (Located in `doc/`).
+*   **`LICENSE`:** License information. (Repository root).
+*   **Code Comments:** Header (`include/`) and source (`src/`) files contain implementation-specific details.
 
-### Key APIs / Classes
+### 6.2. Key APIs / Classes
 
-*   `simfil::ModelPool`: Primary interface for creating and managing data models.
-*   `simfil::ModelNode`: Interface for interacting with nodes in the model.
-*   `simfil::Value`: Represents data during evaluation.
-*   `simfil::compile`: Compiles a query string into an `ExprPtr`.
-*   `simfil::eval`: Evaluates a compiled expression against a model node.
-*   `simfil::Environment`: Manages evaluation context (functions, constants, string pool).
-*   `simfil::Function`: Base class for implementing custom functions.
-*   `simfil::MetaType`: Base class for implementing custom transient data types.
-*   `simfil::ArrayArena`: Efficient allocator for object/array members.
-*   `simfil::StringPool`: Manages string interning.
-*   `simfil::json::parse`: (If JSON support enabled) Parses JSON into a `ModelPool`.
+*   **`simfil::compile`:** Compiles a query string into an `ExprPtr` (AST root).
+*   **`simfil::eval`:** Evaluates a compiled expression (`ExprPtr`) against a `ModelNode`.
+*   **`simfil::Environment`:** Manages evaluation context (functions, constants, string pool).
+*   **`simfil::ModelPool`:** Primary interface for creating and managing data models.
+*   **`simfil::ModelNode`:** Handle/view for interacting with nodes in the model.
+*   **`simfil::Value`:** Represents data during evaluation (primitives, nodes, transients).
+*   **`simfil::Function`:** Base class for implementing custom functions.
+*   **`simfil::MetaType`:** Base interface for defining custom transient data types.
+*   **`simfil::TypedMetaType`:** Helper base class for `MetaType` implementation.
+*   **`simfil::ArrayArena`:** Efficient segmented allocator for object/array members.
+*   **`simfil::StringPool`:** Manages case-insensitive string interning.
+*   **`simfil::json::parse`:** (If `SIMFIL_WITH_MODEL_JSON=ON`) Parses JSON into a `ModelPool`.
 
-### Glossary
+### 6.3. Glossary
 
-*   **Arena Allocator:** A memory allocation strategy that allocates large blocks (arenas) and dispenses smaller chunks from them, often improving performance and locality. `ArrayArena` is simfil's implementation for object/array members.
-*   **AST (Abstract Syntax Tree):** A tree representation of the syntactic structure of a simfil query.
-*   **Columnar Storage:** Storing data for each attribute (column) contiguously. `ModelPool` uses this for primitive types.
-*   **Environment:** The context holding functions, constants, string pool, etc., needed for query parsing and evaluation.
-*   **Expression (Expr):** A node in the AST representing a part of the query that evaluates to a `Value` (or sequence of `Value`s).
-*   **Interning:** Storing only one copy of each unique immutable value (like strings). See `StringPool`.
-*   **MetaType:** An interface defining the behavior (operators, memory management) of a custom `TransientObject` type.
-*   **Model:** The data structure (managed by `ModelPool`) against which queries are run.
-*   **ModelNode:** A handle/view representing a single element (object, array, scalar) within the `ModelPool`.
-*   **ModelNodeAddress:** A compact identifier encoding a node's type (column) and index within the `ModelPool`.
-*   **ModelPool:** The primary class for creating and managing simfil data models using efficient storage.
-*   **Parselet:** A piece of parser logic associated with a token in a Pratt parser (PrefixParselet, InfixParselet).
-*   **Pratt Parser:** An efficient parsing technique using token precedences and parselets.
-*   **ResultFn:** A callback function used during evaluation to yield resulting `Value`s.
-*   **String ID (`StringId`):** A numeric identifier (uint16_t) representing an interned string in the `StringPool`.
-*   **StringPool:** Manages string interning.
-*   **Token:** The smallest meaningful unit of a query string (keyword, operator, literal).
-*   **TransientObject:** A temporary, custom object created during evaluation, managed by a `MetaType`.
-*   **Value:** The universal representation of data during query evaluation.
+*   **Arena Allocator:** Memory allocation strategy using large blocks (arenas) for smaller allocations. See `ArrayArena`.
+*   **AST (Abstract Syntax Tree):** Tree representation of a parsed query. Nodes are `simfil::Expr` subtypes.
+*   **Columnar Storage:** Storing data by type/attribute rather than by record. Used by `ModelPool` for efficiency.
+*   **Environment:** Context for parsing and evaluation, holding functions, constants, `StringPool`, etc.
+*   **Expression (`Expr`):** A node in the AST representing a part of the query that evaluates to `Value`(s).
+*   **Interning:** Storing only one copy of each unique immutable value (especially strings). See `StringPool`.
+*   **MetaType:** Interface defining behavior (operators, memory) for a custom `TransientObject` type.
+*   **Model:** The hierarchical data structure (managed by `ModelPool`) queried by simfil.
+*   **ModelNode:** A lightweight handle/view representing an element (object, array, scalar) within the `ModelPool`.
+*   **ModelNodeAddress:** Compact 32-bit identifier encoding a node's type (column) and location/value within the `ModelPool`.
+*   **ModelPool:** The primary class for creating and managing simfil data models using efficient columnar and arena-based storage.
+*   **Parselet:** Parser logic associated with a token in a Pratt parser (`PrefixParselet`, `InfixParselet`).
+*   **Pratt Parser:** Efficient parsing technique handling operator precedence via parselets.
+*   **ResultFn:** Callback function type used during evaluation to yield resulting `Value`s.
+*   **String ID (`StringId`):** `uint16_t` identifier for an interned string in the `StringPool`.
+*   **StringPool:** Manages string interning, typically case-insensitive for object keys.
+*   **Token:** Smallest meaningful unit of a query string (keyword, operator, literal, identifier).
+*   **TransientObject:** Temporary, custom object created during evaluation, defined by a `MetaType`. Stored within a `Value`.
+*   **Value:** Universal representation of data during query evaluation (primitive, node reference, or transient object).
