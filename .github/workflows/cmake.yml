@@ -20,14 +20,9 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update && sudo apt-get install gcovr ninja-build valgrind
-    - name: Install Conan 2
-      run: |
-        pip install conan
-        conan profile detect
     - name: Build
       run: |
         mkdir build
-        conan install . -of build --build=missing -s compiler.cppstd=20
         cmake . -B build -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
         cmake --build build
     - name: Run CTest
@@ -102,14 +97,9 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: true
-    - name: Install Conan 2
-      run: |
-        pip install conan
-        conan profile detect
     - name: Build
       run: |
         mkdir build
-        conan install . -of build --build=missing -s compiler.cppstd=20
         cmake . -B build -DSIMFIL_FPIC=NO -DSIMFIL_SHARED=NO
         cmake --build build
     - name: Run CTest
@@ -124,14 +114,9 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: true
-    - name: Install Conan 2
-      run: |
-        pip install conan
-        conan profile detect
     - name: Build
       run: |
         mkdir build
-        conan install . -of build --build=missing -s compiler.cppstd=20
         cmake . -B build -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
         cmake --build build
     - name: Run CTest

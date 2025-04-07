@@ -2,7 +2,6 @@
 
 [![](https://img.shields.io/badge/Coverage-HTML-orange)](https://htmlpreview.github.io/?https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/ed28c457ebc09ce8ddddc9cec6668e130d59b64c/coverage.html)
 [![](https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/0ae49c7509dea18b4c110b8bf416f2715a214933/badge.svg)](https://github.com/Klebert-Engineering/simfil)
-[![Conan Center](https://img.shields.io/conan/v/simfil)](https://conan.io/center/recipes/simfil)
 
 `simfil` is a C++ 20 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the `simfil` query language, along with a query interpreter to query the actual data.
 
@@ -71,15 +70,7 @@ range(1,25)...{count((_ % range(1,_)...) == 0) == 2}
 ```
 
 ## Building the Project
-`simfil` uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC. Dependencies outsides the repository are automatically downloaded using either CMakes `FetchContent` system or [Conan](https://conan.io).
-
-### With Conan
-```sh
-conan install . --build missing
-cmake --preset conan-release -DSIMFIL_WITH_TESTS=ON -DSIMFIL_WITH_REPL=ON
-cmake --build --preset conan-release
-ctest --preset conan-release
-```
+`simfil` uses CMake as build system and can be built using all three major compilers, GCC, Clang and MSVC.
 
 ### With FetchContent
 ```sh
@@ -89,7 +80,7 @@ ctest
 ```
 
 ## Using the Interactive Command Line Tool
-The project contains an interactive command line program (repl: “Read-Eval-Print-Loop”) to to test queries against a JSON datasource: `simfil-repl`.
+The project contains an interactive command line program (repl: “Read-Eval-Print-Loop”) to test queries against a JSON datasource: `simfil-repl`.
 
 ```sh
 <build-dir>/repl/simfil-repl <json-file>
@@ -109,44 +100,6 @@ The repl provides some extra commands for testing queries:
 The query language can be extended by additional functions and addititonal types.
 
 ## Using the Library
-### Conan Package
-#### Using Conan
-Simfil is published on [conan.io](https://conan.io/center/recipes/simfil). All you have to do is to add it to your
-conanfile:
-
-``` conan
-[requires]
-simfil/0.1.1
-
-[generators]
-CMakeDeps
-CMakeToolchain
-```
-
-#### Using Conan Editable Mode
-You can link the local simfil source directory as a [Conan 2 editable mode package ](https://docs.conan.io/2/tutorial/developing_packages/editable_packages.html) via `conan editable add <simfil-dir>`. Note that you have to pass
-`--build=editable` to your `conan install` invocation, otherwise the CMake build fails with errors about not finding the library.
-
-To use the editable package, just set the version to the one in this
-repositories `conanfile.py`, which is `dev`:
-
-```conan
-[requires]
-simfil/dev
-
-[generators]
-CMakeDeps
-CMakeToolchain
-```
-
-#### Installing the Package Locally
-To use this library as a dependency you can install it locally using
-`conan create <simfil-dir> --build=missing -s compiler.cppstd=20`, which
-exports the package into the local conan registry. Note that for developing simfil it is recomendet to use Conans "editable mode".
-
-Note: Installing locally with simfil registered as an editable package at the same time will fail. You have to first remove the
-package from editable mode, the error messages do not give a hint about the conflict!
-
 ### CMake FetchContent
 To link against `simfil` vial CMake, all you have to do is to add the following to you `CMakeLists.txt`:
 ```cmake

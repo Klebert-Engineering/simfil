@@ -22,14 +22,9 @@ jobs:
         sudo apt-get install ninja-build
         pip install gcovr
         gcovr --version
-    - name: Install Conan 2
-      run: |
-        pip install conan
-        conan profile detect
     - name: Build
       run: |
         mkdir build
-        conan install . -of build --build=missing -s compiler.cppstd=20
         cmake . -B build -DSIMFIL_WITH_COVERAGE=YES -DSIMFIL_WITH_TESTS=YES -DCMAKE_BUILD_TYPE=Debug -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO -DSIMFIL_WITH_COVERAGE=YES -GNinja
         cmake --build build
     - name: Run CTest
