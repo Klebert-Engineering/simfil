@@ -23,7 +23,7 @@ struct CountedResultFn : simfil::ResultFn
 
     CountedResultFn(InnerFn fn, simfil::Context ctx)
         : fn(fn)
-        , nonctx(std::move(ctx))
+        , nonctx(ctx)
     {}
 
     CountedResultFn(const CountedResultFn&) = delete;
@@ -33,7 +33,7 @@ struct CountedResultFn : simfil::ResultFn
     {
         assert(!finished);
         ++calls;
-        return fn(std::move(ctx), std::move(vv));
+        return fn(ctx, std::move(vv));
     }
 
     /* NOTE: You _must_ call finish before destruction! */
@@ -139,7 +139,8 @@ auto AnyChildExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
         return true;
     }));
 
-    return result;
+   return Result::Continue;
+   //return result;
 }
 
 auto AnyChildExpr::clone() const -> ExprPtr
@@ -810,11 +811,6 @@ void ExprVisitor::visit(Expr& e)
 }
 
 void ExprVisitor::visit(FieldExpr& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(PathExpr& e)
 {
     visit(static_cast<Expr&>(e));
 }

@@ -29,8 +29,7 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
 Environment::Environment(NewStringCache_)
     : Environment(std::make_shared<StringPool>()) {}
 
-Environment::~Environment()
-{}
+Environment::~Environment() = default;
 
 auto Environment::warn(std::string message, std::string detail) -> void
 {

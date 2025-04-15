@@ -9,6 +9,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 #include <chrono>
@@ -46,8 +47,14 @@ struct Diagnostics
 {
     struct Message
     {
+        /* User message */
         std::string message;
+
+        /* Location the message refers to */
         SourceLocation location;
+
+        /* Optional query string that applies this fix */
+        std::optional<std::string> replacementQuery;
     };
 
     explicit Diagnostics(const AST& ast);

@@ -17,9 +17,10 @@ class PathExpr;
 class ExprVisitor
 {
 public:
+    virtual ~ExprVisitor() = default;
+
     virtual void visit(Expr& exp);
     virtual void visit(FieldExpr& exp);
-    virtual void visit(PathExpr& exp);
 
 protected:
     /* Returns the index of the current expression */
@@ -59,7 +60,7 @@ public:
 class FieldExpr : public Expr
 {
 public:
-    FieldExpr(std::string name);
+    explicit FieldExpr(std::string name);
     FieldExpr(std::string name, const Token& token);
 
     auto type() const -> Type override;
@@ -94,9 +95,9 @@ public:
 class ConstExpr : public Expr
 {
 public:
-    template <class _CType>
-    explicit ConstExpr(_CType&& value)
-        : value_(Value::make(std::forward<_CType>(value)))
+    template <class CType_>
+    explicit ConstExpr(CType_&& value)
+        : value_(Value::make(std::forward<CType_>(value)))
     {}
 
     explicit ConstExpr(Value value);
@@ -161,7 +162,7 @@ public:
 class PathExpr : public Expr
 {
 public:
-    PathExpr(ExprPtr right);
+    explicit PathExpr(ExprPtr right);
     PathExpr(ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
@@ -202,7 +203,7 @@ template <class Operator>
 class UnaryExpr : public Expr
 {
 public:
-    UnaryExpr(ExprPtr sub)
+    explicit UnaryExpr(ExprPtr sub)
         : sub_(std::move(sub))
     {}
 

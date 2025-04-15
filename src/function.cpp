@@ -11,7 +11,6 @@
 
 #include <iostream>
 #include <optional>
-#include <ranges>
 #include <stdexcept>
 
 namespace simfil
@@ -576,7 +575,7 @@ auto SumFn::ident() const -> const FnInfo&
 
 auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
-    if (args.size() < 1 || args.size() > 3)
+    if (args.empty() || args.size() > 3)
         raise<std::runtime_error>("sum: Expected at least 1 argument; got "s + std::to_string(args.size()));
 
     Value sum = Value::make((int64_t)0);
@@ -605,7 +604,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
             if (sum.isa(ValueType::Null)) {
                 sum = std::move(vv);
             } else {
-                sum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, std::move(vv));
+                sum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv);
             }
         }
 
