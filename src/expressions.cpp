@@ -29,7 +29,7 @@ struct CountedResultFn : simfil::ResultFn
     CountedResultFn(const CountedResultFn&) = delete;
     CountedResultFn(CountedResultFn&&) = delete;
 
-    auto operator()(simfil::Context ctx, simfil::Value vv) const -> simfil::Result
+    auto operator()(simfil::Context ctx, simfil::Value vv) const -> simfil::Result override
     {
         assert(!finished);
         ++calls;
@@ -131,7 +131,7 @@ auto AnyChildExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
         return res(ctx, Value::null());
 
     auto result = Result::Continue;
-    val.node->iterate(ModelNode::IterLambda([&](auto&& subNode) {
+    val.node->iterate(ModelNode::IterLambda([&](auto subNode) {
         if (res(ctx, Value::field(std::move(subNode))) == Result::Stop) {
             result = Result::Stop;
             return false;
@@ -139,7 +139,7 @@ auto AnyChildExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
         return true;
     }));
 
-    return Result::Continue;
+    return result;
 }
 
 auto AnyChildExpr::clone() const -> ExprPtr
@@ -159,12 +159,18 @@ auto AnyChildExpr::toString() const -> std::string
 
 FieldExpr::FieldExpr(std::string name)
     : name_(std::move(name))
-{}
+{
+    if (name_ == "_")
+        hits_ = 1;
+}
 
 FieldExpr::FieldExpr(std::string name, const Token& token)
     : Expr(token)
     , name_(std::move(name))
-{}
+{
+    if (name_ == "_")
+        hits_ = 1;
+}
 
 auto FieldExpr::type() const -> Type
 {
@@ -177,10 +183,8 @@ auto FieldExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
         return res(ctx, std::move(val));
 
     /* Special case: _ points to the current node */
-    if (name_ == "_") {
-        hits_++;
+    if (name_ == "_")
         return res(ctx, val);
-    }
 
     if (!val.node)
         return res(ctx, Value::null());
@@ -190,7 +194,7 @@ auto FieldExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
 
     if (!nameId_)
         /* If the field name is not in the string cache, then there
-            is no field with that name. */
+           is no field with that name. */
         return res(ctx, Value::null());
 
     /* Enter sub-node */
@@ -320,7 +324,7 @@ auto SubscriptExpr::ieval(Context ctx, Value val, const ResultFn& ores) -> Resul
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
     auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, Value lval) {
-        return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, Value ival) {
+        return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, const Value& ival) {
             /* Field subscript */
             if (lval.node) {
                 ModelNode::Ptr node;
@@ -392,12 +396,12 @@ auto SubExpr::ieval(Context ctx, Value val, const ResultFn& ores) -> Result
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
     auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value lv) {
-        return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](Context ctx, Value vv) {
+        return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) {
             auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
             if (bv.isa(ValueType::Undef))
                 return Result::Continue;
 
-            if (bv.isa(ValueType::Bool) && bv.template as<ValueType::Bool>())
+            if (bv.isa(ValueType::Bool) && bv.as<ValueType::Bool>())
                 return res(ctx, lv);
 
             return Result::Continue;
@@ -414,7 +418,7 @@ auto SubExpr::toString() const -> std::string
 
 auto SubExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<SubscriptExpr>(left_->clone(), sub_->clone());
+    return std::make_unique<SubExpr>(left_->clone(), sub_->clone());
 }
 
 void SubExpr::accept(ExprVisitor& v)
@@ -445,7 +449,7 @@ auto CallExpression::ieval(Context ctx, Value val, const ResultFn& res) -> Resul
         raise<std::runtime_error>("Unknown function "s + name_);
 
     auto anyval = false;
-    auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](Context ctx, Value vv) {
+    auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value vv) {
         anyval = true;
         return res(ctx, std::move(vv));
     }));
@@ -615,7 +619,7 @@ auto UnaryWordOpExpr::type() const -> Type
 
 auto UnaryWordOpExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
 {
-    return left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value val) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value val) {
         if (val.isa(ValueType::Undef))
             return res(ctx, std::move(val));
 
@@ -659,18 +663,18 @@ auto BinaryWordOpExpr::type() const -> Type
 
 auto BinaryWordOpExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
 {
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
-        return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, Value rval) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value lval) {
+        return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](const Context& ctx, const Value& rval) {
             if (lval.isa(ValueType::Undef) || rval.isa(ValueType::Undef))
                 return res(ctx, Value::undef());
 
             if (lval.isa(ValueType::TransientObject)) {
-                const auto& obj = lval.template as<ValueType::TransientObject>();
+                const auto& obj = lval.as<ValueType::TransientObject>();
                 return res(ctx, obj.meta->binaryOp(ident_, obj, rval));
             }
 
             if (rval.isa(ValueType::TransientObject)) {
-                const auto& obj = rval.template as<ValueType::TransientObject>();
+                const auto& obj = rval.as<ValueType::TransientObject>();
                 return res(ctx, obj.meta->binaryOp(ident_, lval, obj));
             }
 
@@ -716,15 +720,15 @@ auto AndExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
 {
     /* Operator and behaves like in lua:
         * 'a and b' returns a if 'not a?' else b is returned */
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value lval) {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
         if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-            if (!v.template as<ValueType::Bool>())
+            if (!v.as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
-        return right_->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value rval) {
+        return right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, Value rval) {
             return res(ctx, std::move(rval));
         }));
     }));
@@ -771,7 +775,7 @@ auto OrExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
             return res(ctx, lval);
 
         if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-            if (v.template as<ValueType::Bool>())
+            if (v.as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
         return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value rval) {

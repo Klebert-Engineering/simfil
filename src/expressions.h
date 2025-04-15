@@ -221,8 +221,7 @@ public:
     void accept(ExprVisitor& v) override
     {
         v.visit(*this);
-        if (sub_)
-            sub_->accept(v);
+        sub_->accept(v);
     }
 
     auto clone() const -> ExprPtr override
@@ -276,10 +275,8 @@ public:
     void accept(ExprVisitor& v) override
     {
         v.visit(*this);
-        if (left_)
-            left_->accept(v);
-        if (right_)
-            right_->accept(v);
+        left_->accept(v);
+        right_->accept(v);
     }
 
     auto toString() const -> std::string override
