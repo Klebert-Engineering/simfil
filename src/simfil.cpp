@@ -192,6 +192,8 @@ static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
     return expr;
 }
 
+AST::~AST() = default;
+
 /**
  * Parser wrapper for parsing and & or operators.
  *
@@ -712,12 +714,14 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
 {
     struct Visitor : ExprVisitor
     {
+        const AST& ast;
         const Environment& env;
         const Diagnostics& diagnonstics;
         std::vector<Diagnostics::Message> messages;
 
-        Visitor(const Environment& env, const Diagnostics& diagnonstics)
-            : env(env)
+        Visitor(const AST& ast, const Environment& env, const Diagnostics& diagnonstics)
+            : ast(ast)
+            , env(env)
             , diagnonstics(diagnonstics)
         {}
 
@@ -728,24 +732,30 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
             // Generate "did you mean ...?" messages for missing fields
             if (auto iter = diagnonstics.fieldHits.find(index()); iter != diagnonstics.fieldHits.end() && iter->second == 0) {
                 auto guess = findSimilarString(e.name_, *env.strings());
-                if (!guess.empty())
-                    addMessage(fmt::format("No matches for field '{}'. Did you mean '{}'?", e.name_, guess), e);
-                else
-                    addMessage(fmt::format("No matches for field '{}'.", e.name_, guess), e);
+                if (!guess.empty()) {
+                    std::string fix = ast.query();
+                    if (auto loc = e.sourceLocation(); loc.size > 0)
+                        fix.replace(loc.begin, loc.size, guess);
+
+                    addMessage(fmt::format("No matches for field '{}'. Did you mean '{}'?", e.name_, guess), e, fix);
+                } else {
+                    addMessage(fmt::format("No matches for field '{}'.", e.name_, guess), e, {});
+                }
             }
         }
 
-        void addMessage(std::string text, const Expr& e)
+        void addMessage(std::string text, const Expr& e, std::optional<std::string> fix)
         {
             Diagnostics::Message msg;
             msg.message = std::move(text);
             msg.location = e.sourceLocation();
+            msg.fix = fix;
 
             messages.push_back(std::move(msg));
         }
     };
 
-    Visitor visitor(env, diag);
+    Visitor visitor(ast, env, diag);
     ast.expr().accept(visitor);
 
     return visitor.messages;

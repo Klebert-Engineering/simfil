@@ -54,7 +54,7 @@ struct Diagnostics
         SourceLocation location;
 
         /* Optional query string that applies this fix */
-        std::optional<std::string> replacementQuery;
+        std::optional<std::string> fix;
     };
 
     explicit Diagnostics(const AST& ast);

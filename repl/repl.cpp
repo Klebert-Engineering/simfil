@@ -274,7 +274,8 @@ int main(int argc, char *argv[])
             for (const auto& m : messages) {
                 std::cout << "  " << m.message << "\n"
                           << "  Here: " << ast->query() << "\n"
-                          << "        " << underlineQuery(m.location) << "\n";
+                          << "        " << underlineQuery(m.location) << "\n"
+                          << "   Fix: " << m.fix.value_or("-") << "\n";
             }
         }
     }

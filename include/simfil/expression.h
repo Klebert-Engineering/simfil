@@ -87,6 +87,8 @@ public:
         , expr_(std::move(expr))
     {}
 
+    ~AST();
+
     auto expr() const -> Expr&
     {
         return *expr_;
