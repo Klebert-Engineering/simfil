@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -45,6 +46,7 @@ struct SourceLocation
 /** Query Diagnostics. */
 struct Diagnostics
 {
+public:
     struct Message
     {
         /* User message */
@@ -57,8 +59,15 @@ struct Diagnostics
         std::optional<std::string> fix;
     };
 
+    Diagnostics();
     explicit Diagnostics(const AST& ast);
 
+    /**
+     * Append/merge another diagnostics object into this one.
+     */
+    Diagnostics& append(const Diagnostics& other);
+
+//private:
     using ExprId = size_t;
     std::unordered_map<ExprId, std::atomic_uint32_t> fieldHits;
 };
@@ -69,6 +78,19 @@ struct Trace
     std::size_t calls = 0; /* Number of calls */
     std::chrono::microseconds totalus;
     std::vector<Value> values;
+
+    /**
+     * Append another trace result to this one.
+     */
+    Trace& append(Trace&& other)
+    {
+        calls += other.calls;
+        totalus += other.totalus;
+        values.insert(values.end(),
+                      std::make_move_iterator(other.values.begin()),
+                      std::make_move_iterator(other.values.end()));
+        return *this;
+    }
 };
 
 struct Environment

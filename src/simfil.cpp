@@ -761,6 +761,9 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
     return visitor.messages;
 }
 
+Diagnostics::Diagnostics()
+{}
+
 Diagnostics::Diagnostics(const AST& ast)
 {
     struct InitDiagnostics : ExprVisitor
@@ -780,6 +783,14 @@ Diagnostics::Diagnostics(const AST& ast)
 
     InitDiagnostics visitor(*this);
     ast.expr().accept(visitor);
+}
+
+Diagnostics& Diagnostics::append(const Diagnostics& other)
+{
+    for (const auto& [key, value] : other.fieldHits) {
+        fieldHits[key] += value;
+    }
+    return *this;
 }
 
 }
