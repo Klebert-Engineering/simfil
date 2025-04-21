@@ -699,6 +699,8 @@ static auto findSimilarString(std::string_view source, const StringPool& pool)
         const auto targetIsDollar = target[0] == '$';
         if (isDollar != targetIsDollar)
             continue;
+        if (target == source)
+            continue;
 
         const auto score = levenshtein(source, target);
         if (score < bestScore) {
