@@ -42,6 +42,13 @@ auto compile(Environment& env, std::string_view src, bool any = true, bool autoW
 auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* diag) -> std::vector<Value>;
 
 /**
+ * Build messages for diagnostics collected by `eval`.
+ * Param:
+ *   env    Environment (must be the same as the one passed to compile and eval)
+ * Param:
+ *   ast    The AST
+ * Param:
+ *   diag   Diagnostics data filled by eval.
  */
 auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Diagnostics::Message>;
 

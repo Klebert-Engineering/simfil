@@ -80,7 +80,7 @@ struct Trace
     std::vector<Value> values;
 
     /**
-     * Append another trace result to this one.
+     * Append/merge another trace result into this one.
      */
     Trace& append(Trace&& other)
     {
