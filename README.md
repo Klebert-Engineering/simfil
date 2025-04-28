@@ -99,6 +99,11 @@ The repl provides some extra commands for testing queries:
 ## Extending the Language
 The query language can be extended by additional functions and addititonal types.
 
+## Diagnostics
+Simfil can output query diagnostics messages that can include a fixed query string.
+Currently, it supports the following types of messages:
+- "No matches for field '...'. Did you mean '...'?"
+
 ## Using the Library
 ### CMake FetchContent
 To link against `simfil` vial CMake, all you have to do is to add the following to you `CMakeLists.txt`:
