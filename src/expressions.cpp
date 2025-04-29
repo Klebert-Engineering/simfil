@@ -62,7 +62,7 @@ auto WildcardExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto WildcardExpr::ieval(Context ctx, Value val, const ResultFn& ores) -> Result
+auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
 {
     if (ctx.phase == Context::Phase::Compilation)
         return ores(ctx, Value::undef());
@@ -83,7 +83,7 @@ auto WildcardExpr::ieval(Context ctx, Value val, const ResultFn& ores) -> Result
                 return Result::Stop;
 
             auto result = Result::Continue;
-            val.iterate(ModelNode::IterLambda([&, this](auto&& subNode) {
+            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
                 if (iterate(subNode, depth + 1) == Result::Stop) {
                     result = Result::Stop;
                     return false;
@@ -122,7 +122,7 @@ auto AnyChildExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto AnyChildExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -178,7 +178,7 @@ auto FieldExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto FieldExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     if (val.isa(ValueType::Undef))
         return res(ctx, std::move(val));
@@ -242,7 +242,7 @@ auto MultiConstExpr::constant() const -> bool
     return true;
 }
 
-auto MultiConstExpr::ieval(Context ctx, Value, const ResultFn& res) -> Result
+auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> Result
 {
     for (const auto& v : values_) {
         if (res(ctx, v) == Result::Stop)
@@ -288,7 +288,7 @@ auto ConstExpr::constant() const -> bool
     return true;
 }
 
-auto ConstExpr::ieval(Context ctx, Value, const ResultFn& res) -> Result
+auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> Result
 {
     return res(ctx, value_);
 }
@@ -320,7 +320,7 @@ auto SubscriptExpr::type() const -> Type
     return Type::SUBSCRIPT;
 }
 
-auto SubscriptExpr::ieval(Context ctx, Value val, const ResultFn& ores) -> Result
+auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
@@ -391,12 +391,12 @@ auto SubExpr::type() const -> Type
     return Type::SUBEXPR;
 }
 
-auto SubExpr::ieval(Context ctx, Value val, const ResultFn& ores) -> Result
+auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
 {
     /* Do not return null unless we have _no_ matching value. */
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value lv) {
+    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, const Value& lv) {
         return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) {
             auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
             if (bv.isa(ValueType::Undef))
@@ -434,7 +434,6 @@ void SubExpr::accept(ExprVisitor& v)
 CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)
     : name_(std::move(name))
     , args_(std::move(args))
-    , fn_(nullptr)
 {}
 
 auto CallExpression::type() const -> Type
@@ -442,7 +441,7 @@ auto CallExpression::type() const -> Type
     return Type::VALUE;
 }
 
-auto CallExpression::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     if (!fn_)
         fn_ = ctx.env->findFunction(name_);
@@ -509,7 +508,7 @@ auto PathExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto PathExpr::ieval(Context ctx, Value val, const ResultFn& ores) -> Result
+auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
@@ -564,7 +563,7 @@ auto UnpackExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnpackExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     auto anyval = false;
     auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value v) {
@@ -618,7 +617,7 @@ auto UnaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnaryWordOpExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value val) {
         if (val.isa(ValueType::Undef))
@@ -662,9 +661,9 @@ auto BinaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto BinaryWordOpExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value lval) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, const Value& lval) {
         return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](const Context& ctx, const Value& rval) {
             if (lval.isa(ValueType::Undef) || rval.isa(ValueType::Undef))
                 return res(ctx, Value::undef());
@@ -717,7 +716,7 @@ auto AndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto AndExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     /* Operator and behaves like in lua:
         * 'a and b' returns a if 'not a?' else b is returned */
@@ -767,7 +766,7 @@ auto OrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto OrExpr::ieval(Context ctx, Value val, const ResultFn& res) -> Result
+auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     /* Operator or behaves like in lua:
         * 'a or b' returns a if 'a?' else b is returned */

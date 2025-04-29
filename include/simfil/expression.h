@@ -36,7 +36,7 @@ public:
         sourceLocation_.size = token.end - token.begin;
     }
 
-    virtual ~Expr() {}
+    virtual ~Expr() = default;
 
     /* Category */
     virtual auto type() const -> Type = 0;
@@ -53,18 +53,20 @@ public:
     {
         auto dbg = ctx.env->debug;
         if (dbg) dbg->evalBegin(*this, ctx, val, res);
-        auto r = ieval(std::move(ctx), std::move(val), res);
+        auto r = ieval(ctx, val, res);
         if (dbg) dbg->evalEnd(*this);
         return r;
     }
 
     /* Recursive clone */
+    [[nodiscard]]
     virtual auto clone() const -> std::unique_ptr<Expr> = 0;
 
     /* Accept expression visitor */
-    virtual void accept(ExprVisitor&) = 0;
+    virtual void accept(ExprVisitor& v) = 0;
 
     /* Source location the expression got parsed from */
+    [[nodiscard]]
     auto sourceLocation() const -> SourceLocation
     {
         return sourceLocation_;
@@ -72,7 +74,7 @@ public:
 
 private:
     /* Abstract evaluation implementation */
-    virtual auto ieval(Context, Value, const ResultFn&) -> Result = 0;
+    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result = 0;
 
     SourceLocation sourceLocation_;
 };

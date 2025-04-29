@@ -93,7 +93,7 @@ struct ArgParser
         return *this;
     }
 
-    auto opt(const char* name, ValueType type, Value& outValue, Value def) -> ArgParser&
+    auto opt(std::string_view name, ValueType type, Value& outValue, Value def) -> ArgParser&
     {
         if (args.size() <= idx) {
             outValue = std::move(def);
@@ -103,7 +103,7 @@ struct ArgParser
         auto subctx = ctx;
         args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable {
             if (++n > 1)
-                raise<std::runtime_error>(functionName + ": argument "s + name + " must return a single value"s);
+                raise<std::runtime_error>(fmt::format("{}: argument {} must return a single value", functionName, name));
 
             if (vv.isa(ValueType::Undef)) {
                 anyUndef = true;
@@ -112,7 +112,7 @@ struct ArgParser
             }
 
             if (!vv.isa(type))
-                raise<std::runtime_error>(functionName + ": invalid value type for argument '"s + name + "'"s);
+                raise<std::runtime_error>(fmt::format("{}: invalid value type for argument", functionName, name));
 
             outValue = std::move(vv);
             return Result::Continue;
@@ -590,7 +590,8 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
             auto ov = model_ptr<OverlayNode>::make(vv);
             ov->set(StringPool::OverlaySum, sum);
             ov->set(StringPool::OverlayValue, vv);
-            ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n++)));
+            ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n)));
+            n += 1;
 
             subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, auto vv) {
                 ov->set(StringPool::OverlaySum, vv);

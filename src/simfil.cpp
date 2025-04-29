@@ -655,8 +655,8 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     auto mutableAST = ast.expr().clone();
 
     std::vector<Value> res;
-    mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&res](Context ctx, Value vv) {
-        res.push_back(std::move(vv));
+    mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&res](Context, Value value) {
+        res.push_back(std::move(value));
         return Result::Continue;
     }));
 
@@ -671,6 +671,8 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
             explicit MergeDiagnostics(Diagnostics& diag)
                 : diagnostics(diag)
             {}
+
+            using ExprVisitor::visit;
 
             auto visit(FieldExpr& e) -> void override {
                 ExprVisitor::visit(e);
@@ -723,6 +725,8 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
             , diagnonstics(diagnonstics)
         {}
 
+        using ExprVisitor::visit;
+
         void visit(FieldExpr& e) override
         {
             ExprVisitor::visit(e);
@@ -770,6 +774,8 @@ Diagnostics::Diagnostics(const AST& ast)
         explicit InitDiagnostics(Diagnostics& self)
             : self(self)
         {}
+
+        using ExprVisitor::visit;
 
         auto visit(FieldExpr& e) -> void override
         {
