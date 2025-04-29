@@ -250,7 +250,9 @@ public:
 
     static auto field(ModelNode&& node) -> Value
     {
-        return {node.type(), node.value(), model_ptr<ModelNode>(std::move(node))};
+        auto type = node.type();
+        auto value = node.value();
+        return {type, std::move(value), model_ptr<ModelNode>(std::move(node))};
     }
 
     template <class ModelNodeT>
