@@ -23,7 +23,7 @@ endif()
 if (NOT TARGET bitsery::bitsery)
   FetchContent_Declare(bitsery
     GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
-    GIT_TAG        "v5.2.3"
+    GIT_TAG        "v5.2.4"
     GIT_SHALLOW    ON)
   FetchContent_MakeAvailable(bitsery)
 endif()
