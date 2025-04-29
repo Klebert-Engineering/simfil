@@ -72,7 +72,7 @@ struct model_ptr
 {
     template<typename> friend struct model_ptr;
 
-    model_ptr(::nullptr_t) {}  // NOLINT
+    model_ptr(std::nullptr_t) {}  // NOLINT
     model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
     explicit model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
 

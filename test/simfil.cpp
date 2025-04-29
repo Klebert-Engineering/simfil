@@ -7,7 +7,7 @@
 
 using namespace simfil;
 
-static const auto StaticTestKey = StringPool::NextStaticId;
+static constexpr auto StaticTestKey = StringPool::NextStaticId;
 
 
 static auto getASTString(std::string_view input, bool autoWildcard = false)
@@ -478,7 +478,7 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
 
     struct DerivedProceduralObject : public ProceduralObject<2, DerivedProceduralObject> {
         DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
-            : ProceduralObject<2, DerivedProceduralObject>((ArrayIndex)a.index(), std::move(pool), a)
+            : ProceduralObject<2, DerivedProceduralObject>(static_cast<ArrayIndex>(a.index()), std::move(pool), a)
         {
             fields_.emplace_back(
                 StaticTestKey,

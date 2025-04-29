@@ -5,23 +5,21 @@
 
 #include <cctype>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
-#include <cassert>
-#include <ostream>
 #include <stdexcept>
 #include <string_view>
 #include <optional>
 #include <cstring>
 #include <unordered_map>
 #include <algorithm>
+#include <ostream>
 
 namespace
 {
 
 std::string downcase(std::string s)
 {
-    std::transform(s.begin(), s.end(), s.begin(), [](auto c) {
+    std::ranges::transform(s.begin(), s.end(), s.begin(), [](auto c) {
         return tolower(c);
     });
     return s;
@@ -118,13 +116,13 @@ struct Scanner
     std::string_view sv_;
     std::size_t pos_;
 
-    Scanner(std::string_view sv)
+    explicit Scanner(std::string_view sv)
         : orig_(sv)
         , sv_(sv)
         , pos_(0)
     {}
 
-    operator bool() const
+    explicit operator bool() const
     {
         return !sv_.empty();
     }
@@ -290,7 +288,7 @@ std::optional<Token> scanStringLiteral(Scanner& s)
 
 std::optional<Token> scanNumber(Scanner& s)
 {
-    const auto chr2digit = [](Scanner& s, int base, auto c)
+    const auto chr2digit = [](const Scanner& s, int base, auto c)
     {
         if (c >= '0' && c <= '1')
             return c - '0';
@@ -350,7 +348,7 @@ std::optional<Token> scanNumber(Scanner& s)
             if (base != 10)
                 s.fail("Decimal point is allowed for base 10 numbers only");
 
-            double f = n;
+            auto f = static_cast<double>(n);
             for (auto i = 1; isdigit(s.at(0)); ++i) {
                 f += (s.pop() - '0') / std::pow(10, i);
             }
@@ -364,7 +362,7 @@ std::optional<Token> scanNumber(Scanner& s)
 
         /* SCI notation results in float if exponent != 0 (=1) */
         if (auto sci = parseSciSuffix(s); sci != 1)
-            return Token(Token::FLOAT, n * sci, begin, s.pos());
+            return Token(Token::FLOAT, static_cast<double>(n) * sci, begin, s.pos());
         if (isalpha(s.at(0)) || s.at(0) == '.')
             s.fail("Unexpected non-digit character");
 
@@ -439,7 +437,7 @@ std::vector<Token> tokenize(std::string_view expr)
             break;
         }
     }
-    tokens.emplace_back(Token(Token::NIL, 0, 0));
+    tokens.emplace_back(Token::NIL, 0, 0);
 
     return tokens;
 }

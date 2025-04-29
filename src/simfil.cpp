@@ -28,9 +28,6 @@
 #include <stdexcept>
 #include <cassert>
 #include <vector>
-#include <deque>
-#include <iostream>
-
 
 namespace simfil
 {
@@ -39,11 +36,11 @@ using namespace std::string_literals;
 
 namespace strings
 {
-static const std::string_view TypenameNull("null");
-static const std::string_view TypenameBool("bool");
-static const std::string_view TypenameInt("int");
-static const std::string_view TypenameFloat("float");
-static const std::string_view TypenameString("string");
+static constexpr std::string_view TypenameNull("null");
+static constexpr std::string_view TypenameBool("bool");
+static constexpr std::string_view TypenameInt("int");
+static constexpr std::string_view TypenameFloat("float");
+static constexpr std::string_view TypenameString("string");
 }
 
 /**
@@ -110,7 +107,7 @@ static auto expect(const ExprPtr& e, Type... types)
 static auto isSymbolWord(std::string_view sv) -> bool
 {
     auto numUpperCaseLetters = 0;
-    return std::all_of(sv.begin(), sv.end(), [&numUpperCaseLetters](auto c) {
+    return std::ranges::all_of(sv.begin(), sv.end(), [&numUpperCaseLetters](auto c) {
        if (std::isupper(c)) {
            ++numUpperCaseLetters;
            return true;
@@ -125,8 +122,8 @@ static auto isSymbolWord(std::string_view sv) -> bool
 struct scoped {
     std::function<void()> f;
 
-    scoped(std::function<void()> f) : f(std::move(f)) {}
-    scoped(scoped&& s) : f(std::move(s.f)) { s.f = nullptr; }
+    explicit scoped(std::function<void()> f) : f(std::move(f)) {}
+    scoped(scoped&& s) noexcept : f(std::move(s.f)) { s.f = nullptr; }
     scoped(const scoped& s) = delete;
     ~scoped() {
         try { if (f) { f(); } } catch (...) {}
@@ -173,12 +170,12 @@ static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
     }));
 
     /* Warn about constant results */
-    if (!values.empty() && std::all_of(values.begin(), values.end(), [](const Value& v) {
+    if (!values.empty() && std::ranges::all_of(values.begin(), values.end(), [](const Value& v) {
         return v.isa(ValueType::Null);
     }))
         env->warn("Expression is alway null"s, expr->toString());
 
-    if (!values.empty() && values[0].isa(ValueType::Bool) && std::all_of(values.begin(), values.end(), [&](const Value& v) {
+    if (!values.empty() && values[0].isa(ValueType::Bool) && std::ranges::all_of(values.begin(), values.end(), [&](const Value& v) {
         return v.isBool(values[0].as<ValueType::Bool>());
     }))
         env->warn("Expression is always "s + values[0].toString(), expr->toString());
@@ -336,8 +333,7 @@ class WordOpParser : public InfixParselet
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
         /* Try parse as binary operator */
-        auto right = p.parsePrecedence(precedence(), true);
-        if (right)
+        if (auto right = p.parsePrecedence(precedence(), true); right)
             return simplifyOrForward(p.env, std::make_unique<BinaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                std::move(left),
                                                                                std::move(right)));
@@ -386,12 +382,12 @@ class RegExpParser : public PrefixParselet
 class ConstParser : public PrefixParselet
 {
 public:
-    template <class _ValueType>
-    ConstParser(_ValueType value)
+    template <class ValueType>
+    explicit ConstParser(ValueType value)
         : value_(Value::make(value))
     {}
 
-    ConstParser(Value value)
+    explicit ConstParser(Value value)
         : value_(std::move(value))
     {}
 
@@ -672,7 +668,7 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
         {
             Diagnostics& diagnostics;
 
-            MergeDiagnostics(Diagnostics& diag)
+            explicit MergeDiagnostics(Diagnostics& diag)
                 : diagnostics(diag)
             {}
 
@@ -689,7 +685,7 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     return res;
 }
 
-static auto findSimilarString(std::string_view source, const StringPool& pool)
+static auto findSimilarString(std::string_view source, const StringPool& pool) -> std::string
 {
     std::string_view best;
     auto bestScore = std::numeric_limits<int>::max();
@@ -709,7 +705,7 @@ static auto findSimilarString(std::string_view source, const StringPool& pool)
         }
     }
 
-    return best;
+    return std::string(best);
 }
 
 auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Diagnostics::Message>
@@ -727,7 +723,7 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
             , diagnonstics(diagnonstics)
         {}
 
-        void visit(FieldExpr& e)
+        void visit(FieldExpr& e) override
         {
             ExprVisitor::visit(e);
 
@@ -751,7 +747,7 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
             Diagnostics::Message msg;
             msg.message = std::move(text);
             msg.location = e.sourceLocation();
-            msg.fix = fix;
+            msg.fix = std::move(fix);
 
             messages.push_back(std::move(msg));
         }
@@ -763,8 +759,7 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
     return visitor.messages;
 }
 
-Diagnostics::Diagnostics()
-{}
+Diagnostics::Diagnostics() = default;
 
 Diagnostics::Diagnostics(const AST& ast)
 {
@@ -772,7 +767,7 @@ Diagnostics::Diagnostics(const AST& ast)
     {
         Diagnostics& self;
 
-        InitDiagnostics(Diagnostics& self)
+        explicit InitDiagnostics(Diagnostics& self)
             : self(self)
         {}
 

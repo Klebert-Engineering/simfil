@@ -9,7 +9,6 @@
 #include "simfil/overlay.h"
 #include "fmt/core.h"
 
-#include <iostream>
 #include <optional>
 #include <stdexcept>
 
@@ -48,33 +47,33 @@ namespace
 
 struct ArgParser
 {
-    const std::string fname;
+    const std::string functionName;
     const std::vector<ExprPtr>& args;
     Value value;
     Context ctx;
     std::size_t idx = 0;
     bool anyUndef = false;
 
-    ArgParser(std::string fname, Context ctx, Value val, const std::vector<ExprPtr>& args, size_t idx = 0)
-        : fname(fname)
+    ArgParser(const std::string& functionName, Context ctx, Value val, const std::vector<ExprPtr>& args, size_t idx = 0)
+        : functionName(functionName)
         , args(args)
-        , ctx(ctx)
         , value(std::move(val))
+        , ctx(ctx)
         , idx(idx)
     {
         if (args.size() < idx)
-            raise<std::runtime_error>(fname + ": too few arguments"s);
+            raise<std::runtime_error>(functionName + ": too few arguments"s);
     }
 
     auto arg(const char* name, ValueType type, Value& outValue) -> ArgParser&
     {
         if (args.size() <= idx)
-            raise<std::runtime_error>(fname + ": missing argument "s + name);
+            raise<std::runtime_error>(functionName + ": missing argument "s + name);
 
         auto subctx = ctx;
         args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable {
             if (++n > 1)
-                raise<std::runtime_error>(fname + ": argument "s + name + " must return a single value"s);
+                raise<std::runtime_error>(functionName + ": argument "s + name + " must return a single value"s);
 
             if (vv.isa(ValueType::Undef)) {
                 anyUndef = true;
@@ -83,7 +82,7 @@ struct ArgParser
             }
 
             if (!vv.isa(type))
-                raise<std::runtime_error>(fname + ": invalid value type for argument '"s + name + "'"s);
+                raise<std::runtime_error>(functionName + ": invalid value type for argument '"s + name + "'"s);
 
             outValue = std::move(vv);
 
@@ -94,18 +93,17 @@ struct ArgParser
         return *this;
     }
 
-    auto opt(const char* name, ValueType type, Value& outValue, Value def, bool* set = nullptr) -> ArgParser&
+    auto opt(const char* name, ValueType type, Value& outValue, Value def) -> ArgParser&
     {
         if (args.size() <= idx) {
             outValue = std::move(def);
-            if (set) *set = false;
             return *this;
         }
 
         auto subctx = ctx;
         args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable {
             if (++n > 1)
-                raise<std::runtime_error>(fname + ": argument "s + name + " must return a single value"s);
+                raise<std::runtime_error>(functionName + ": argument "s + name + " must return a single value"s);
 
             if (vv.isa(ValueType::Undef)) {
                 anyUndef = true;
@@ -114,10 +112,9 @@ struct ArgParser
             }
 
             if (!vv.isa(type))
-                raise<std::runtime_error>(fname + ": invalid value type for argument '"s + name + "'"s);
+                raise<std::runtime_error>(functionName + ": invalid value type for argument '"s + name + "'"s);
 
             outValue = std::move(vv);
-            if (set) *set = true;
             return Result::Continue;
         }));
 
@@ -125,19 +122,20 @@ struct ArgParser
         return *this;
     }
 
+    [[nodiscard]]
     auto ok() const -> bool
     {
         return !anyUndef;
     }
 };
 
-auto boolify(Value v) -> bool
+auto boolify(const Value& v) -> bool
 {
     /* Needed because DispatchOperator* returns
      * Undef if any argument is Undef. */
     if (v.isa(ValueType::Undef))
         return false;
-    return UnaryOperatorDispatcher<OperatorBool>::dispatch(std::move(v)).as<ValueType::Bool>();
+    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).as<ValueType::Bool>();
 }
 }
 
@@ -156,7 +154,7 @@ auto AnyFn::ident() const -> const FnInfo&
 
 auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
-    if (args.size() < 1)
+    if (args.empty())
         raise<std::runtime_error>("any(...) expects one argument; got "s + std::to_string(args.size()));
 
     auto subctx = ctx;
@@ -164,7 +162,7 @@ auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
     auto undef = false;  /* At least one value is undef */
 
     for (const auto& arg : args) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, Value vv) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -172,7 +170,7 @@ auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
                 }
             }
 
-            result = result || boolify(std::move(vv));
+            result = result || boolify(vv);
             return result ? Result::Stop : Result::Continue;
         }));
 
@@ -200,7 +198,7 @@ auto EachFn::ident() const -> const FnInfo&
 
 auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
-    if (args.size() < 1)
+    if (args.empty())
         raise<std::runtime_error>("each(...) expects one argument; got "s + std::to_string(args.size()));
 
     auto subctx = ctx;
@@ -208,14 +206,14 @@ auto EachFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, cons
     auto undef = false; /* At least one value is undef */
 
     for (const auto& arg : args) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, Value vv) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
                     return Result::Stop;
                 }
             }
-            result = result && boolify(std::move(vv));
+            result = result && boolify(vv);
             return result ? Result::Continue : Result::Stop;
         }));
 
@@ -243,7 +241,7 @@ auto CountFn::ident() const -> const FnInfo&
 
 auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
 {
-    if (args.size() < 1)
+    if (args.empty())
         raise<std::runtime_error>("count(...) expects one argument; got "s + std::to_string(args.size()));
 
     auto subctx = ctx;
@@ -251,14 +249,14 @@ auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
     int64_t count = 0;
 
     for (const auto& arg : args) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, Value vv) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
                     return Result::Stop;
                 }
             }
-            count += boolify(std::move(vv)) ? 1 : 0;
+            count += boolify(vv) ? 1 : 0;
             return Result::Continue;
         }));
 
@@ -289,9 +287,9 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
     Value name  = Value::undef();
     Value limit = Value::undef();
 
-    auto ok = ArgParser("trace", ctx, val, args, 1)
+    (void)ArgParser("trace", ctx, val, args, 1)
         /* Skip arg 0 */
-        .opt("limit", ValueType::Int, limit, Value::make((int64_t)-1))
+        .opt("limit", ValueType::Int, limit, Value::make(static_cast<int64_t>(-1)))
         .opt("name",  ValueType::String, name, Value::make(args[0]->toString()))
         .ok();
 
@@ -312,7 +310,7 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
                 copy = Value::make(std::string(*sv));
             values.emplace_back(std::move(copy));
         }
-        return res(std::move(ctx), std::move(vv));
+        return res(ctx, std::move(vv));
     }));
     auto duration = std::chrono::steady_clock::now() - start;
 
@@ -397,7 +395,6 @@ auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const 
                 return res(ctx, std::move(vv));
 
         raise<std::runtime_error>("re: invalid value type for argument 'expr'"s);
-        return res(ctx, Value::undef());
     }));
 }
 
@@ -444,14 +441,14 @@ auto SplitFn::ident() const -> const FnInfo&
 }
 
 namespace {
-template <class _Container = std::vector<std::string>>
-_Container split(std::string_view what,
+template <class ContainerType = std::vector<std::string>>
+ContainerType split(std::string_view what,
                  std::string_view at,
                  bool removeEmpty = true)
 {
-    using ResultType = typename _Container::value_type;
+    using ResultType = typename ContainerType::value_type;
 
-    _Container container;
+    ContainerType container;
     auto out = std::back_inserter(container);
 
     /* Special case: empty `what` */
@@ -464,12 +461,12 @@ _Container split(std::string_view what,
         return container;
     }
 
-    auto begin = 0ull;
-    auto end = 0ull;
+    std::string::size_type begin{};
+    std::string::size_type end{};
 
     auto next = [&]() {
         if ((end = what.find(at, begin)) != std::string::npos) {
-            if (end - begin || !removeEmpty)
+            if ((end - begin) != 0 || !removeEmpty)
                 *out++ = ResultType(what).substr(begin, end - begin);
 
             begin = end + at.size();
@@ -534,7 +531,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, co
     auto ok = ArgParser("select", ctx, val, args, 1)
         /* Skip arg 0 */
         .arg("index", ValueType::Int, idx)
-        .opt("limit", ValueType::Int, cnt, Value::make((int64_t)1))
+        .opt("limit", ValueType::Int, cnt, Value::make(static_cast<int64_t>(1)))
         .ok();
 
     if (!ok)
@@ -578,7 +575,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
     if (args.empty() || args.size() > 3)
         raise<std::runtime_error>("sum: Expected at least 1 argument; got "s + std::to_string(args.size()));
 
-    Value sum = Value::make((int64_t)0);
+    Value sum = Value::make(static_cast<int64_t>(0));
 
     Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
     Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
@@ -593,7 +590,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
             auto ov = model_ptr<OverlayNode>::make(vv);
             ov->set(StringPool::OverlaySum, sum);
             ov->set(StringPool::OverlayValue, vv);
-            ov->set(StringPool::OverlayIndex, Value::make((int64_t)n++));
+            ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n++)));
 
             subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, auto vv) {
                 ov->set(StringPool::OverlaySum, vv);
@@ -611,7 +608,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
         return Result::Continue;
     }));
 
-    return res(std::move(ctx), sum);
+    return res(ctx, sum);
 }
 
 KeysFn KeysFn::Fn;

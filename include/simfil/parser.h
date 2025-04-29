@@ -31,7 +31,7 @@ public:
      * @param t  Current token for which this parser got called.
      * @return  Parsed expression object.
      */
-    virtual ExprPtr parse(Parser&, Token) const = 0;
+    virtual ExprPtr parse(Parser& p, Token t) const = 0;
 };
 
 /**
@@ -89,7 +89,7 @@ public:
     /**
      * Returns the precedence of the parselet of the given token or 0.
      */
-    auto precedence(Token token) const -> int;
+    auto precedence(const Token& token) const -> int;
 
     Context ctx;
     Environment* const env;

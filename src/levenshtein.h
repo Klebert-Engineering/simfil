@@ -17,7 +17,7 @@ inline auto levenshtein(std::string_view a, std::string_view b) -> int
 
     std::vector<int> dist;
     dist.resize(lo + 1);
-    std::generate(dist.begin(), dist.end(), [i = 0]() mutable { return i++; });
+    std::ranges::generate(dist.begin(), dist.end(), [i = 0]() mutable { return i++; });
 
     for (auto j = 1; j <= hi; ++j) {
         auto p = dist[0]++;
