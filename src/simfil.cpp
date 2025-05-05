@@ -676,7 +676,9 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
 
             auto visit(FieldExpr& e) -> void override {
                 ExprVisitor::visit(e);
-                diagnostics.fieldHits[index()] += e.hits_;
+
+                if (e.evaluations_ > 0)
+                    diagnostics.fieldHits[index()] += e.hits_;
             }
         };
 
@@ -716,13 +718,13 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
     {
         const AST& ast;
         const Environment& env;
-        const Diagnostics& diagnonstics;
+        const Diagnostics& diagnostics;
         std::vector<Diagnostics::Message> messages;
 
-        Visitor(const AST& ast, const Environment& env, const Diagnostics& diagnonstics)
+        Visitor(const AST& ast, const Environment& env, const Diagnostics& diagnostics)
             : ast(ast)
             , env(env)
-            , diagnonstics(diagnonstics)
+            , diagnostics(diagnostics)
         {}
 
         using ExprVisitor::visit;
@@ -732,7 +734,7 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
             ExprVisitor::visit(e);
 
             // Generate "did you mean ...?" messages for missing fields
-            if (auto iter = diagnonstics.fieldHits.find(index()); iter != diagnonstics.fieldHits.end() && iter->second == 0) {
+            if (auto iter = diagnostics.fieldHits.find(index()); iter != diagnostics.fieldHits.end() && iter->second == 0) {
                 auto guess = findSimilarString(e.name_, *env.strings());
                 if (!guess.empty()) {
                     std::string fix = ast.query();

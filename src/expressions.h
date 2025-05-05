@@ -72,7 +72,9 @@ public:
 
     std::string name_;
     StringId nameId_ = {};
+
     size_t hits_ = 0;
+    size_t evaluations_ = 0;
 };
 
 class MultiConstExpr : public Expr

@@ -1,5 +1,6 @@
 #include "expressions.h"
 
+#include "simfil/environment.h"
 #include "simfil/result.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
@@ -180,8 +181,11 @@ auto FieldExpr::type() const -> Type
 
 auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
+    if (ctx.phase != Context::Compilation)
+        evaluations_++;
+
     if (val.isa(ValueType::Undef))
-        return res(ctx, std::move(val));
+        return res(ctx, val);
 
     /* Special case: _ points to the current node */
     if (name_ == "_")
