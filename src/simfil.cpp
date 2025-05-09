@@ -155,14 +155,10 @@ static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
     std::deque<Value> values;
     auto stub = Context(env, Context::Phase::Compilation);
     (void)expr->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
-        if (!vv.isa(ValueType::Undef) || vv.node) {
+        n += 1;
+        if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.node)) {
             values.push_back(std::move(vv));
             return Result::Continue;
-        }
-
-        if (++n > MultiConstExpr::Limit) {
-            values.clear();
-            return Result::Stop;
         }
 
         values.clear();
