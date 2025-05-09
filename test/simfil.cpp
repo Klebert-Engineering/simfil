@@ -1,9 +1,13 @@
 #include "simfil/simfil.h"
+#include "simfil/environment.h"
 #include "simfil/exception-handler.h"
+#include "simfil/function.h"
 #include "simfil/model/json.h"
+#include "simfil/result.h"
 #include "simfil/value.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <stdexcept>
 
 using namespace simfil;
 
@@ -301,10 +305,39 @@ static const char* const doc = R"json(
 }
 )json";
 
+class PanicFn : public simfil::Function
+{
+public:
+    static const PanicFn fn;
+
+    auto ident() const -> const FnInfo& override
+    {
+        static const FnInfo info{
+          "panic",
+          "Thrown an exception",
+          "panic()"
+        };
+
+        return info;
+    }
+
+    auto eval(Context ctx, Value, const std::vector<ExprPtr>&, const ResultFn& res) const -> Result override
+    {
+        if (ctx.phase != Context::Phase::Compilation)
+            throw std::runtime_error("Panic!");
+
+        return res(ctx, Value::undef());
+    }
+};
+
+const PanicFn PanicFn::fn{};
+
 static auto joined_result(std::string_view query)
 {
     auto model = simfil::json::parse(doc);
     Environment env(model->strings());
+
+    env.functions["panic"] = &PanicFn::fn;
 
     auto ast = compile(env, query, false);
     INFO("AST: " << ast->expr().toString());
@@ -322,6 +355,28 @@ static auto joined_result(std::string_view query)
 
 #define REQUIRE_RESULT(query, result) \
     REQUIRE(joined_result(query) == result)
+
+TEST_CASE("OperatorOrShortCircuit", "[eval.operator-or-short-circuit]") {
+    REQUIRE_RESULT("true or panic()", "true");
+}
+
+TEST_CASE("OperatorAndShortCircuit", "[eval.operator-and-short-circuit]") {
+    REQUIRE_RESULT("false and panic()", "false");
+}
+
+TEST_CASE("OperatorOr", "[eval.operator-or]") {
+    REQUIRE_RESULT("false or false", "false");
+    REQUIRE_RESULT("false or true", "true");
+    REQUIRE_RESULT("true or false", "true");
+    REQUIRE_RESULT("true or true", "true");
+}
+
+TEST_CASE("OperatorAnd", "[eval.operator-and]") {
+    REQUIRE_RESULT("false and false", "false");
+    REQUIRE_RESULT("false and true", "false");
+    REQUIRE_RESULT("true and false", "false");
+    REQUIRE_RESULT("true and true", "true");
+}
 
 TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
     REQUIRE_RESULT("sub.*", R"(sub a|sub b|{"a":"sub sub a","b":"sub sub b"})");
