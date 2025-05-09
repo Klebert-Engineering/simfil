@@ -800,7 +800,7 @@ void OrExpr::accept(ExprVisitor& v)
 
 auto OrExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<AndExpr>(left_->clone(), right_->clone());
+    return std::make_unique<OrExpr>(left_->clone(), right_->clone());
 }
 
 auto OrExpr::toString() const -> std::string
