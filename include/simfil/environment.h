@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "simfil/model/nodes.h"
 #include "simfil/value.h"
 #include "simfil/model/model.h"
 
@@ -37,40 +38,6 @@ struct CaseInsensitiveCompare
     }
 };
 
-
-struct SourceLocation
-{
-    size_t begin = 0, size = 0;
-};
-
-/** Query Diagnostics. */
-struct Diagnostics
-{
-public:
-    struct Message
-    {
-        /* User message */
-        std::string message;
-
-        /* Location the message refers to */
-        SourceLocation location;
-
-        /* Optional query string that applies this fix */
-        std::optional<std::string> fix;
-    };
-
-    Diagnostics();
-    explicit Diagnostics(const AST& ast);
-
-    /**
-     * Append/merge another diagnostics object into this one.
-     */
-    Diagnostics& append(const Diagnostics& other);
-
-//private:
-    using ExprId = size_t;
-    std::unordered_map<ExprId, std::atomic_uint32_t> fieldHits;
-};
 
 /** Trace call stats. */
 struct Trace

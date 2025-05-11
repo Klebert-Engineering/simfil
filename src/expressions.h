@@ -1,6 +1,7 @@
 #pragma once
 
 #include "simfil/expression.h"
+#include "simfil/model/nodes.h"
 #include "simfil/operator.h"
 
 #include <string>
@@ -264,7 +265,10 @@ public:
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override
     {
         return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
-            return right_->eval(ctx, val, LambdaResultFn([&res, &lv](Context ctx, Value rv) {
+            leftTypes_.set(lv.type);
+            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) {
+                rightTypes_.set(rv.type);
+
                 return res(ctx, BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv),
                                                                              std::move(rv)));
             }));
@@ -289,6 +293,7 @@ public:
     }
 
     ExprPtr left_, right_;
+    TypeFlags leftTypes_, rightTypes_;
 };
 
 class UnaryWordOpExpr : public Expr

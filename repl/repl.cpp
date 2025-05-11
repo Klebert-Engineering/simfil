@@ -232,7 +232,7 @@ int main(int argc, char *argv[])
         if (options.verbose)
             std::cout << "Expression:\n  " << ast->expr().toString() << "\n";
 
-        simfil::Diagnostics diag(*ast);
+        simfil::Diagnostics diag;
         std::vector<std::vector<simfil::Value>> res;
         std::chrono::milliseconds msec;
 

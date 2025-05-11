@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "fmt/format.h"
 #include "simfil/value.h"
 #include "exception-handler.h"
 
@@ -90,8 +91,8 @@ struct OperatorBool
     NAME("?")
 
     /* Everything but `false` and `null` are `true`. */
-    template <class _Type>
-    auto operator()(const _Type&) const
+    template <class Type>
+    auto operator()(const Type&) const
     {
         return true;
     }
@@ -233,9 +234,9 @@ struct OperatorAsFloat
     NAME("float")
     DENY_OTHER()
 
-    auto operator()(bool v) const
+    auto operator()(bool v) const -> double
     {
-        return static_cast<double>(v ? 1.0 : 0.0);
+        return v ? 1.0 : 0.0;
     }
 
     auto operator()(int64_t v) const
@@ -684,11 +685,11 @@ struct UnaryOperatorDispatcher
     }
 };
 
-template <class _Left, class _Operator>
+template <class Left, class Operator>
 struct BinaryOperatorDispatcherRHS
 {
-    const _Left& lhs;
-    BinaryOperatorDispatcherRHS(const _Left& lhs)
+    const Left& lhs;
+    explicit BinaryOperatorDispatcherRHS(const Left& lhs)
         : lhs(lhs)
     {}
 
@@ -697,14 +698,14 @@ struct BinaryOperatorDispatcherRHS
         return Value::undef();
     }
 
-    template <class _Right>
-    auto operator()(const _Right& rhs) -> Value
+    template <class Right>
+    auto operator()(const Right& rhs) -> Value
     {
-        return impl::makeOperatorResult<_Operator>(_Operator()(lhs, rhs));
+        return impl::makeOperatorResult<Operator>(Operator()(lhs, rhs));
     }
 };
 
-template <class _Operator>
+template <class Operator>
 struct BinaryOperatorDispatcher
 {
     const Value& value;
@@ -716,17 +717,17 @@ struct BinaryOperatorDispatcher
                 if (rhs.isa(ValueType::Undef))
                     return Value::undef();
                 const auto& obj = lhs.as<ValueType::TransientObject>();
-                return obj.meta->binaryOp(_Operator::name(), obj, rhs);
+                return obj.meta->binaryOp(Operator::name(), obj, rhs);
             }
 
             if (rhs.isa(ValueType::TransientObject)) {
                 if (lhs.isa(ValueType::Undef))
                     return Value::undef();
                 const auto& obj = rhs.as<ValueType::TransientObject>();
-                return obj.meta->binaryOp(_Operator::name(), lhs, obj);
+                return obj.meta->binaryOp(Operator::name(), lhs, obj);
             }
 
-            return lhs.visit(BinaryOperatorDispatcher<_Operator>(rhs));
+            return lhs.visit(BinaryOperatorDispatcher<Operator>(rhs));
         } catch (const InvalidOperandsError& err) {
             std::string ltype, rtype;
             try {
@@ -736,13 +737,11 @@ struct BinaryOperatorDispatcher
                 ltype = valueType2String(lhs.type);
                 rtype = valueType2String(rhs.type);
             }
-            raise<std::runtime_error>("Invalid operands "s + ltype +
-                                     " and "s + rtype +
-                                     " for operator "s + std::string(err.operatorName));
+            raise<std::runtime_error>(fmt::format("Invalid operands {} and {} for operator {}", ltype, rtype, err.operatorName));
         }
     }
 
-    BinaryOperatorDispatcher(const Value& value)
+    explicit BinaryOperatorDispatcher(const Value& value)
         : value(value)
     {}
 
@@ -751,10 +750,10 @@ struct BinaryOperatorDispatcher
         return Value::undef();
     }
 
-    template <class _Left>
-    auto operator()(const _Left& lhs) -> Value
+    template <class Left>
+    auto operator()(const Left& lhs) -> Value
     {
-        return value.visit(BinaryOperatorDispatcherRHS<_Left, _Operator>(lhs));
+        return value.visit(BinaryOperatorDispatcherRHS<Left, Operator>(lhs));
     }
 };
 

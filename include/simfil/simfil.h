@@ -2,13 +2,12 @@
 
 #pragma once
 
-#include <memory>
 #include <vector>
 #include <string_view>
 
-#include "simfil/token.h"
 #include "simfil/expression.h"
 #include "simfil/environment.h"
+#include "simfil/diagnostics.h"
 #include "simfil/value.h"
 #include "simfil/model/model.h"
 

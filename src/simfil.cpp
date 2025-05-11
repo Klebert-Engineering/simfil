@@ -657,141 +657,15 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     }));
 
     if (diagnostics) {
-        /* NOTE: Make sure everything here is thread-safe! Preinitialize maps in the Diagnostics ctor etc.
-         *       Try to be lock-free, as locking here can hurt performance.
-         */
-        struct MergeDiagnostics : ExprVisitor
-        {
-            Diagnostics& diagnostics;
-
-            explicit MergeDiagnostics(Diagnostics& diag)
-                : diagnostics(diag)
-            {}
-
-            using ExprVisitor::visit;
-
-            auto visit(FieldExpr& e) -> void override {
-                ExprVisitor::visit(e);
-
-                if (e.evaluations_ > 0)
-                    diagnostics.fieldHits[index()] += e.hits_;
-            }
-        };
-
-        MergeDiagnostics visitor(*diagnostics);
-        mutableAST->accept(visitor);
+        diagnostics->collect(*mutableAST);
     }
 
     return res;
 }
 
-static auto findSimilarString(std::string_view source, const StringPool& pool) -> std::string
-{
-    std::string_view best;
-    auto bestScore = std::numeric_limits<int>::max();
-
-    const auto isDollar = source[0] == '$';
-    for (const auto& target : pool.strings()) {
-        const auto targetIsDollar = target[0] == '$';
-        if (isDollar != targetIsDollar)
-            continue;
-        if (target == source)
-            continue;
-
-        const auto score = levenshtein(source, target);
-        if (score < bestScore) {
-            bestScore = score;
-            best = target;
-        }
-    }
-
-    return std::string(best);
-}
-
 auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Diagnostics::Message>
 {
-    struct Visitor : ExprVisitor
-    {
-        const AST& ast;
-        const Environment& env;
-        const Diagnostics& diagnostics;
-        std::vector<Diagnostics::Message> messages;
-
-        Visitor(const AST& ast, const Environment& env, const Diagnostics& diagnostics)
-            : ast(ast)
-            , env(env)
-            , diagnostics(diagnostics)
-        {}
-
-        using ExprVisitor::visit;
-
-        void visit(FieldExpr& e) override
-        {
-            ExprVisitor::visit(e);
-
-            // Generate "did you mean ...?" messages for missing fields
-            if (auto iter = diagnostics.fieldHits.find(index()); iter != diagnostics.fieldHits.end() && iter->second == 0) {
-                auto guess = findSimilarString(e.name_, *env.strings());
-                if (!guess.empty()) {
-                    std::string fix = ast.query();
-                    if (auto loc = e.sourceLocation(); loc.size > 0)
-                        fix.replace(loc.begin, loc.size, guess);
-
-                    addMessage(fmt::format("No matches for field '{}'. Did you mean '{}'?", e.name_, guess), e, fix);
-                } else {
-                    addMessage(fmt::format("No matches for field '{}'.", e.name_, guess), e, {});
-                }
-            }
-        }
-
-        void addMessage(std::string text, const Expr& e, std::optional<std::string> fix)
-        {
-            Diagnostics::Message msg;
-            msg.message = std::move(text);
-            msg.location = e.sourceLocation();
-            msg.fix = std::move(fix);
-
-            messages.push_back(std::move(msg));
-        }
-    };
-
-    Visitor visitor(ast, env, diag);
-    ast.expr().accept(visitor);
-
-    return visitor.messages;
-}
-
-Diagnostics::Diagnostics() = default;
-
-Diagnostics::Diagnostics(const AST& ast)
-{
-    struct InitDiagnostics : ExprVisitor
-    {
-        Diagnostics& self;
-
-        explicit InitDiagnostics(Diagnostics& self)
-            : self(self)
-        {}
-
-        using ExprVisitor::visit;
-
-        auto visit(FieldExpr& e) -> void override
-        {
-            ExprVisitor::visit(e);
-            self.fieldHits[index()] = 0;
-        }
-    };
-
-    InitDiagnostics visitor(*this);
-    ast.expr().accept(visitor);
-}
-
-Diagnostics& Diagnostics::append(const Diagnostics& other)
-{
-    for (const auto& [key, value] : other.fieldHits) {
-        fieldHits[key] += value;
-    }
-    return *this;
+    return diag.buildMessages(env, ast);
 }
 
 }

@@ -5,6 +5,7 @@
 #include "simfil/token.h"
 #include "simfil/value.h"
 #include "simfil/environment.h"
+#include "simfil/diagnostics.h"
 #include "simfil/result.h"
 
 #include <memory>

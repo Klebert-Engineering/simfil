@@ -1,6 +1,8 @@
 #pragma once
 
+#include <bitset>
 #include <memory>
+#include <type_traits>
 #include <variant>
 #include <functional>
 
@@ -48,6 +50,35 @@ enum class ValueType
     TransientObject,
     Object,
     Array
+    // If you add types, update TypeFlags::flags bit size!
+};
+
+/**
+ * Bitset of ValueTypes
+ */
+struct TypeFlags
+{
+    std::bitset<9> flags;
+
+    auto test(ValueType type) const
+    {
+        return flags.test(static_cast<std::underlying_type_t<ValueType>>(type));
+    }
+
+    auto test(TypeFlags other) const
+    {
+        return flags & other.flags;
+    }
+
+    auto set(ValueType type, bool value = true)
+    {
+        flags.set(static_cast<std::underlying_type_t<ValueType>>(type), value);
+    }
+
+    auto set(TypeFlags other)
+    {
+        flags |= other.flags;
+    }
 };
 
 using ScalarValueType = std::variant<
@@ -98,7 +129,7 @@ struct model_ptr
     template<typename... Args>
     explicit model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
 
-    static_assert(std::is_base_of<ModelNode, T>::value, "T must inherit from ModelNode.");
+    static_assert(std::is_base_of_v<ModelNode, T>, "T must inherit from ModelNode.");
 
     template<typename... Args>
     static model_ptr<T> make(Args&&... args) {
