@@ -818,6 +818,36 @@ void ExprVisitor::visit(FieldExpr& e)
     visit(static_cast<Expr&>(e));
 }
 
+void ExprVisitor::visit(BinaryExpr<OperatorEq>& e)
+{
+    visit(static_cast<Expr&>(e));
+}
+
+void ExprVisitor::visit(BinaryExpr<OperatorNeq>& e)
+{
+    visit(static_cast<Expr&>(e));
+}
+
+void ExprVisitor::visit(BinaryExpr<OperatorLt>& e)
+{
+    visit(static_cast<Expr&>(e));
+}
+
+void ExprVisitor::visit(BinaryExpr<OperatorLtEq>& e)
+{
+    visit(static_cast<Expr&>(e));
+}
+
+void ExprVisitor::visit(BinaryExpr<OperatorGt>& e)
+{
+    visit(static_cast<Expr&>(e));
+}
+
+void ExprVisitor::visit(BinaryExpr<OperatorGtEq>& e)
+{
+    visit(static_cast<Expr&>(e));
+}
+
 auto ExprVisitor::index() const -> size_t
 {
     return index_;

@@ -11,6 +11,8 @@ namespace simfil
 
 class FieldExpr;
 class PathExpr;
+template <class> class UnaryExpr;
+template <class> class BinaryExpr;
 
 /**
  * Visitor base for visiting expressions recursively.
@@ -20,8 +22,14 @@ class ExprVisitor
 public:
     virtual ~ExprVisitor() = default;
 
-    virtual void visit(Expr& exp);
-    virtual void visit(FieldExpr& exp);
+    virtual void visit(Expr& expr);
+    virtual void visit(FieldExpr& expr);
+    virtual void visit(BinaryExpr<OperatorEq>& expr);
+    virtual void visit(BinaryExpr<OperatorNeq>& expr);
+    virtual void visit(BinaryExpr<OperatorLt>& expr);
+    virtual void visit(BinaryExpr<OperatorLtEq>& expr);
+    virtual void visit(BinaryExpr<OperatorGt>& expr);
+    virtual void visit(BinaryExpr<OperatorGtEq>& expr);
 
 protected:
     /* Returns the index of the current expression */
@@ -252,10 +260,13 @@ public:
     BinaryExpr(ExprPtr left, ExprPtr right)
         : left_(std::move(left))
         , right_(std::move(right))
-    {
-        assert(left_.get());
-        assert(right_.get());
-    }
+    {}
+
+    BinaryExpr(const Token& token, ExprPtr left, ExprPtr right)
+        : Expr(token)
+        , left_(std::move(left))
+        , right_(std::move(right))
+    {}
 
     auto type() const -> Type override
     {
@@ -294,6 +305,122 @@ public:
 
     ExprPtr left_, right_;
     TypeFlags leftTypes_, rightTypes_;
+};
+
+class ComparisonExprBase : public Expr
+{
+public:
+    ComparisonExprBase(ExprPtr left, ExprPtr right)
+        : left_(std::move(left))
+        , right_(std::move(right))
+    {}
+
+    ComparisonExprBase(const Token& token, ExprPtr left, ExprPtr right)
+        : Expr(token)
+        , left_(std::move(left))
+        , right_(std::move(right))
+    {}
+
+    auto type() const -> Type override
+    {
+        return Type::VALUE;
+    }
+
+    auto operandTypes() const -> std::tuple<TypeFlags, TypeFlags>
+    {
+        return {leftTypes_, rightTypes_};
+    }
+
+    auto resultCounts() const -> std::tuple<uint32_t, uint32_t>
+    {
+        return {falseResults_, trueResults_};
+    }
+
+    ExprPtr left_, right_;
+    TypeFlags leftTypes_;
+    TypeFlags rightTypes_;
+    uint32_t falseResults_ = 0;
+    uint32_t trueResults_ = 0;
+};
+
+template <class Operator, class Child>
+class ComparisonExpr : public ComparisonExprBase
+{
+public:
+    using ComparisonExprBase::ComparisonExprBase;
+
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override
+    {
+        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
+            leftTypes_.set(lv.type);
+            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) {
+                rightTypes_.set(rv.type);
+
+                auto operatorResult = BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv), std::move(rv));
+                if (operatorResult.isa(ValueType::Bool)) {
+                    if (operatorResult.template as<ValueType::Bool>())
+                        ++trueResults_;
+                    else
+                        ++falseResults_;
+                }
+
+                return res(ctx, operatorResult);
+            }));
+        }));
+    }
+
+    auto clone() const -> ExprPtr override
+    {
+        return std::make_unique<Child>(left_->clone(), right_->clone());
+    }
+
+    void accept(ExprVisitor& v) override
+    {
+        v.visit(static_cast<Child&>(*this));
+        left_->accept(v);
+        right_->accept(v);
+    }
+
+    auto toString() const -> std::string override
+    {
+        return "("s + Operator::name() + " "s + left_->toString() + " "s + right_->toString() + ")"s;
+    }
+};
+
+template <>
+class BinaryExpr<OperatorEq> : public ComparisonExpr<OperatorEq, BinaryExpr<OperatorEq>>
+{
+    using ComparisonExpr::ComparisonExpr;
+};
+
+template <>
+class BinaryExpr<OperatorNeq> : public ComparisonExpr<OperatorNeq, BinaryExpr<OperatorNeq>>
+{
+    using ComparisonExpr::ComparisonExpr;
+};
+
+template <>
+class BinaryExpr<OperatorLt> : public ComparisonExpr<OperatorLt, BinaryExpr<OperatorLt>>
+{
+    using ComparisonExpr::ComparisonExpr;
+};
+
+template <>
+class BinaryExpr<OperatorLtEq> : public ComparisonExpr<OperatorLtEq, BinaryExpr<OperatorLtEq>>
+{
+    using ComparisonExpr::ComparisonExpr;
+};
+
+template <>
+class BinaryExpr<OperatorGt> : public ComparisonExpr<OperatorGt, BinaryExpr<OperatorGt>>
+{
+    using ComparisonExpr::ComparisonExpr;
+};
+
+template <>
+class BinaryExpr<OperatorGtEq> : public ComparisonExpr<OperatorGtEq, BinaryExpr<OperatorGtEq>>
+{
+    using ComparisonExpr::ComparisonExpr;
 };
 
 class UnaryWordOpExpr : public Expr

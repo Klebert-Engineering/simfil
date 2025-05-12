@@ -263,7 +263,8 @@ public:
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
         auto right = p.parsePrecedence(precedence());
-        return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(std::move(left),
+        return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(t,
+                                                                               std::move(left),
                                                                                std::move(right)));
     }
 

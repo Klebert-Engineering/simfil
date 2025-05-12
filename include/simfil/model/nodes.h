@@ -53,34 +53,6 @@ enum class ValueType
     // If you add types, update TypeFlags::flags bit size!
 };
 
-/**
- * Bitset of ValueTypes
- */
-struct TypeFlags
-{
-    std::bitset<9> flags;
-
-    auto test(ValueType type) const
-    {
-        return flags.test(static_cast<std::underlying_type_t<ValueType>>(type));
-    }
-
-    auto test(TypeFlags other) const
-    {
-        return flags & other.flags;
-    }
-
-    auto set(ValueType type, bool value = true)
-    {
-        flags.set(static_cast<std::underlying_type_t<ValueType>>(type), value);
-    }
-
-    auto set(TypeFlags other)
-    {
-        flags |= other.flags;
-    }
-};
-
 using ScalarValueType = std::variant<
     std::monostate,
     bool,

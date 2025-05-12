@@ -267,7 +267,8 @@ int main(int argc, char *argv[])
                 std::string underline;
                 std::fill_n(std::back_inserter(underline), loc.begin, ' ');
                 underline.push_back('^');
-                std::fill_n(std::back_inserter(underline), loc.size - 1, '~');
+                if (loc.size > 0)
+                    std::fill_n(std::back_inserter(underline), loc.size - 1, '~');
                 return underline;
             };
 
