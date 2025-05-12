@@ -5,6 +5,8 @@
 #include "levenshtein.h"
 #include "expressions.h"
 
+#include <fmt/ranges.h>
+
 namespace simfil
 {
 
