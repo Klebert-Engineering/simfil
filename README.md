@@ -19,7 +19,7 @@ For details about the language see the [Language Guide](simfil-language.md).
 
 ### Examples
 
-All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the interactive command line tool `<builddir>/repl/simfil-repl INPUT` (see [Using the Interactive Command Line Tool](#Using the Interactive Command Line Tool)).
+All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the interactive command line tool `<builddir>/repl/simfil-repl INPUT` (see [Using the Interactive Command Line Tool](#using-the-interactive-command-line-tool)).
 
 #### All person's names
 
