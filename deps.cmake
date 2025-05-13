@@ -20,7 +20,7 @@ if (NOT TARGET fmt::fmt)
   FetchContent_MakeAvailable(fmt)
 endif()
 
-if (NOT TARGET bitsery::bitsery)
+if (NOT TARGET Bitsery::bitsery)
   FetchContent_Declare(bitsery
     GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
     GIT_TAG        "v5.2.4"
