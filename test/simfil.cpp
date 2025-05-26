@@ -5,8 +5,10 @@
 #include "simfil/model/json.h"
 #include "simfil/result.h"
 #include "simfil/value.h"
+#include "src/expressions.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <optional>
 #include <stdexcept>
 
 using namespace simfil;
@@ -641,4 +643,29 @@ TEST_CASE("Exception Handler", "[exception]")
 
     // Reset throw-handler, so it isn't erroneously used by other tests.
     simfil::ThrowHandler::instance().set(nullptr);
+}
+
+TEST_CASE("Visit AST", "[visit.ast]")
+{
+    Environment env(Environment::WithNewStringCache);
+
+    auto ast = compile(env, "**.field = 123", false, false);
+    REQUIRE(ast.get() != nullptr);
+
+    struct Visitor : ExprVisitor
+    {
+        std::optional<std::string> visitedFieldName;
+
+        auto visit(FieldExpr& expr) -> void override
+        {
+            ExprVisitor::visit(expr);
+
+            visitedFieldName = expr.name_;
+        }
+    };
+
+    Visitor visitor;
+    ast->expr().accept(visitor);
+
+    REQUIRE(visitor.visitedFieldName == "field");
 }
