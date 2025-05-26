@@ -99,7 +99,7 @@ public:
      * @param name  Trace identifier
      * @param fn    IterCallback called thread-safe
      */
-    auto trace(const std::string& name, std::function<void(Trace&)> fn) -> void;
+    auto trace(const std::string& name, const std::function<void(Trace&)>& fn) -> void;
 
     /**
      * Query function by name.

@@ -4,13 +4,26 @@
 #include "simfil/model/nodes.h"
 #include "simfil/operator.h"
 
+#include <cstdint>
 #include <string>
 
 namespace simfil
 {
 
+class WildcardExpr;
+class AnyChildExpr;
+class MultiConstExpr;
+class ConstExpr;
+class SubscriptExpr;
+class SubExpr;
+class CallExpression;
+class UnpackExpr;
+class UnaryWordOpExpr;
+class BinaryWordOpExpr;
 class FieldExpr;
 class PathExpr;
+class AndExpr;
+class OrExpr;
 template <class> class UnaryExpr;
 template <class> class BinaryExpr;
 
@@ -23,7 +36,20 @@ public:
     virtual ~ExprVisitor() = default;
 
     virtual void visit(Expr& expr);
+    virtual void visit(WildcardExpr& expr);
+    virtual void visit(AnyChildExpr& expr);
+    virtual void visit(MultiConstExpr& expr);
+    virtual void visit(ConstExpr& expr);
+    virtual void visit(SubscriptExpr& expr);
+    virtual void visit(SubExpr& expr);
+    virtual void visit(CallExpression& expr);
+    virtual void visit(PathExpr& expr);
     virtual void visit(FieldExpr& expr);
+    virtual void visit(UnpackExpr& expr);
+    virtual void visit(UnaryWordOpExpr& expr);
+    virtual void visit(BinaryWordOpExpr& expr);
+    virtual void visit(AndExpr& expr);
+    virtual void visit(OrExpr& expr);
     virtual void visit(BinaryExpr<OperatorEq>& expr);
     virtual void visit(BinaryExpr<OperatorNeq>& expr);
     virtual void visit(BinaryExpr<OperatorLt>& expr);

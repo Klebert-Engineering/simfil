@@ -37,7 +37,7 @@ auto Environment::warn(std::string message, std::string detail) -> void
     warnings.emplace_back(std::move(message), std::move(detail));
 }
 
-auto Environment::trace(const std::string& name, std::function<void(Trace&)> fn) -> void
+auto Environment::trace(const std::string& name, const std::function<void(Trace&)>& fn) -> void
 {
     std::unique_lock<std::mutex> _(*traceMtx);
     fn(traces[name]);

@@ -14,8 +14,8 @@ namespace simfil
 
 class AST;
 class Expr;
-class Environment;
-class ModelNode;
+struct Environment;
+struct ModelNode;
 
 struct SourceLocation
 {

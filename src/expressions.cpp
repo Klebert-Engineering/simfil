@@ -369,10 +369,6 @@ auto SubscriptExpr::clone() const -> ExprPtr
 void SubscriptExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (left_)
-        left_->accept(v);
-    if (index_)
-        index_->accept(v);
 }
 
 auto SubscriptExpr::toString() const -> std::string
@@ -429,10 +425,6 @@ auto SubExpr::clone() const -> ExprPtr
 void SubExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (left_)
-        left_->accept(v);
-    if (sub_)
-        sub_->accept(v);
 }
 
 CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)
@@ -477,9 +469,6 @@ auto CallExpression::clone() const -> ExprPtr
 void CallExpression::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    for (auto& arg : args_)
-        if (arg)
-            arg->accept(v);
 }
 
 auto CallExpression::toString() const -> std::string
@@ -547,10 +536,6 @@ auto PathExpr::clone() const -> ExprPtr
 void PathExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (left_)
-        left_->accept(v);
-    if (right_)
-        right_->accept(v);
 }
 
 auto PathExpr::toString() const -> std::string
@@ -602,8 +587,6 @@ auto UnpackExpr::clone() const -> ExprPtr
 void UnpackExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (sub_)
-        sub_->accept(v);
 }
 
 auto UnpackExpr::toString() const -> std::string
@@ -640,8 +623,6 @@ auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) 
 void UnaryWordOpExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (left_)
-        left_->accept(v);
 }
 
 auto UnaryWordOpExpr::clone() const -> ExprPtr
@@ -691,10 +672,6 @@ auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res)
 void BinaryWordOpExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (left_)
-        left_->accept(v);
-    if (right_)
-        right_->accept(v);
 }
 
 auto BinaryWordOpExpr::clone() const -> ExprPtr
@@ -741,10 +718,6 @@ auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Resul
 void AndExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (left_)
-        left_->accept(v);
-    if (right_)
-        right_->accept(v);
 }
 
 auto AndExpr::clone() const -> ExprPtr
@@ -792,10 +765,6 @@ auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 void OrExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
-    if (left_)
-        left_->accept(v);
-    if (right_)
-        right_->accept(v);
 }
 
 auto OrExpr::clone() const -> ExprPtr
@@ -813,9 +782,114 @@ void ExprVisitor::visit(Expr& e)
     index_++;
 }
 
-void ExprVisitor::visit(FieldExpr& e)
+void ExprVisitor::visit(WildcardExpr& expr)
 {
-    visit(static_cast<Expr&>(e));
+    visit(static_cast<Expr&>(expr));
+}
+
+void ExprVisitor::visit(AnyChildExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+}
+
+void ExprVisitor::visit(MultiConstExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+}
+
+void ExprVisitor::visit(ConstExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+}
+
+void ExprVisitor::visit(SubscriptExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.left_)
+        expr.left_->accept(*this);
+    if (expr.index_)
+        expr.index_->accept(*this);
+}
+
+void ExprVisitor::visit(SubExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.left_)
+        expr.left_->accept(*this);
+    if (expr.sub_)
+        expr.sub_->accept(*this);
+}
+
+void ExprVisitor::visit(CallExpression& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    for (const auto& arg : expr.args_)
+        if (arg)
+            arg->accept(*this);
+}
+
+void ExprVisitor::visit(PathExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.left_)
+        expr.left_->accept(*this);
+    if (expr.right_)
+        expr.right_->accept(*this);
+}
+
+void ExprVisitor::visit(FieldExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+}
+
+void ExprVisitor::visit(UnpackExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.sub_)
+        expr.sub_->accept(*this);
+}
+
+void ExprVisitor::visit(UnaryWordOpExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.left_)
+        expr.left_->accept(*this);
+}
+
+void ExprVisitor::visit(BinaryWordOpExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.left_)
+        expr.left_->accept(*this);
+    if (expr.right_)
+        expr.right_->accept(*this);
+}
+
+void ExprVisitor::visit(AndExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.left_)
+        expr.left_->accept(*this);
+    if (expr.right_)
+        expr.right_->accept(*this);
+}
+
+void ExprVisitor::visit(OrExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    if (expr.left_)
+        expr.left_->accept(*this);
+    if (expr.right_)
+        expr.right_->accept(*this);
 }
 
 void ExprVisitor::visit(BinaryExpr<OperatorEq>& e)
