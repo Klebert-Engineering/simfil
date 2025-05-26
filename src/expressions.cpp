@@ -7,6 +7,8 @@
 
 #include "fmt/core.h"
 
+namespace simfil
+{
 namespace
 {
 
@@ -14,15 +16,15 @@ namespace
  * Helper for calling the result function if it has never been executed
  * at the time of destruction.
  */
-template <class InnerFn = const simfil::ResultFn&>
-struct CountedResultFn : simfil::ResultFn
+template <class InnerFn = const ResultFn&>
+struct CountedResultFn : ResultFn
 {
     mutable std::size_t calls = 0;
     bool finished = false;
     InnerFn fn;
-    simfil::Context nonctx;
+    Context nonctx;
 
-    CountedResultFn(InnerFn fn, simfil::Context ctx)
+    CountedResultFn(InnerFn fn, Context ctx)
         : fn(fn)
         , nonctx(ctx)
     {}
@@ -30,7 +32,7 @@ struct CountedResultFn : simfil::ResultFn
     CountedResultFn(const CountedResultFn&) = delete;
     CountedResultFn(CountedResultFn&&) = delete;
 
-    auto operator()(simfil::Context ctx, simfil::Value vv) const -> simfil::Result override
+    auto operator()(Context ctx, Value vv) const -> Result override
     {
         assert(!finished);
         ++calls;
@@ -43,18 +45,24 @@ struct CountedResultFn : simfil::ResultFn
         assert(!finished);
         if (calls == 0 && !finished) {
             finished = true;
-            if (nonctx.phase == simfil::Context::Phase::Compilation)
-                fn(nonctx, simfil::Value::undef());
+            if (nonctx.phase == Context::Phase::Compilation)
+                fn(nonctx, Value::undef());
             else
-                fn(nonctx, simfil::Value::null());
+                fn(nonctx, Value::null());
         }
     }
 };
 
+auto boolify(const Value& v) -> bool
+{
+    /* Needed because DispatchOperator* returns
+     * Undef if any argument is Undef. */
+    if (v.isa(ValueType::Undef))
+        return false;
+    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).as<ValueType::Bool>();
 }
 
-namespace simfil
-{
+}
 
 WildcardExpr::WildcardExpr() = default;
 
@@ -425,6 +433,73 @@ auto SubExpr::clone() const -> ExprPtr
 void SubExpr::accept(ExprVisitor& v)
 {
     v.visit(*this);
+}
+
+AnyCallExpr::AnyCallExpr(std::vector<ExprPtr> args)
+    : args_(std::move(args))
+{}
+
+auto AnyCallExpr::type() const -> Type
+{
+    return Type::VALUE;
+}
+
+auto AnyCallExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+{
+    auto subctx = ctx;
+    auto result = false; /* At least one value is true  */
+    auto undef = false;  /* At least one value is undef */
+
+    for (const auto& arg : args_) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+            if (ctx.phase == Context::Phase::Compilation) {
+                if (vv.isa(ValueType::Undef)) {
+                    undef = true;
+                    return Result::Stop;
+                }
+            }
+
+            result = result || boolify(vv);
+            return result ? Result::Stop : Result::Continue;
+        }));
+
+        if (result || undef)
+            break;
+    }
+
+    if (undef)
+        return res(subctx, Value::undef());
+
+    ++trueResults_;
+    return res(subctx, Value::make(result));
+}
+
+auto AnyCallExpr::clone() const -> ExprPtr
+{
+    std::vector<ExprPtr> clonedArgs;
+    clonedArgs.resize(args_.size());
+    std::transform(args_.cbegin(), args_.cend(), std::make_move_iterator(clonedArgs.begin()), [](const auto& exp) {
+        return exp->clone();
+    });
+
+    return std::make_unique<AnyCallExpr>(std::move(clonedArgs));
+}
+
+auto AnyCallExpr::accept(ExprVisitor& v) -> void
+{
+    v.visit(*this);
+}
+
+auto AnyCallExpr::toString() const -> std::string
+{
+    if (args_.empty())
+        return "any()"s;
+
+    auto s = "(any"s;
+    for (const auto& arg : args_) {
+        s += " "s + arg->toString();
+    }
+    return s + ")"s;
 }
 
 CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)

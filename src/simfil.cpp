@@ -507,7 +507,11 @@ class WordParser : public PrefixParselet
             p.consume();
 
             auto arguments = p.parseList(Token::RPAREN);
-            return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
+            if (word == "any") {
+                return simplifyOrForward(p.env, std::make_unique<AnyCallExpr>(std::move(arguments)));
+            } else {
+                return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
+            }
         } else if (!p.ctx.inPath) {
             /* Parse Symbols (words in upper-case) */
             if (isSymbolWord(word)) {

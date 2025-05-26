@@ -16,6 +16,7 @@ class MultiConstExpr;
 class ConstExpr;
 class SubscriptExpr;
 class SubExpr;
+class AnyCallExpr;
 class CallExpression;
 class UnpackExpr;
 class UnaryWordOpExpr;
@@ -42,6 +43,7 @@ public:
     virtual void visit(ConstExpr& expr);
     virtual void visit(SubscriptExpr& expr);
     virtual void visit(SubExpr& expr);
+    virtual void visit(AnyCallExpr& expr);
     virtual void visit(CallExpression& expr);
     virtual void visit(PathExpr& expr);
     virtual void visit(FieldExpr& expr);
@@ -179,6 +181,23 @@ public:
     void accept(ExprVisitor& v) override;
 
     ExprPtr left_, sub_;
+};
+
+class AnyCallExpr : public Expr
+{
+public:
+    explicit AnyCallExpr(std::vector<ExprPtr> args);
+
+    auto type() const -> Type override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override;
+    auto clone() const -> ExprPtr override;
+    void accept(ExprVisitor& v) override;
+    auto toString() const -> std::string override;
+
+    std::vector<ExprPtr> args_;
+
+    /* Runtime Data */
+    std::uint32_t trueResults_ = 0;
 };
 
 class CallExpression : public Expr

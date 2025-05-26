@@ -139,50 +139,6 @@ auto boolify(const Value& v) -> bool
 }
 }
 
-AnyFn AnyFn::Fn;
-AnyFn::AnyFn() = default;
-
-auto AnyFn::ident() const -> const FnInfo&
-{
-    static const FnInfo info{
-        "any",
-        "Returns true if any expr returned a positive result.",
-        "any(expr...) -> <bool>"
-    };
-    return info;
-}
-
-auto AnyFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
-{
-    if (args.empty())
-        raise<std::runtime_error>("any(...) expects one argument; got "s + std::to_string(args.size()));
-
-    auto subctx = ctx;
-    auto result = false; /* At least one value is true  */
-    auto undef = false;  /* At least one value is undef */
-
-    for (const auto& arg : args) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
-            if (ctx.phase == Context::Phase::Compilation) {
-                if (vv.isa(ValueType::Undef)) {
-                    undef = true;
-                    return Result::Stop;
-                }
-            }
-
-            result = result || boolify(vv);
-            return result ? Result::Stop : Result::Continue;
-        }));
-
-        if (result || undef)
-            break;
-    }
-
-    if (undef)
-        return res(subctx, Value::undef());
-    return res(subctx, Value::make(result));
-}
-
 EachFn EachFn::Fn;
 EachFn::EachFn() = default;
 
