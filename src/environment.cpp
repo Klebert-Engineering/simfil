@@ -12,8 +12,6 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
     if (!stringPool)
         raise<std::runtime_error>("The string cache must not be null.");
 
-    functions["each"]   = &EachFn::Fn;
-    functions["all"]    = &EachFn::Fn;
     functions["count"]  = &CountFn::Fn;
     functions["range"]  = &RangeFn::Fn;
     functions["arr"]    = &ArrFn::Fn;

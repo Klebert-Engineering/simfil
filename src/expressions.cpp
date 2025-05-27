@@ -435,16 +435,16 @@ void SubExpr::accept(ExprVisitor& v)
     v.visit(*this);
 }
 
-AnyCallExpr::AnyCallExpr(std::vector<ExprPtr> args)
+AnyExpr::AnyExpr(std::vector<ExprPtr> args)
     : args_(std::move(args))
 {}
 
-auto AnyCallExpr::type() const -> Type
+auto AnyExpr::type() const -> Type
 {
     return Type::VALUE;
 }
 
-auto AnyCallExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     auto subctx = ctx;
     auto result = false; /* At least one value is true  */
@@ -470,11 +470,14 @@ auto AnyCallExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> R
     if (undef)
         return res(subctx, Value::undef());
 
-    ++trueResults_;
+    if (result)
+        ++trueResults_;
+    else
+        ++falseResults_;
     return res(subctx, Value::make(result));
 }
 
-auto AnyCallExpr::clone() const -> ExprPtr
+auto AnyExpr::clone() const -> ExprPtr
 {
     std::vector<ExprPtr> clonedArgs;
     clonedArgs.resize(args_.size());
@@ -482,20 +485,89 @@ auto AnyCallExpr::clone() const -> ExprPtr
         return exp->clone();
     });
 
-    return std::make_unique<AnyCallExpr>(std::move(clonedArgs));
+    return std::make_unique<AnyExpr>(std::move(clonedArgs));
 }
 
-auto AnyCallExpr::accept(ExprVisitor& v) -> void
+auto AnyExpr::accept(ExprVisitor& v) -> void
 {
     v.visit(*this);
 }
 
-auto AnyCallExpr::toString() const -> std::string
+auto AnyExpr::toString() const -> std::string
 {
     if (args_.empty())
         return "any()"s;
 
     auto s = "(any"s;
+    for (const auto& arg : args_) {
+        s += " "s + arg->toString();
+    }
+    return s + ")"s;
+}
+
+EachExpr::EachExpr(std::vector<ExprPtr> args)
+    : args_(std::move(args))
+{}
+
+auto EachExpr::type() const -> Type
+{
+    return Type::VALUE;
+}
+
+auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+{
+    auto subctx = ctx;
+    auto result = true; /* All values are true  */
+    auto undef = false; /* At least one value is undef */
+
+    for (const auto& arg : args_) {
+        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+            if (ctx.phase == Context::Phase::Compilation) {
+                if (vv.isa(ValueType::Undef)) {
+                    undef = true;
+                    return Result::Stop;
+                }
+            }
+            result = result && boolify(vv);
+            return result ? Result::Continue : Result::Stop;
+        }));
+
+        if (!result || undef)
+            break;
+    }
+
+    if (undef)
+        return res(subctx, Value::undef());
+
+    if (result)
+        ++trueResults_;
+    else
+        ++falseResults_;
+    return res(subctx, Value::make(result));
+}
+
+auto EachExpr::clone() const -> ExprPtr
+{
+    std::vector<ExprPtr> clonedArgs;
+    clonedArgs.resize(args_.size());
+    std::transform(args_.cbegin(), args_.cend(), std::make_move_iterator(clonedArgs.begin()), [](const auto& exp) {
+        return exp->clone();
+    });
+
+    return std::make_unique<EachExpr>(std::move(clonedArgs));
+}
+
+auto EachExpr::accept(ExprVisitor& v) -> void
+{
+    v.visit(*this);
+}
+
+auto EachExpr::toString() const -> std::string
+{
+    if (args_.empty())
+        return "each()"s;
+
+    auto s = "(each"s;
     for (const auto& arg : args_) {
         s += " "s + arg->toString();
     }
@@ -895,6 +967,24 @@ void ExprVisitor::visit(SubExpr& expr)
         expr.left_->accept(*this);
     if (expr.sub_)
         expr.sub_->accept(*this);
+}
+
+void ExprVisitor::visit(AnyExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    for (const auto& arg : expr.args_)
+        if (arg)
+            arg->accept(*this);
+}
+
+void ExprVisitor::visit(EachExpr& expr)
+{
+    visit(static_cast<Expr&>(expr));
+
+    for (const auto& arg : expr.args_)
+        if (arg)
+            arg->accept(*this);
 }
 
 void ExprVisitor::visit(CallExpression& expr)

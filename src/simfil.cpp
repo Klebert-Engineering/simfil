@@ -508,7 +508,9 @@ class WordParser : public PrefixParselet
 
             auto arguments = p.parseList(Token::RPAREN);
             if (word == "any") {
-                return simplifyOrForward(p.env, std::make_unique<AnyCallExpr>(std::move(arguments)));
+                return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(arguments)));
+            } else if (word == "each" || word == "all") {
+                return simplifyOrForward(p.env, std::make_unique<EachExpr>(std::move(arguments)));
             } else {
                 return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
             }
