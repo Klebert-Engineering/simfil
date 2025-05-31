@@ -130,7 +130,16 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
             if (iter == diagnostics.comparisonOperandTypes.end())
                 return;
 
-            const auto [leftTypes, rightTypes] = iter->second;
+            auto [leftTypes, rightTypes] = iter->second;
+            if (leftTypes.test(ValueType::Int) || leftTypes.test(ValueType::Float)) {
+                leftTypes.set(ValueType::Int);
+                leftTypes.set(ValueType::Float);
+            }
+            if (rightTypes.test(ValueType::Int) || rightTypes.test(ValueType::Float)) {
+                rightTypes.set(ValueType::Int);
+                rightTypes.set(ValueType::Float);
+            }
+
             const auto intersection = leftTypes.flags & rightTypes.flags;
             if (intersection.any())
                 return;
