@@ -11,6 +11,8 @@
 #include <optional>
 #include <stdexcept>
 
+#include "common.hpp"
+
 using namespace simfil;
 
 static constexpr auto StaticTestKey = StringPool::NextStaticId;
@@ -272,92 +274,6 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
     REQUIRE_AST("Trace(1)",      "(Trace 1)");
 }
 
-static const char* const doc = R"json(
-{
-  "a": 1,
-  "b": 2,
-  "c": ["a", "b", "c"],
-  "d": [0, 1, 2],
-  "sub": {
-    "a": "sub a",
-    "b": "sub b",
-    "sub": {
-      "a": "sub sub a",
-      "b": "sub sub b"
-    }
-  },
-  "geoPoint": {
-    "geometry": {
-      "type": "Point",
-      "coordinates": [1, 2]
-    }
-  },
-  "geoLineString": {
-    "geometry": {
-      "type": "LineString",
-      "coordinates": [[1, 2], [3, 4]]
-    }
-  },
-  "geoPolygon": {
-    "geometry": {
-      "type": "Polygon",
-      "coordinates": [[[1, 2], [3, 4], [5, 6]]]
-    }
-  }
-}
-)json";
-
-class PanicFn : public simfil::Function
-{
-public:
-    static const PanicFn fn;
-
-    auto ident() const -> const FnInfo& override
-    {
-        static const FnInfo info{
-          "panic",
-          "Thrown an exception",
-          "panic()"
-        };
-
-        return info;
-    }
-
-    auto eval(Context ctx, Value, const std::vector<ExprPtr>&, const ResultFn& res) const -> Result override
-    {
-        if (ctx.phase != Context::Phase::Compilation)
-            throw std::runtime_error("Panic!");
-
-        return res(ctx, Value::undef());
-    }
-};
-
-const PanicFn PanicFn::fn{};
-
-static auto joined_result(std::string_view query)
-{
-    auto model = simfil::json::parse(doc);
-    Environment env(model->strings());
-
-    env.functions["panic"] = &PanicFn::fn;
-
-    auto ast = compile(env, query, false);
-    INFO("AST: " << ast->expr().toString());
-
-    auto res = eval(env, *ast, *model->root(0), nullptr);
-
-    std::string vals;
-    for (const auto& vv : res) {
-        if (!vals.empty())
-            vals.push_back('|');
-        vals += vv.toString();
-    }
-    return vals;
-}
-
-#define REQUIRE_RESULT(query, result) \
-    REQUIRE(joined_result(query) == result)
-
 TEST_CASE("OperatorOrShortCircuit", "[eval.operator-or-short-circuit]") {
     REQUIRE_RESULT("true or panic()", "true");
 }
@@ -386,10 +302,10 @@ TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
                              R"({"a":"sub sub a","b":"sub sub b"}|sub sub a|sub sub b)");
     REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
     REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
-    REQUIRE_RESULT("count(*)", "8");
-    REQUIRE_RESULT("count(**)", "47");
+    REQUIRE_RESULT("count(*)", "10");
+    REQUIRE_RESULT("count(**)", "49");
     REQUIRE_RESULT("count(sub.**.a)", "2");
-    REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "10");
+    REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "11");
     REQUIRE_RESULT("count(sub.**.{typeof _ == 'string'})", "4");
 }
 
@@ -417,7 +333,7 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
 
 TEST_CASE("Single Values", "[yaml.single-values]") {
 
-    auto json = R"({"a":1,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
+    auto json = R"({"a":1,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"number":123,"string":"text","sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
     auto sub_json = R"({"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}})";
     auto sub_sub_json = R"({"a":"sub sub a","b":"sub sub b"})";
 
@@ -474,8 +390,8 @@ TEST_CASE("Model Functions", "[yaml.mode-functions]") {
 
 TEST_CASE("Sub-Selects", "[yaml.sub-selects]") {
     SECTION("Filter out null values") {
-        REQUIRE_RESULT("count(** as int)", "47"); /* Unfiltered */
-        REQUIRE_RESULT("count(**{typeof _ != 'null' and typeof _ != 'model'})", "27"); /* Filtered */
+        REQUIRE_RESULT("count(** as int)", "49"); /* Unfiltered */
+        REQUIRE_RESULT("count(**{typeof _ != 'null' and typeof _ != 'model'})", "29"); /* Filtered */
     }
     SECTION("Filter out all values") {
         REQUIRE_RESULT("**{false}", "null"); /* Non-Value returns single 'null' */

@@ -3,8 +3,11 @@ project(test.simfil)
 set(CMAKE_CXX_STANDARD 17) # Required for catch2
 
 add_executable(test.simfil
+  common.hpp
+  common.cpp
   token.cpp
   simfil.cpp
+  diagnostics.cpp
   complex.cpp
   performance.cpp
   arena.cpp)
