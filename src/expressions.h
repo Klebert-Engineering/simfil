@@ -545,6 +545,10 @@ public:
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
+
+    /* Runtime Data */
+    uint32_t leftEvaluations_ = 0;
+    uint32_t rightEvaluations_ = 0;
 };
 
 }

@@ -169,13 +169,13 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
         void visit(BinaryExpr<OperatorGt>& e) override
         {
             ExprVisitor::visit(e);
-            visitComparisonOperator(e, true);
+            visitComparisonOperator(e, false);
         }
 
         void visit(BinaryExpr<OperatorGtEq>& e) override
         {
             ExprVisitor::visit(e);
-            visitComparisonOperator(e, true);
+            visitComparisonOperator(e, false);
         }
 
         void addMessage(std::string text, const Expr& expr, std::optional<std::string> fix)
@@ -202,6 +202,7 @@ auto Diagnostics::collect(Expr& ast) -> void
     struct CollectDiagnostics : ExprVisitor
     {
         Diagnostics::Data& diagnostics;
+        bool suppressDiagnostics = false;
 
         explicit CollectDiagnostics(Diagnostics::Data& diag)
             : diagnostics(diag)
@@ -224,6 +225,29 @@ auto Diagnostics::collect(Expr& ast) -> void
                 left.set(thisLeft);
                 right.set(thisRight);
             }
+        }
+
+        auto visit(AnyExpr& e) -> void override {
+            ExprVisitor::visit(static_cast<Expr&>(e));
+
+            // Only provide diagnostic results for
+            // child expressions if none of them matched.
+            if (e.trueResults_ == 0 && e.falseResults_ > 0) {
+                for (const auto& arg : e.args_)
+                    if (arg)
+                        arg->accept(*this);
+            }
+        }
+
+        auto visit(OrExpr& e) -> void override {
+            ExprVisitor::visit(static_cast<Expr&>(e));
+
+            // Suppress diagnostics of the right hand side
+            // expression if the left hand side matched and
+            // vice versa.
+            e.left_->accept(*this);
+            if (e.rightEvaluations_ > 0)
+                e.right_->accept(*this);
         }
 
         auto visit(BinaryExpr<OperatorEq>& e) -> void override {

@@ -893,15 +893,17 @@ auto OrExpr::type() const -> Type
 auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     /* Operator or behaves like in lua:
-        * 'a or b' returns a if 'a?' else b is returned */
+     * 'a or b' returns a if 'a?' else b is returned */
     return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
+        ++leftEvaluations_;
         if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
             if (v.as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
+        ++rightEvaluations_;
         return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value rval) {
             return res(ctx, std::move(rval));
         }));
