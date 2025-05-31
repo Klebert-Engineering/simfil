@@ -39,7 +39,7 @@ public:
     };
 
     Diagnostics();
-    Diagnostics(Diagnostics&&);
+    Diagnostics(Diagnostics&&) noexcept;
     ~Diagnostics();
 
     /**

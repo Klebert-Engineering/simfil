@@ -215,8 +215,7 @@ struct OperatorAsInt
 
     auto operator()(const std::string& v) const
     {
-        long long out = 0;
-        if (std::sscanf(v.c_str(), "%lld", &out) == 1)
+        if (long long out = 0; std::sscanf(v.c_str(), "%lld", &out) == 1)
             return (int64_t)out;
         return (int64_t)0;
     }
@@ -251,8 +250,7 @@ struct OperatorAsFloat
 
     auto operator()(const std::string& v) const
     {
-        double out = 0;
-        if (std::sscanf(v.c_str(), "%lf", &out) == 1)
+        if (double out = 0; std::sscanf(v.c_str(), "%lf", &out) == 1)
             return out;
         return 0.0;
     }

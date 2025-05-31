@@ -31,7 +31,7 @@ Diagnostics::Diagnostics()
     : data(std::make_unique<Diagnostics::Data>())
 {}
 
-Diagnostics::Diagnostics(Diagnostics&& other)
+Diagnostics::Diagnostics(Diagnostics&& other) noexcept
     : data(std::move(other.data))
 {}
 
