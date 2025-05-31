@@ -636,7 +636,7 @@ auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard)
         if (any) {
             std::vector<ExprPtr> args;
             args.emplace_back(std::move(root));
-            return simplifyOrForward(p.env, std::make_unique<CallExpression>("any"s, std::move(args)));
+            return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(args)));
         } else {
             return root;
         }
