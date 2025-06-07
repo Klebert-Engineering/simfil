@@ -103,7 +103,12 @@ auto Token::toString(Type t) -> std::string
     return "";
 }
 
-std::ostream& operator<<(std::ostream& o, const Token& t)
+auto Token::containsPoint(size_t point) const -> bool
+{
+    return begin < point && end <= point;
+}
+
+auto operator<<(std::ostream& o, const Token& t) -> std::ostream&
 {
     return o << t.toString();
 }

@@ -51,4 +51,17 @@ auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* 
  */
 auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Diagnostics::Message>;
 
+/**
+ * Find completion candidates for an expression.
+ * Param:
+ *   env   Environment used for compilation & evaluation.
+ * Param:
+ *   src   Source code to complete.
+ * Param:
+ *   point Index to complete at.
+ * Param:
+ *   node   Root node of the data model to query in
+ */
+auto complete(Environment& env, std::string_view src, size_t point, ModelNode const& node) -> std::vector<CompletionCandidate>;
+
 }

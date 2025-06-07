@@ -64,7 +64,7 @@ public:
     virtual auto clone() const -> std::unique_ptr<Expr> = 0;
 
     /* Accept expression visitor */
-    virtual void accept(ExprVisitor& v) = 0;
+    virtual auto accept(ExprVisitor& v) -> void = 0;
 
     /* Source location the expression got parsed from */
     [[nodiscard]]

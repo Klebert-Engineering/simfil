@@ -3,6 +3,7 @@
 #pragma once
 
 #include "simfil/value.h"
+#include "simfil/token.h"
 
 #include <optional>
 #include <vector>
@@ -16,11 +17,6 @@ class AST;
 class Expr;
 struct Environment;
 struct ModelNode;
-
-struct SourceLocation
-{
-    size_t begin = 0, size = 0;
-};
 
 /** Query Diagnostics. */
 struct Diagnostics
