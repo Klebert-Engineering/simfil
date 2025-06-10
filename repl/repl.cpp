@@ -1,4 +1,5 @@
 #include "simfil/environment.h"
+#include "simfil/parser.h"
 #include "simfil/simfil.h"
 #include "simfil/expression.h"
 #include "simfil/value.h"
@@ -172,6 +173,26 @@ static void show_help()
         << "\n";
 }
 
+static void display_error(std::string_view expression, const simfil::ParserError& e)
+{
+    static const auto indent = "  ";
+    auto [begin, end] = e.range();
+
+    std::string underline;
+    if (end >= begin) {
+        if (begin > 0)
+            std::generate_n(std::back_inserter(underline), begin, []() { return ' '; });
+        underline.push_back('^');
+        if (end > begin)
+            std::generate_n(std::back_inserter(underline), end - begin - 1, []() { return '~'; });
+    }
+
+    std::cout << "Error:\n"
+        << indent << e.what() << ".\n\n"
+        << indent << expression << "\n"
+        << indent << underline << "\n";
+}
+
 int main(int argc, char *argv[])
 {
 #if WITH_READLINE
@@ -238,10 +259,14 @@ int main(int argc, char *argv[])
         simfil::ASTPtr ast;
         try {
             ast = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
+        } catch (const simfil::ParserError& e) {
+            display_error(cmd, e);
         } catch (const std::exception& e) {
             std::cout << "Compile:\n  " << e.what() << "\n";
-            continue;
         }
+
+        if (!ast)
+            continue;
 
         if (options.verbose)
             std::cout << "Expression:\n  " << ast->expr().toString() << "\n";
