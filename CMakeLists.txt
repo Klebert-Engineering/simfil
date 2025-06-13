@@ -45,10 +45,12 @@ include(deps.cmake)
 
 add_library(simfil ${LIBRARY_TYPE}
   src/environment.cpp
+  src/diagnostics.cpp
   src/function.cpp
   src/parser.cpp
   src/token.cpp
   src/types.cpp
+  src/expressions.cpp
   src/simfil.cpp
   src/value.cpp
   src/overlay.cpp
@@ -62,6 +64,7 @@ target_sources(simfil PUBLIC
     TYPE HEADERS
     FILES
       include/simfil/environment.h
+      include/simfil/diagnostics.h
       include/simfil/expression.h
       include/simfil/function.h
       include/simfil/operator.h

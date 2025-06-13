@@ -57,7 +57,7 @@ auto Parser::current() const -> const Token&
     raise<std::runtime_error>("Parser EOF (current)");
 }
 
-auto Parser::precedence(Token token) const -> int
+auto Parser::precedence(const Token& token) const -> int
 {
     if (auto parser = findInfixParser(token))
         return parser->precedence();

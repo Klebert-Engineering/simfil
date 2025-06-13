@@ -12,9 +12,6 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
     if (!stringPool)
         raise<std::runtime_error>("The string cache must not be null.");
 
-    functions["any"]    = &AnyFn::Fn;
-    functions["each"]   = &EachFn::Fn;
-    functions["all"]    = &EachFn::Fn;
     functions["count"]  = &CountFn::Fn;
     functions["range"]  = &RangeFn::Fn;
     functions["arr"]    = &ArrFn::Fn;
@@ -29,8 +26,7 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
 Environment::Environment(NewStringCache_)
     : Environment(std::make_shared<StringPool>()) {}
 
-Environment::~Environment()
-{}
+Environment::~Environment() = default;
 
 auto Environment::warn(std::string message, std::string detail) -> void
 {
@@ -38,7 +34,7 @@ auto Environment::warn(std::string message, std::string detail) -> void
     warnings.emplace_back(std::move(message), std::move(detail));
 }
 
-auto Environment::trace(const std::string& name, std::function<void(Trace&)> fn) -> void
+auto Environment::trace(const std::string& name, const std::function<void(Trace&)>& fn) -> void
 {
     std::unique_lock<std::mutex> _(*traceMtx);
     fn(traces[name]);

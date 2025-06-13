@@ -15,15 +15,15 @@ endif()
 if (NOT TARGET fmt::fmt)
   FetchContent_Declare(fmt
     GIT_REPOSITORY "https://github.com/fmtlib/fmt.git"
-    GIT_TAG        "10.0.0"
+    GIT_TAG        "11.1.4"
     GIT_SHALLOW    ON)
   FetchContent_MakeAvailable(fmt)
 endif()
 
-if (NOT TARGET bitsery::bitsery)
+if (NOT TARGET Bitsery::bitsery)
   FetchContent_Declare(bitsery
     GIT_REPOSITORY "https://github.com/fraillt/bitsery.git"
-    GIT_TAG        "v5.2.3"
+    GIT_TAG        "v5.2.4"
     GIT_SHALLOW    ON)
   FetchContent_MakeAvailable(bitsery)
 endif()

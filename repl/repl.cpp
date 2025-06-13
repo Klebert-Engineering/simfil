@@ -3,6 +3,8 @@
 #include "simfil/expression.h"
 #include "simfil/value.h"
 #include "simfil/model/model.h"
+#include <algorithm>
+#include <iterator>
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
 #  include "simfil/model/json.h"
@@ -103,14 +105,14 @@ static std::string input(const char* prompt = "> ")
     return r;
 }
 
-static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const std::shared_ptr<simfil::ModelPool>& model)
+static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std::shared_ptr<simfil::ModelPool>& model, simfil::Diagnostics& diag)
 {
     std::vector<std::vector<simfil::Value>> result;
     result.resize(std::max<size_t>(1, model->numRoots()));
 
     if (!model->numRoots()) {
         model->addRoot(simfil::ModelNode::Ptr());
-        result[0] = simfil::eval(env, expr, *model->root(0));
+        result[0] = simfil::eval(env, ast, *model->root(0), &diag);
         return result;
     }
 
@@ -128,7 +130,7 @@ static auto eval_mt(simfil::Environment& env, const simfil::Expr& expr, const st
             size_t next;
             while ((next = idx++) < model->numRoots()) {
                 try {
-                    result[next] = simfil::eval(env, expr, *model->root(next));
+                    result[next] = simfil::eval(env, ast, *model->root(next), &diag);
                 } catch (...) {
                     return;
                 }
@@ -219,23 +221,24 @@ int main(int argc, char *argv[])
         simfil::Environment env(model->strings());
         env.constants = constants;
 
-        simfil::ExprPtr expr;
+        simfil::ASTPtr ast;
         try {
-            expr = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
+            ast = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
         } catch (const std::exception& e) {
             std::cout << "Compile:\n  " << e.what() << "\n";
             continue;
         }
 
         if (options.verbose)
-            std::cout << "Expression:\n  " << expr->toString() << "\n";
+            std::cout << "Expression:\n  " << ast->expr().toString() << "\n";
 
+        simfil::Diagnostics diag;
         std::vector<std::vector<simfil::Value>> res;
         std::chrono::milliseconds msec;
 
         try {
             auto eval_begin = std::chrono::steady_clock::now();
-            res = eval_mt(env, *expr, model);
+            res = eval_mt(env, *ast, model, diag);
             msec = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - eval_begin);
         } catch (const std::exception& e) {
             std::cout << "Error:\n  " << e.what() << "\n";
@@ -254,6 +257,27 @@ int main(int argc, char *argv[])
         std::cout << "Result:\n";
         for (const auto& v : flatres) {
             std::cout << "  " << v.toString() << "\n";
+        }
+
+        auto messages = simfil::diagnostics(env, *ast, diag);
+        if (!messages.empty()) {
+            std::cout << "Diagnostics:\n";
+
+            auto underlineQuery = [&](simfil::SourceLocation loc) {
+                std::string underline;
+                std::fill_n(std::back_inserter(underline), loc.begin, ' ');
+                underline.push_back('^');
+                if (loc.size > 0)
+                    std::fill_n(std::back_inserter(underline), loc.size - 1, '~');
+                return underline;
+            };
+
+            for (const auto& m : messages) {
+                std::cout << "  " << m.message << "\n"
+                          << "  Here: " << ast->query() << "\n"
+                          << "        " << underlineQuery(m.location) << "\n"
+                          << "   Fix: " << m.fix.value_or("-") << "\n";
+            }
         }
     }
 

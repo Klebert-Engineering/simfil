@@ -79,28 +79,6 @@ public:
     virtual auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result = 0;
 };
 
-class AnyFn : public Function
-{
-public:
-    static AnyFn Fn;
-
-    AnyFn();
-
-    auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
-};
-
-class EachFn : public Function
-{
-public:
-    static EachFn Fn;
-
-    EachFn();
-
-    auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> Result override;
-};
-
 class CountFn : public Function
 {
 public:

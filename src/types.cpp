@@ -19,7 +19,7 @@ auto IRangeType::make(int64_t a, int64_t b) -> Value
     range->begin = a;
     range->end = b;
 
-    return Value(ValueType::TransientObject, std::move(obj));
+    return {ValueType::TransientObject, std::move(obj)};
 }
 
 auto IRangeType::unaryOp(std::string_view op, const IRange& self) const -> Value

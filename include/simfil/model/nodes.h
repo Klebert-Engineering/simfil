@@ -1,6 +1,8 @@
 #pragma once
 
+#include <bitset>
 #include <memory>
+#include <type_traits>
 #include <variant>
 #include <functional>
 
@@ -26,9 +28,9 @@ class ModelPool;
 class Model;
 struct ModelNode;
 struct Environment;
+struct Diagnostics;
+class AST;
 class Expr;
-
-std::vector<Value> eval(Environment& env, const Expr& ast, const ModelNode& node);
 
 using ModelConstPtr = std::shared_ptr<const Model>;
 using ModelPoolConstPtr = std::shared_ptr<const ModelPool>;
@@ -48,6 +50,7 @@ enum class ValueType
     TransientObject,
     Object,
     Array
+    // If you add types, update TypeFlags::flags bit size!
 };
 
 using ScalarValueType = std::variant<
@@ -72,7 +75,7 @@ struct model_ptr
 {
     template<typename> friend struct model_ptr;
 
-    model_ptr(::nullptr_t) {}  // NOLINT
+    model_ptr(std::nullptr_t) {}  // NOLINT
     model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
     explicit model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
 
@@ -98,7 +101,7 @@ struct model_ptr
     template<typename... Args>
     explicit model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
 
-    static_assert(std::is_base_of<ModelNode, T>::value, "T must inherit from ModelNode.");
+    static_assert(std::is_base_of_v<ModelNode, T>, "T must inherit from ModelNode.");
 
     template<typename... Args>
     static model_ptr<T> make(Args&&... args) {
@@ -196,7 +199,7 @@ struct ModelNode
     friend class ModelPool;
     friend class Model;
     friend class OverlayNode;
-    friend std::vector<Value> eval(Environment& env, const Expr& ast, const ModelNode& node);
+    friend std::vector<Value> eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics*);
 
     /// Get the node's scalar value if it has one
     [[nodiscard]] virtual ScalarValueType value() const;

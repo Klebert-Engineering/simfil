@@ -2,12 +2,17 @@
 
 #pragma once
 
+#include "simfil/model/nodes.h"
 #include "simfil/value.h"
 #include "simfil/model/model.h"
 
 #include <algorithm>
+#include <atomic>
+#include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
+#include <unordered_map>
 #include <vector>
 #include <chrono>
 #include <functional>
@@ -33,12 +38,26 @@ struct CaseInsensitiveCompare
     }
 };
 
+
 /** Trace call stats. */
 struct Trace
 {
     std::size_t calls = 0; /* Number of calls */
     std::chrono::microseconds totalus;
     std::vector<Value> values;
+
+    /**
+     * Append/merge another trace result into this one.
+     */
+    Trace& append(Trace&& other)
+    {
+        calls += other.calls;
+        totalus += other.totalus;
+        values.insert(values.end(),
+                      std::make_move_iterator(other.values.begin()),
+                      std::make_move_iterator(other.values.end()));
+        return *this;
+    }
 };
 
 struct Environment
@@ -80,7 +99,7 @@ public:
      * @param name  Trace identifier
      * @param fn    IterCallback called thread-safe
      */
-    auto trace(const std::string& name, std::function<void(Trace&)> fn) -> void;
+    auto trace(const std::string& name, const std::function<void(Trace&)>& fn) -> void;
 
     /**
      * Query function by name.

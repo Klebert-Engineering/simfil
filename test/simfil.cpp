@@ -1,13 +1,21 @@
 #include "simfil/simfil.h"
+#include "simfil/environment.h"
 #include "simfil/exception-handler.h"
+#include "simfil/function.h"
 #include "simfil/model/json.h"
+#include "simfil/result.h"
 #include "simfil/value.h"
+#include "src/expressions.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <optional>
+#include <stdexcept>
+
+#include "common.hpp"
 
 using namespace simfil;
 
-static const auto StaticTestKey = StringPool::NextStaticId;
+static constexpr auto StaticTestKey = StringPool::NextStaticId;
 
 
 static auto getASTString(std::string_view input, bool autoWildcard = false)
@@ -18,10 +26,10 @@ static auto getASTString(std::string_view input, bool autoWildcard = false)
 }
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(getASTString(input, false)->toString() == output);
+    REQUIRE(getASTString(input, false)->expr().toString() == output);
 
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
-    REQUIRE(getASTString(input, true)->toString() == output);
+    REQUIRE(getASTString(input, true)->expr().toString() == output);
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -182,9 +190,9 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
         Environment env(model->strings());
 
         auto ast = compile(env, query, false);
-        INFO("AST: " << ast->toString());
+        INFO("AST: " << ast->expr().toString());
 
-        return eval(env, *ast, *model->root(0)).front().template as<ValueType::Bool>();
+        return eval(env, *ast, *model->root(0), nullptr).front().template as<ValueType::Bool>();
     };
 
     /* Test some field with different value types for different objects */
@@ -266,62 +274,27 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
     REQUIRE_AST("Trace(1)",      "(Trace 1)");
 }
 
-static const char* const doc = R"json(
-{
-  "a": 1,
-  "b": 2,
-  "c": ["a", "b", "c"],
-  "d": [0, 1, 2],
-  "sub": {
-    "a": "sub a",
-    "b": "sub b",
-    "sub": {
-      "a": "sub sub a",
-      "b": "sub sub b"
-    }
-  },
-  "geoPoint": {
-    "geometry": {
-      "type": "Point",
-      "coordinates": [1, 2]
-    }
-  },
-  "geoLineString": {
-    "geometry": {
-      "type": "LineString",
-      "coordinates": [[1, 2], [3, 4]]
-    }
-  },
-  "geoPolygon": {
-    "geometry": {
-      "type": "Polygon",
-      "coordinates": [[[1, 2], [3, 4], [5, 6]]]
-    }
-  }
-}
-)json";
-
-static auto joined_result(std::string_view query)
-{
-    auto model = simfil::json::parse(doc);
-    Environment env(model->strings());
-
-    auto ast = compile(env, query, false);
-    INFO("AST: " << ast->toString());
-
-    auto res = eval(env, *ast, *model->root(0));
-
-    std::string vals;
-    for (const auto& vv : res) {
-        if (!vals.empty())
-            vals.push_back('|');
-        vals += vv.toString();
-    }
-    return vals;
+TEST_CASE("OperatorOrShortCircuit", "[eval.operator-or-short-circuit]") {
+    REQUIRE_RESULT("true or panic()", "true");
 }
 
-#define REQUIRE_RESULT(query, result) \
-    REQUIRE(joined_result(query) == result)
+TEST_CASE("OperatorAndShortCircuit", "[eval.operator-and-short-circuit]") {
+    REQUIRE_RESULT("false and panic()", "false");
+}
+
+TEST_CASE("OperatorOr", "[eval.operator-or]") {
+    REQUIRE_RESULT("false or false", "false");
+    REQUIRE_RESULT("false or true", "true");
+    REQUIRE_RESULT("true or false", "true");
+    REQUIRE_RESULT("true or true", "true");
+}
+
+TEST_CASE("OperatorAnd", "[eval.operator-and]") {
+    REQUIRE_RESULT("false and false", "false");
+    REQUIRE_RESULT("false and true", "false");
+    REQUIRE_RESULT("true and false", "false");
+    REQUIRE_RESULT("true and true", "true");
+}
 
 TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
     REQUIRE_RESULT("sub.*", R"(sub a|sub b|{"a":"sub sub a","b":"sub sub b"})");
@@ -329,10 +302,10 @@ TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
                              R"({"a":"sub sub a","b":"sub sub b"}|sub sub a|sub sub b)");
     REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
     REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
-    REQUIRE_RESULT("count(*)", "8");
-    REQUIRE_RESULT("count(**)", "47");
+    REQUIRE_RESULT("count(*)", "10");
+    REQUIRE_RESULT("count(**)", "49");
     REQUIRE_RESULT("count(sub.**.a)", "2");
-    REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "10");
+    REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "11");
     REQUIRE_RESULT("count(sub.**.{typeof _ == 'string'})", "4");
 }
 
@@ -360,7 +333,7 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
 
 TEST_CASE("Single Values", "[yaml.single-values]") {
 
-    auto json = R"({"a":1,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
+    auto json = R"({"a":1,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"number":123,"string":"text","sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
     auto sub_json = R"({"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}})";
     auto sub_sub_json = R"({"a":"sub sub a","b":"sub sub b"})";
 
@@ -417,8 +390,8 @@ TEST_CASE("Model Functions", "[yaml.mode-functions]") {
 
 TEST_CASE("Sub-Selects", "[yaml.sub-selects]") {
     SECTION("Filter out null values") {
-        REQUIRE_RESULT("count(** as int)", "47"); /* Unfiltered */
-        REQUIRE_RESULT("count(**{typeof _ != 'null' and typeof _ != 'model'})", "27"); /* Filtered */
+        REQUIRE_RESULT("count(** as int)", "49"); /* Unfiltered */
+        REQUIRE_RESULT("count(**{typeof _ != 'null' and typeof _ != 'model'})", "29"); /* Filtered */
     }
     SECTION("Filter out all values") {
         REQUIRE_RESULT("**{false}", "null"); /* Non-Value returns single 'null' */
@@ -478,7 +451,7 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
 
     struct DerivedProceduralObject : public ProceduralObject<2, DerivedProceduralObject> {
         DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
-            : ProceduralObject<2, DerivedProceduralObject>((ArrayIndex)a.index(), std::move(pool), a)
+            : ProceduralObject<2, DerivedProceduralObject>(static_cast<ArrayIndex>(a.index()), std::move(pool), a)
         {
             fields_.emplace_back(
                 StaticTestKey,
@@ -586,4 +559,29 @@ TEST_CASE("Exception Handler", "[exception]")
 
     // Reset throw-handler, so it isn't erroneously used by other tests.
     simfil::ThrowHandler::instance().set(nullptr);
+}
+
+TEST_CASE("Visit AST", "[visit.ast]")
+{
+    Environment env(Environment::WithNewStringCache);
+
+    auto ast = compile(env, "**.field = 123", false, false);
+    REQUIRE(ast.get() != nullptr);
+
+    struct Visitor : ExprVisitor
+    {
+        std::optional<std::string> visitedFieldName;
+
+        auto visit(FieldExpr& expr) -> void override
+        {
+            ExprVisitor::visit(expr);
+
+            visitedFieldName = expr.name_;
+        }
+    };
+
+    Visitor visitor;
+    ast->expr().accept(visitor);
+
+    REQUIRE(visitor.visitedFieldName == "field");
 }

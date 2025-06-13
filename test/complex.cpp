@@ -58,9 +58,9 @@ static auto joined_result(std::string_view query)
     auto model = json::parse(invoice);
     Environment env(model->strings());
     auto ast = compile(env, query, false);
-    INFO("AST: " << ast->toString());
+    INFO("AST: " << ast->expr().toString());
 
-    auto res = eval(env, *ast, *model->root(0));
+    auto res = eval(env, *ast, *model->root(0), nullptr);
 
     std::string vals;
     for (const auto& vv : res) {

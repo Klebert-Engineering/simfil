@@ -19,7 +19,7 @@ For details about the language see the [Language Guide](simfil-language.md).
 
 ### Examples
 
-All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the interactive command line tool `<builddir>/repl/simfil-repl INPUT` (see [Using the Interactive Command Line Tool](#Using the Interactive Command Line Tool)).
+All examples shown below can be executed by loading the json file [`examples/example.json`](examples/example.json) using the interactive command line tool `<builddir>/repl/simfil-repl INPUT` (see [Using the Interactive Command Line Tool](#using-the-interactive-command-line-tool)).
 
 #### All person's names
 
@@ -99,6 +99,11 @@ The repl provides some extra commands for testing queries:
 ## Extending the Language
 The query language can be extended by additional functions and addititonal types.
 
+## Diagnostics
+Simfil can output query diagnostics messages that can include a fixed query string.
+Currently, it supports the following types of messages:
+- "No matches for field '...'. Did you mean '...'?"
+
 ## Using the Library
 ### CMake FetchContent
 To link against `simfil` vial CMake, all you have to do is to add the following to you `CMakeLists.txt`:
@@ -138,7 +143,7 @@ auto env = simfil::Environment{strings};
 auto query = simfil::compile(env, "name", false);
 
 // Evalualte query and get result of type simfil::Value.
-auto result = simfil::eval(env, *query, *model);
+auto result = simfil::eval(env, *query, *model, nullptr);
 
 for (auto&& value : result)
     std::cout << value.toString() << "\n";

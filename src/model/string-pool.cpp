@@ -244,6 +244,10 @@ bool StringPool::operator==(const StringPool &other) const {
     return idForString_ == other.idForString_;
 }
 
+const std::deque<std::string>& StringPool::strings() const {
+    return storedStrings_;
+}
+
 size_t detail::CaseInsensitiveHash::operator()(const std::string_view& str) const
 {
     // FNV-1a Hash (Fowler–Noll–Vo) for case-insensitive hashing.

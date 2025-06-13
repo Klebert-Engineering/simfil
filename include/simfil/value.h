@@ -92,6 +92,38 @@ inline auto valueType2String(ValueType t) -> const char*
     }
 }
 
+
+/**
+ * Bitset of ValueTypes
+ */
+struct TypeFlags
+{
+    std::bitset<9> flags;
+
+    auto test(ValueType type) const
+    {
+        return flags.test(static_cast<std::underlying_type_t<ValueType>>(type));
+    }
+
+    auto test(TypeFlags other) const
+    {
+        return flags & other.flags;
+    }
+
+    auto set(ValueType type, bool value = true)
+    {
+        flags.set(static_cast<std::underlying_type_t<ValueType>>(type), value);
+    }
+
+    auto set(TypeFlags other)
+    {
+        flags |= other.flags;
+    }
+
+    auto types() const -> std::vector<ValueType>;
+    auto typeNames() const -> std::vector<std::string_view>;
+};
+
 class Value;
 
 template <class>
@@ -250,7 +282,9 @@ public:
 
     static auto field(ModelNode&& node) -> Value
     {
-        return {node.type(), node.value(), model_ptr<ModelNode>(std::move(node))};
+        auto type = node.type();
+        auto value = node.value();
+        return {type, std::move(value), model_ptr<ModelNode>(std::move(node))};
     }
 
     template <class ModelNodeT>
