@@ -4,15 +4,12 @@
 
 #include "simfil/model/nodes.h"
 #include "simfil/value.h"
-#include "simfil/model/model.h"
+#include "simfil/token.h"
 
 #include <algorithm>
-#include <atomic>
 #include <iterator>
 #include <map>
 #include <memory>
-#include <optional>
-#include <unordered_map>
 #include <vector>
 #include <chrono>
 #include <functional>
@@ -161,6 +158,20 @@ struct Debug
 {
     std::function<void(const Expr&, Context&, Value&, const ResultFn&)> evalBegin;
     std::function<void(const Expr&)> evalEnd;
+};
+
+/**
+ * Completion candidate
+ */
+struct CompletionCandidate
+{
+    std::string text;
+    SourceLocation location;
+
+    auto operator<(const CompletionCandidate& r) const -> bool
+    {
+        return text < r.text;
+    }
 };
 
 }

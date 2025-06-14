@@ -46,10 +46,13 @@ include(deps.cmake)
 add_library(simfil ${LIBRARY_TYPE}
   src/environment.cpp
   src/diagnostics.cpp
+  src/completion.h
+  src/completion.cpp
   src/function.cpp
   src/parser.cpp
   src/token.cpp
   src/types.cpp
+  src/expressions.h
   src/expressions.cpp
   src/simfil.cpp
   src/value.cpp

@@ -1,4 +1,5 @@
 #include "simfil/environment.h"
+#include "simfil/parser.h"
 #include "simfil/simfil.h"
 #include "simfil/expression.h"
 #include "simfil/value.h"
@@ -25,6 +26,9 @@
 #endif
 
 using namespace std::string_literals;
+
+auto model = std::make_shared<simfil::ModelPool>();
+simfil::Environment* current_env = nullptr;
 
 struct
 {
@@ -57,6 +61,8 @@ char* command_generator(const char *text, int state)
     static std::vector<std::string> matches;
     static size_t match_index = 0;
 
+    std::string query = text;
+
     if (state == 0) {
         matches.clear();
         match_index = 0;
@@ -67,9 +73,15 @@ char* command_generator(const char *text, int state)
             cmds.push_back(name + "("s);
         }
 
-        for (auto word : cmds) {
-            if (word.substr(0, strlen(text)) == text)
-                matches.push_back(std::string(word));
+        if (query[0] == '/') {
+            return nullptr;
+        }
+
+        if (current_env) {
+            auto comp = simfil::complete(*current_env, query, query.size(), *model->root(0));
+            for (const auto& candidate : comp) {
+                matches.push_back(query.substr(0, candidate.location.begin) + candidate.text);
+            }
         }
     }
 
@@ -88,8 +100,10 @@ char** command_completion(const char *text, int start, int end)
 }
 #endif
 
-static std::string input(const char* prompt = "> ")
+static std::string input(simfil::Environment& env, const char* prompt = "> ")
 {
+    current_env = &env;
+
     std::string r;
 #ifdef WITH_READLINE
     auto buf = readline(prompt);
@@ -102,6 +116,8 @@ static std::string input(const char* prompt = "> ")
     std::cout << prompt << std::flush;
     std::getline(std::cin, r);
 #endif
+
+    current_env = nullptr;
     return r;
 }
 
@@ -157,16 +173,35 @@ static void show_help()
         << "\n";
 }
 
+static void display_error(std::string_view expression, const simfil::ParserError& e)
+{
+    static const auto indent = "  ";
+    auto [begin, end] = e.range();
+
+    std::string underline;
+    if (end >= begin) {
+        if (begin > 0)
+            std::generate_n(std::back_inserter(underline), begin, []() { return ' '; });
+        underline.push_back('^');
+        if (end > begin)
+            std::generate_n(std::back_inserter(underline), end - begin - 1, []() { return '~'; });
+    }
+
+    std::cout << "Error:\n"
+        << indent << e.what() << ".\n\n"
+        << indent << expression << "\n"
+        << indent << underline << "\n";
+}
+
 int main(int argc, char *argv[])
 {
 #if WITH_READLINE
     rl_attempted_completion_function = command_completion;
 #endif
 
-    auto model = std::make_shared<simfil::ModelPool>();
     std::map<std::string, simfil::Value, simfil::CaseInsensitiveCompare> constants;
 
-    auto load_json = [&model](const std::string_view& filename) {
+    auto load_json = [](const std::string_view& filename) {
 #if defined(SIMFIL_WITH_MODEL_JSON)
         std::cout << "Parsing " << filename << "\n";
         auto f = std::ifstream(std::string(filename));
@@ -190,7 +225,7 @@ int main(int argc, char *argv[])
                 if (arg.empty()) {
                     arg = *++argv;
                 }
-                if (auto pos = arg.find("="); (pos != std::string::npos) && (pos > 0)) {
+                if (auto pos = arg.find('='); (pos != std::string::npos) && (pos > 0)) {
                     constants.try_emplace(std::string(arg.substr(0, pos)), simfil::Value::make(std::string(arg.substr(pos + 1))));
                 } else {
                     std::cerr << "Invalid definition: " << arg << "\n";
@@ -207,7 +242,10 @@ int main(int argc, char *argv[])
     }
 
     for (;;) {
-        auto cmd = input("> ");
+        simfil::Environment env(model->strings());
+        env.constants = constants;
+
+        auto cmd = input(env, "> ");
         if (cmd.empty())
             continue;
         if (cmd[0] == '/') {
@@ -218,16 +256,17 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        simfil::Environment env(model->strings());
-        env.constants = constants;
-
         simfil::ASTPtr ast;
         try {
             ast = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
+        } catch (const simfil::ParserError& e) {
+            display_error(cmd, e);
         } catch (const std::exception& e) {
             std::cout << "Compile:\n  " << e.what() << "\n";
-            continue;
         }
+
+        if (!ast)
+            continue;
 
         if (options.verbose)
             std::cout << "Expression:\n  " << ast->expr().toString() << "\n";

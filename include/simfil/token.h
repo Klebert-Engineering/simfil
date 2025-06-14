@@ -11,6 +11,11 @@
 namespace simfil
 {
 
+struct SourceLocation
+{
+    size_t begin = 0, size = 0;
+};
+
 struct Token
 {
     enum Type {
@@ -90,6 +95,8 @@ struct Token
 
     static auto toString(Type) -> std::string;
     auto toString() const -> std::string;
+
+    auto containsPoint(size_t point) const -> bool;
 };
 
 std::ostream& operator<<(std::ostream&, const Token&);

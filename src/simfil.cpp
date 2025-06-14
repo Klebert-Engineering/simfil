@@ -13,7 +13,7 @@
 #include "fmt/core.h"
 
 #include "expressions.h"
-#include "levenshtein.h"
+#include "completion.h"
 
 #include <algorithm>
 #include <cctype>
@@ -531,6 +531,55 @@ class WordParser : public PrefixParselet
 };
 
 /**
+ * Parser for word (field or function name) completion.
+ */
+class CompletionWordParser : public PrefixParselet
+{
+public:
+    explicit CompletionWordParser(Completion* comp)
+        : comp_(comp)
+    {}
+
+    auto parse(Parser& p, Token t) const -> ExprPtr override
+    {
+        /* Self */
+        if (t.type == Token::SELF)
+            return std::make_unique<FieldExpr>("_");
+
+        /* Any Child */
+        if (t.type == Token::OP_TIMES)
+            return std::make_unique<AnyChildExpr>();
+
+        /* Wildcard */
+        if (t.type == Token::WILDCARD)
+            return std::make_unique<WildcardExpr>();
+
+        auto word = std::get<std::string>(t.value);
+
+        /* Function call */
+        if (p.match(Token::LPAREN)) {
+            p.consume();
+
+            /* Downcase function name */
+            std::transform(word.begin(), word.end(), word.begin(), [](auto c) {
+                return tolower(c);
+            });
+
+            auto arguments = p.parseList(Token::RPAREN);
+            return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
+        }
+
+        /* Single field name */
+        if (t.containsPoint(comp_->point)) {
+            return std::make_unique<CompletionFieldExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
+        }
+        return std::make_unique<FieldExpr>(std::move(word));
+    }
+
+    Completion* comp_;
+};
+
+/**
  * Parser for parsing '.' separated paths.
  *
  * <expr> '.' <expr>
@@ -556,10 +605,8 @@ class PathParser : public InfixParselet
     }
 };
 
-auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard) -> ASTPtr
+static auto setupParser(Parser& p)
 {
-    Parser p(&env, sv);
-
     /* Scalars */
     p.prefixParsers[Token::C_TRUE]  = std::make_unique<ConstParser>(Value::t());
     p.prefixParsers[Token::C_FALSE] = std::make_unique<ConstParser>(Value::f());
@@ -623,6 +670,12 @@ auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard)
 
     /* Paths */
     p.infixParsers[Token::DOT]  = std::make_unique<PathParser>();
+}
+
+auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard) -> ASTPtr
+{
+    Parser p(&env, sv);
+    setupParser(p);
 
     auto expr = [&](){
         auto root = p.parse();
@@ -646,6 +699,28 @@ auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard)
         raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());
 
     return std::make_unique<AST>(std::string(sv), std::move(expr));
+}
+
+auto complete(Environment& env, std::string_view sv, size_t point, const ModelNode& node) -> std::vector<CompletionCandidate>
+{
+    Parser p(&env, sv);
+    setupParser(p);
+
+    Completion comp(point);
+
+    p.prefixParsers[Token::WORD] = std::make_unique<CompletionWordParser>(&comp);
+
+    auto ast = p.parse();
+
+    Context ctx(&env);
+    ast->eval(ctx, Value::field(node), LambdaResultFn([](Context ctx, Value vv) {
+        return Result::Stop;
+    }));
+
+    if (!p.match(Token::Type::NIL))
+        raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());
+
+    return std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
 }
 
 auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diagnostics) -> std::vector<Value>
