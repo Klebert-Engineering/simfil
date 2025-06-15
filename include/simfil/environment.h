@@ -149,6 +149,7 @@ struct Context
     Phase phase = Evaluation;
 
     Context(Environment*, Phase = Phase::Evaluation);
+    explicit Context(Environment* env, Phase = Phase::Evaluation);
 };
 
 /**
