@@ -17,15 +17,15 @@ namespace simfil
 /**
  * Compile expression `src`.
  * Param:
- *   env  Environment used for compilation. Register custom functions there.
+ *   env   Environment used for compilation. Register custom functions there.
  * Param:
- *   src  Source code to compile into an expression-tree.
+ *   query Source code to compile into an expression-tree.
  * Param:
- *   any  If true, wrap expression with call to `any(...)`.
+ *   any   If true, wrap expression with call to `any(...)`.
  * Param:
  *   autoWildcard  If true, expand constant expressions to `** = <const>`.
  */
-auto compile(Environment& env, std::string_view src, bool any = true, bool autoWildcard = false) -> ASTPtr;
+auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> ASTPtr;
 
 /**
  * Evaluate compiled expression.
@@ -56,12 +56,12 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
  * Param:
  *   env   Environment used for compilation & evaluation.
  * Param:
- *   src   Source code to complete.
+ *   query Source code to complete.
  * Param:
  *   point Index to complete at.
  * Param:
  *   node   Root node of the data model to query in
  */
-auto complete(Environment& env, std::string_view src, size_t point, ModelNode const& node) -> std::vector<CompletionCandidate>;
+auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node) -> std::vector<CompletionCandidate>;
 
 }

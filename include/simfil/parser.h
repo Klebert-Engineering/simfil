@@ -66,12 +66,17 @@ public:
 class Parser
 {
 public:
+    enum class Mode {
+        Strict,  // Panic on errors
+        Relaxed, // Try to recover from errors, if possible
+    };
+
     struct Context {
         bool inPath = false;
     };
 
     Parser(Environment*, std::vector<Token> tokens);
-    Parser(Environment*, std::string_view expr);
+    Parser(Environment*, std::string_view expr, Mode mode);
 
     auto eof() const -> bool;
 
@@ -106,6 +111,11 @@ public:
      */
     auto precedence(const Token& token) const -> int;
 
+    /**
+     * Get the current parsing mode.
+     */
+    auto mode() const -> Mode;
+
     Context ctx;
     Environment* const env;
     std::unordered_map<Token::Type, std::unique_ptr<PrefixParselet>> prefixParsers;
@@ -115,6 +125,7 @@ private:
     auto findPrefixParser(const Token& t) const -> const PrefixParselet*;
     auto findInfixParser(const Token& t) const -> const InfixParselet*;
 
+    Mode mode_ = Mode::Strict;
     std::vector<Token> tokens_;
     std::size_t pos_;
 };

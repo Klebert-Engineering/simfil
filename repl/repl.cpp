@@ -56,14 +56,13 @@ static auto make_env()
 }
 
 #ifdef WITH_READLINE
-char* command_generator(const char *text, int state)
+char* command_generator(const char* text, int state)
 {
     static std::vector<std::string> matches;
     static size_t match_index = 0;
 
-    std::string query = text;
-
     if (state == 0) {
+        std::string query = text;
         matches.clear();
         match_index = 0;
 
@@ -78,7 +77,7 @@ char* command_generator(const char *text, int state)
         }
 
         if (current_env) {
-            auto comp = simfil::complete(*current_env, query, query.size(), *model->root(0));
+            auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0));
             for (const auto& candidate : comp) {
                 matches.push_back(query.substr(0, candidate.location.begin) + candidate.text);
             }
@@ -196,6 +195,7 @@ static void display_error(std::string_view expression, const simfil::ParserError
 int main(int argc, char *argv[])
 {
 #if WITH_READLINE
+    rl_completer_word_break_characters = "";
     rl_attempted_completion_function = command_completion;
 #endif
 

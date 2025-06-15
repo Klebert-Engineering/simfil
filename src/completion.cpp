@@ -23,12 +23,12 @@ auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& r
 
     for (StringId id : val.node->fieldNames()) {
         auto keyPtr = ctx.env->strings()->resolve(id);
-        if (!keyPtr)
+        if (!keyPtr || keyPtr->empty())
             continue;
         const auto& key = *keyPtr;
 
         // TODO: Make this case insensitive
-        if (key.size() >= prefix_.size() && key.starts_with(prefix_)) {
+        if ((key.size() >= prefix_.size() && key.starts_with(prefix_))) {
             if (isdigit(key[0]) || std::any_of(key.begin(), key.end(), [](auto c) {
                 return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
             })) {

@@ -36,8 +36,9 @@ Parser::Parser(Environment* env, std::vector<Token> tokens)
     assert(env);
 }
 
-Parser::Parser(Environment* env, std::string_view expr)
+Parser::Parser(Environment* env, std::string_view expr, Parser::Mode mode)
     : env(env)
+    , mode_(mode)
     , tokens_(tokenize(expr))
     , pos_(0)
 {
@@ -59,10 +60,12 @@ auto Parser::lookahead(std::size_t offset) const -> const Token*
 
 auto Parser::match(Token::Type t) const -> bool
 {
-    if (!eof())
+    if (!eof()) {
         if (auto head = lookahead())
             return head->type == t;
-    return false;
+    }
+
+    return mode() == Mode::Relaxed;
 }
 
 auto Parser::consume() -> const Token&
@@ -84,6 +87,11 @@ auto Parser::precedence(const Token& token) const -> int
     if (auto parser = findInfixParser(token))
         return parser->precedence();
     return 0;
+}
+
+auto Parser::mode() const -> Mode
+{
+    return mode_;
 }
 
 auto Parser::parseInfix(ExprPtr left, int prec) -> ExprPtr

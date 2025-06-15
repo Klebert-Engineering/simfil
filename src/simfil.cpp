@@ -485,6 +485,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
  */
 class WordParser : public PrefixParselet
 {
+public:
     auto parse(Parser& p, Token t) const -> ExprPtr override
     {
         /* Self */
@@ -533,7 +534,7 @@ class WordParser : public PrefixParselet
 /**
  * Parser for word (field or function name) completion.
  */
-class CompletionWordParser : public PrefixParselet
+class CompletionWordParser : public WordParser
 {
 public:
     explicit CompletionWordParser(Completion* comp)
@@ -578,6 +579,7 @@ public:
 
     Completion* comp_;
 };
+;
 
 /**
  * Parser for parsing '.' separated paths.
@@ -586,6 +588,7 @@ public:
  */
 class PathParser : public InfixParselet
 {
+public:
     auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
     {
         auto inPath = true;
@@ -603,6 +606,34 @@ class PathParser : public InfixParselet
     {
         return Precedence::PATH;
     }
+};
+
+class CompletionPathParser : public PathParser
+{
+public:
+    explicit CompletionPathParser(Completion* comp)
+        : comp_(comp)
+    {}
+
+    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    {
+        auto inPath = true;
+        std::swap(p.ctx.inPath, inPath);
+
+        scoped _([&p, inPath]() {
+            p.ctx.inPath = inPath;
+        });
+
+        auto right = p.parsePrecedence(precedence(), t.containsPoint(comp_->point));
+        if (!right) {
+            Token expectedWord(Token::WORD, "", t.end, t.end);
+            right = std::make_unique<CompletionFieldExpr>("", comp_, expectedWord);
+        }
+
+        return std::make_unique<PathExpr>(std::move(left), std::move(right));
+    }
+
+    Completion* comp_;
 };
 
 static auto setupParser(Parser& p)
@@ -672,9 +703,9 @@ static auto setupParser(Parser& p)
     p.infixParsers[Token::DOT]  = std::make_unique<PathParser>();
 }
 
-auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard) -> ASTPtr
+auto compile(Environment& env, std::string_view query, bool any, bool autoWildcard) -> ASTPtr
 {
-    Parser p(&env, sv);
+    Parser p(&env, query, Parser::Mode::Strict);
     setupParser(p);
 
     auto expr = [&](){
@@ -698,22 +729,23 @@ auto compile(Environment& env, std::string_view sv, bool any, bool autoWildcard)
     if (!p.match(Token::Type::NIL))
         raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());
 
-    return std::make_unique<AST>(std::string(sv), std::move(expr));
+    return std::make_unique<AST>(std::string(query), std::move(expr));
 }
 
-auto complete(Environment& env, std::string_view sv, size_t point, const ModelNode& node) -> std::vector<CompletionCandidate>
+auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node) -> std::vector<CompletionCandidate>
 {
-    Parser p(&env, sv);
+    Parser p(&env, query, Parser::Mode::Relaxed);
     setupParser(p);
 
     Completion comp(point);
 
     p.prefixParsers[Token::WORD] = std::make_unique<CompletionWordParser>(&comp);
+    p.infixParsers[Token::DOT]  = std::make_unique<CompletionPathParser>(&comp);
 
     auto ast = p.parse();
 
     Context ctx(&env);
-    ast->eval(ctx, Value::field(node), LambdaResultFn([](Context ctx, Value vv) {
+    ast->eval(ctx, Value::field(node), LambdaResultFn([](Context ctx, const Value& vv) {
         return Result::Stop;
     }));
 
@@ -723,7 +755,7 @@ auto complete(Environment& env, std::string_view sv, size_t point, const ModelNo
     return std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
 }
 
-auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diagnostics) -> std::vector<Value>
+auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag) -> std::vector<Value>
 {
     if (!node.model_)
         raise<std::runtime_error>("ModelNode must have a model!");
@@ -738,8 +770,8 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
         return Result::Continue;
     }));
 
-    if (diagnostics) {
-        diagnostics->collect(*mutableAST);
+    if (diag) {
+        diag->collect(*mutableAST);
     }
 
     return res;
