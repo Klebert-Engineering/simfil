@@ -742,12 +742,16 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     p.prefixParsers[Token::WORD] = std::make_unique<CompletionWordParser>(&comp);
     p.infixParsers[Token::DOT]  = std::make_unique<CompletionPathParser>(&comp);
 
-    auto ast = p.parse();
+    try {
+        auto ast = p.parse();
 
-    Context ctx(&env);
-    ast->eval(ctx, Value::field(node), LambdaResultFn([](Context ctx, const Value& vv) {
-        return Result::Stop;
-    }));
+        Context ctx(&env);
+        ast->eval(ctx, Value::field(node), LambdaResultFn([](Context ctx, const Value& vv) {
+            return Result::Stop;
+        }));
+    } catch (const simfil::ParserError&) {
+        /* Silently ignore errors */
+    }
 
     if (!p.match(Token::Type::NIL))
         raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());

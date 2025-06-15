@@ -144,12 +144,15 @@ auto Parser::parseTo(Token::Type type) -> ExprPtr
     }
 
     if (!match(type)) {
-        auto msg = fmt::format("Expected '{}', got '{}'",
-                               Token::toString(type),
-                               current().toString());
-        raise<ParserError>(msg, current());
+        if (mode() != Mode::Relaxed) {
+            auto msg = fmt::format("Expected '{}', got '{}'",
+                                Token::toString(type),
+                                current().toString());
+            raise<ParserError>(msg, current());
+        }
+    } else {
+        consume();
     }
-    consume();
 
     return expr;
 }
@@ -170,6 +173,10 @@ auto Parser::parseList(Token::Type stop) -> std::vector<ExprPtr>
         if (!match(stop)) {
             if (match(Token::COMMA)) {
                 consume();
+            } else if (mode() == Mode::Relaxed && match(Token::NIL)) {
+                // We are at eof, so we might just ignore the missing token and
+                // break.
+                break;
             } else {
               auto msg = fmt::format("Expected '{}' but got '{}'",
                                      Token::toString(stop),
