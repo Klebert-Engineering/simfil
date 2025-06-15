@@ -103,7 +103,12 @@ auto Token::toString(Type t) -> std::string
     return "";
 }
 
-std::ostream& operator<<(std::ostream& o, const Token& t)
+auto Token::containsPoint(size_t point) const -> bool
+{
+    return (begin == end && begin == point) || (begin < point && end >= point);
+}
+
+auto operator<<(std::ostream& o, const Token& t) -> std::ostream&
 {
     return o << t.toString();
 }
@@ -437,7 +442,7 @@ std::vector<Token> tokenize(std::string_view expr)
             break;
         }
     }
-    tokens.emplace_back(Token::NIL, 0, 0);
+    tokens.emplace_back(Token(Token::NIL, expr.size(), expr.size()));
 
     return tokens;
 }
