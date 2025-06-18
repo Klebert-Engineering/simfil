@@ -77,10 +77,12 @@ char* command_generator(const char* text, int state)
         }
 
         if (current_env) {
-            auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0));
-            for (const auto& candidate : comp) {
-                matches.push_back(query.substr(0, candidate.location.begin) + candidate.text);
-            }
+            try {
+                auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0));
+                for (const auto& candidate : comp) {
+                    matches.push_back(query.substr(0, candidate.location.begin) + candidate.text);
+                }
+            } catch (const std::runtime_error&) {}
         }
     }
 

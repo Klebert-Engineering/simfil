@@ -1,6 +1,47 @@
 #include "completion.h"
 
 #include "expressions.h"
+#include <string_view>
+
+namespace
+{
+
+auto startsWith(std::string_view str, std::string_view prefix)
+{
+    for (auto i = 0; i < std::min<std::string_view::size_type>(str.size(), prefix.size()); ++i)
+        if (std::tolower(str[i], std::locale()) != std::tolower(prefix[i], std::locale()))
+            return false;
+    return true;
+}
+
+auto needsEscaping(std::string_view str)
+{
+    if (!str.empty() && isdigit(str[0]))
+        return true;
+
+    return std::any_of(str.begin(), str.end(), [](const auto chr) mutable {
+        if (!((chr >= 'a' && chr <= 'z') || (chr >= 'A' && chr <= 'Z')))
+            return true;
+        return false;
+    });
+}
+
+auto escapeKey(std::string_view str)
+{
+    std::string escaped = "[\"";
+    escaped.reserve(str.size() + 4);
+
+    for (auto i = 0; i < str.size(); ++i) {
+        if (str[i] == '"' || str[i] == '\\')
+            escaped.push_back('\\');
+        escaped.push_back(str[i]);
+    }
+
+    escaped += "\"]";
+    return escaped;
+}
+
+}
 
 namespace simfil
 {
@@ -27,12 +68,9 @@ auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& r
             continue;
         const auto& key = *keyPtr;
 
-        // TODO: Make this case insensitive
-        if ((key.size() >= prefix_.size() && key.starts_with(prefix_))) {
-            if (isdigit(key[0]) || std::any_of(key.begin(), key.end(), [](auto c) {
-                return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
-            })) {
-                comp_->add(fmt::format("[\"{}\"]", key), sourceLocation());
+        if (key.size() >= prefix_.size() && startsWith(key, prefix_)) {
+            if (needsEscaping(key)) {
+                comp_->add(escapeKey(key), sourceLocation());
             } else {
                 comp_->add(std::string{key}, sourceLocation());
             }
