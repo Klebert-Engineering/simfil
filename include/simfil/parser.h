@@ -5,12 +5,27 @@
 #include "simfil/token.h"
 #include "simfil/expression.h"
 
+#include <stdexcept>
 #include <unordered_map>
 #include <memory>
 #include <vector>
+#include <tuple>
 
 namespace simfil
 {
+
+struct ParserError : std::runtime_error
+{
+    using RangeType = std::tuple<int, int>;
+
+    explicit ParserError(const std::string& msg);
+    ParserError(const std::string& msg, const Token& token);
+    ParserError(const std::string& msg, RangeType range);
+
+    auto range() const noexcept -> RangeType;
+
+    RangeType range_;
+};
 
 struct Environment;
 class Parser;
@@ -51,12 +66,17 @@ public:
 class Parser
 {
 public:
+    enum class Mode {
+        Strict,  // Panic on errors
+        Relaxed, // Try to recover from errors, if possible
+    };
+
     struct Context {
         bool inPath = false;
     };
 
     Parser(Environment*, std::vector<Token> tokens);
-    Parser(Environment*, std::string_view expr);
+    Parser(Environment*, std::string_view expr, Mode mode);
 
     auto eof() const -> bool;
 
@@ -91,6 +111,11 @@ public:
      */
     auto precedence(const Token& token) const -> int;
 
+    /**
+     * Get the current parsing mode.
+     */
+    auto mode() const -> Mode;
+
     Context ctx;
     Environment* const env;
     std::unordered_map<Token::Type, std::unique_ptr<PrefixParselet>> prefixParsers;
@@ -100,6 +125,7 @@ private:
     auto findPrefixParser(const Token& t) const -> const PrefixParselet*;
     auto findInfixParser(const Token& t) const -> const InfixParselet*;
 
+    Mode mode_ = Mode::Strict;
     std::vector<Token> tokens_;
     std::size_t pos_;
 };
