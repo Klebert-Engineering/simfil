@@ -78,7 +78,11 @@ char* command_generator(const char* text, int state)
 
         if (current_env) {
             try {
-                auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0));
+                simfil::CompletionOptions opts;
+                opts.limit = 25;
+                opts.autoWildcard = options.auto_wildcard;
+
+                auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0), opts);
                 for (const auto& candidate : comp) {
                     matches.push_back(query.substr(0, candidate.location.begin) + candidate.text);
                 }
