@@ -4,6 +4,7 @@
 #include "simfil/token.h"
 #include "simfil/environment.h"
 
+#include <limits>
 #include <string>
 #include <set>
 #include <memory>
@@ -27,7 +28,13 @@ struct Completion
         candidates.insert({std::move(str), location});
     }
 
+    auto size() const
+    {
+        return candidates.size();
+    }
+
     std::size_t point;
+    std::size_t limit = 1000;
     std::set<CompletionCandidate> candidates;
 };
 

@@ -62,6 +62,6 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
  * Param:
  *   node   Root node of the data model to query in
  */
-auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node) -> std::vector<CompletionCandidate>;
+auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node, CompletionOptions const& options) -> std::vector<CompletionCandidate>;
 
 }

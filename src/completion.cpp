@@ -59,10 +59,16 @@ auto CompletionFieldExpr::type() const -> Type
 
 auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
+    if (ctx.phase == Context::Phase::Compilation)
+        return res(ctx, Value::undef());
+
     if (val.isa(ValueType::Undef))
         return res(ctx, val);
 
     for (StringId id : val.node->fieldNames()) {
+        if (comp_->size() >= comp_->limit)
+            return Result::Stop;
+
         auto keyPtr = ctx.env->strings()->resolve(id);
         if (!keyPtr || keyPtr->empty())
             continue;
@@ -77,8 +83,6 @@ auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& r
         }
     }
 
-    if (ctx.phase == Context::Phase::Compilation)
-        return res(ctx, Value::undef());
     return res(ctx, Value::null());
 }
 

@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -732,12 +733,14 @@ auto compile(Environment& env, std::string_view query, bool any, bool autoWildca
     return std::make_unique<AST>(std::string(query), std::move(expr));
 }
 
-auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node) -> std::vector<CompletionCandidate>
+auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node, const CompletionOptions& options) -> std::vector<CompletionCandidate>
 {
     Parser p(&env, query, Parser::Mode::Relaxed);
     setupParser(p);
 
     Completion comp(point);
+    if (options.limit > 0)
+        comp.limit = options.limit;
 
     p.prefixParsers[Token::WORD] = std::make_unique<CompletionWordParser>(&comp);
     p.infixParsers[Token::DOT]  = std::make_unique<CompletionPathParser>(&comp);
@@ -745,16 +748,22 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     try {
         auto ast = p.parse();
 
+        /* Expand a single value to `** == <value>` */
+        if (options.autoWildcard && ast && ast->constant()) {
+            ast = std::make_unique<BinaryExpr<OperatorEq>>(
+                std::make_unique<WildcardExpr>(), std::move(ast));
+        }
+
         Context ctx(&env);
+        if (options.timeoutMs > 0)
+            ctx.timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeoutMs);
+
         ast->eval(ctx, Value::field(node), LambdaResultFn([](Context ctx, const Value& vv) {
-            return Result::Stop;
+            return Result::Continue;
         }));
     } catch (const simfil::ParserError&) {
         /* Silently ignore errors */
     }
-
-    if (!p.match(Token::Type::NIL))
-        raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());
 
     return std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
 }

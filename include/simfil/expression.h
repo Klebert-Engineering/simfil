@@ -52,6 +52,9 @@ public:
     /* Evaluation wrapper */
     auto eval(Context ctx, Value val, const ResultFn& res) -> Result
     {
+        if (ctx.canceled())
+            return Result::Stop;
+
         auto dbg = ctx.env->debug;
         if (dbg) dbg->evalBegin(*this, ctx, val, res);
         auto r = ieval(ctx, val, res);
