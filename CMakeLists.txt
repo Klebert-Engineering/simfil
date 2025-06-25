@@ -138,6 +138,7 @@ add_library(simfil::simfil ALIAS simfil)
 
 if (SIMFIL_WITH_TESTS)
   add_subdirectory(test)
+  add_subdirectory(playground)
 
   if (SIMFIL_WITH_COVERAGE)
     setup_target_for_coverage_gcovr_html(
