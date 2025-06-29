@@ -53,4 +53,32 @@ public:
     Completion* comp_;
 };
 
+class CompletionAndExpr : public Expr
+{
+public:
+    CompletionAndExpr(ExprPtr left, ExprPtr right, Completion* comp);
+
+    auto type() const -> Type override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override;
+    void accept(ExprVisitor& v) override;
+    auto clone() const -> ExprPtr override;
+    auto toString() const -> std::string override;
+
+    ExprPtr left_, right_;
+};
+
+class CompletionOrExpr : public Expr
+{
+public:
+    CompletionOrExpr(ExprPtr left, ExprPtr right, Completion* comp);
+
+    auto type() const -> Type override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override;
+    void accept(ExprVisitor& v) override;
+    auto clone() const -> ExprPtr override;
+    auto toString() const -> std::string override;
+
+    ExprPtr left_, right_;
+};
+
 }

@@ -215,6 +215,35 @@ public:
     }
 };
 
+class CompletionAndOrParser : public InfixParselet
+{
+public:
+    CompletionAndOrParser(Completion* comp)
+        : comp_(comp)
+    {}
+
+    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    {
+        auto right = p.parsePrecedence(precedence());
+
+        if (t.type == Token::OP_AND)
+          return simplifyOrForward(p.env, std::make_unique<CompletionAndExpr>(std::move(left),
+                                                                              std::move(right), comp_));
+        else if (t.type == Token::OP_OR)
+          return simplifyOrForward(p.env, std::make_unique<CompletionOrExpr>(std::move(left),
+                                                                             std::move(right), comp_));
+        assert(0);
+        return nullptr;
+    }
+
+    int precedence() const override
+    {
+        return Precedence::LOGIC;
+    }
+
+    Completion* comp_;
+};
+
 class CastParser : public InfixParselet
 {
 public:
@@ -741,8 +770,10 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     if (options.limit > 0)
         comp.limit = options.limit;
 
-    p.prefixParsers[Token::WORD] = std::make_unique<CompletionWordParser>(&comp);
-    p.infixParsers[Token::DOT]  = std::make_unique<CompletionPathParser>(&comp);
+    p.prefixParsers[Token::WORD]  = std::make_unique<CompletionWordParser>(&comp);
+    p.infixParsers[Token::DOT]    = std::make_unique<CompletionPathParser>(&comp);
+    p.infixParsers[Token::OP_AND] = std::make_unique<CompletionAndOrParser>(&comp);
+    p.infixParsers[Token::OP_OR]  = std::make_unique<CompletionAndOrParser>(&comp);
 
     try {
         auto ast = p.parse();

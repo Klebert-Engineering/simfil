@@ -33,6 +33,7 @@ public:
     Expr() = default;
     explicit Expr(const Token& token)
     {
+        assert(token.end >= token.begin);
         sourceLocation_.begin = token.begin;
         sourceLocation_.size = token.end - token.begin;
     }

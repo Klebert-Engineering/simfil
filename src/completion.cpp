@@ -1,6 +1,8 @@
 #include "completion.h"
 
 #include "expressions.h"
+#include "simfil/result.h"
+#include <stdexcept>
 #include <string_view>
 
 namespace
@@ -99,6 +101,137 @@ auto CompletionFieldExpr::clone() const -> std::unique_ptr<Expr>
 auto CompletionFieldExpr::accept(ExprVisitor& v) -> void
 {
     v.visit(*this);
+}
+
+namespace
+{
+
+struct FindExpressionRange : ExprVisitor
+{
+    size_t min = 0;
+    size_t max = 0;
+
+    auto contains(size_t point) const
+    {
+        return min <= point && point <= max;
+    }
+
+    void visit(Expr& expr) override
+    {
+        ExprVisitor::visit(expr);
+
+        auto loc = expr.sourceLocation();
+        if (loc.size > 0) {
+            min = std::min<size_t>(min, loc.begin);
+            max = std::max<size_t>(max, loc.begin + loc.size);
+        }
+    }
+};
+
+}
+
+CompletionAndExpr::CompletionAndExpr(ExprPtr left, ExprPtr right, Completion* comp)
+    : left_(std::move(left))
+    , right_(std::move(right))
+{
+    FindExpressionRange leftRange;
+    left_->accept(leftRange);
+
+    if (!leftRange.contains(comp->point))
+        left_ = nullptr;
+
+    FindExpressionRange rightRange;
+    right_->accept(rightRange);
+
+    if (!rightRange.contains(comp->point))
+        right_ = nullptr;
+}
+
+auto CompletionAndExpr::type() const -> Type
+{
+    return Type::VALUE;
+}
+
+auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+{
+    if (left_)
+        (void)left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, const Value&) {
+            return Result::Continue;
+        }));
+
+    if (right_)
+        (void)right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, const Value&) {
+            return Result::Continue;
+        }));
+
+    return Result::Continue;
+}
+
+void CompletionAndExpr::accept(ExprVisitor& v)
+{
+    v.visit(*this);
+}
+
+auto CompletionAndExpr::clone() const -> ExprPtr
+{
+    throw std::runtime_error("Cannot clone CompletionAndExpr");
+}
+
+auto CompletionAndExpr::toString() const -> std::string
+{
+    return "(and "s + left_->toString() + " "s + right_->toString() + ")"s;
+}
+
+CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, Completion* comp)
+    : left_(std::move(left))
+    , right_(std::move(right))
+{
+    FindExpressionRange leftRange;
+    left_->accept(leftRange);
+
+    if (!leftRange.contains(comp->point))
+        left_ = nullptr;
+
+    FindExpressionRange rightRange;
+    right_->accept(rightRange);
+
+    if (!rightRange.contains(comp->point))
+        right_ = nullptr;
+}
+
+auto CompletionOrExpr::type() const -> Type
+{
+    return Type::VALUE;
+}
+
+auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+{
+    if (left_)
+        (void)left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, const Value&) {
+            return Result::Continue;
+        }));
+
+    if (right_)
+        (void)right_->eval(ctx, val, LambdaResultFn([&](Context ctx, const Value&) {
+            return Result::Continue;
+        }));
+
+    return Result::Continue;
+}
+
+void CompletionOrExpr::accept(ExprVisitor& v)
+{
+    v.visit(*this);
+}
+
+auto CompletionOrExpr::clone() const -> ExprPtr
+{
+    throw std::runtime_error("Cannot clone CompletionOrExpr");
+}
+
+auto CompletionOrExpr::toString() const -> std::string
+{
+    return "(or "s + left_->toString() + " "s + right_->toString() + ")"s;
 }
 
 }
