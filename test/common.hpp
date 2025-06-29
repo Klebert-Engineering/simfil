@@ -78,6 +78,7 @@ public:
 };
 
 auto JoinedResult(std::string_view query) -> std::string;
+auto CompleteQuery(std::string_view query, size_t point) -> std::vector<CompletionCandidate>;
 auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::Message>;
 
 #define REQUIRE_RESULT(query, result) \
