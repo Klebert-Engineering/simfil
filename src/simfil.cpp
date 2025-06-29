@@ -20,7 +20,6 @@
 #include <chrono>
 #include <cstdint>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -563,7 +562,7 @@ public:
             p.consume();
 
             /* Downcase function name */
-            std::transform(word.begin(), word.end(), word.begin(), [](auto c) {
+            std::ranges::transform(word.begin(), word.end(), word.begin(), [](auto c) {
                 return tolower(c);
             });
 
@@ -758,11 +757,12 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
         if (options.timeoutMs > 0)
             ctx.timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeoutMs);
 
-        ast->eval(ctx, Value::field(node), LambdaResultFn([](Context ctx, const Value& vv) {
+        ast->eval(ctx, Value::field(node), LambdaResultFn([](Context, const Value&) {
             return Result::Continue;
         }));
-    } catch (const simfil::ParserError&) {
+    } catch (const simfil::ParserError& exc) {
         /* Silently ignore errors */
+        (void)exc;
     }
 
     return std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
