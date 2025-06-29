@@ -1,12 +1,62 @@
 #include "simfil/parser.h"
 
 #include <cassert>
+#include <memory>
 #include <stdexcept>
 #include "fmt/core.h"
 #include "simfil/exception-handler.h"
+#include "simfil/expression.h"
+#include "simfil/result.h"
+#include "src/expressions.h"
+
 
 namespace simfil
 {
+
+namespace
+{
+
+class NOOPExpr : public Expr
+{
+public:
+    auto type() const -> Type override
+    {
+        return Type::FIELD;
+    }
+
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result override
+    {
+        return Result::Stop;
+    }
+
+    auto clone() const -> ExprPtr override
+    {
+        return std::make_unique<NOOPExpr>();
+    }
+
+    void accept(ExprVisitor& v) override
+    {
+        v.visit(*this);
+    }
+
+    auto toString() const -> std::string override
+    {
+        return "noop";
+    }
+};
+
+template <class ErrorType, class ...Args>
+[[nodiscard]]
+auto raiseOrNOOP(const Parser& p, Args... args)
+{
+    if (p.mode() == Parser::Mode::Relaxed)
+        return std::make_unique<NOOPExpr>();
+
+    raise<ErrorType>(std::forward<Args>(args)...);
+    assert(0);
+}
+
+}
 
 ParserError::ParserError(const std::string& msg)
     : std::runtime_error(msg)
@@ -102,7 +152,7 @@ auto Parser::parseInfix(ExprPtr left, int prec) -> ExprPtr
         if (!parser) {
             auto msg = fmt::format("Could not parse right side of '{}'",
                                    token.toString());
-            raise<ParserError>(msg, token);
+            return raiseOrNOOP<ParserError>(*this, msg, token);
         }
 
         left = parser->parse(*this, std::move(left), token);
@@ -119,7 +169,7 @@ auto Parser::parsePrecedence(int precedence, bool optional) -> ExprPtr
             auto msg = fmt::format("Unexpected input '{}'",
                                    token.toString());
 
-            raise<ParserError>(msg, token);
+            return raiseOrNOOP<ParserError>(*this, msg, token);
         }
         return nullptr;
     }
@@ -140,7 +190,7 @@ auto Parser::parseTo(Token::Type type) -> ExprPtr
     if (!expr) {
         auto msg = fmt::format("Expected expression after '{}'",
                                current().toString());
-        raise<ParserError>(msg, current());
+        return raiseOrNOOP<ParserError>(*this, msg, current());
     }
 
     if (!match(type)) {
