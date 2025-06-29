@@ -193,9 +193,9 @@ struct CompletionCandidate
     std::string text;
     SourceLocation location;
 
-    auto operator<(const CompletionCandidate& r) const -> bool
+    auto operator<=>(const CompletionCandidate& r) const
     {
-        return text < r.text;
+        return std::tie(text, location.begin, location.size) <=> std::tie(r.text, r.location.begin, r.location.size);
     }
 };
 

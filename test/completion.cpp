@@ -16,7 +16,7 @@ auto FindCompletion(std::string_view query, std::optional<size_t> point, std::st
 }
 
 #define EXPECT_COMPLETION(query, point, what) \
-    REQUIRE(FindCompletion(query, point, what) == true);
+    REQUIRE(FindCompletion(query, point, what) == true)
 
 TEST_CASE("CompleteField", "[completion.field.incompleteQuery]") {
     EXPECT_COMPLETION("((num", {}, "number");

@@ -116,6 +116,8 @@ struct FindExpressionRange : ExprVisitor
         return min <= point && point <= max;
     }
 
+    using ExprVisitor::visit;
+
     void visit(Expr& expr) override
     {
         ExprVisitor::visit(expr);

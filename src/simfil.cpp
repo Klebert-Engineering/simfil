@@ -218,7 +218,7 @@ public:
 class CompletionAndOrParser : public InfixParselet
 {
 public:
-    CompletionAndOrParser(Completion* comp)
+    explicit CompletionAndOrParser(const Completion* comp)
         : comp_(comp)
     {}
 
@@ -241,7 +241,7 @@ public:
         return Precedence::LOGIC;
     }
 
-    Completion* comp_;
+    const Completion* comp_;
 };
 
 class CastParser : public InfixParselet

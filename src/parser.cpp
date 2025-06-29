@@ -47,7 +47,7 @@ public:
 
 template <class ErrorType, class ...Args>
 [[nodiscard]]
-auto raiseOrNOOP(const Parser& p, Args... args)
+auto raiseOrNOOP(const Parser& p, Args&&... args)
 {
     if (p.mode() == Parser::Mode::Relaxed)
         return std::make_unique<NOOPExpr>();
