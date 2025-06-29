@@ -791,7 +791,7 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
         ast->eval(ctx, Value::field(node), LambdaResultFn([](Context, const Value&) {
             return Result::Continue;
         }));
-    } catch (const simfil::ParserError& exc) {
+    } catch (const std::runtime_error& exc) {
         /* Silently ignore errors */
         (void)exc;
     }
