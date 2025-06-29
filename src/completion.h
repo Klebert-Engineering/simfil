@@ -56,7 +56,7 @@ public:
 class CompletionAndExpr : public Expr
 {
 public:
-    CompletionAndExpr(ExprPtr left, ExprPtr right, Completion* comp);
+    CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override;
@@ -70,7 +70,7 @@ public:
 class CompletionOrExpr : public Expr
 {
 public:
-    CompletionOrExpr(ExprPtr left, ExprPtr right, Completion* comp);
+    CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override;

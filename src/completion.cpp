@@ -130,7 +130,7 @@ struct FindExpressionRange : ExprVisitor
 
 }
 
-CompletionAndExpr::CompletionAndExpr(ExprPtr left, ExprPtr right, Completion* comp)
+CompletionAndExpr::CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp)
     : left_(std::move(left))
     , right_(std::move(right))
 {
@@ -155,12 +155,12 @@ auto CompletionAndExpr::type() const -> Type
 auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     if (left_)
-        (void)left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, const Value&) {
+        (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
             return Result::Continue;
         }));
 
     if (right_)
-        (void)right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, const Value&) {
+        (void)right_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
             return Result::Continue;
         }));
 
@@ -182,7 +182,7 @@ auto CompletionAndExpr::toString() const -> std::string
     return "(and "s + left_->toString() + " "s + right_->toString() + ")"s;
 }
 
-CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, Completion* comp)
+CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp)
     : left_(std::move(left))
     , right_(std::move(right))
 {
@@ -207,12 +207,12 @@ auto CompletionOrExpr::type() const -> Type
 auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     if (left_)
-        (void)left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, const Value&) {
+        (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
             return Result::Continue;
         }));
 
     if (right_)
-        (void)right_->eval(ctx, val, LambdaResultFn([&](Context ctx, const Value&) {
+        (void)right_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
             return Result::Continue;
         }));
 
