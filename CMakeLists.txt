@@ -99,6 +99,7 @@ target_link_libraries(simfil
   PUBLIC
     sfl::sfl
     fmt::fmt
+    tl::expected
     Bitsery::bitsery)
 
 if (SIMFIL_FPIC OR NOT SIMFIL_SHARED)
