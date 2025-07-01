@@ -1,0 +1,17 @@
+#pragma once
+
+#include "tl/expected.hpp"
+
+// Helper macro for bubbling-up tl::expected errors.
+#define TRY_EXPECTED(res)                                                      \
+  do {                                                                         \
+    if (!(res).has_value()) {                                                  \
+      return tl::unexpected(std::move((res).error()));                         \
+    }                                                                          \
+  } while (false)
+
+template <class T, class E>
+using expected = tl::expected<T, E>;
+
+template <class E>
+using unexpected = tl::unexpected<E>;

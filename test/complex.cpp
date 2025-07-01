@@ -58,12 +58,18 @@ static auto joined_result(std::string_view query)
     auto model = json::parse(invoice);
     Environment env(model->strings());
     auto ast = compile(env, query, false);
-    INFO("AST: " << ast->expr().toString());
+    if (!ast)
+        INFO(ast.error().message);
+    REQUIRE(ast.has_value());
+    INFO("AST: " << (*ast)->expr().toString());
 
-    auto res = eval(env, *ast, *model->root(0), nullptr);
+    auto res = eval(env, **ast, *model->root(0), nullptr);
+    if (!res)
+        INFO(res.error().message);
+    REQUIRE(res);
 
     std::string vals;
-    for (const auto& vv : res) {
+    for (const auto& vv : *res) {
         if (!vals.empty())
             vals.push_back('|');
         vals += vv.toString();

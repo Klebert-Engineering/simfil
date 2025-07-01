@@ -48,6 +48,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/diagnostics.cpp
   src/completion.h
   src/completion.cpp
+  src/error.cpp
   src/function.cpp
   src/parser.cpp
   src/token.cpp
@@ -66,6 +67,8 @@ target_sources(simfil PUBLIC
   FILE_SET public_headers
     TYPE HEADERS
     FILES
+      include/simfil/error.h
+      include/simfil/sourcelocation.h
       include/simfil/environment.h
       include/simfil/diagnostics.h
       include/simfil/expression.h

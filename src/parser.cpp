@@ -2,12 +2,12 @@
 
 #include <cassert>
 #include <memory>
-#include <stdexcept>
 #include "fmt/core.h"
-#include "simfil/exception-handler.h"
 #include "simfil/expression.h"
 #include "simfil/result.h"
+#include "simfil/token.h"
 #include "src/expressions.h"
+#include "expected.h"
 
 
 namespace simfil
@@ -45,51 +45,12 @@ public:
     }
 };
 
-template <class ErrorType, class ...Args>
-[[nodiscard]]
-auto raiseOrNOOP(const Parser& p, Args&&... args)
-{
-    if (p.mode() == Parser::Mode::Relaxed)
-        return std::make_unique<NOOPExpr>();
-
-    raise<ErrorType>(std::forward<Args>(args)...);
-    assert(0);
 }
 
-}
-
-ParserError::ParserError(const std::string& msg)
-    : std::runtime_error(msg)
-    , range_(0, 0)
-{}
-
-ParserError::ParserError(const std::string& msg, const Token& token)
-    : std::runtime_error(msg)
-    , range_(token.begin, token.end)
-{}
-
-ParserError::ParserError(const std::string& msg, RangeType range)
-    : std::runtime_error(msg)
-    , range_(std::move(range))
-{}
-
-auto ParserError::range() const noexcept -> ParserError::RangeType
-{
-    return range_;
-}
-
-Parser::Parser(Environment* env, std::vector<Token> tokens)
-    : env(env)
-    , tokens_(std::move(tokens))
-    , pos_(0)
-{
-    assert(env);
-}
-
-Parser::Parser(Environment* env, std::string_view expr, Parser::Mode mode)
+Parser::Parser(Environment* env, std::vector<Token> tokens, Mode mode)
     : env(env)
     , mode_(mode)
-    , tokens_(tokenize(expr))
+    , tokens_(std::move(tokens))
     , pos_(0)
 {
     assert(env);
@@ -120,16 +81,22 @@ auto Parser::match(Token::Type t) const -> bool
 
 auto Parser::consume() -> const Token&
 {
+    static Token eofToken(Token::NIL, 0, 0);
+
     if (!eof())
         return tokens_[pos_++];
-    raise<ParserError>("Parser end of input (consume)");
+
+    return eofToken;
 }
 
 auto Parser::current() const -> const Token&
 {
+    static Token eofToken(Token::NIL, 0, 0);
+
     if (!eof())
         return tokens_[pos_];
-    raise<ParserError>("Parser end of input");
+
+    return eofToken;
 }
 
 auto Parser::precedence(const Token& token) const -> int
@@ -144,61 +111,83 @@ auto Parser::mode() const -> Mode
     return mode_;
 }
 
-auto Parser::parseInfix(ExprPtr left, int prec) -> ExprPtr
+auto Parser::relaxed() const -> bool
 {
+    return mode_ == Mode::Relaxed;
+}
+
+auto Parser::parseInfix(expected<ExprPtr, Error> left, int prec) -> expected<ExprPtr, Error>
+{
+    TRY_EXPECTED(left);
+
     while (prec < precedence(current())) {
         auto token = consume();
         auto parser = findInfixParser(token);
         if (!parser) {
-            auto msg = fmt::format("Could not parse right side of '{}'",
-                                   token.toString());
-            return raiseOrNOOP<ParserError>(*this, msg, token);
+            if (relaxed())
+                return std::make_unique<NOOPExpr>();
+
+            return unexpected<Error>(
+                Error::ParserError,
+                fmt::format("Could not parse right side of '{}'",
+                            token.toString()),
+                token);
         }
 
-        left = parser->parse(*this, std::move(left), token);
+        auto next = parser->parse(*this, std::move(*left), token);
+        TRY_EXPECTED(next);
+
+        left = std::move(*next);
     }
     return left;
 }
 
-auto Parser::parsePrecedence(int precedence, bool optional) -> ExprPtr
+auto Parser::parsePrecedence(int precedence, bool optional) -> expected<ExprPtr, Error>
 {
     auto token = current();
     auto parser = findPrefixParser(token);
     if (!parser) {
-        if (!optional) {
-            auto msg = fmt::format("Unexpected input '{}'",
-                                   token.toString());
+        if (!optional)
+          return unexpected<Error>(
+              Error::ParserError,
+              fmt::format("Unexpected input '{}'", token.toString()), token);
 
-            return raiseOrNOOP<ParserError>(*this, msg, token);
-        }
         return nullptr;
     }
     consume();
 
     auto left = parser->parse(*this, token);
-    return parseInfix(std::move(left), precedence);
+    TRY_EXPECTED(left);
+
+    return parseInfix(std::move(*left), precedence);
 }
 
-auto Parser::parse() -> ExprPtr
+auto Parser::parse() -> expected<ExprPtr, Error>
 {
     return parsePrecedence(0);
 }
 
-auto Parser::parseTo(Token::Type type) -> ExprPtr
+auto Parser::parseTo(Token::Type type) -> expected<ExprPtr, Error>
 {
     auto expr = parse();
+    TRY_EXPECTED(expr);
+
     if (!expr) {
-        auto msg = fmt::format("Expected expression after '{}'",
-                               current().toString());
-        return raiseOrNOOP<ParserError>(*this, msg, current());
+        if (relaxed())
+            return std::make_unique<NOOPExpr>();
+
+        return unexpected<Error>(
+            Error::ParserError,
+            fmt::format("Expected expression after '{}'", current().toString()),
+            current());
     }
 
     if (!match(type)) {
-        if (mode() != Mode::Relaxed) {
-            auto msg = fmt::format("Expected '{}', got '{}'",
-                                Token::toString(type),
-                                current().toString());
-            raise<ParserError>(msg, current());
+        if (!relaxed()) {
+            return unexpected<Error>(
+                Error::ParserError,
+                fmt::format("Expected '{}', got '{}'", Token::toString(type), current().toString()),
+                current());
         }
     } else {
         consume();
@@ -207,7 +196,7 @@ auto Parser::parseTo(Token::Type type) -> ExprPtr
     return expr;
 }
 
-auto Parser::parseList(Token::Type stop) -> std::vector<ExprPtr>
+auto Parser::parseList(Token::Type stop) -> expected<std::vector<ExprPtr>, Error>
 {
     std::vector<ExprPtr> exprs;
     const auto begin = current().begin;
@@ -218,8 +207,10 @@ auto Parser::parseList(Token::Type stop) -> std::vector<ExprPtr>
     }
 
     for (;;) {
-        exprs.emplace_back(parse());
+        auto res = parse();
+        TRY_EXPECTED(res);
 
+        exprs.emplace_back(std::move(res.value()));
         if (!match(stop)) {
             if (match(Token::COMMA)) {
                 consume();
@@ -228,10 +219,11 @@ auto Parser::parseList(Token::Type stop) -> std::vector<ExprPtr>
                 // break.
                 break;
             } else {
-              auto msg = fmt::format("Expected '{}' but got '{}'",
-                                     Token::toString(stop),
-                                     current().toString());
-              raise<ParserError>(ParserError(msg, {begin, current().end}));
+              return unexpected<Error>(Error::ParserError,
+                                       fmt::format("Expected '{}' but got '{}'",
+                                                   Token::toString(stop),
+                                                   current().toString()),
+                                       current());
             }
         } else {
             consume();

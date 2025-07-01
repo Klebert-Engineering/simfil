@@ -4,15 +4,18 @@
 
 #include <vector>
 #include <string_view>
+#include <tl/expected.hpp>
 
 #include "simfil/expression.h"
 #include "simfil/environment.h"
 #include "simfil/diagnostics.h"
 #include "simfil/value.h"
-#include "simfil/model/model.h"
+#include "simfil/error.h"
 
 namespace simfil
 {
+
+struct ModelNode;
 
 /**
  * Compile expression `src`.
@@ -25,7 +28,7 @@ namespace simfil
  * Param:
  *   autoWildcard  If true, expand constant expressions to `** = <const>`.
  */
-auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> ASTPtr;
+auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> tl::expected<ASTPtr, Error>;
 
 /**
  * Evaluate compiled expression.
@@ -38,7 +41,7 @@ auto compile(Environment& env, std::string_view query, bool any = true, bool aut
  * Param:
  *   diag   Optional pointer to a diagnostics object to merge results into.
  */
-auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* diag) -> std::vector<Value>;
+auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* diag) -> tl::expected<std::vector<Value>, Error>;
 
 /**
  * Build messages for diagnostics collected by `eval`.
@@ -49,7 +52,7 @@ auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* 
  * Param:
  *   diag   Diagnostics data filled by eval.
  */
-auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Diagnostics::Message>;
+auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> tl::expected<std::vector<Diagnostics::Message>, Error>;
 
 /**
  * Find completion candidates for an expression.
@@ -62,6 +65,6 @@ auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> s
  * Param:
  *   node   Root node of the data model to query in
  */
-auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node, CompletionOptions const& options) -> std::vector<CompletionCandidate>;
+auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node, CompletionOptions const& options) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 }
