@@ -141,13 +141,17 @@ auto env = simfil::Environment{strings};
 
 // Compile query string to a simfil::Expression.
 auto query = simfil::compile(env, "name", false);
-if (!query)
+if (!query) {
     std::cerr << query.error() << "\n";
+    return -1;
+}
 
-// Evalualte query and get result of type simfil::Value.
-auto result = simfil::eval(env, query.value(), *model, nullptr);
-if (!result)
+// Evaluate query and get result of type simfil::Value.
+auto result = simfil::eval(env, *query, *model->root(0), nullptr);
+if (!result) {
     std::cerr << result.error() << "\n";
+    return -1;
+}
 
 for (auto&& value : result.value())
     std::cout << value.toString() << "\n";
