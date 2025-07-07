@@ -86,7 +86,7 @@ char* command_generator(const char* text, int state)
                 return nullptr;
 
             for (const auto& candidate : *comp) {
-                matches.push_back(query.substr(0, candidate.location.begin) + candidate.text);
+                matches.push_back(query.substr(0, candidate.location.offset) + candidate.text);
             }
         }
     }
@@ -188,15 +188,15 @@ static void show_help()
 static void display_error(std::string_view expression, const simfil::Error& e)
 {
     static const auto indent = "  ";
-    auto [begin, end] = e.location;
+    auto [offset, end] = e.location;
 
     std::string underline;
-    if (end >= begin) {
-        if (begin > 0)
-            std::generate_n(std::back_inserter(underline), begin, []() { return ' '; });
+    if (end >= offset) {
+        if (offset > 0)
+            std::generate_n(std::back_inserter(underline), offset, []() { return ' '; });
         underline.push_back('^');
-        if (end > begin)
-            std::generate_n(std::back_inserter(underline), end - begin - 1, []() { return '~'; });
+        if (end > offset)
+            std::generate_n(std::back_inserter(underline), end - offset - 1, []() { return '~'; });
     }
 
     std::cout << "Error:\n"
@@ -316,7 +316,7 @@ int main(int argc, char *argv[])
 
             auto underlineQuery = [&](simfil::SourceLocation loc) {
                 std::string underline;
-                std::fill_n(std::back_inserter(underline), loc.begin, ' ');
+                std::fill_n(std::back_inserter(underline), loc.offset, ' ');
                 underline.push_back('^');
                 if (loc.size > 0)
                     std::fill_n(std::back_inserter(underline), loc.size - 1, '~');

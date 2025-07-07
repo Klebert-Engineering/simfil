@@ -18,7 +18,7 @@ Error::Error(Type type, std::string message, SourceLocation location)
 {}
 
 Error::Error(Type type, std::string message, const Token& token)
-    : type(type), message(std::move(message)), location(token.begin, token.begin - token.end)
+    : type(type), message(std::move(message)), location(token.begin, token.end - token.begin)
 {}
 
 }
