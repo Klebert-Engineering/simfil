@@ -24,6 +24,11 @@ TEST_CASE("CompleteField", "[completion.field.incompleteQuery]") {
 
 TEST_CASE("CompleteField", "[completion.field]") {
     EXPECT_COMPLETION("num", {}, "number");
+    EXPECT_COMPLETION("__", {}, "__long__name__");
+}
+
+TEST_CASE("CompleteField", "[completion.field.escape]") {
+    EXPECT_COMPLETION("abc", {}, "[\"abc def\"]");
 }
 
 TEST_CASE("CompleteField", "[completion.field.midQuery]") {

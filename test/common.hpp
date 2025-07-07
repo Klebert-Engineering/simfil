@@ -21,6 +21,8 @@ static const char* const TestModel = R"json(
 {
   "number": 123,
   "string": "text",
+  "__long__name__": true,
+  "abc def": true,
   "a": 1,
   "b": 2,
   "c": ["a", "b", "c"],
