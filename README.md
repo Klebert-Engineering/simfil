@@ -139,17 +139,17 @@ model->addRoot(obj);
 // to register custom functions or callbacks.
 auto env = simfil::Environment{strings};
 
-// Compile query string to a simfil::Expression.
-auto query = simfil::compile(env, "name", false);
-if (!query) {
-    std::cerr << query.error() << "\n";
+// Compile query string to an simfil::AST.
+auto ast = simfil::compile(env, "name", false);
+if (!ast) {
+    std::cerr << ast.error().message << "\n";
     return -1;
 }
 
 // Evaluate query and get result of type simfil::Value.
-auto result = simfil::eval(env, *query, *model->root(0), nullptr);
+auto result = simfil::eval(env, **ast, *model->root(0), nullptr);
 if (!result) {
-    std::cerr << result.error() << "\n";
+    std::cerr << result.error().message << "\n";
     return -1;
 }
 
