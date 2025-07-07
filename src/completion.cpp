@@ -26,7 +26,8 @@ auto needsEscaping(std::string_view str)
     if (!str.empty() && isdigit(str[0]))
         return true;
 
-    return std::any_of(str.begin(), str.end(), [i = 0](const auto chr) mutable {
+    auto i = 0;
+    return std::any_of(str.begin(), str.end(), [&i](const auto chr) {
         if (!((chr >= 'a' && chr <= 'z') ||
               (chr >= 'A' && chr <= 'Z') ||
               (chr == '_') ||
