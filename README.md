@@ -141,11 +141,19 @@ auto env = simfil::Environment{strings};
 
 // Compile query string to a simfil::Expression.
 auto query = simfil::compile(env, "name", false);
+if (!query) {
+    std::cerr << query.error() << "\n";
+    return -1;
+}
 
-// Evalualte query and get result of type simfil::Value.
-auto result = simfil::eval(env, *query, *model, nullptr);
+// Evaluate query and get result of type simfil::Value.
+auto result = simfil::eval(env, *query, *model->root(0), nullptr);
+if (!result) {
+    std::cerr << result.error() << "\n";
+    return -1;
+}
 
-for (auto&& value : result)
+for (auto&& value : result.value())
     std::cout << value.toString() << "\n";
 ```
 
@@ -156,3 +164,4 @@ The full source of the example can be found [here](./examples/minimal/main.cpp).
 - [fraillt/bitsery](https://github.com/fraillt/bitsery) for binary en- and decoding.
 - [slavenf/sfl-library](https://github.com/slavenf/sfl-library.git) for small and segmented vector containers.
 - [fmtlib/fmt](https://github.com/fmtlib/fmt) string formatting library.
+- [tl/excpected](https://github.com/TartanLlama/expected) `std::expected` implementation.

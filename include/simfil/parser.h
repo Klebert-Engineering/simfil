@@ -4,28 +4,15 @@
 
 #include "simfil/token.h"
 #include "simfil/expression.h"
+#include "simfil/error.h"
 
-#include <stdexcept>
+#include <tl/expected.hpp>
 #include <unordered_map>
 #include <memory>
 #include <vector>
-#include <tuple>
 
 namespace simfil
 {
-
-struct ParserError : std::runtime_error
-{
-    using RangeType = std::tuple<int, int>;
-
-    explicit ParserError(const std::string& msg);
-    ParserError(const std::string& msg, const Token& token);
-    ParserError(const std::string& msg, RangeType range);
-
-    auto range() const noexcept -> RangeType;
-
-    RangeType range_;
-};
 
 struct Environment;
 class Parser;
@@ -46,7 +33,7 @@ public:
      * @param t  Current token for which this parser got called.
      * @return  Parsed expression object.
      */
-    virtual ExprPtr parse(Parser& p, Token t) const = 0;
+    virtual auto parse(Parser& p, Token t) const -> tl::expected<ExprPtr, Error> = 0;
 };
 
 /**
@@ -58,7 +45,7 @@ class InfixParselet
 public:
     virtual ~InfixParselet() = default;
 
-    virtual ExprPtr parse(Parser&, std::unique_ptr<Expr> left, Token) const = 0;
+    virtual auto parse(Parser&, std::unique_ptr<Expr> left, Token) const -> tl::expected<ExprPtr, Error> = 0;
     virtual int precedence() const = 0;
 };
 
@@ -75,27 +62,26 @@ public:
         bool inPath = false;
     };
 
-    Parser(Environment*, std::vector<Token> tokens);
-    Parser(Environment*, std::string_view expr, Mode mode);
+    Parser(Environment*, std::vector<Token> tokens, Mode mode);
 
     auto eof() const -> bool;
 
     /**
      * Parsing entry point(s).
      */
-    auto parse() -> ExprPtr;
-    auto parseInfix(ExprPtr left, int prec) -> ExprPtr;
-    auto parsePrecedence(int precedence, bool optional = false) -> ExprPtr;
+    auto parse() -> tl::expected<ExprPtr, Error>;
+    auto parseInfix(tl::expected<ExprPtr, Error> left, int prec) -> tl::expected<ExprPtr, Error>;
+    auto parsePrecedence(int precedence, bool optional = false) -> tl::expected<ExprPtr, Error>;
 
     /**
      * Parse expression and match next token against given token type.
      */
-    auto parseTo(Token::Type type) -> ExprPtr;
+    auto parseTo(Token::Type type) -> tl::expected<ExprPtr, Error>;
 
     /**
      * Helper for parsing comma separated expressions.
      */
-    auto parseList(Token::Type stop) -> std::vector<ExprPtr>;
+    auto parseList(Token::Type stop) -> tl::expected<std::vector<ExprPtr>, Error>;
 
     /**
      * Returns token at offset relative to current position.
@@ -115,6 +101,7 @@ public:
      * Get the current parsing mode.
      */
     auto mode() const -> Mode;
+    auto relaxed() const -> bool;
 
     Context ctx;
     Environment* const env;

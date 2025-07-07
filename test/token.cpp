@@ -7,7 +7,7 @@ using namespace simfil;
 
 static auto getFirstType(std::string_view input)
 {
-    auto tokens = tokenize(input);
+    auto tokens = tokenize(input).value();
     REQUIRE(tokens.size() >= 2);
 
     return tokens.at(0).type;
@@ -16,7 +16,8 @@ static auto getFirstType(std::string_view input)
 template <class Type>
 static auto getFirst(std::string_view input, Token::Type t) -> Type
 {
-    auto tokens = tokenize(input);
+    auto tokens = tokenize(input).value();
+    INFO(input);
     REQUIRE(tokens.size() >= 2);
     REQUIRE(tokens.at(0).type == t);
 
@@ -28,6 +29,12 @@ static auto asFloat(const std::string_view input) {return getFirst<double>(input
 static auto asStr(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::STRING);}
 static auto asRegexp(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::REGEXP);}
 static auto asWord(const std::string_view input)  {return getFirst<std::string>(input, Token::Type::WORD);}
+static auto asError(const std::string_view input) {
+    auto tokens = tokenize(input);
+    INFO("Input: " << input);
+    REQUIRE(!tokens.has_value());
+    return tokens.error().message;
+}
 
 TEST_CASE("Tokenize integers", "[token.integer]") {
     /* Decimal */
@@ -42,11 +49,11 @@ TEST_CASE("Tokenize integers", "[token.integer]") {
     REQUIRE(asInt("0b1001011") == 0b1001011);
 
     /* Invalid */
-    CHECK_THROWS(asInt("0b12"));  // Invalid characters for base  2
-    CHECK_THROWS(asInt("0abc"));  // Invalid characters for base 10
-    CHECK_THROWS(asInt("0xGZ"));  // Invalid characters for base 16
-    CHECK_THROWS(asInt("0x.2"));  // Invalid decimal point
-    CHECK_THROWS(asInt("0x0.2")); // Invalid decimal point
+    REQUIRE(asError("0b12") == "Invalid digit for base at 4");
+    REQUIRE(asError("0abc") == "Invalid input at 1 (abc)");
+    REQUIRE(asError("0xGZ") == "Invalid input at 2 (GZ)");
+    REQUIRE(asError("0x.2") == "Invalid input at 2 (.2)");
+    REQUIRE(asError("0x0.2") == "Invalid input at 4 (2)");
 }
 
 TEST_CASE("Tokenize floats", "[token.float]") {
@@ -98,8 +105,8 @@ TEST_CASE("Tokenize strings", "[token.string]") {
     REQUIRE(asRegexp("re'\"'") == "\"");
 
     /* Quote mismatch */
-    CHECK_THROWS(asStr("'abc"));
-    CHECK_THROWS(asStr("abc'"));
+    REQUIRE(asError("'abc") == "Quote mismatch at 4");
+    REQUIRE(asError("abc'") == "Quote mismatch at 4");
 }
 
 TEST_CASE("Tokenize words", "[token.word]") {
@@ -135,12 +142,12 @@ TEST_CASE("Tokenize symbols", "[token.icase]") {
 }
 
 TEST_CASE("Tokenize mixed", "[token.mixed]") {
-    auto tokens = tokenize("1+.0 and true or 'test'");
+    auto tokens = tokenize("1+.0 and true or 'test'").value();
     REQUIRE(tokens.size() == 7 + 1 /*EOF*/);
 }
 
 TEST_CASE("Token location", "[token.location]") {
-    auto tokens = tokenize("1+.0 and true");
+    auto tokens = tokenize("1+.0 and true").value();
     REQUIRE(tokens.size() == 5 + 1 /*EOF*/);
 
     auto pos = 0;

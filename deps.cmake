@@ -28,6 +28,16 @@ if (NOT TARGET Bitsery::bitsery)
   FetchContent_MakeAvailable(bitsery)
 endif()
 
+if (NOT TARGET tl::expected)
+  set(EXPECTED_BUILD_TESTS NO)
+  set(EXPECTED_BUILD_PACKAGE_DEB NO)
+  FetchContent_Declare(expected
+    GIT_REPOSITORY "https://github.com/TartanLlama/expected.git"
+    GIT_TAG        "v1.1.0"
+    GIT_SHALLOW    ON)
+  FetchContent_MakeAvailable(expected)
+endif()
+
 if (SIMFIL_WITH_MODEL_JSON)
   if (NOT TARGET nlohmann_json::nlohmann_json)
     FetchContent_Declare(nlohmann_json

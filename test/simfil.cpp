@@ -1,9 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/environment.h"
 #include "simfil/exception-handler.h"
-#include "simfil/function.h"
 #include "simfil/model/json.h"
-#include "simfil/result.h"
 #include "simfil/value.h"
 #include "src/expressions.h"
 
@@ -17,19 +15,14 @@ using namespace simfil;
 
 static constexpr auto StaticTestKey = StringPool::NextStaticId;
 
-
-static auto getASTString(std::string_view input, bool autoWildcard = false)
-{
-    Environment env(Environment::WithNewStringCache);
-    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
-    return compile(env, input, false, autoWildcard);
-}
+#define REQUIRE_RESULT(query, result) \
+    REQUIRE(JoinedResult((query)) == (result))
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(getASTString(input, false)->expr().toString() == output);
+    REQUIRE(Compile(input, false)->expr().toString() == (output));
 
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
-    REQUIRE(getASTString(input, true)->expr().toString() == output);
+    REQUIRE(Compile(input, true)->expr().toString() == (output));
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -68,9 +61,18 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("1/null", "null");
     REQUIRE_AST("null/1", "null");
 
+    auto GetError = [&](std::string_view query) {
+        Environment env(Environment::WithNewStringCache);
+        auto ast = compile(env, query);
+
+        REQUIRE(!ast);
+        if (!ast)
+            throw ast.error();
+    };
+
     /* Division by zero */
-    CHECK_THROWS(getASTString("1/0"));
-    CHECK_THROWS(getASTString("1%0"));
+    CHECK_THROWS(GetError("1/0"));
+    CHECK_THROWS(GetError("1%0"));
 
     /* String */
     REQUIRE_AST("'a'+null", "\"anull\"");
@@ -190,9 +192,14 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
         Environment env(model->strings());
 
         auto ast = compile(env, query, false);
-        INFO("AST: " << ast->expr().toString());
+        if (!ast)
+            INFO(ast.error().message);
+        REQUIRE(ast.has_value());
+        REQUIRE(*ast);
 
-        return eval(env, *ast, *model->root(0), nullptr).front().template as<ValueType::Bool>();
+        INFO("AST: " << (*ast)->expr().toString());
+
+        return eval(env, **ast, *model->root(0), nullptr).value().front().template as<ValueType::Bool>();
     };
 
     /* Test some field with different value types for different objects */
@@ -566,7 +573,10 @@ TEST_CASE("Visit AST", "[visit.ast]")
     Environment env(Environment::WithNewStringCache);
 
     auto ast = compile(env, "**.field = 123", false, false);
-    REQUIRE(ast.get() != nullptr);
+    if (!ast)
+        INFO(ast.error().message);
+    REQUIRE(ast.has_value());
+    REQUIRE(*ast);
 
     struct Visitor : ExprVisitor
     {
@@ -581,7 +591,7 @@ TEST_CASE("Visit AST", "[visit.ast]")
     };
 
     Visitor visitor;
-    ast->expr().accept(visitor);
+    (*ast)->expr().accept(visitor);
 
     REQUIRE(visitor.visitedFieldName == "field");
 }

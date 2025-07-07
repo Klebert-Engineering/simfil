@@ -77,16 +77,17 @@ char* command_generator(const char* text, int state)
         }
 
         if (current_env) {
-            try {
-                simfil::CompletionOptions opts;
-                opts.limit = 25;
-                opts.autoWildcard = options.auto_wildcard;
+            simfil::CompletionOptions opts;
+            opts.limit = 25;
+            opts.autoWildcard = options.auto_wildcard;
 
-                auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0), opts);
-                for (const auto& candidate : comp) {
-                    matches.push_back(query.substr(0, candidate.location.begin) + candidate.text);
-                }
-            } catch (const std::runtime_error&) {}
+            auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0), opts);
+            if (!comp)
+                return nullptr;
+
+            for (const auto& candidate : *comp) {
+                matches.push_back(query.substr(0, candidate.location.offset) + candidate.text);
+            }
         }
     }
 
@@ -133,7 +134,10 @@ static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std:
 
     if (!model->numRoots()) {
         model->addRoot(simfil::ModelNode::Ptr());
-        result[0] = simfil::eval(env, ast, *model->root(0), &diag);
+        auto res = simfil::eval(env, ast, *model->root(0), &diag);
+        if (res)
+            result[0] = std::move(*res);
+        // TODO: Output eval errors
         return result;
     }
 
@@ -147,16 +151,19 @@ static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std:
     auto threads = std::vector<std::thread>();
     threads.reserve(n_threads);
     for (auto i = 0; i < n_threads; ++i) {
-        threads.emplace_back(std::thread([&, i]() {
+        threads.emplace_back([&, i]() {
             size_t next;
             while ((next = idx++) < model->numRoots()) {
                 try {
-                    result[next] = simfil::eval(env, ast, *model->root(next), &diag);
+                    auto res = simfil::eval(env, ast, *model->root(next), &diag);
+                    if (res)
+                        result[next] = std::move(*res);
+                    // TODO: Output eval errors
                 } catch (...) {
                     return;
                 }
             }
-        }));
+        });
     }
 
     for (auto& thread : threads)
@@ -178,22 +185,22 @@ static void show_help()
         << "\n";
 }
 
-static void display_error(std::string_view expression, const simfil::ParserError& e)
+static void display_error(std::string_view expression, const simfil::Error& e)
 {
     static const auto indent = "  ";
-    auto [begin, end] = e.range();
+    auto [offset, size] = e.location;
 
     std::string underline;
-    if (end >= begin) {
-        if (begin > 0)
-            std::generate_n(std::back_inserter(underline), begin, []() { return ' '; });
+    if (size >= 0) {
+        if (offset > 0)
+            std::generate_n(std::back_inserter(underline), offset, []() { return ' '; });
         underline.push_back('^');
-        if (end > begin)
-            std::generate_n(std::back_inserter(underline), end - begin - 1, []() { return '~'; });
+        if (size > 0)
+            std::generate_n(std::back_inserter(underline), size - 1, []() { return '~'; });
     }
 
     std::cout << "Error:\n"
-        << indent << e.what() << ".\n\n"
+        << indent << e.message << ".\n\n"
         << indent << expression << "\n"
         << indent << underline << "\n";
 }
@@ -262,20 +269,14 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        simfil::ASTPtr ast;
-        try {
-            ast = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
-        } catch (const simfil::ParserError& e) {
-            display_error(cmd, e);
-        } catch (const std::exception& e) {
-            std::cout << "Compile:\n  " << e.what() << "\n";
+        auto ast = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
+        if (!ast) {
+            display_error(cmd, ast.error());
+            continue;
         }
 
-        if (!ast)
-            continue;
-
         if (options.verbose)
-            std::cout << "Expression:\n  " << ast->expr().toString() << "\n";
+            std::cout << "Expression:\n  " << (*ast)->expr().toString() << "\n";
 
         simfil::Diagnostics diag;
         std::vector<std::vector<simfil::Value>> res;
@@ -283,7 +284,7 @@ int main(int argc, char *argv[])
 
         try {
             auto eval_begin = std::chrono::steady_clock::now();
-            res = eval_mt(env, *ast, model, diag);
+            res = eval_mt(env, **ast, model, diag);
             msec = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - eval_begin);
         } catch (const std::exception& e) {
             std::cout << "Error:\n  " << e.what() << "\n";
@@ -304,22 +305,27 @@ int main(int argc, char *argv[])
             std::cout << "  " << v.toString() << "\n";
         }
 
-        auto messages = simfil::diagnostics(env, *ast, diag);
-        if (!messages.empty()) {
+        auto messages = simfil::diagnostics(env, **ast, diag);
+        if (!messages) {
+            std::cerr << "Error: " << messages.error().message << "\n";
+            continue;
+        }
+
+        if (!messages->empty()) {
             std::cout << "Diagnostics:\n";
 
             auto underlineQuery = [&](simfil::SourceLocation loc) {
                 std::string underline;
-                std::fill_n(std::back_inserter(underline), loc.begin, ' ');
+                std::fill_n(std::back_inserter(underline), loc.offset, ' ');
                 underline.push_back('^');
                 if (loc.size > 0)
                     std::fill_n(std::back_inserter(underline), loc.size - 1, '~');
                 return underline;
             };
 
-            for (const auto& m : messages) {
+            for (const auto& m : *messages) {
                 std::cout << "  " << m.message << "\n"
-                          << "  Here: " << ast->query() << "\n"
+                          << "  Here: " << (*ast)->query() << "\n"
                           << "        " << underlineQuery(m.location) << "\n"
                           << "   Fix: " << m.fix.value_or("-") << "\n";
             }

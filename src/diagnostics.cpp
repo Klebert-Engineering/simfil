@@ -112,7 +112,7 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
             if (!guess.empty()) {
                 std::string fix = ast.query();
                 if (auto loc = e.sourceLocation(); loc.size > 0)
-                    fix.replace(loc.begin, loc.size, guess);
+                    fix.replace(loc.offset, loc.size, guess);
 
                 addMessage(fmt::format("No matches for field '{}'. Did you mean '{}'?", e.name_, guess), e, fix);
             } else {

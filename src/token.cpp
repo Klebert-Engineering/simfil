@@ -1,12 +1,12 @@
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 
 #include "simfil/token.h"
-#include "simfil/exception-handler.h"
+#include "simfil/error.h"
+#include "src/expected.h"
 
 #include <cctype>
 #include <cmath>
 #include <cstdint>
-#include <stdexcept>
 #include <string_view>
 #include <optional>
 #include <cstring>
@@ -120,6 +120,7 @@ struct Scanner
     const std::string_view orig_;
     std::string_view sv_;
     std::size_t pos_;
+    mutable std::optional<Error> error_;
 
     explicit Scanner(std::string_view sv)
         : orig_(sv)
@@ -164,18 +165,29 @@ struct Scanner
         return false;
     }
 
-    auto fail(std::string msg) const
+    auto fail(std::string msg) const -> Error&
     {
         msg += " at "s + std::to_string(pos_);
         if (pos_ < orig_.size())
             msg += " ("s + std::string(orig_.substr(pos_)) + ")"s;
 
-        raise<std::runtime_error>(std::move(msg));
+        error_.emplace(Error::ParserError, std::move(msg));
+        return *error_;
     }
 
     auto pos() const
     {
         return pos_;
+    }
+
+    auto hasError() const
+    {
+        return error_.has_value();
+    }
+
+    auto error() const -> Error&
+    {
+        return *error_;
     }
 };
 
@@ -185,8 +197,11 @@ void skipWhitespace(Scanner& s)
         s.skip();
 }
 
-std::optional<Token> scanWord(Scanner& s)
+auto scanWord(Scanner& s) -> std::optional<Token>
 {
+    if (s.hasError())
+        return {};
+
     static const std::unordered_map<std::string, Token::Type> keyword_tab = {
         /* lowercase-op-name | token-type */
         {"_",                  Token::SELF},
@@ -209,8 +224,10 @@ std::optional<Token> scanWord(Scanner& s)
         std::string text;
         do {
             if (s.match("\\", Scanner::Skip)) {
-                if (!s)
+                if (!s) {
                     s.fail("Unfinished escape sequence");
+                    return {};
+                }
             }
 
             text.push_back(s.pop());
@@ -227,6 +244,9 @@ std::optional<Token> scanWord(Scanner& s)
 
 std::optional<Token> scanStringLiteral(Scanner& s)
 {
+    if (s.hasError())
+        return {};
+
     // Test for raw strings
     const auto raw =
         s.match("r'") || s.match("R'") ||
@@ -253,8 +273,10 @@ std::optional<Token> scanStringLiteral(Scanner& s)
                 break;
 
             if (s.match("\\", Scanner::Skip)) {
-                if (!s)
+                if (!s) {
                     s.fail("Unfinished escape sequence");
+                    return {};
+                }
 
                 if (raw || regexp) {
                     if (s.at(0) == quote)
@@ -280,8 +302,10 @@ std::optional<Token> scanStringLiteral(Scanner& s)
             text.push_back(s.pop());
         }
 
-        if (!s || s.pop() != quote)
+        if (!s || s.pop() != quote) {
             s.fail("Quote mismatch");
+            return {};
+        }
 
         if (regexp)
             return Token(Token::REGEXP, text, begin, s.pos());
@@ -293,6 +317,9 @@ std::optional<Token> scanStringLiteral(Scanner& s)
 
 std::optional<Token> scanNumber(Scanner& s)
 {
+    if (s.hasError())
+        return {};
+
     const auto chr2digit = [](const Scanner& s, int base, auto c)
     {
         if (c >= '0' && c <= '1')
@@ -339,8 +366,10 @@ std::optional<Token> scanNumber(Scanner& s)
     else if (s.match("0b", Scanner::Skip))
         base = 2;
 
-    if (base != 10 && !isxdigit(s.at(0)))
+    if (base != 10 && !isxdigit(s.at(0))) {
         s.fail("Expected at least one digit after base specifier");
+        return {};
+    }
 
     if (isdigit(s.at(0)) || (s.at(0) == '.' && isdigit(s.at(1))) || base > 10) {
         int64_t n = 0;
@@ -350,8 +379,10 @@ std::optional<Token> scanNumber(Scanner& s)
         }
 
         if (s.match(".", Scanner::Skip)) {
-            if (base != 10)
+            if (base != 10) {
                 s.fail("Decimal point is allowed for base 10 numbers only");
+                return {};
+            }
 
             auto f = static_cast<double>(n);
             for (auto i = 1; isdigit(s.at(0)); ++i) {
@@ -359,8 +390,10 @@ std::optional<Token> scanNumber(Scanner& s)
             }
 
             f *= parseSciSuffix(s);
-            if (isalpha(s.at(0)) || s.at(0) == '.')
+            if (isalpha(s.at(0)) || s.at(0) == '.') {
                 s.fail("Unexpected non-digit character");
+                return {};
+            }
 
             return Token(Token::FLOAT, f, begin, s.pos());
         }
@@ -368,8 +401,10 @@ std::optional<Token> scanNumber(Scanner& s)
         /* SCI notation results in float if exponent != 0 (=1) */
         if (auto sci = parseSciSuffix(s); sci != 1)
             return Token(Token::FLOAT, static_cast<double>(n) * sci, begin, s.pos());
-        if (isalpha(s.at(0)) || s.at(0) == '.')
+        if (isalpha(s.at(0)) || s.at(0) == '.') {
             s.fail("Unexpected non-digit character");
+            return {};
+        }
 
         return Token(Token::INT, n, begin, s.pos());
     }
@@ -379,6 +414,9 @@ std::optional<Token> scanNumber(Scanner& s)
 
 std::optional<Token> scanSyntax(Scanner& s)
 {
+    if (s.hasError())
+        return {};
+
     static const std::pair<const char*, Token::Type> tab[] = {
         {"(", Token::LPAREN},
         {")", Token::RPAREN},
@@ -421,7 +459,7 @@ std::optional<Token> scanSyntax(Scanner& s)
     return {};
 }
 
-std::vector<Token> tokenize(std::string_view expr)
+auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
 {
     std::vector<Token> tokens;
 
@@ -438,9 +476,11 @@ std::vector<Token> tokenize(std::string_view expr)
             tokens.push_back(std::move(*t));
         else {
             if (s.at(0) != '\0')
-                s.fail("Invalid input");
-            break;
+                return unexpected<Error>(s.fail("Invalid input"));
         }
+
+        if (s.hasError())
+            return unexpected<Error>(s.error());
     }
     tokens.emplace_back(Token::NIL, expr.size(), expr.size());
 

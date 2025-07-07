@@ -195,7 +195,7 @@ struct CompletionCandidate
 
     auto operator<=>(const CompletionCandidate& r) const
     {
-        return std::tie(text, location.begin, location.size) <=> std::tie(r.text, r.location.begin, r.location.size);
+        return std::tie(text, location.offset, location.size) <=> std::tie(r.text, r.location.offset, r.location.size);
     }
 };
 

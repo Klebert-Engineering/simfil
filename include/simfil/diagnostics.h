@@ -4,7 +4,9 @@
 
 #include "simfil/value.h"
 #include "simfil/token.h"
+#include "simfil/error.h"
 
+#include <tl/expected.hpp>
 #include <optional>
 #include <vector>
 #include <string>
@@ -45,8 +47,8 @@ public:
 
     struct Data;
 private:
-    friend auto eval(Environment&, const AST&, const ModelNode&, Diagnostics*) -> std::vector<Value>;
-    friend auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Message>;
+    friend auto eval(Environment&, const AST&, const ModelNode&, Diagnostics*) -> tl::expected<std::vector<Value>, Error>;
+    friend auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> tl::expected<std::vector<Message>, Error>;
 
     using ExprId = size_t;
 

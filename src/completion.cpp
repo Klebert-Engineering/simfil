@@ -124,8 +124,8 @@ struct FindExpressionRange : ExprVisitor
 
         auto loc = expr.sourceLocation();
         if (loc.size > 0) {
-            min = std::min<size_t>(min, loc.begin);
-            max = std::max<size_t>(max, loc.begin + loc.size);
+            min = std::min<size_t>(min, loc.offset);
+            max = std::max<size_t>(max, loc.offset + loc.size);
         }
     }
 };

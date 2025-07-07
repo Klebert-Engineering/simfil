@@ -7,15 +7,12 @@
 #include <string_view>
 #include <variant>
 #include <cstdint>
+#include <tl/expected.hpp>
+
+#include "simfil/error.h"
 
 namespace simfil
 {
-
-struct SourceLocation
-{
-    size_t begin = 0;
-    size_t size = 0;
-};
 
 struct Token
 {
@@ -105,6 +102,6 @@ std::ostream& operator<<(std::ostream&, const Token&);
 /**
  * Split a SIMFIL expression `expr` into parser tokens
  */
-std::vector<Token> tokenize(std::string_view expr);
+auto tokenize(std::string_view expr) -> tl::expected<std::vector<Token>, Error>;
 
 }

@@ -10,10 +10,12 @@
 #include "simfil/environment.h"
 #include "simfil/model/model.h"
 #include "simfil/types.h"
+#include "simfil/error.h"
 #include "fmt/core.h"
 
 #include "expressions.h"
 #include "completion.h"
+#include "expected.h"
 
 #include <algorithm>
 #include <cctype>
@@ -21,11 +23,11 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <deque>
 #include <unordered_map>
-#include <stdexcept>
 #include <cassert>
 #include <vector>
 
@@ -66,7 +68,7 @@ enum Precedence {
  *
  */
 template <class ...Type>
-static auto expect(const ExprPtr& e, Type... types)
+static auto expect(const ExprPtr& e, Type... types) -> std::optional<unexpected<Error>>
 {
     const auto type2str = [](Expr::Type t) {
         switch (t) {
@@ -80,13 +82,13 @@ static auto expect(const ExprPtr& e, Type... types)
     };
 
     if (!e)
-        raise<std::runtime_error>("Expected expression"s);
+        return unexpected<Error>(Error::InvalidExpression, "Expected expression");
 
     if constexpr (sizeof...(types) >= 1) {
         Expr::Type list[] = {types...};
         for (auto i = 0; i < sizeof...(types); ++i) {
             if (e->type() == list[i])
-                return;
+                return {};
         }
 
         std::string typeNames;
@@ -96,7 +98,7 @@ static auto expect(const ExprPtr& e, Type... types)
             typeNames += type2str(list[i]);
         }
 
-        raise<std::runtime_error>("Expected "s + typeNames + " got "s + type2str(e->type()));
+        return unexpected<Error>(Error::InvalidExpression, fmt::format("Expected {} got {}", typeNames, type2str(e->type())));
     }
 }
 
@@ -147,14 +149,16 @@ static auto scopedNotInPath(Parser& p) {
  * Tries to evaluate the input expression on a stub context.
  * Returns the evaluated result on success, otherwise the original expression is returned.
  */
-static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
+static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -> expected<ExprPtr, Error>
 {
     if (!expr)
+        return expr;
+    if (!*expr)
         return nullptr;
 
     std::deque<Value> values;
     auto stub = Context(env, Context::Phase::Compilation);
-    (void)expr->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
+    (void)(*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         n += 1;
         if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.node)) {
             values.push_back(std::move(vv));
@@ -169,12 +173,12 @@ static auto simplifyOrForward(Environment* env, ExprPtr expr) -> ExprPtr
     if (!values.empty() && std::ranges::all_of(values.begin(), values.end(), [](const Value& v) {
         return v.isa(ValueType::Null);
     }))
-        env->warn("Expression is alway null"s, expr->toString());
+        env->warn("Expression is alway null"s, (*expr)->toString());
 
     if (!values.empty() && values[0].isa(ValueType::Bool) && std::ranges::all_of(values.begin(), values.end(), [&](const Value& v) {
         return v.isBool(values[0].as<ValueType::Bool>());
     }))
-        env->warn("Expression is always "s + values[0].toString(), expr->toString());
+        env->warn("Expression is always "s + values[0].toString(), (*expr)->toString());
 
     if (values.size() == 1)
         return std::make_unique<ConstExpr>(std::move(values[0]));
@@ -195,16 +199,18 @@ AST::~AST() = default;
 class AndOrParser : public InfixParselet
 {
 public:
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         auto right = p.parsePrecedence(precedence());
+        if (!right)
+            return right;
 
         if (t.type == Token::OP_AND)
           return simplifyOrForward(p.env, std::make_unique<AndExpr>(std::move(left),
-                                                                    std::move(right)));
+                                                                    std::move(*right)));
         else if (t.type == Token::OP_OR)
           return simplifyOrForward(p.env, std::make_unique<OrExpr>(std::move(left),
-                                                                   std::move(right)));
+                                                                   std::move(*right)));
         assert(0);
         return nullptr;
     }
@@ -222,16 +228,18 @@ public:
         : comp_(comp)
     {}
 
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         auto right = p.parsePrecedence(precedence());
+        if (!right)
+            return right;
 
         if (t.type == Token::OP_AND)
           return simplifyOrForward(p.env, std::make_unique<CompletionAndExpr>(std::move(left),
-                                                                              std::move(right), comp_));
+                                                                              std::move(*right), comp_));
         else if (t.type == Token::OP_OR)
           return simplifyOrForward(p.env, std::make_unique<CompletionOrExpr>(std::move(left),
-                                                                             std::move(right), comp_));
+                                                                             std::move(*right), comp_));
         assert(0);
         return nullptr;
     }
@@ -247,17 +255,17 @@ public:
 class CastParser : public InfixParselet
 {
 public:
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         auto type = p.consume();
         if (type.type == Token::C_NULL)
             return std::make_unique<ConstExpr>(Value::null());
 
         if (type.type != Token::Type::WORD)
-            raise<std::runtime_error>("'as' expected typename got "s + type.toString());
+            return unexpected<Error>(Error::InvalidType, fmt::format("'as' expected typename got {}", type.toString()));
 
         auto name = std::get<std::string>(type.value);
-        return simplifyOrForward(p.env, [&]() -> ExprPtr {
+        return simplifyOrForward(p.env, [&]() -> expected<ExprPtr, Error> {
             if (name == strings::TypenameNull)
                 return std::make_unique<ConstExpr>(Value::null());
             if (name == strings::TypenameBool)
@@ -269,7 +277,7 @@ public:
             if (name == strings::TypenameString)
                 return std::make_unique<UnaryExpr<OperatorAsString>>(std::move(left));
 
-            raise<std::runtime_error>("Invalid type name for cast '"s + name + "'"s);
+            return unexpected<Error>(Error::InvalidType, fmt::format("Invalid type name for cast '{}'", name));
         }());
     }
 
@@ -289,12 +297,15 @@ template <class Operator,
 class BinaryOpParser : public InfixParselet
 {
 public:
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         auto right = p.parsePrecedence(precedence());
+        if (!right)
+            return right;
+
         return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(t,
                                                                                std::move(left),
-                                                                               std::move(right)));
+                                                                               std::move(*right)));
     }
 
     int precedence() const override
@@ -311,10 +322,13 @@ public:
 template <class Operator>
 class UnaryOpParser : public PrefixParselet
 {
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         auto sub = p.parsePrecedence(Precedence::UNARY);
-        return simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(sub)));
+        if (!sub)
+            return sub;
+
+        return simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(*sub)));
     }
 };
 
@@ -324,7 +338,7 @@ class UnaryOpParser : public PrefixParselet
 template <class Operator>
 class UnaryPostOpParser : public InfixParselet
 {
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(left))), 0);
     }
@@ -340,7 +354,7 @@ class UnaryPostOpParser : public InfixParselet
  */
 class UnpackOpParser : public InfixParselet
 {
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnpackExpr>(std::move(left))), 0);
     }
@@ -356,13 +370,18 @@ class UnpackOpParser : public InfixParselet
  */
 class WordOpParser : public InfixParselet
 {
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         /* Try parse as binary operator */
-        if (auto right = p.parsePrecedence(precedence(), true); right)
+        auto right = p.parsePrecedence(precedence(), true);
+        if (!right)
+            return right;
+
+        if (*right)
             return simplifyOrForward(p.env, std::make_unique<BinaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                std::move(left),
-                                                                               std::move(right)));
+                                                                               std::move(*right)));
+
         /* Parse as unary operator */
         return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                        std::move(left))), 0);
@@ -382,7 +401,7 @@ class WordOpParser : public InfixParselet
 template <class Type>
 class ScalarParser : public PrefixParselet
 {
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         return std::make_unique<ConstExpr>(std::get<Type>(t.value));
     }
@@ -395,7 +414,7 @@ class ScalarParser : public PrefixParselet
  */
 class RegExpParser : public PrefixParselet
 {
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         auto value = ReType::Type.make(std::get<std::string>(t.value));
         return std::make_unique<ConstExpr>(std::move(value));
@@ -417,7 +436,7 @@ public:
         : value_(std::move(value))
     {}
 
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         return std::make_unique<ConstExpr>(value_);
     }
@@ -432,7 +451,7 @@ public:
  */
 class ParenParser : public PrefixParselet
 {
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         auto _ = scopedNotInPath(p);
         return p.parseTo(Token::RPAREN);
@@ -447,23 +466,29 @@ class ParenParser : public PrefixParselet
  */
 class SubscriptParser : public PrefixParselet, public InfixParselet
 {
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         auto _ = scopedNotInPath(p);
+        auto body = p.parseTo(Token::RBRACK);
+        if (!body)
+            return body;
+
         return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::make_unique<FieldExpr>("_"),
-                                                                        p.parseTo(Token::RBRACK)));
+                                                                        std::move(*body)));
     }
 
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        expect(left,
-               Expr::Type::PATH,
-               Expr::Type::VALUE,
-               Expr::Type::SUBEXPR,
-               Expr::Type::SUBSCRIPT);
+        if (auto err = expect(left, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
+            return *err;
+
         auto _ = scopedNotInPath(p);
+        auto body = p.parseTo(Token::RBRACK);
+        if (!body)
+            return body;
+
         return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::move(left),
-                                                                        p.parseTo(Token::RBRACK)));
+                                                                        std::move(*body)));
     }
 
     auto precedence() const -> int override
@@ -480,25 +505,31 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
  */
 class SubSelectParser : public PrefixParselet, public InfixParselet
 {
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         auto _ = scopedNotInPath(p);
         /* Prefix sub-selects are transformed to a right side path expression,
          * with the current node on the left. As "standalone" sub-selects are not useful. */
+        auto body = p.parseTo(Token::RBRACE);
+        if (!body)
+            return unexpected<Error>(std::move(body.error()));
+
         return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
-                                                                  p.parseTo(Token::RBRACE)));
+                                                                  std::move(*body)));
     }
 
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        expect(left,
-               Expr::Type::PATH,
-               Expr::Type::VALUE,
-               Expr::Type::SUBEXPR,
-               Expr::Type::SUBSCRIPT);
+        if (auto err = expect(left, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
+            return *err;
+
         auto _ = scopedNotInPath(p);
+        auto body = p.parseTo(Token::RBRACE);
+        if (!body)
+            return unexpected<Error>(std::move(body.error()));
+
         return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::move(left),
-                                                                  p.parseTo(Token::RBRACE)));
+                                                                  std::move(*body)));
     }
 
     auto precedence() const -> int override
@@ -515,7 +546,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
 class WordParser : public PrefixParselet
 {
 public:
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         /* Self */
         if (t.type == Token::SELF)
@@ -537,12 +568,14 @@ public:
             p.consume();
 
             auto arguments = p.parseList(Token::RPAREN);
+            TRY_EXPECTED(arguments);
+
             if (word == "any") {
-                return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(arguments)));
+                return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(*arguments)));
             } else if (word == "each" || word == "all") {
-                return simplifyOrForward(p.env, std::make_unique<EachExpr>(std::move(arguments)));
+                return simplifyOrForward(p.env, std::make_unique<EachExpr>(std::move(*arguments)));
             } else {
-                return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
+                return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
             }
         } else if (!p.ctx.inPath) {
             /* Parse Symbols (words in upper-case) */
@@ -570,7 +603,7 @@ public:
         : comp_(comp)
     {}
 
-    auto parse(Parser& p, Token t) const -> ExprPtr override
+    auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         /* Self */
         if (t.type == Token::SELF)
@@ -596,7 +629,9 @@ public:
             });
 
             auto arguments = p.parseList(Token::RPAREN);
-            return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(arguments)));
+            TRY_EXPECTED(arguments);
+
+            return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
         }
 
         /* Single field name */
@@ -618,7 +653,7 @@ public:
 class PathParser : public InfixParselet
 {
 public:
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         auto inPath = true;
         std::swap(p.ctx.inPath, inPath);
@@ -628,7 +663,9 @@ public:
         });
 
         auto right = p.parsePrecedence(precedence());
-        return std::make_unique<PathExpr>(std::move(left), std::move(right));
+        TRY_EXPECTED(right);
+
+        return std::make_unique<PathExpr>(std::move(left), std::move(*right));
     }
 
     auto precedence() const -> int override
@@ -644,7 +681,7 @@ public:
         : comp_(comp)
     {}
 
-    auto parse(Parser& p, ExprPtr left, Token t) const -> ExprPtr override
+    auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         auto inPath = true;
         std::swap(p.ctx.inPath, inPath);
@@ -654,12 +691,15 @@ public:
         });
 
         auto right = p.parsePrecedence(precedence(), t.containsPoint(comp_->point));
-        if (!right) {
+        if (!right)
+            return right;
+
+        if (!*right) {
             Token expectedWord(Token::WORD, "", t.end, t.end);
             right = std::make_unique<CompletionFieldExpr>("", comp_, expectedWord);
         }
 
-        return std::make_unique<PathExpr>(std::move(left), std::move(right));
+        return std::make_unique<PathExpr>(std::move(left), std::move(*right));
     }
 
     Completion* comp_;
@@ -732,38 +772,49 @@ static auto setupParser(Parser& p)
     p.infixParsers[Token::DOT]  = std::make_unique<PathParser>();
 }
 
-auto compile(Environment& env, std::string_view query, bool any, bool autoWildcard) -> ASTPtr
+auto compile(Environment& env, std::string_view query, bool any, bool autoWildcard) -> expected<ASTPtr, Error>
 {
-    Parser p(&env, query, Parser::Mode::Strict);
+    auto tokens = tokenize(query);
+    TRY_EXPECTED(tokens);
+
+    Parser p(&env, *tokens, Parser::Mode::Strict);
     setupParser(p);
 
-    auto expr = [&](){
+    auto expr = [&]() -> expected<ExprPtr, Error> {
         auto root = p.parse();
+        TRY_EXPECTED(root);
 
         /* Expand a single value to `** == <value>` */
-        if (autoWildcard && root && root->constant()) {
+        if (autoWildcard && *root && (*root)->constant()) {
             root = std::make_unique<BinaryExpr<OperatorEq>>(
-                std::make_unique<WildcardExpr>(), std::move(root));
+                std::make_unique<WildcardExpr>(), std::move(*root));
         }
+
+        if (!*root)
+            return unexpected<Error>(Error::ParserError, "Expression is null");
 
         if (any) {
             std::vector<ExprPtr> args;
-            args.emplace_back(std::move(root));
+            args.emplace_back(std::move(*root));
             return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(args)));
         } else {
             return root;
         }
     }();
+    TRY_EXPECTED(expr);
 
     if (!p.match(Token::Type::NIL))
-        raise<std::runtime_error>("Expected end-of-input; got "s + p.current().toString());
+        return unexpected<Error>(Error::ExpectedEOF, "Expected end-of-input; got "s + p.current().toString());
 
-    return std::make_unique<AST>(std::string(query), std::move(expr));
+    return std::make_unique<AST>(std::string(query), std::move(*expr));
 }
 
-auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node, const CompletionOptions& options) -> std::vector<CompletionCandidate>
+auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node, const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>
 {
-    Parser p(&env, query, Parser::Mode::Relaxed);
+    auto tokens = tokenize(query);
+    TRY_EXPECTED(tokens);
+
+    Parser p(&env, *tokens, Parser::Mode::Relaxed);
     setupParser(p);
 
     Completion comp(point);
@@ -775,34 +826,31 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     p.infixParsers[Token::OP_AND] = std::make_unique<CompletionAndOrParser>(&comp);
     p.infixParsers[Token::OP_OR]  = std::make_unique<CompletionAndOrParser>(&comp);
 
-    try {
-        auto ast = p.parse();
+    auto astResult = p.parse();
+    TRY_EXPECTED(astResult);
+    auto ast = std::move(*astResult);
 
-        /* Expand a single value to `** == <value>` */
-        if (options.autoWildcard && ast && ast->constant()) {
-            ast = std::make_unique<BinaryExpr<OperatorEq>>(
-                std::make_unique<WildcardExpr>(), std::move(ast));
-        }
-
-        Context ctx(&env);
-        if (options.timeoutMs > 0)
-            ctx.timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeoutMs);
-
-        ast->eval(ctx, Value::field(node), LambdaResultFn([](Context, const Value&) {
-            return Result::Continue;
-        }));
-    } catch (const std::runtime_error& exc) {
-        /* Silently ignore errors */
-        (void)exc;
+    /* Expand a single value to `** == <value>` */
+    if (options.autoWildcard && ast && ast->constant()) {
+        ast = std::make_unique<BinaryExpr<OperatorEq>>(
+            std::make_unique<WildcardExpr>(), std::move(ast));
     }
+
+    Context ctx(&env);
+    if (options.timeoutMs > 0)
+        ctx.timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeoutMs);
+
+    ast->eval(ctx, Value::field(node), LambdaResultFn([](Context, const Value&) {
+        return Result::Continue;
+    }));
 
     return std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
 }
 
-auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag) -> std::vector<Value>
+auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag) -> expected<std::vector<Value>, Error>
 {
     if (!node.model_)
-        raise<std::runtime_error>("ModelNode must have a model!");
+        return unexpected<Error>(Error::NullModel, "ModelNode must have a model!");
 
     Context ctx(&env);
 
@@ -821,7 +869,7 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     return res;
 }
 
-auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> std::vector<Diagnostics::Message>
+auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> expected<std::vector<Diagnostics::Message>, Error>
 {
     return diag.buildMessages(env, ast);
 }
