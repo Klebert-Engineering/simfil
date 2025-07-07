@@ -2,6 +2,7 @@
 
 #include "expressions.h"
 #include "simfil/result.h"
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 
@@ -10,9 +11,13 @@ namespace
 
 auto startsWith(std::string_view str, std::string_view prefix)
 {
+    if (prefix.size() > str.size())
+        return false;
+
     for (auto i = 0; i < std::min<std::string_view::size_type>(str.size(), prefix.size()); ++i)
         if (std::tolower(str[i], std::locale()) != std::tolower(prefix[i], std::locale()))
             return false;
+
     return true;
 }
 
@@ -21,9 +26,14 @@ auto needsEscaping(std::string_view str)
     if (!str.empty() && isdigit(str[0]))
         return true;
 
-    return std::any_of(str.begin(), str.end(), [](const auto chr) mutable {
-        if (!((chr >= 'a' && chr <= 'z') || (chr >= 'A' && chr <= 'Z')))
+    return std::any_of(str.begin(), str.end(), [i = 0](const auto chr) mutable {
+        if (!((chr >= 'a' && chr <= 'z') ||
+              (chr >= 'A' && chr <= 'Z') ||
+              (chr == '_') ||
+              (i > 0 && chr >= '0' && chr <= '9')))
             return true;
+
+        ++i;
         return false;
     });
 }
@@ -108,8 +118,8 @@ namespace
 
 struct FindExpressionRange : ExprVisitor
 {
-    size_t min = 0;
-    size_t max = 0;
+    size_t min = std::numeric_limits<size_t>::max();
+    size_t max = std::numeric_limits<size_t>::min();
 
     auto contains(size_t point) const
     {
@@ -137,13 +147,15 @@ CompletionAndExpr::CompletionAndExpr(ExprPtr left, ExprPtr right, const Completi
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
-    left_->accept(leftRange);
+    if (left_)
+        left_->accept(leftRange);
 
     if (!leftRange.contains(comp->point))
         left_ = nullptr;
 
     FindExpressionRange rightRange;
-    right_->accept(rightRange);
+    if (right_)
+        right_->accept(rightRange);
 
     if (!rightRange.contains(comp->point))
         right_ = nullptr;
@@ -195,13 +207,15 @@ CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
-    left_->accept(leftRange);
+    if (left_)
+        left_->accept(leftRange);
 
     if (!leftRange.contains(comp->point))
         left_ = nullptr;
 
     FindExpressionRange rightRange;
-    right_->accept(rightRange);
+    if (right_)
+        right_->accept(rightRange);
 
     if (!rightRange.contains(comp->point))
         right_ = nullptr;

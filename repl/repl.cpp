@@ -81,7 +81,11 @@ char* command_generator(const char* text, int state)
             opts.limit = 25;
             opts.autoWildcard = options.auto_wildcard;
 
-            auto comp = simfil::complete(*current_env, query, rl_point, *model->root(0), opts);
+            auto root = model->root(0);
+            if (!root)
+                return nullptr;
+
+            auto comp = simfil::complete(*current_env, query, rl_point, *root, opts);
             if (!comp)
                 return nullptr;
 
