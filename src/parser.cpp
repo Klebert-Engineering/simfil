@@ -172,7 +172,7 @@ auto Parser::parseTo(Token::Type type) -> expected<ExprPtr, Error>
     auto expr = parse();
     TRY_EXPECTED(expr);
 
-    if (!expr) {
+    if (!*expr) {
         if (relaxed())
             return std::make_unique<NOOPExpr>();
 
