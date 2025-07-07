@@ -15,6 +15,9 @@ using namespace simfil;
 
 static constexpr auto StaticTestKey = StringPool::NextStaticId;
 
+#define REQUIRE_RESULT(query, result) \
+    REQUIRE(JoinedResult((query)) == (result))
+
 #define REQUIRE_AST(input, output) \
     REQUIRE(Compile(input, false)->expr().toString() == (output));
 

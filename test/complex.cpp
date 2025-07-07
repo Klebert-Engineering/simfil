@@ -1,11 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
-#include <sstream>
 
 #include "simfil/model/model.h"
 #include "simfil/model/string-pool.h"
 #include "simfil/simfil.h"
 #include "simfil/model/json.h"
+#include "common.hpp"
 
 using namespace simfil;
 
@@ -53,32 +53,9 @@ static const auto invoice = R"json(
 }
 )json";
 
-static auto joined_result(std::string_view query)
-{
-    auto model = json::parse(invoice);
-    Environment env(model->strings());
-    auto ast = compile(env, query, false);
-    if (!ast)
-        INFO(ast.error().message);
-    REQUIRE(ast.has_value());
-    INFO("AST: " << (*ast)->expr().toString());
-
-    auto res = eval(env, **ast, *model->root(0), nullptr);
-    if (!res)
-        INFO(res.error().message);
-    REQUIRE(res);
-
-    std::string vals;
-    for (const auto& vv : *res) {
-        if (!vals.empty())
-            vals.push_back('|');
-        vals += vv.toString();
-    }
-    return vals;
-}
 
 #define REQUIRE_RESULT(query, result) \
-    REQUIRE(joined_result(query) == (result))
+    REQUIRE(JoinedResult((query), invoice) == (result))
 
 TEST_CASE("Invoice", "[complex.invoice-sum]") {
     REQUIRE_RESULT("account.order.*.product.*.(price * quantity)",
@@ -99,7 +76,7 @@ TEST_CASE("Regular Expression", "[complex.regexp]") {
 }
 
 TEST_CASE("Runtime Error", "[complex.runtime-error]") {
-    REQUIRE_THROWS(joined_result("1 / (nonexisting as int)")); /* Division by zero */
+    REQUIRE_THROWS(JoinedResult("1 / (nonexisting as int)", invoice)); /* Division by zero */
 }
 
 TEST_CASE("Multimap JSON", "[multimap.serialization]") {

@@ -18,9 +18,9 @@ auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
     return std::move(*ast);
 }
 
-auto JoinedResult(std::string_view query) -> std::string
+auto JoinedResult(std::string_view query, std::optional<std::string> json) -> std::string
 {
-    auto model = simfil::json::parse(TestModel);
+    auto model = simfil::json::parse(std::string(json.value_or(TestModel)));
     Environment env(model->strings());
 
     env.functions["panic"] = &panicFn;
