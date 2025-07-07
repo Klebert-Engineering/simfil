@@ -801,6 +801,7 @@ auto compile(Environment& env, std::string_view query, bool any, bool autoWildca
             return root;
         }
     }();
+    TRY_EXPECTED(expr);
 
     if (!p.match(Token::Type::NIL))
         return unexpected<Error>(Error::ExpectedEOF, "Expected end-of-input; got "s + p.current().toString());
