@@ -188,15 +188,15 @@ static void show_help()
 static void display_error(std::string_view expression, const simfil::Error& e)
 {
     static const auto indent = "  ";
-    auto [offset, end] = e.location;
+    auto [offset, size] = e.location;
 
     std::string underline;
-    if (end >= offset) {
+    if (size >= 0) {
         if (offset > 0)
             std::generate_n(std::back_inserter(underline), offset, []() { return ' '; });
         underline.push_back('^');
-        if (end > offset)
-            std::generate_n(std::back_inserter(underline), end - offset - 1, []() { return '~'; });
+        if (size > 0)
+            std::generate_n(std::back_inserter(underline), size - 1, []() { return '~'; });
     }
 
     std::cout << "Error:\n"

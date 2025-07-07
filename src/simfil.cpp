@@ -511,6 +511,9 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
         /* Prefix sub-selects are transformed to a right side path expression,
          * with the current node on the left. As "standalone" sub-selects are not useful. */
         auto body = p.parseTo(Token::RBRACE);
+        if (!body)
+            return unexpected<Error>(std::move(body.error()));
+
         return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
                                                                   std::move(*body)));
     }
@@ -522,6 +525,9 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
 
         auto _ = scopedNotInPath(p);
         auto body = p.parseTo(Token::RBRACE);
+        if (!body)
+            return unexpected<Error>(std::move(body.error()));
+
         return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::move(left),
                                                                   std::move(*body)));
     }
