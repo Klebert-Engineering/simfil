@@ -29,6 +29,8 @@ TEST_CASE("CompleteField", "[completion.field]") {
 TEST_CASE("CompleteField", "[completion.field.midQuery]") {
     EXPECT_COMPLETION("num > 123", 3, "number");
     //                    ^- cursor
+    EXPECT_COMPLETION("num>123", 3, "number");
+    //                    ^- cursor
 }
 
 TEST_CASE("CompleteField", "[completion.sub-field]") {

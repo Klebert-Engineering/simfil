@@ -181,7 +181,13 @@ auto CompletionAndExpr::clone() const -> ExprPtr
 
 auto CompletionAndExpr::toString() const -> std::string
 {
-    return "(and "s + left_->toString() + " "s + right_->toString() + ")"s;
+    if (left_ && right_)
+        return fmt::format("(and {} {})", left_->toString(), right_->toString());
+    else if (left_)
+        return fmt::format("(and {} ?)", left_->toString());
+    else if (right_)
+        return fmt::format("(and ? {})", right_->toString());
+    return "(and ? ?)";
 }
 
 CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp)
@@ -233,7 +239,13 @@ auto CompletionOrExpr::clone() const -> ExprPtr
 
 auto CompletionOrExpr::toString() const -> std::string
 {
-    return "(or "s + left_->toString() + " "s + right_->toString() + ")"s;
+    if (left_ && right_)
+        return fmt::format("(or {} {})", left_->toString(), right_->toString());
+    else if (left_)
+        return fmt::format("(or {} ?)", left_->toString());
+    else if (right_)
+        return fmt::format("(or ? {})", right_->toString());
+    return "(or ? ?)";
 }
 
 }
