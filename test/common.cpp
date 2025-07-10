@@ -1,26 +1,58 @@
 #include "common.hpp"
+#include "catch2/catch_test_macros.hpp"
+#include "simfil/environment.h"
+#include "src/completion.h"
 
 static const PanicFn panicFn{};
 
-auto JoinedResult(std::string_view query) -> std::string
+auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
 {
-    auto model = simfil::json::parse(TestModel);
+    Environment env(Environment::WithNewStringCache);
+    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
+
+    auto ast = compile(env, query, false, autoWildcard);
+    if (!ast)
+        INFO(ast.error().message);
+    REQUIRE(ast.has_value());
+
+    return std::move(*ast);
+}
+
+auto JoinedResult(std::string_view query, std::optional<std::string> json) -> std::string
+{
+    auto model = simfil::json::parse(std::string(json.value_or(TestModel)));
     Environment env(model->strings());
 
     env.functions["panic"] = &panicFn;
 
     auto ast = compile(env, query, false);
-    INFO("AST: " << ast->expr().toString());
+    if (!ast)
+        INFO(ast.error().message);
+    REQUIRE(ast.has_value());
 
-    auto res = eval(env, *ast, *model->root(0), nullptr);
+    INFO("AST: " << (*ast)->expr().toString());
+
+    auto res = eval(env, **ast, *model->root(0), nullptr);
+    if (!res)
+        INFO(res.error().message);
+    REQUIRE(res);
 
     std::string vals;
-    for (const auto& vv : res) {
+    for (const auto& vv : *res) {
         if (!vals.empty())
             vals.push_back('|');
         vals += vv.toString();
     }
     return vals;
+}
+
+auto CompleteQuery(std::string_view query, size_t point) -> std::vector<CompletionCandidate>
+{
+    auto model = simfil::json::parse(TestModel);
+    Environment env(model->strings());
+
+    CompletionOptions opts;
+    return complete(env, query, point, *model->root(0), opts).value_or(std::vector<CompletionCandidate>());
 }
 
 auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::Message>
@@ -31,10 +63,17 @@ auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::M
     env.functions["panic"] = &panicFn;
 
     auto ast = compile(env, query, false);
-    INFO("AST: " << ast->expr().toString());
+    if (!ast)
+        INFO(ast.error().message);
+    REQUIRE(ast);
+
+    INFO("AST: " << (*ast)->expr().toString());
 
     Diagnostics diag;
-    auto res = eval(env, *ast, *model->root(0), &diag);
+    auto res = eval(env, **ast, *model->root(0), &diag);
+    if (!res)
+        INFO(res.error().message);
+    REQUIRE(res);
 
-    return diagnostics(env, *ast, diag);
+    return diagnostics(env, **ast, diag).value_or(std::vector<Diagnostics::Message>());
 }

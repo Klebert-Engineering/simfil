@@ -1,13 +1,15 @@
 #pragma once
 
-#include <bitset>
+#include <tl/expected.hpp>
 #include <memory>
 #include <type_traits>
 #include <variant>
 #include <functional>
+#include <bitset>
 
 #include "arena.h"
 #include "string-pool.h"
+#include "simfil/error.h"
 
 #include <sfl/small_vector.hpp>
 
@@ -199,7 +201,7 @@ struct ModelNode
     friend class ModelPool;
     friend class Model;
     friend class OverlayNode;
-    friend std::vector<Value> eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics*);
+    friend auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics*) -> tl::expected<std::vector<Value>, Error>;
 
     /// Get the node's scalar value if it has one
     [[nodiscard]] virtual ScalarValueType value() const;

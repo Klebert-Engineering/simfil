@@ -1,4 +1,5 @@
 #include "simfil/environment.h"
+#include "simfil/parser.h"
 #include "simfil/simfil.h"
 #include "simfil/expression.h"
 #include "simfil/value.h"
@@ -26,6 +27,9 @@
 
 using namespace std::string_literals;
 
+auto model = std::make_shared<simfil::ModelPool>();
+simfil::Environment* current_env = nullptr;
+
 struct
 {
     bool auto_any = false;
@@ -52,12 +56,13 @@ static auto make_env()
 }
 
 #ifdef WITH_READLINE
-char* command_generator(const char *text, int state)
+char* command_generator(const char* text, int state)
 {
     static std::vector<std::string> matches;
     static size_t match_index = 0;
 
     if (state == 0) {
+        std::string query = text;
         matches.clear();
         match_index = 0;
 
@@ -67,9 +72,26 @@ char* command_generator(const char *text, int state)
             cmds.push_back(name + "("s);
         }
 
-        for (auto word : cmds) {
-            if (word.substr(0, strlen(text)) == text)
-                matches.push_back(std::string(word));
+        if (query[0] == '/') {
+            return nullptr;
+        }
+
+        if (current_env) {
+            simfil::CompletionOptions opts;
+            opts.limit = 25;
+            opts.autoWildcard = options.auto_wildcard;
+
+            auto root = model->root(0);
+            if (!root)
+                return nullptr;
+
+            auto comp = simfil::complete(*current_env, query, rl_point, *root, opts);
+            if (!comp)
+                return nullptr;
+
+            for (const auto& candidate : *comp) {
+                matches.push_back(query.substr(0, candidate.location.offset) + candidate.text);
+            }
         }
     }
 
@@ -88,8 +110,10 @@ char** command_completion(const char *text, int start, int end)
 }
 #endif
 
-static std::string input(const char* prompt = "> ")
+static std::string input(simfil::Environment& env, const char* prompt = "> ")
 {
+    current_env = &env;
+
     std::string r;
 #ifdef WITH_READLINE
     auto buf = readline(prompt);
@@ -102,6 +126,8 @@ static std::string input(const char* prompt = "> ")
     std::cout << prompt << std::flush;
     std::getline(std::cin, r);
 #endif
+
+    current_env = nullptr;
     return r;
 }
 
@@ -112,7 +138,10 @@ static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std:
 
     if (!model->numRoots()) {
         model->addRoot(simfil::ModelNode::Ptr());
-        result[0] = simfil::eval(env, ast, *model->root(0), &diag);
+        auto res = simfil::eval(env, ast, *model->root(0), &diag);
+        if (res)
+            result[0] = std::move(*res);
+        // TODO: Output eval errors
         return result;
     }
 
@@ -126,16 +155,19 @@ static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std:
     auto threads = std::vector<std::thread>();
     threads.reserve(n_threads);
     for (auto i = 0; i < n_threads; ++i) {
-        threads.emplace_back(std::thread([&, i]() {
+        threads.emplace_back([&, i]() {
             size_t next;
             while ((next = idx++) < model->numRoots()) {
                 try {
-                    result[next] = simfil::eval(env, ast, *model->root(next), &diag);
+                    auto res = simfil::eval(env, ast, *model->root(next), &diag);
+                    if (res)
+                        result[next] = std::move(*res);
+                    // TODO: Output eval errors
                 } catch (...) {
                     return;
                 }
             }
-        }));
+        });
     }
 
     for (auto& thread : threads)
@@ -157,16 +189,36 @@ static void show_help()
         << "\n";
 }
 
+static void display_error(std::string_view expression, const simfil::Error& e)
+{
+    static const auto indent = "  ";
+    auto [offset, size] = e.location;
+
+    std::string underline;
+    if (size >= 0) {
+        if (offset > 0)
+            std::generate_n(std::back_inserter(underline), offset, []() { return ' '; });
+        underline.push_back('^');
+        if (size > 0)
+            std::generate_n(std::back_inserter(underline), size - 1, []() { return '~'; });
+    }
+
+    std::cout << "Error:\n"
+        << indent << e.message << ".\n\n"
+        << indent << expression << "\n"
+        << indent << underline << "\n";
+}
+
 int main(int argc, char *argv[])
 {
 #if WITH_READLINE
+    rl_completer_word_break_characters = "";
     rl_attempted_completion_function = command_completion;
 #endif
 
-    auto model = std::make_shared<simfil::ModelPool>();
     std::map<std::string, simfil::Value, simfil::CaseInsensitiveCompare> constants;
 
-    auto load_json = [&model](const std::string_view& filename) {
+    auto load_json = [](const std::string_view& filename) {
 #if defined(SIMFIL_WITH_MODEL_JSON)
         std::cout << "Parsing " << filename << "\n";
         auto f = std::ifstream(std::string(filename));
@@ -190,7 +242,7 @@ int main(int argc, char *argv[])
                 if (arg.empty()) {
                     arg = *++argv;
                 }
-                if (auto pos = arg.find("="); (pos != std::string::npos) && (pos > 0)) {
+                if (auto pos = arg.find('='); (pos != std::string::npos) && (pos > 0)) {
                     constants.try_emplace(std::string(arg.substr(0, pos)), simfil::Value::make(std::string(arg.substr(pos + 1))));
                 } else {
                     std::cerr << "Invalid definition: " << arg << "\n";
@@ -207,7 +259,10 @@ int main(int argc, char *argv[])
     }
 
     for (;;) {
-        auto cmd = input("> ");
+        simfil::Environment env(model->strings());
+        env.constants = constants;
+
+        auto cmd = input(env, "> ");
         if (cmd.empty())
             continue;
         if (cmd[0] == '/') {
@@ -218,19 +273,14 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        simfil::Environment env(model->strings());
-        env.constants = constants;
-
-        simfil::ASTPtr ast;
-        try {
-            ast = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
-        } catch (const std::exception& e) {
-            std::cout << "Compile:\n  " << e.what() << "\n";
+        auto ast = simfil::compile(env, cmd, options.auto_any, options.auto_wildcard);
+        if (!ast) {
+            display_error(cmd, ast.error());
             continue;
         }
 
         if (options.verbose)
-            std::cout << "Expression:\n  " << ast->expr().toString() << "\n";
+            std::cout << "Expression:\n  " << (*ast)->expr().toString() << "\n";
 
         simfil::Diagnostics diag;
         std::vector<std::vector<simfil::Value>> res;
@@ -238,7 +288,7 @@ int main(int argc, char *argv[])
 
         try {
             auto eval_begin = std::chrono::steady_clock::now();
-            res = eval_mt(env, *ast, model, diag);
+            res = eval_mt(env, **ast, model, diag);
             msec = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - eval_begin);
         } catch (const std::exception& e) {
             std::cout << "Error:\n  " << e.what() << "\n";
@@ -259,22 +309,27 @@ int main(int argc, char *argv[])
             std::cout << "  " << v.toString() << "\n";
         }
 
-        auto messages = simfil::diagnostics(env, *ast, diag);
-        if (!messages.empty()) {
+        auto messages = simfil::diagnostics(env, **ast, diag);
+        if (!messages) {
+            std::cerr << "Error: " << messages.error().message << "\n";
+            continue;
+        }
+
+        if (!messages->empty()) {
             std::cout << "Diagnostics:\n";
 
             auto underlineQuery = [&](simfil::SourceLocation loc) {
                 std::string underline;
-                std::fill_n(std::back_inserter(underline), loc.begin, ' ');
+                std::fill_n(std::back_inserter(underline), loc.offset, ' ');
                 underline.push_back('^');
                 if (loc.size > 0)
                     std::fill_n(std::back_inserter(underline), loc.size - 1, '~');
                 return underline;
             };
 
-            for (const auto& m : messages) {
+            for (const auto& m : *messages) {
                 std::cout << "  " << m.message << "\n"
-                          << "  Here: " << ast->query() << "\n"
+                          << "  Here: " << (*ast)->query() << "\n"
                           << "        " << underlineQuery(m.location) << "\n"
                           << "   Fix: " << m.fix.value_or("-") << "\n";
             }

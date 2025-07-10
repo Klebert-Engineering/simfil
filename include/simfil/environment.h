@@ -4,15 +4,12 @@
 
 #include "simfil/model/nodes.h"
 #include "simfil/value.h"
-#include "simfil/model/model.h"
+#include "simfil/token.h"
 
 #include <algorithm>
-#include <atomic>
 #include <iterator>
 #include <map>
 #include <memory>
-#include <optional>
-#include <unordered_map>
 #include <vector>
 #include <chrono>
 #include <functional>
@@ -151,7 +148,17 @@ struct Context
     };
     Phase phase = Evaluation;
 
-    Context(Environment*, Phase = Phase::Evaluation);
+    /* Timeout after which the evaluation should be canceled. */
+    std::chrono::time_point<std::chrono::steady_clock> timeout = std::chrono::time_point<std::chrono::steady_clock>::max();
+
+    Context(Environment* env, Phase = Phase::Evaluation);
+
+    auto canceled() const -> bool
+    {
+        if (phase != Phase::Compilation)
+            return timeout < std::chrono::steady_clock::now();
+        return false;
+    }
 };
 
 /**
@@ -161,6 +168,35 @@ struct Debug
 {
     std::function<void(const Expr&, Context&, Value&, const ResultFn&)> evalBegin;
     std::function<void(const Expr&)> evalEnd;
+};
+
+/**
+ * Options for the autocompletion.
+ */
+struct CompletionOptions
+{
+    // Auto insert a wildcard if the first token is a field name.
+    bool autoWildcard = false;
+
+    // Limit of candidates.
+    size_t limit = 15;
+
+    // Timeout in milliseconds, 0 means no timeout.
+    size_t timeoutMs = 0;
+};
+
+/**
+ * Completion candidate
+ */
+struct CompletionCandidate
+{
+    std::string text;
+    SourceLocation location;
+
+    auto operator<=>(const CompletionCandidate& r) const
+    {
+        return std::tie(text, location.offset, location.size) <=> std::tie(r.text, r.location.offset, r.location.size);
+    }
 };
 
 }

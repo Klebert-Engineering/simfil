@@ -33,7 +33,8 @@ public:
     Expr() = default;
     explicit Expr(const Token& token)
     {
-        sourceLocation_.begin = token.begin;
+        assert(token.end >= token.begin);
+        sourceLocation_.offset = token.begin;
         sourceLocation_.size = token.end - token.begin;
     }
 
@@ -52,6 +53,9 @@ public:
     /* Evaluation wrapper */
     auto eval(Context ctx, Value val, const ResultFn& res) -> Result
     {
+        if (ctx.canceled())
+            return Result::Stop;
+
         auto dbg = ctx.env->debug;
         if (dbg) dbg->evalBegin(*this, ctx, val, res);
         auto r = ieval(ctx, val, res);
@@ -64,7 +68,7 @@ public:
     virtual auto clone() const -> std::unique_ptr<Expr> = 0;
 
     /* Accept expression visitor */
-    virtual void accept(ExprVisitor& v) = 0;
+    virtual auto accept(ExprVisitor& v) -> void = 0;
 
     /* Source location the expression got parsed from */
     [[nodiscard]]

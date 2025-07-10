@@ -4,7 +4,9 @@
 
 #include "simfil/token.h"
 #include "simfil/expression.h"
+#include "simfil/error.h"
 
+#include <tl/expected.hpp>
 #include <unordered_map>
 #include <memory>
 #include <vector>
@@ -31,7 +33,7 @@ public:
      * @param t  Current token for which this parser got called.
      * @return  Parsed expression object.
      */
-    virtual ExprPtr parse(Parser& p, Token t) const = 0;
+    virtual auto parse(Parser& p, Token t) const -> tl::expected<ExprPtr, Error> = 0;
 };
 
 /**
@@ -43,7 +45,7 @@ class InfixParselet
 public:
     virtual ~InfixParselet() = default;
 
-    virtual ExprPtr parse(Parser&, std::unique_ptr<Expr> left, Token) const = 0;
+    virtual auto parse(Parser&, std::unique_ptr<Expr> left, Token) const -> tl::expected<ExprPtr, Error> = 0;
     virtual int precedence() const = 0;
 };
 
@@ -51,31 +53,35 @@ public:
 class Parser
 {
 public:
+    enum class Mode {
+        Strict,  // Panic on errors
+        Relaxed, // Try to recover from errors, if possible
+    };
+
     struct Context {
         bool inPath = false;
     };
 
-    Parser(Environment*, std::vector<Token> tokens);
-    Parser(Environment*, std::string_view expr);
+    Parser(Environment*, std::vector<Token> tokens, Mode mode);
 
     auto eof() const -> bool;
 
     /**
      * Parsing entry point(s).
      */
-    auto parse() -> ExprPtr;
-    auto parseInfix(ExprPtr left, int prec) -> ExprPtr;
-    auto parsePrecedence(int precedence, bool optional = false) -> ExprPtr;
+    auto parse() -> tl::expected<ExprPtr, Error>;
+    auto parseInfix(tl::expected<ExprPtr, Error> left, int prec) -> tl::expected<ExprPtr, Error>;
+    auto parsePrecedence(int precedence, bool optional = false) -> tl::expected<ExprPtr, Error>;
 
     /**
      * Parse expression and match next token against given token type.
      */
-    auto parseTo(Token::Type type) -> ExprPtr;
+    auto parseTo(Token::Type type) -> tl::expected<ExprPtr, Error>;
 
     /**
      * Helper for parsing comma separated expressions.
      */
-    auto parseList(Token::Type stop) -> std::vector<ExprPtr>;
+    auto parseList(Token::Type stop) -> tl::expected<std::vector<ExprPtr>, Error>;
 
     /**
      * Returns token at offset relative to current position.
@@ -91,6 +97,12 @@ public:
      */
     auto precedence(const Token& token) const -> int;
 
+    /**
+     * Get the current parsing mode.
+     */
+    auto mode() const -> Mode;
+    auto relaxed() const -> bool;
+
     Context ctx;
     Environment* const env;
     std::unordered_map<Token::Type, std::unique_ptr<PrefixParselet>> prefixParsers;
@@ -100,6 +112,7 @@ private:
     auto findPrefixParser(const Token& t) const -> const PrefixParselet*;
     auto findInfixParser(const Token& t) const -> const InfixParselet*;
 
+    Mode mode_ = Mode::Strict;
     std::vector<Token> tokens_;
     std::size_t pos_;
 };

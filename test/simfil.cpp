@@ -1,9 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/environment.h"
 #include "simfil/exception-handler.h"
-#include "simfil/function.h"
 #include "simfil/model/json.h"
-#include "simfil/result.h"
 #include "simfil/value.h"
 #include "src/expressions.h"
 
@@ -17,19 +15,14 @@ using namespace simfil;
 
 static constexpr auto StaticTestKey = StringPool::NextStaticId;
 
-
-static auto getASTString(std::string_view input, bool autoWildcard = false)
-{
-    Environment env(Environment::WithNewStringCache);
-    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
-    return compile(env, input, false, autoWildcard);
-}
+#define REQUIRE_RESULT(query, result) \
+    REQUIRE(JoinedResult((query)) == (result))
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(getASTString(input, false)->expr().toString() == output);
+    REQUIRE(Compile(input, false)->expr().toString() == (output));
 
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
-    REQUIRE(getASTString(input, true)->expr().toString() == output);
+    REQUIRE(Compile(input, true)->expr().toString() == (output));
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -68,9 +61,18 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("1/null", "null");
     REQUIRE_AST("null/1", "null");
 
+    auto GetError = [&](std::string_view query) {
+        Environment env(Environment::WithNewStringCache);
+        auto ast = compile(env, query);
+
+        REQUIRE(!ast);
+        if (!ast)
+            throw ast.error();
+    };
+
     /* Division by zero */
-    CHECK_THROWS(getASTString("1/0"));
-    CHECK_THROWS(getASTString("1%0"));
+    CHECK_THROWS(GetError("1/0"));
+    CHECK_THROWS(GetError("1%0"));
 
     /* String */
     REQUIRE_AST("'a'+null", "\"anull\"");
@@ -190,9 +192,14 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
         Environment env(model->strings());
 
         auto ast = compile(env, query, false);
-        INFO("AST: " << ast->expr().toString());
+        if (!ast)
+            INFO(ast.error().message);
+        REQUIRE(ast.has_value());
+        REQUIRE(*ast);
 
-        return eval(env, *ast, *model->root(0), nullptr).front().template as<ValueType::Bool>();
+        INFO("AST: " << (*ast)->expr().toString());
+
+        return eval(env, **ast, *model->root(0), nullptr).value().front().template as<ValueType::Bool>();
     };
 
     /* Test some field with different value types for different objects */
@@ -302,8 +309,8 @@ TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
                              R"({"a":"sub sub a","b":"sub sub b"}|sub sub a|sub sub b)");
     REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
     REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
-    REQUIRE_RESULT("count(*)", "10");
-    REQUIRE_RESULT("count(**)", "49");
+    REQUIRE_RESULT("count(*)", "12");
+    REQUIRE_RESULT("count(**)", "51");
     REQUIRE_RESULT("count(sub.**.a)", "2");
     REQUIRE_RESULT("count(**.{typeof _ == 'string'})", "11");
     REQUIRE_RESULT("count(sub.**.{typeof _ == 'string'})", "4");
@@ -333,7 +340,7 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
 
 TEST_CASE("Single Values", "[yaml.single-values]") {
 
-    auto json = R"({"a":1,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"number":123,"string":"text","sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
+    auto json = R"({"__long__name__":true,"a":1,"abc def":true,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"number":123,"string":"text","sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
     auto sub_json = R"({"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}})";
     auto sub_sub_json = R"({"a":"sub sub a","b":"sub sub b"})";
 
@@ -390,8 +397,8 @@ TEST_CASE("Model Functions", "[yaml.mode-functions]") {
 
 TEST_CASE("Sub-Selects", "[yaml.sub-selects]") {
     SECTION("Filter out null values") {
-        REQUIRE_RESULT("count(** as int)", "49"); /* Unfiltered */
-        REQUIRE_RESULT("count(**{typeof _ != 'null' and typeof _ != 'model'})", "29"); /* Filtered */
+        REQUIRE_RESULT("count(** as int)", "51"); /* Unfiltered */
+        REQUIRE_RESULT("count(**{typeof _ != 'null' and typeof _ != 'model'})", "31"); /* Filtered */
     }
     SECTION("Filter out all values") {
         REQUIRE_RESULT("**{false}", "null"); /* Non-Value returns single 'null' */
@@ -566,7 +573,10 @@ TEST_CASE("Visit AST", "[visit.ast]")
     Environment env(Environment::WithNewStringCache);
 
     auto ast = compile(env, "**.field = 123", false, false);
-    REQUIRE(ast.get() != nullptr);
+    if (!ast)
+        INFO(ast.error().message);
+    REQUIRE(ast.has_value());
+    REQUIRE(*ast);
 
     struct Visitor : ExprVisitor
     {
@@ -581,7 +591,7 @@ TEST_CASE("Visit AST", "[visit.ast]")
     };
 
     Visitor visitor;
-    ast->expr().accept(visitor);
+    (*ast)->expr().accept(visitor);
 
     REQUIRE(visitor.visitedFieldName == "field");
 }

@@ -7,6 +7,9 @@
 #include <string_view>
 #include <variant>
 #include <cstdint>
+#include <tl/expected.hpp>
+
+#include "simfil/error.h"
 
 namespace simfil
 {
@@ -90,6 +93,8 @@ struct Token
 
     static auto toString(Type) -> std::string;
     auto toString() const -> std::string;
+
+    auto containsPoint(size_t point) const -> bool;
 };
 
 std::ostream& operator<<(std::ostream&, const Token&);
@@ -97,6 +102,6 @@ std::ostream& operator<<(std::ostream&, const Token&);
 /**
  * Split a SIMFIL expression `expr` into parser tokens
  */
-std::vector<Token> tokenize(std::string_view expr);
+auto tokenize(std::string_view expr) -> tl::expected<std::vector<Token>, Error>;
 
 }

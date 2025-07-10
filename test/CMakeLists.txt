@@ -8,6 +8,7 @@ add_executable(test.simfil
   token.cpp
   simfil.cpp
   diagnostics.cpp
+  completion.cpp
   complex.cpp
   performance.cpp
   arena.cpp)

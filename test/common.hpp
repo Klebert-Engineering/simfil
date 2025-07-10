@@ -21,6 +21,8 @@ static const char* const TestModel = R"json(
 {
   "number": 123,
   "string": "text",
+  "__long__name__": true,
+  "abc def": true,
   "a": 1,
   "b": 2,
   "c": ["a", "b", "c"],
@@ -77,8 +79,7 @@ public:
     }
 };
 
-auto JoinedResult(std::string_view query) -> std::string;
+auto Compile(std::string_view query, bool autoWildcard = false) -> ASTPtr;
+auto JoinedResult(std::string_view query, std::optional<std::string> json = {}) -> std::string;
+auto CompleteQuery(std::string_view query, size_t point) -> std::vector<CompletionCandidate>;
 auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::Message>;
-
-#define REQUIRE_RESULT(query, result) \
-    REQUIRE(JoinedResult((query)) == (result))
