@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <iostream>
 #include <bitsery/traits/core/std_defaults.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/ext/std_map.h>
@@ -38,6 +37,12 @@ template <typename S>
 void serialize(S& s, double& v)
 {
     s.value8b(v);
+}
+
+template <typename S>
+void serialize(S& s, simfil::StringId& v)
+{
+    s.value2b(v);
 }
 
 namespace ext

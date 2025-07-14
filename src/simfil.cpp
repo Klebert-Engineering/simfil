@@ -30,6 +30,7 @@
 #include <unordered_map>
 #include <cassert>
 #include <vector>
+#include <iostream>
 
 namespace simfil
 {
@@ -632,6 +633,18 @@ public:
             TRY_EXPECTED(arguments);
 
             return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
+        } else if (!p.ctx.inPath) {
+            /* Parse Symbols (words in upper-case) */
+            if (isSymbolWord(word)) {
+                if (t.containsPoint(comp_->point)) {
+                    return std::make_unique<CompletionWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
+                }
+                return std::make_unique<ConstExpr>(Value::make<std::string>(std::move(word)));
+            }
+            /* Constant */
+            else if (auto constant = p.env->findConstant(word)) {
+                return std::make_unique<ConstExpr>(*constant);
+            }
         }
 
         /* Single field name */

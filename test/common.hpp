@@ -20,7 +20,7 @@ using namespace simfil;
 static const char* const TestModel = R"json(
 {
   "number": 123,
-  "string": "text",
+  "string": "TEXT",
   "__long__name__": true,
   "abc def": true,
   "a": 1,

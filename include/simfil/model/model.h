@@ -13,6 +13,7 @@
 #include <ostream>
 
 #include "nodes.h"
+#include "string-pool.h"
 
 namespace simfil
 {
@@ -93,6 +94,7 @@ public:
         Int64,
         Double,
         String,
+        StringIds,
 
         FirstCustomColumnId = 128,
     };
@@ -147,6 +149,7 @@ public:
     ModelNode::Ptr newValue(int64_t const& value);
     ModelNode::Ptr newValue(double const& value);
     ModelNode::Ptr newValue(std::string_view const& value);
+    ModelNode::Ptr newValue(StringId handle);
 
     /** Node-type-specific resolve-functions */
     [[nodiscard]]

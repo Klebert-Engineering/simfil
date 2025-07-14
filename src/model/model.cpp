@@ -67,6 +67,7 @@ struct ModelPool::Impl
         sfl::segmented_vector<ModelNodeAddress, detail::ColumnPageSize> roots_;
         sfl::segmented_vector<int64_t, detail::ColumnPageSize> i64_;
         sfl::segmented_vector<double, detail::ColumnPageSize> double_;
+        sfl::segmented_vector<StringId, detail::ColumnPageSize> stringIds_;
 
         std::string stringData_;
         sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
@@ -85,6 +86,7 @@ struct ModelPool::Impl
         s.container(columns_.double_, maxColumnSize);
         s.text1b(columns_.stringData_, maxColumnSize);
         s.container(columns_.strings_, maxColumnSize);
+        s.container(columns_.stringIds_, maxColumnSize);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
@@ -184,6 +186,7 @@ void ModelPool::clear()
     clear_and_shrink(columns.i64_);
     clear_and_shrink(columns.double_);
     clear_and_shrink(columns.strings_);
+    clear_and_shrink(columns.stringIds_);
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
@@ -226,6 +229,13 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
         cb(ValueNode(
             // TODO: Make sure that the string view is not turned into a string here.
             std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
+            shared_from_this()));
+        break;
+    }
+    case StringIds: {
+        auto id = get(impl_->columns_.stringIds_);
+        cb(ValueNode(
+            lookupStringId(id).value_or(std::string_view{}),
             shared_from_this()));
         break;
     }
@@ -307,6 +317,11 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     });
     impl_->columns_.stringData_ += value;
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
+}
+
+ModelNode::Ptr ModelPool::newValue(StringId handle) {
+    impl_->columns_.stringIds_.emplace_back(handle);
+    return ModelNode(shared_from_this(), {StringIds, (uint32_t)impl_->columns_.stringIds_.size()-1});
 }
 
 model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
