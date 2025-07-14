@@ -8,8 +8,6 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
-#include <stdexcept>
-#include <locale>
 
 /**
  * Note: This code is taken from bitsery traits/string.h and adopted
@@ -248,38 +246,4 @@ const std::deque<std::string>& StringPool::strings() const {
     return storedStrings_;
 }
 
-size_t detail::CaseInsensitiveHash::operator()(const std::string_view& str) const
-{
-    // FNV-1a Hash (Fowler–Noll–Vo) for case-insensitive hashing.
-    // Reference: http://www.isthe.com/chongo/tech/comp/fnv/#FNV-reference-source
-    // Selects 64-bit FNV-1a offset basis and prime if size_t is 8 bytes,
-    // and 32-bit FNV values if size_t is 4 bytes.
-    constexpr size_t offsetBasis = sizeof(size_t) == 4 ? 2166136261U : 14695981039346656037ULL;
-    constexpr size_t prime = sizeof(size_t) == 4 ? 16777619U : 1099511628211ULL;
-
-    size_t hash = offsetBasis;
-    std::locale locale{};
-
-    for (auto c : str) {
-        c = std::tolower(c, locale);
-        hash ^= c;
-        hash *= prime;
-    }
-
-    return hash;
 }
-
-bool detail::CaseInsensitiveEqual::operator()(
-    const std::string_view& lhs,
-    const std::string_view& rhs) const
-{
-    std::locale locale{};
-    return std::equal(
-        lhs.begin(),
-        lhs.end(),
-        rhs.begin(),
-        rhs.end(),
-        [&locale](auto l, auto r)
-        { return std::tolower(l, locale) == std::tolower(r, locale); });
-}
-}  // namespace simfil

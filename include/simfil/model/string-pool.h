@@ -18,21 +18,6 @@ namespace simfil
 using StringId = uint16_t;
 static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
 
-namespace detail
-{
-// Custom hash function for case-insensitive string hashing.
-struct CaseInsensitiveHash
-{
-    size_t operator()(const std::string_view& str) const;
-};
-
-// Custom equality comparison for case-insensitive string comparison.
-struct CaseInsensitiveEqual
-{
-    bool operator()(const std::string_view& lhs, const std::string_view& rhs) const;
-};
-}  // namespace detail
-
 /**
  * Fast and efficient case-insensitive string interner,
  * used to store object keys.
@@ -99,9 +84,7 @@ private:
     mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<
         std::string_view,
-        StringId,
-        detail::CaseInsensitiveHash,
-        detail::CaseInsensitiveEqual>
+        StringId>
         idForString_;
     std::unordered_map<StringId, std::string_view> stringForId_;
     std::deque<std::string> storedStrings_;
