@@ -113,6 +113,7 @@ TEST_CASE("Serialization", "[complex.serialization]") {
         auto recoveredModel = std::make_shared<ModelPool>();
         recoveredModel->read(stream);
         recoveredModel->setStrings(model->strings());
+        recoveredModel->validate();
 
         std::function<void(ModelNode::Ptr, ModelNode::Ptr)> require_equals = [&](auto l, auto r)
         {

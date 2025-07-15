@@ -30,7 +30,6 @@
 #include <unordered_map>
 #include <cassert>
 #include <vector>
-#include <iostream>
 
 namespace simfil
 {

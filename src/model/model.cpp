@@ -116,7 +116,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
         return true;
     };
 
-    auto validateFieldName = [&, this](StringId const& str)
+    auto validatePooledString = [&, this](StringId const& str)
     {
         if (!impl_->strings_)
             return;
@@ -132,7 +132,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
                     if (!validateArrayIndex(node->addr().index(), "object", impl_->columns_.objectMemberArrays_))
                         return;
                 for (auto const& [fieldName, fieldValue] : node->fields()) {
-                    validateFieldName(fieldName);
+                    validatePooledString(fieldName);
                     validateModelNode(fieldValue);
                 }
             }
@@ -161,6 +161,10 @@ std::vector<std::string> ModelPool::checkForErrors() const
     // Validate roots
     for (auto i = 0; i < numRoots(); ++i)
         validateModelNode(root(i));
+
+    // Validate string-ids
+    for (auto id : impl_->columns_.stringIds_)
+        validatePooledString(id);
 
     return errors;
 }
@@ -288,7 +292,7 @@ ModelNode::Ptr Model::newSmallValue(uint16_t value)
     return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
 }
 
-std::optional<std::string_view> Model::lookupStringId(const StringId) const
+std::optional<std::string_view> Model::lookupStringId(const simfil::StringId) const
 {
     return {};
 }
@@ -361,7 +365,7 @@ void ModelPool::setStrings(std::shared_ptr<StringPool> const& strings)
     }
 }
 
-std::optional<std::string_view> ModelPool::lookupStringId(const StringId id) const
+std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId id) const
 {
     return impl_->strings_->resolve(id);
 }
