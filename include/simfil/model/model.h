@@ -94,7 +94,7 @@ public:
         Int64,
         Double,
         String,
-        StringIds,
+        PooledString,
 
         FirstCustomColumnId = 128,
     };

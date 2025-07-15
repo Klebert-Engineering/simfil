@@ -67,7 +67,6 @@ struct ModelPool::Impl
         sfl::segmented_vector<ModelNodeAddress, detail::ColumnPageSize> roots_;
         sfl::segmented_vector<int64_t, detail::ColumnPageSize> i64_;
         sfl::segmented_vector<double, detail::ColumnPageSize> double_;
-        sfl::segmented_vector<StringId, detail::ColumnPageSize> stringIds_;
 
         std::string stringData_;
         sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
@@ -86,7 +85,6 @@ struct ModelPool::Impl
         s.container(columns_.double_, maxColumnSize);
         s.text1b(columns_.stringData_, maxColumnSize);
         s.container(columns_.strings_, maxColumnSize);
-        s.container(columns_.stringIds_, maxColumnSize);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
@@ -143,6 +141,9 @@ std::vector<std::string> ModelPool::checkForErrors() const
                 for (auto const& member : *node)
                     validateModelNode(member);
             }
+            else if (node->addr().column() == PooledString) {
+                validatePooledString(static_cast<StringId>(node->addr().index()));
+            }
             resolve(*node, Lambda([](auto&&) {}));
         }
         catch (std::exception& e) {
@@ -161,10 +162,6 @@ std::vector<std::string> ModelPool::checkForErrors() const
     // Validate roots
     for (auto i = 0; i < numRoots(); ++i)
         validateModelNode(root(i));
-
-    // Validate string-ids
-    for (auto id : impl_->columns_.stringIds_)
-        validatePooledString(id);
 
     return errors;
 }
@@ -190,7 +187,6 @@ void ModelPool::clear()
     clear_and_shrink(columns.i64_);
     clear_and_shrink(columns.double_);
     clear_and_shrink(columns.strings_);
-    clear_and_shrink(columns.stringIds_);
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
@@ -236,11 +232,9 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
             shared_from_this()));
         break;
     }
-    case StringIds: {
-        auto id = get(impl_->columns_.stringIds_);
-        cb(ValueNode(
-            lookupStringId(id).value_or(std::string_view{}),
-            shared_from_this()));
+    case PooledString: {
+        auto str = lookupStringId(static_cast<StringId>(n.addr().index()));
+        cb(ValueNode(str.value_or(std::string_view{}), shared_from_this()));
         break;
     }
     default: Model::resolve(n, cb);
@@ -324,8 +318,7 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 }
 
 ModelNode::Ptr ModelPool::newValue(StringId handle) {
-    impl_->columns_.stringIds_.emplace_back(handle);
-    return ModelNode(shared_from_this(), {StringIds, (uint32_t)impl_->columns_.stringIds_.size()-1});
+    return ModelNode(shared_from_this(), {PooledString, static_cast<uint32_t>(handle)});
 }
 
 model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {

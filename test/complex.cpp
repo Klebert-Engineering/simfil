@@ -112,6 +112,7 @@ TEST_CASE("Serialization", "[complex.serialization]") {
 
         auto recoveredModel = std::make_shared<ModelPool>();
         recoveredModel->read(stream);
+        CHECK_THROWS(recoveredModel->validate());
         recoveredModel->setStrings(model->strings());
         recoveredModel->validate();
 
