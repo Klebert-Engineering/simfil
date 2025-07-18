@@ -263,4 +263,56 @@ auto CompletionOrExpr::toString() const -> std::string
     return "(or ? ?)";
 }
 
+CompletionWordExpr::CompletionWordExpr(std::string prefix, Completion* comp, const Token& token)
+    : Expr(token)
+    , prefix_(std::move(prefix))
+    , comp_(comp)
+{}
+
+auto CompletionWordExpr::type() const -> Type
+{
+    return Type::VALUE;
+}
+
+auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+{
+    if (ctx.phase == Context::Phase::Compilation)
+        return res(ctx, Value::undef());
+
+    // Generate completion candidates for uppercase string constants from string pool.
+    auto stringPool = ctx.env->strings();
+    const auto& strings = stringPool->strings();
+
+    for (const auto& str : strings) {
+        if (comp_->size() >= comp_->limit)
+            return Result::Stop;
+
+        // Check if string is uppercase.
+        bool isUppercase = !str.empty() && std::all_of(str.begin(), str.end(), [](char c) {
+            return std::isupper(c) || c == '_' || std::isdigit(c);
+        });
+
+        if (isUppercase && str.size() >= prefix_.size() && startsWith(str, prefix_)) {
+            comp_->add(str, sourceLocation());
+        }
+    }
+
+    return res(ctx, Value::undef());
+}
+
+auto CompletionWordExpr::toString() const -> std::string
+{
+    return prefix_;
+}
+
+auto CompletionWordExpr::clone() const -> std::unique_ptr<Expr>
+{
+    throw std::runtime_error("Cannot clone CompletionWordExpr");
+}
+
+auto CompletionWordExpr::accept(ExprVisitor& v) -> void
+{
+    v.visit(*this);
+}
+
 }

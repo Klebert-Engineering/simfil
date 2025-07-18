@@ -23,7 +23,7 @@ static ModelNode::Ptr build(const json& j, ModelPool & model)
     case json::value_t::number_integer:
         return model.newValue(j.get<int64_t>());
     case json::value_t::string:
-        return model.newValue(j.get<std::string>());
+        return model.newValue((StringId)model.strings()->emplace(j.get<std::string>()));
     default:
         break;
     }

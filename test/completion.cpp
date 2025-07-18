@@ -41,3 +41,7 @@ TEST_CASE("CompleteField", "[completion.field.midQuery]") {
 TEST_CASE("CompleteField", "[completion.sub-field]") {
     EXPECT_COMPLETION("sub.", {}, "sub");
 }
+
+TEST_CASE("CompleteString", "[completion.string-const]") {
+    EXPECT_COMPLETION("1 > T", {}, "TEXT");
+}

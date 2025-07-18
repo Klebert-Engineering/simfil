@@ -81,4 +81,19 @@ public:
     ExprPtr left_, right_;
 };
 
+class CompletionWordExpr : public Expr
+{
+public:
+    CompletionWordExpr(std::string prefix, Completion* comp, const Token& token);
+
+    auto type() const -> Type override;
+    auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result override;
+    auto clone() const -> std::unique_ptr<Expr> override;
+    auto accept(ExprVisitor& v) -> void override;
+    auto toString() const -> std::string override;
+
+    std::string prefix_;
+    Completion* comp_;
+};
+
 }
