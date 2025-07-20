@@ -39,6 +39,9 @@ using EnableSafeIntegerConversion = std::enable_if_t<IsSafeIntegerConversion<Fro
 
 } // namespace detail
 
+
+/// Type safe wrapper around an integer type for
+/// usa as a StringHandle.
 struct StringHandle
 {
     using Type = std::uint16_t;
@@ -52,12 +55,10 @@ struct StringHandle
     constexpr StringHandle(const T& value) : value(static_cast<Type>(value)) {}
 
     auto next() const -> StringHandle {
-        assert(value < std::numeric_limits<Type>::max());
         return StringHandle{static_cast<Type>(value + 1u)};
     }
 
     auto previous() const -> StringHandle {
-        assert(value > 0);
         return StringHandle{static_cast<Type>(value - 1u)};
     }
 
@@ -98,27 +99,23 @@ struct StringHandle
 
     /// StringHandle is used as an index type
     auto operator++(int) -> StringHandle {
-        assert(value < std::numeric_limits<Type>::max());
         auto old = *this;
         ++value;
         return old;
     }
 
     auto operator++() -> StringHandle& {
-        assert(value < std::numeric_limits<Type>::max());
         ++value;
         return *this;
     }
 
     auto operator--(int) -> StringHandle {
-        assert(value > 0);
         auto old = *this;
         --value;
         return old;
     }
 
     auto operator--() -> StringHandle& {
-        assert(value > 0);
         --value;
         return *this;
     }
