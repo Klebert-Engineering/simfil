@@ -23,7 +23,7 @@ namespace simfil
  */
 struct StringPool
 {
-    enum StaticStringIds : StringId {
+    enum StaticStringIds : StringHandle::Type {
         Empty = 0,
         OverlaySum,
         OverlayValue,
@@ -57,7 +57,7 @@ struct StringPool
     virtual std::optional<std::string_view> resolve(StringHandle const& id) const;
 
     /// Get highest stored field id
-    StringId highest() const;
+    StringHandle highest() const;
 
     /// Get stats
     size_t size() const;
@@ -70,7 +70,7 @@ struct StringPool
 
     /// Serialization - write to stream, starting from a specific
     ///  id offset if necessary (for partial serialisation).
-    virtual void write(std::ostream& outputStream, StringId offset = {}) const;  // NOLINT
+    virtual void write(std::ostream& outputStream, StringHandle offset = {}) const;  // NOLINT
     virtual void read(std::istream& inputStream);
 
     /// Check if the content of the string pools is logically identical.
@@ -83,11 +83,11 @@ private:
     mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<
         std::string_view,
-        StringId>
+        StringHandle>
         idForString_;
-    std::unordered_map<StringId, std::string_view> stringForId_;
+    std::unordered_map<StringHandle, std::string_view> stringForId_;
     std::deque<std::string> storedStrings_;
-    StringId nextId_ = FirstDynamicId;
+    StringHandle nextId_ = FirstDynamicId;
     std::atomic_int64_t byteSize_{0};
     std::atomic_int64_t cacheHits_{0};
     std::atomic_int64_t cacheMisses_{0};

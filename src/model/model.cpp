@@ -142,7 +142,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
                     validateModelNode(member);
             }
             else if (node->addr().column() == PooledString) {
-                validatePooledString(static_cast<StringId>(node->addr().index()));
+                validatePooledString(static_cast<StringHandle::Type>(node->addr().index()));
             }
             resolve(*node, Lambda([](auto&&) {}));
         }
@@ -233,7 +233,7 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
         break;
     }
     case PooledString: {
-        auto str = lookupStringId(static_cast<StringId>(n.addr().index()));
+        auto str = lookupStringId(static_cast<StringHandle::Type>(n.addr().index()));
         cb(ValueNode(str.value_or(std::string_view{}), shared_from_this()));
         break;
     }
@@ -354,14 +354,14 @@ void ModelPool::setStrings(std::shared_ptr<StringPool> const& strings)
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
         for (auto& member : memberArray) {
             if (auto resolvedName = oldStrings->resolve(member.name_))
-                member.name_ = static_cast<StringId>(strings->emplace(*resolvedName));
+                member.name_ = strings->emplace(*resolvedName);
         }
     }
 }
 
 std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringHandle& id) const
 {
-    return impl_->strings_->resolve(static_cast<StringId>(id));
+    return impl_->strings_->resolve(id);
 }
 
 Object::Storage& ModelPool::objectMemberStorage() {

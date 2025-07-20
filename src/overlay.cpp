@@ -20,7 +20,7 @@ OverlayNode::OverlayNode(ModelNode const& n)
 
 auto OverlayNode::set(StringHandle const& key, Value const& child) -> void
 {
-    model().overlayChildren_.insert({static_cast<StringId>(key), child});
+    model().overlayChildren_.insert({key, child});
 }
 
 [[nodiscard]] ScalarValueType OverlayNode::value() const
@@ -35,7 +35,7 @@ auto OverlayNode::set(StringHandle const& key, Value const& child) -> void
 
 [[nodiscard]] ModelNode::Ptr OverlayNode::get(const StringHandle& key) const
 {
-    auto iter = model().overlayChildren_.find(static_cast<StringId>(key));
+    auto iter = model().overlayChildren_.find(key);
     if (iter != model().overlayChildren_.end()) {
         if (iter->second.node)
             return iter->second.node;

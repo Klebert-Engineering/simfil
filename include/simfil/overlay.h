@@ -10,7 +10,7 @@ namespace simfil
 struct OverlayNodeStorage final : public Model
 {
     Value value_;
-    std::map<StringId, Value> overlayChildren_;
+    std::map<StringHandle, Value> overlayChildren_;
 
     explicit OverlayNodeStorage(Value const& val) : value_(val) {} // NOLINT
 

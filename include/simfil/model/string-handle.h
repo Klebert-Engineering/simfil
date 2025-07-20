@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <type_traits>
 
@@ -37,14 +38,9 @@ using EnableSafeIntegerConversion = std::enable_if_t<IsSafeIntegerConversion<Fro
 
 } // namespace detail
 
-using StringId = std::uint16_t;
-static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
-
-/// StringHandle is a strong typedef for StringId
-/// and should be used as a replacement, if possible.
 struct StringHandle
 {
-    using Type = StringId;
+    using Type = std::uint16_t;
 
     Type value;
 
@@ -53,6 +49,17 @@ struct StringHandle
 
     template <typename T, typename = detail::EnableSafeIntegerConversion<T, Type>>
     constexpr StringHandle(const T& value) : value(static_cast<Type>(value)) {}
+
+    auto next() const -> StringHandle {
+        auto n = StringHandle{static_cast<Type>(value + 1u)};
+        assert(*this < n);
+        return n;
+    }
+
+    auto previous() const -> StringHandle {
+        assert(value > 0);
+        return {static_cast<Type>(value - 1u)};
+    }
 
     explicit operator bool() const {
         return value != (Type)0;
@@ -66,9 +73,49 @@ struct StringHandle
         return value == id.value;
     }
 
+    auto operator<(const StringHandle& id) const -> bool {
+        return value < id.value;
+    }
+
+    auto operator<=(const StringHandle& id) const -> bool {
+        return value <= id.value;
+    }
+
     template <class T, class = detail::EnableSafeIntegerConversion<T, Type>>
     auto operator==(const T& v) const -> bool {
       return value == v;
+    }
+
+    template <class T, class = detail::EnableSafeIntegerConversion<T, Type>>
+    auto operator<(const T& v) const -> bool {
+      return value < v;
+    }
+
+    template <class T, class = detail::EnableSafeIntegerConversion<T, Type>>
+    auto operator<=(const T& v) const -> bool {
+      return value <= v;
+    }
+
+    template <class T, class = detail::EnableSafeIntegerConversion<T, Type>>
+    auto operator+(const T& v) const -> StringHandle {
+      return value + v;
+    }
+
+    /// StringHandle is used as an index type
+    auto operator++(int) -> StringHandle {
+        return value++;
+    }
+
+    auto operator++() -> StringHandle {
+        return ++value;
+    }
+
+    auto operator--(int) -> StringHandle {
+        return value--;
+    }
+
+    auto operator--() -> StringHandle {
+        return --value;
     }
 };
 
@@ -85,15 +132,3 @@ struct hash<simfil::StringHandle> {
 };
 
 } // namespace std
-
-
-namespace bitsery
-{
-
-template <typename S>
-void serialize(S& s, simfil::StringHandle& v)
-{
-    s.value2b(v.value);
-}
-
-} // namespace bitsery
