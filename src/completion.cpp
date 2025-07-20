@@ -2,6 +2,7 @@
 
 #include "expressions.h"
 #include "simfil/result.h"
+
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -11,11 +12,13 @@ namespace
 
 auto startsWith(std::string_view str, std::string_view prefix)
 {
+    static const auto loc = std::locale();
+
     if (prefix.size() > str.size())
         return false;
 
     for (auto i = 0; i < std::min<std::string_view::size_type>(str.size(), prefix.size()); ++i)
-        if (std::tolower(str[i], std::locale()) != std::tolower(prefix[i], std::locale()))
+        if (std::tolower(str[i], loc) != std::tolower(prefix[i], loc))
             return false;
 
     return true;
