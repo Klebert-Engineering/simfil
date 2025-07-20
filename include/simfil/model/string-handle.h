@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 
 namespace simfil
@@ -51,14 +52,13 @@ struct StringHandle
     constexpr StringHandle(const T& value) : value(static_cast<Type>(value)) {}
 
     auto next() const -> StringHandle {
-        auto n = StringHandle{static_cast<Type>(value + 1u)};
-        assert(*this < n);
-        return n;
+        assert(value < std::numeric_limits<Type>::max());
+        return StringHandle{static_cast<Type>(value + 1u)};
     }
 
     auto previous() const -> StringHandle {
         assert(value > 0);
-        return {static_cast<Type>(value - 1u)};
+        return StringHandle{static_cast<Type>(value - 1u)};
     }
 
     explicit operator bool() const {
@@ -96,26 +96,31 @@ struct StringHandle
       return value <= v;
     }
 
-    template <class T, class = detail::EnableSafeIntegerConversion<T, Type>>
-    auto operator+(const T& v) const -> StringHandle {
-      return value + v;
-    }
-
     /// StringHandle is used as an index type
     auto operator++(int) -> StringHandle {
-        return value++;
+        assert(value < std::numeric_limits<Type>::max());
+        auto old = *this;
+        ++value;
+        return old;
     }
 
-    auto operator++() -> StringHandle {
-        return ++value;
+    auto operator++() -> StringHandle& {
+        assert(value < std::numeric_limits<Type>::max());
+        ++value;
+        return *this;
     }
 
     auto operator--(int) -> StringHandle {
-        return value--;
+        assert(value > 0);
+        auto old = *this;
+        --value;
+        return old;
     }
 
-    auto operator--() -> StringHandle {
-        return --value;
+    auto operator--() -> StringHandle& {
+        assert(value > 0);
+        --value;
+        return *this;
     }
 };
 
