@@ -243,11 +243,11 @@ struct ModelNode
     virtual bool iterate(IterCallback const& cb) const; // NOLINT (allow discard)
 
     /// Iterator Support
-    /// * `fieldNames()`: Returns range object which supports `for(StringId const& f: node.fieldNames())`
+    /// * `fieldNames()`: Returns range object which supports `for(StringHandle const& f: node.fieldNames())`
     /// * `fields()`: Returns range object which supports `for(auto const& [fieldId, value] : node.fields())`
     /// * Normal `begin()`/`end()`: Supports `for(ModelNode::Ptr child : node)`
 
-    // Implement fieldNames() by creating an iterator for StringId
+    // Implement fieldNames() by creating an iterator for StringHandle
     class StringHandleIterator
     {
         int64_t index;
@@ -537,14 +537,13 @@ protected:
     struct Field
     {
         Field() = default;
-        Field(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
-        Field(StringHandle name, ModelNodeAddress a) : name_(static_cast<StringId>(name)), node_(a) {}
-        StringId name_ = StringPool::Empty;
+        Field(StringHandle name, ModelNodeAddress a) : name_(name), node_(a) {}
+        StringHandle name_ = StringPool::Empty;
         ModelNodeAddress node_;
 
         template<typename S>
         void serialize(S& s) {
-            s.value2b(name_);
+            s.object(name_);
             s.object(node_);
         }
     };
@@ -650,7 +649,7 @@ protected:
         : Object(InvalidArrayIndex, pool, a) {}
 
     sfl::small_vector<
-        std::pair<StringId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
+        std::pair<StringHandle, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
         MaxProceduralFields> fields_;
 };
 

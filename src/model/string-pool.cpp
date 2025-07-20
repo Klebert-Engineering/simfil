@@ -1,5 +1,6 @@
 #include "simfil/model/string-pool.h"
 #include "simfil/exception-handler.h"
+#include "simfil/model/bitsery-traits.h"
 
 #include <bitsery/adapter/stream.h>
 #include <bitsery/bitsery.h>
@@ -110,7 +111,7 @@ StringHandle StringPool::emplace(std::string_view const& str)
 
         // Store the string to maintain ownership.
         auto& storedString = storedStrings_.emplace_back(str);
-        StringId id = nextId_++;
+        StringHandle id = nextId_++;
         if (nextId_ < id) {
             raise<std::overflow_error>("StringPool id overflow!");
         }
@@ -137,15 +138,15 @@ StringHandle StringPool::get(std::string_view const& str)
 std::optional<std::string_view> StringPool::resolve(const StringHandle& id) const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
-    auto it = stringForId_.find(static_cast<StringId>(id));
+    auto it = stringForId_.find(id);
     if (it != stringForId_.end())
         return it->second;
     return std::nullopt;
 }
 
-StringId StringPool::highest() const
+StringHandle StringPool::highest() const
 {
-    return nextId_ - 1;
+    return nextId_.previous();
 }
 
 size_t StringPool::size() const
@@ -173,30 +174,30 @@ void StringPool::addStaticKey(const StringHandle& id, const std::string& value)
 {
     std::unique_lock lock(stringStoreMutex_);
     auto& storedString = storedStrings_.emplace_back(value);
-    idForString_.emplace(storedString, static_cast<StringId>(id));
-    stringForId_.emplace(static_cast<StringId>(id), storedString);
+    idForString_.emplace(storedString, id);
+    stringForId_.emplace(id, storedString);
 }
 
-void StringPool::write(std::ostream& outputStream, const StringId offset) const  // NOLINT
+void StringPool::write(std::ostream& outputStream, const StringHandle offset) const  // NOLINT
 {
     std::shared_lock stringStoreReadAccess(stringStoreMutex_);
     bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
 
     // Calculate how many strings will be sent
-    StringId sendStrCount = 0;
+    StringHandle sendStrCount = {};
     const auto high = highest();
     for (auto strId = offset; strId <= high; ++strId) {
         auto it = stringForId_.find(strId);
         if (it != stringForId_.end())
             ++sendStrCount;
     }
-    s.value2b(sendStrCount);
+    s.object(sendStrCount);
 
     // Send the pool's key-string pairs
     for (auto strId = offset; strId <= high; ++strId) {
         auto it = stringForId_.find(strId);
         if (it != stringForId_.end()) {
-            s.value2b(strId);
+            s.object(strId);
             // Don't support strings longer than 64kB.
             s.text1b(it->second, std::numeric_limits<uint16_t>::max());
         }
@@ -209,14 +210,14 @@ void StringPool::read(std::istream& inputStream)
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
 
     // Determine how many strings are to be received
-    StringId rcvStringCount{};
-    s.value2b(rcvStringCount);
+    StringHandle rcvStringCount{};
+    s.object(rcvStringCount);
 
     // Read strings
-    for (auto i = 0; i < rcvStringCount; ++i) {
+    for (auto i = 0u; i < static_cast<StringHandle::Type>(rcvStringCount); ++i) {
         // Read string key
-        StringId stringId{};
-        s.value2b(stringId);
+        StringHandle stringId{};
+        s.object(stringId);
 
         // Don't support strings longer than 64kB.
         auto& stringValue = storedStrings_.emplace_back();
@@ -227,7 +228,7 @@ void StringPool::read(std::istream& inputStream)
         if (insertionTookPlace) {
             stringForId_.try_emplace(stringId, stringValue);
             byteSize_ += static_cast<int64_t>(stringValue.size());
-            nextId_ = std::max<StringId>(nextId_, stringId + 1);
+            nextId_ = std::max<StringHandle>(nextId_, stringId.next());
         }
     }
 
