@@ -16,7 +16,7 @@ ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType 
 ScalarValueType ModelNode::value() const {
     ScalarValueType result;
     if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.value(); }));
+        model_->resolve(*this, Model::Lambda([&](const auto& resolved) { result = resolved.value(); }));
     return result;
 }
 
@@ -24,7 +24,7 @@ ScalarValueType ModelNode::value() const {
 ValueType ModelNode::type() const {
     ValueType result = ValueType::Null;
     if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.type(); }));
+        model_->resolve(*this, Model::Lambda([&](const auto& resolved) { result = resolved.type(); }));
     return result;
 }
 
@@ -32,7 +32,7 @@ ValueType ModelNode::type() const {
 ModelNode::Ptr ModelNode::get(const StringHandle& field) const {
     ModelNode::Ptr result;
     if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.get(field); }));
+        model_->resolve(*this, Model::Lambda([&](const auto& resolved) { result = resolved.get(field); }));
     return result;
 }
 
@@ -41,7 +41,7 @@ ModelNode::Ptr ModelNode::at(int64_t index) const {
     ModelNode::Ptr result;
     if (model_)
         model_
-            ->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.at(index); }));
+            ->resolve(*this, Model::Lambda([&](const auto& resolved) { result = resolved.at(index); }));
     return result;
 }
 
