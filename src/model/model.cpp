@@ -114,12 +114,12 @@ std::vector<std::string> ModelPool::checkForErrors() const
         return true;
     };
 
-    auto validatePooledString = [&, this](StringId const& str)
+    auto validatePooledString = [&, this](StringHandle const& str)
     {
         if (!impl_->strings_)
             return;
         if (!impl_->strings_->resolve(str))
-            errors.push_back(fmt::format("Bad string ID: {}", str));
+            errors.push_back(fmt::format("Bad string ID: {}", static_cast<StringHandle::Type>(str)));
     };
 
     std::function<void(ModelNode::Ptr)> validateModelNode = [&](ModelNode::Ptr node)
@@ -286,7 +286,7 @@ ModelNode::Ptr Model::newSmallValue(uint16_t value)
     return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
 }
 
-std::optional<std::string_view> Model::lookupStringId(const simfil::StringId) const
+std::optional<std::string_view> Model::lookupStringId(const simfil::StringHandle&) const
 {
     return {};
 }
@@ -317,8 +317,9 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
-ModelNode::Ptr ModelPool::newValue(StringId handle) {
-    return ModelNode(shared_from_this(), {PooledString, static_cast<uint32_t>(handle)});
+ModelNode::Ptr ModelPool::newValue(const StringHandle& handle)
+{
+    return ModelNode(shared_from_this(), {PooledString, static_cast<uint32_t>(handle.value)});
 }
 
 model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
@@ -353,14 +354,14 @@ void ModelPool::setStrings(std::shared_ptr<StringPool> const& strings)
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
         for (auto& member : memberArray) {
             if (auto resolvedName = oldStrings->resolve(member.name_))
-                member.name_ = strings->emplace(*resolvedName);
+                member.name_ = static_cast<StringId>(strings->emplace(*resolvedName));
         }
     }
 }
 
-std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId id) const
+std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringHandle& id) const
 {
-    return impl_->strings_->resolve(id);
+    return impl_->strings_->resolve(static_cast<StringId>(id));
 }
 
 Object::Storage& ModelPool::objectMemberStorage() {

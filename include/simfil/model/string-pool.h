@@ -12,11 +12,10 @@
 #include <ostream>
 #include <deque>
 
+#include "string-handle.h"
+
 namespace simfil
 {
-
-using StringId = uint16_t;
-static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
 
 /**
  * Fast and efficient case-insensitive string interner,
@@ -45,17 +44,17 @@ struct StringPool
 
     /// Use this function to lookup a stored string, or insert it
     /// if it doesn't exist yet.
-    StringId emplace(std::string_view const& str);
+    StringHandle emplace(std::string_view const& str);
 
     /// Returns the ID of the given string, or `Empty` if
     /// no such string was ever inserted.
-    StringId get(std::string_view const& str);
+    StringHandle get(std::string_view const& str);
 
     /// Get the actual string for the given ID, or
     ///  nullopt if the given ID is invalid.
     /// Virtual to allow defining an inherited StringPool which understands
     /// additional StaticStringIds.
-    virtual std::optional<std::string_view> resolve(StringId const& id) const;
+    virtual std::optional<std::string_view> resolve(StringHandle const& id) const;
 
     /// Get highest stored field id
     StringId highest() const;
@@ -67,7 +66,7 @@ struct StringPool
     size_t misses() const;
 
     /// Add a static key-string mapping - Warning: Not thread-safe.
-    void addStaticKey(StringId k, std::string const& v);
+    void addStaticKey(const StringHandle& k, std::string const& v);
 
     /// Serialization - write to stream, starting from a specific
     ///  id offset if necessary (for partial serialisation).

@@ -18,9 +18,9 @@ OverlayNode::OverlayNode(ModelNode const& n)
     : MandatoryDerivedModelNodeBase<OverlayNodeStorage>(n)
 {}
 
-auto OverlayNode::set(StringId const& key, Value const& child) -> void
+auto OverlayNode::set(StringHandle const& key, Value const& child) -> void
 {
-    model().overlayChildren_.insert({key, child});
+    model().overlayChildren_.insert({static_cast<StringId>(key), child});
 }
 
 [[nodiscard]] ScalarValueType OverlayNode::value() const
@@ -33,9 +33,9 @@ auto OverlayNode::set(StringId const& key, Value const& child) -> void
     return ValueType::Object;
 }
 
-[[nodiscard]] ModelNode::Ptr OverlayNode::get(const StringId& key) const
+[[nodiscard]] ModelNode::Ptr OverlayNode::get(const StringHandle& key) const
 {
-    auto iter = model().overlayChildren_.find(key);
+    auto iter = model().overlayChildren_.find(static_cast<StringId>(key));
     if (iter != model().overlayChildren_.end()) {
         if (iter->second.node)
             return iter->second.node;
@@ -49,7 +49,7 @@ auto OverlayNode::set(StringId const& key, Value const& child) -> void
     return model().value_.node->at(i);
 }
 
-[[nodiscard]] StringId OverlayNode::keyAt(int64_t i) const
+[[nodiscard]] StringHandle OverlayNode::keyAt(int64_t i) const
 {
     return model().value_.node->keyAt(i);
 }

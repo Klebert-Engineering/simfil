@@ -29,11 +29,10 @@ ValueType ModelNode::type() const {
 }
 
 /// Get a child by name
-ModelNode::Ptr ModelNode::get(const StringId& field) const {
+ModelNode::Ptr ModelNode::get(const StringHandle& field) const {
     ModelNode::Ptr result;
     if (model_)
-        model_
-            ->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.get(field); }));
+        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.get(field); }));
     return result;
 }
 
@@ -47,10 +46,10 @@ ModelNode::Ptr ModelNode::at(int64_t index) const {
 }
 
 /// Get an Object model's field names
-StringId ModelNode::keyAt(int64_t i) const {
-    StringId result = 0;
+StringHandle ModelNode::keyAt(int64_t i) const {
+    StringHandle result = {};
     if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.keyAt(i); }));
+        model_->resolve(*this, Model::Lambda([&](const auto& resolved) { result = resolved.keyAt(i); }));
     return result;
 }
 
@@ -58,7 +57,7 @@ StringId ModelNode::keyAt(int64_t i) const {
 uint32_t ModelNode::size() const {
     uint32_t result = 0;
     if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.size(); }));
+        model_->resolve(*this, Model::Lambda([&](const auto& resolved) { result = resolved.size(); }));
     return result;
 }
 
@@ -66,7 +65,7 @@ uint32_t ModelNode::size() const {
 bool ModelNode::iterate(const IterCallback& cb) const {
     bool result = true;
     if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.iterate(cb); }));
+        model_->resolve(*this, Model::Lambda([&](const auto& resolved) { result = resolved.iterate(cb); }));
     return result;
 }
 
@@ -148,7 +147,7 @@ ValueType ModelNodeBase::type() const
     return ValueType::Null;
 }
 
-ModelNode::Ptr ModelNodeBase::get(const StringId&) const
+ModelNode::Ptr ModelNodeBase::get(const StringHandle&) const
 {
     return nullptr;
 }
@@ -158,9 +157,9 @@ ModelNode::Ptr ModelNodeBase::at(int64_t) const
     return nullptr;
 }
 
-StringId ModelNodeBase::keyAt(int64_t) const
+StringHandle ModelNodeBase::keyAt(int64_t) const
 {
-    return 0;
+    return {};
 }
 
 uint32_t ModelNodeBase::size() const
@@ -284,6 +283,12 @@ Object& Object::addField(std::string_view const& name, double const& value) {
 }
 
 Object& Object::addField(std::string_view const& name, std::string_view const& value) {
+    auto fieldId = model().strings()->emplace(name);
+    storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
+    return *this;
+}
+
+Object& Object::addField(std::string_view const& name, StringHandle const& value) {
     auto fieldId = model().strings()->emplace(name);
     storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
     return *this;

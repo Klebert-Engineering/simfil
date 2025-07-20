@@ -89,7 +89,7 @@ StringPool::StringPool(const StringPool& other)
     cacheMisses_ = other.cacheMisses_.load();
 }
 
-StringId StringPool::emplace(std::string_view const& str)
+StringHandle StringPool::emplace(std::string_view const& str)
 {
     {
         std::shared_lock lock(stringStoreMutex_);
@@ -123,7 +123,7 @@ StringId StringPool::emplace(std::string_view const& str)
     }
 }
 
-StringId StringPool::get(std::string_view const& str)
+StringHandle StringPool::get(std::string_view const& str)
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     auto it = idForString_.find(str);
@@ -134,10 +134,10 @@ StringId StringPool::get(std::string_view const& str)
     return StringPool::Empty;
 }
 
-std::optional<std::string_view> StringPool::resolve(const StringId& id) const
+std::optional<std::string_view> StringPool::resolve(const StringHandle& id) const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
-    auto it = stringForId_.find(id);
+    auto it = stringForId_.find(static_cast<StringId>(id));
     if (it != stringForId_.end())
         return it->second;
     return std::nullopt;
@@ -169,12 +169,12 @@ size_t StringPool::misses() const
     return cacheMisses_;
 }
 
-void StringPool::addStaticKey(StringId id, const std::string& value)
+void StringPool::addStaticKey(const StringHandle& id, const std::string& value)
 {
     std::unique_lock lock(stringStoreMutex_);
     auto& storedString = storedStrings_.emplace_back(value);
-    idForString_.emplace(storedString, id);
-    stringForId_.emplace(id, storedString);
+    idForString_.emplace(storedString, static_cast<StringId>(id));
+    stringForId_.emplace(static_cast<StringId>(id), storedString);
 }
 
 void StringPool::write(std::ostream& outputStream, const StringId offset) const  // NOLINT
