@@ -70,7 +70,7 @@ public:
      * which contains the `strings()` function. The base
      * implementation returns an unset optional.
      */
-    virtual std::optional<std::string_view> lookupStringId(StringId id) const;
+    virtual std::optional<std::string_view> lookupStringId(const StringHandle& id) const;
 };
 
 /**
@@ -149,7 +149,7 @@ public:
     ModelNode::Ptr newValue(int64_t const& value);
     ModelNode::Ptr newValue(double const& value);
     ModelNode::Ptr newValue(std::string_view const& value);
-    ModelNode::Ptr newValue(StringId handle);
+    ModelNode::Ptr newValue(StringHandle const& handle);
 
     /** Node-type-specific resolve-functions */
     [[nodiscard]]
@@ -168,7 +168,7 @@ public:
      */
     virtual void setStrings(std::shared_ptr<simfil::StringPool> const& strings);
 
-    std::optional<std::string_view> lookupStringId(StringId id) const override;
+    std::optional<std::string_view> lookupStringId(const StringHandle& id) const override;
 
     /** Serialization */
     virtual void write(std::ostream& outputStream);

@@ -100,7 +100,7 @@ ModelNode::Ptr BaseObject<ModelType, ModelNodeType>::at(int64_t i) const
 }
 
 template <class ModelType, class ModelNodeType>
-StringId BaseObject<ModelType, ModelNodeType>::keyAt(int64_t i) const
+StringHandle BaseObject<ModelType, ModelNodeType>::keyAt(int64_t i) const
 {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
@@ -114,14 +114,14 @@ uint32_t BaseObject<ModelType, ModelNodeType>::size() const
 }
 
 template <class ModelType, class ModelNodeType>
-ModelNode::Ptr BaseObject<ModelType, ModelNodeType>::get(const StringId& field) const
+ModelNode::Ptr BaseObject<ModelType, ModelNodeType>::get(const StringHandle& field) const
 {
     ModelNode::Ptr result;
     storage_->iterate(
         members_,
         [&field, &result, this](auto&& member)
         {
-            if (member.name_ == field) {
+            if (field == member.name_) {
                 result = ModelNode::Ptr::make(model_, member.node_);
                 return false;
             }
