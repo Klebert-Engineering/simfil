@@ -6,6 +6,10 @@
 #include "expressions.h"
 
 #include <fmt/ranges.h>
+#include <bitsery/bitsery.h>
+#include <bitsery/adapter/stream.h>
+#include <bitsery/ext/std_map.h>
+#include <bitsery/ext/std_bitset.h>
 
 namespace simfil
 {
@@ -26,6 +30,28 @@ struct Diagnostics::Data
         return std::unique_lock(mtx);
     }
 };
+
+template<typename S>
+void serialize(S& s, TypeFlags& flags)
+{
+    s.ext(flags.flags, bitsery::ext::StdBitset{});
+}
+
+template<typename S>
+void serialize(S& s, Diagnostics::Data& data)
+{
+    s.ext(data.fieldHits, bitsery::ext::StdMap{std::numeric_limits<uint32_t>::max()},
+        [](S& s, Diagnostics::ExprId& key, uint32_t& value) {
+            s.value4b(key);
+            s.value4b(value);
+        });
+    s.ext(data.comparisonOperandTypes, bitsery::ext::StdMap{std::numeric_limits<uint32_t>::max()},
+        [](S& s, Diagnostics::ExprId& key, std::tuple<TypeFlags, TypeFlags>& value) {
+            s.value4b(key);
+            s.object(std::get<0>(value));
+            s.object(std::get<1>(value));
+        });
+}
 
 Diagnostics::Diagnostics()
     : data(std::make_unique<Diagnostics::Data>())
@@ -54,6 +80,37 @@ Diagnostics& Diagnostics::append(const Diagnostics& other)
 
     return *this;
 }
+
+auto Diagnostics::write(std::ostream& stream) const -> tl::expected<void, Error>
+{
+    using OutputAdapter = bitsery::OutputStreamAdapter;
+    
+    bitsery::Serializer<OutputAdapter> serializer{stream};
+    auto lock = data->lock();
+    serializer.object(*data);
+    
+    if (!stream.good()) {
+        return tl::unexpected(Error(Error::IOError, "Failed to write diagnostics data to stream"));
+    }
+    
+    return {};
+}
+
+auto Diagnostics::read(std::istream& stream) -> tl::expected<void, Error>
+{
+    using InputAdapter = bitsery::InputStreamAdapter;
+    
+    bitsery::Deserializer<InputAdapter> deserializer{stream};
+    auto lock = data->lock();
+    deserializer.object(*data);
+    
+    if (!stream.good()) {
+        return tl::unexpected(Error(Error::IOError, "Failed to read diagnostics data from stream"));
+    }
+    
+    return {};
+}
+
 
 static auto findSimilarString(std::string_view source, const StringPool& pool) -> std::string
 {

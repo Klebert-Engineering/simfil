@@ -17,6 +17,7 @@ struct Error
         InvalidExpression,
         ExpectedEOF,
         NullModel,
+        IOError,
     };
 
     explicit Error(Type type);
