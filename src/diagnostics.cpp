@@ -21,7 +21,7 @@ struct Diagnostics::Data
     // Number a FieldExpr field was found in the model
     std::unordered_map<ExprId, uint32_t> fieldHits;
 
-    // Coparison operator operand types
+    // Comparison operator operand types
     std::unordered_map<ExprId, std::tuple<TypeFlags, TypeFlags>> comparisonOperandTypes;
 
     [[nodiscard]]
