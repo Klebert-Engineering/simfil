@@ -84,6 +84,7 @@ target_sources(simfil PUBLIC
       include/simfil/exception-handler.h
 
       include/simfil/model/arena.h
+      include/simfil/model/string-handle.h
       include/simfil/model/string-pool.h
       include/simfil/model/model.h
       include/simfil/model/nodes.h

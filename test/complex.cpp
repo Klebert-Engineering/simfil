@@ -149,7 +149,7 @@ TEST_CASE("Serialization", "[complex.serialization]") {
         REQUIRE(model->strings()->size() == recoveredFields->size());
         REQUIRE(model->strings()->highest() == recoveredFields->highest());
         REQUIRE(model->strings()->bytes() == recoveredFields->bytes());
-        for (StringId sId = 0; sId <= recoveredFields->highest(); ++sId)
-            REQUIRE(model->strings()->resolve(sId) == recoveredFields->resolve(StringId(sId)));
+        for (StringHandle sId = {}; sId <= recoveredFields->highest(); ++sId)
+            REQUIRE(model->strings()->resolve(sId) == recoveredFields->resolve(sId));
     }
 }

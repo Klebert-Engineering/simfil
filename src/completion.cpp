@@ -81,7 +81,7 @@ auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& r
     if (val.isa(ValueType::Undef))
         return res(ctx, val);
 
-    for (StringId id : val.node->fieldNames()) {
+    for (const StringHandle& id : val.node->fieldNames()) {
         if (comp_->size() >= comp_->limit)
             return Result::Stop;
 

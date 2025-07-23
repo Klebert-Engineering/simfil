@@ -40,9 +40,9 @@ void serialize(S& s, double& v)
 }
 
 template <typename S>
-void serialize(S& s, simfil::StringId& v)
+void serialize(S& s, simfil::StringHandle& v)
 {
-    s.value2b(v);
+    s.value2b(v.value);
 }
 
 namespace ext
