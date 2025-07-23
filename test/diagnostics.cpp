@@ -1,4 +1,5 @@
 #include <string_view>
+#include <sstream>
 
 #include "common.hpp"
 
@@ -35,4 +36,36 @@ TEST_CASE("AnyUnknownField", "[diag.any-suppress-if-any]") {
 
 TEST_CASE("OrShortCircuit", "[diag.suppress-short-circuitted-or]") {
     EXPECT_N_DIAGNOSTIC_MESSAGES("**.number = 123 or **.not_a_field > 0", 0);
+}
+
+TEST_CASE("DiagnosticsSerialization", "[diag.serialization]") {
+    auto model = simfil::json::parse(TestModel);
+    Environment env(model->strings());
+
+    // Create two diagnostic messages.
+    Diagnostics originalDiag;
+    auto ast = compile(env, "**.number == \"string\" or **.number == \"string\"");
+    REQUIRE(ast.has_value());
+    eval(env, **ast, *model->root(0), &originalDiag);
+
+    std::stringstream stream;
+    auto writeResult = originalDiag.write(stream);
+    REQUIRE(writeResult.has_value());
+    
+    stream.seekg(0);
+    Diagnostics deserializedDiag;
+    auto readResult = deserializedDiag.read(stream);
+    REQUIRE(readResult.has_value());
+    
+    // Both diagnostics objects must generate the exact same messages.
+    auto originalMessages = diagnostics(env, **ast, originalDiag);
+    auto deserializedMessages = diagnostics(env, **ast, deserializedDiag);
+    
+    REQUIRE(originalMessages.has_value());
+    REQUIRE(deserializedMessages.has_value());
+    REQUIRE(originalMessages->size() == deserializedMessages->size());
+    
+    if (!originalMessages->empty()) {
+        REQUIRE(originalMessages->front().message == deserializedMessages->front().message);
+    }
 }

@@ -24,6 +24,8 @@ struct ModelNode;
 struct Diagnostics
 {
 public:
+    using ExprId = std::uint32_t;
+
     struct Message
     {
         /* User message */
@@ -45,12 +47,16 @@ public:
      */
     Diagnostics& append(const Diagnostics& other);
 
+    /**
+     * Serialize/deserialize diagnostics data to/from binary streams using bitsery.
+     */
+    auto write(std::ostream& stream) const -> tl::expected<void, Error>;
+    auto read(std::istream& stream) -> tl::expected<void, Error>;
+
     struct Data;
 private:
     friend auto eval(Environment&, const AST&, const ModelNode&, Diagnostics*) -> tl::expected<std::vector<Value>, Error>;
     friend auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> tl::expected<std::vector<Message>, Error>;
-
-    using ExprId = size_t;
 
     std::unique_ptr<Data> data;
 
