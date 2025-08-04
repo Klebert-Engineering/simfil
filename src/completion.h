@@ -45,7 +45,7 @@ struct Completion
 class CompletionFieldOrWordExpr : public Expr
 {
 public:
-    CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token);
+    CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result override;
@@ -55,6 +55,7 @@ public:
 
     std::string prefix_;
     Completion* comp_;
+    bool inPath_;
 };
 
 class CompletionAndExpr : public Expr

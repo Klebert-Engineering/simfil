@@ -647,7 +647,7 @@ public:
 
         /* Single field name */
         if (t.containsPoint(comp_->point)) {
-            return std::make_unique<CompletionFieldOrWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
+            return std::make_unique<CompletionFieldOrWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t, p.ctx.inPath);
         }
         return std::make_unique<FieldExpr>(std::move(word));
     }
@@ -707,7 +707,7 @@ public:
 
         if (!*right) {
             Token expectedWord(Token::WORD, "", t.end, t.end);
-            right = std::make_unique<CompletionFieldOrWordExpr>("", comp_, expectedWord);
+            right = std::make_unique<CompletionFieldOrWordExpr>("", comp_, expectedWord, p.ctx.inPath);
         }
 
         return std::make_unique<PathExpr>(std::move(left), std::move(*right));

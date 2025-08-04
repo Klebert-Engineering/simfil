@@ -108,10 +108,11 @@ auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::
 namespace simfil
 {
 
-CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token)
+CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath)
     : Expr(token)
     , prefix_(std::move(prefix))
     , comp_(comp)
+    , inPath_(inPath)
 {}
 
 auto CompletionFieldOrWordExpr::type() const -> Type
@@ -149,8 +150,9 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
     }
 
     // If not in a path, we try to complete words
-    if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
-        return r;
+    if (!inPath_)
+        if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
+            return r;
 
     return res(ctx, Value::null());
 }
