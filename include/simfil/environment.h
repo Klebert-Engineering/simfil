@@ -199,19 +199,21 @@ struct CompletionCandidate
     enum class Type {
       CONSTANT = 1,
       FIELD    = 2,
+      FUNCTION = 3,
     };
 
-    std::string text;
-    SourceLocation location;
-    Type type;
+    std::string text;        // Text to insert
+    SourceLocation location; // Location to insert the text at
+    Type type;               // Type of the completion
+    std::string hint;        // Additional info
 
-    CompletionCandidate(std::string text, SourceLocation location, Type type)
-        : text(std::move(text)), location(std::move(location)), type(type)
+    CompletionCandidate(std::string text, SourceLocation location, Type type, std::string hint)
+        : text(std::move(text)), location(std::move(location)), type(type), hint(hint)
     {}
 
     auto operator<=>(const CompletionCandidate& r) const
     {
-        return std::tie(text, location.offset, location.size, type) <=> std::tie(r.text, r.location.offset, r.location.size, r.type);
+        return std::tie(text, location.offset, location.size, type, hint) <=> std::tie(r.text, r.location.offset, r.location.size, r.type, r.hint);
     }
 };
 

@@ -26,9 +26,9 @@ struct Completion
     Completion(const Completion&) = delete;
     Completion& operator=(const Completion&) = delete;
 
-    auto add(std::string str, SourceLocation location, CompletionCandidate::Type type)
+    auto add(std::string str, SourceLocation location, CompletionCandidate::Type type, std::string hint = {})
     {
-        candidates.emplace(std::move(str), location, type);
+        candidates.emplace(std::move(str), location, type, hint);
     }
 
     auto size() const

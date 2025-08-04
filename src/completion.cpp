@@ -3,6 +3,7 @@
 #include "expressions.h"
 #include "simfil/result.h"
 #include "simfil/simfil.h"
+#include "simfil/function.h"
 
 #include <cctype>
 #include <limits>
@@ -74,6 +75,21 @@ auto escapeKey(std::string_view str)
 
     escaped += "\"]";
     return escaped;
+}
+
+/// Complete a function name staritng with `prefix` at `loc`.
+auto completeFunctions(const simfil::Context& ctx, std::string_view prefix, simfil::Completion& comp, simfil::SourceLocation loc) -> simfil::Result
+{
+    using simfil::Result;
+
+    const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
+    for (const auto& [ident, fn] : ctx.env->functions) {
+        if (startsWith(ident, prefix, caseSensitive)) {
+            comp.add(ident, loc, simfil::CompletionCandidate::Type::FUNCTION, fn->ident().signature);
+        }
+    }
+
+    return Result::Continue;
 }
 
 /// Complete a single WORD starting with `prefix` at `loc`.
@@ -149,10 +165,14 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
         }
     }
 
-    // If not in a path, we try to complete words
-    if (!inPath_)
+    // If not in a path, we try to complete words and functions
+    if (!inPath_) {
         if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
             return r;
+
+        if (auto r = completeFunctions(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
+            return r;
+    }
 
     return res(ctx, Value::null());
 }
