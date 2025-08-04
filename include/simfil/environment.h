@@ -203,6 +203,10 @@ struct CompletionCandidate
       FIELD = 2,
     } type;
 
+    CompletionCandidate(std::string text, SourceLocation location, Type type)
+        : text(std::move(text)), location(std::move(location)), type(type)
+    {}
+
     auto operator<=>(const CompletionCandidate& r) const
     {
         return std::tie(text, location.offset, location.size, type) <=> std::tie(r.text, r.location.offset, r.location.size, r.type);
