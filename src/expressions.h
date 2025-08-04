@@ -110,7 +110,7 @@ public:
     auto toString() const -> std::string override;
 
     std::string name_;
-    StringId nameId_ = {};
+    StringHandle nameId_ = {};
 
     size_t hits_ = 0;
     size_t evaluations_ = 0;

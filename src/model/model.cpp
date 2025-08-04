@@ -114,12 +114,12 @@ std::vector<std::string> ModelPool::checkForErrors() const
         return true;
     };
 
-    auto validatePooledString = [&, this](StringId const& str)
+    auto validatePooledString = [&, this](StringHandle const& str)
     {
         if (!impl_->strings_)
             return;
         if (!impl_->strings_->resolve(str))
-            errors.push_back(fmt::format("Bad string ID: {}", str));
+            errors.push_back(fmt::format("Bad string ID: {}", static_cast<StringHandle::Type>(str)));
     };
 
     std::function<void(ModelNode::Ptr)> validateModelNode = [&](ModelNode::Ptr node)
@@ -142,7 +142,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
                     validateModelNode(member);
             }
             else if (node->addr().column() == PooledString) {
-                validatePooledString(static_cast<StringId>(node->addr().index()));
+                validatePooledString(static_cast<StringHandle::Type>(node->addr().index()));
             }
             resolve(*node, Lambda([](auto&&) {}));
         }
@@ -233,7 +233,7 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
         break;
     }
     case PooledString: {
-        auto str = lookupStringId(static_cast<StringId>(n.addr().index()));
+        auto str = lookupStringId(static_cast<StringHandle::Type>(n.addr().index()));
         cb(ValueNode(str.value_or(std::string_view{}), shared_from_this()));
         break;
     }
@@ -286,7 +286,7 @@ ModelNode::Ptr Model::newSmallValue(uint16_t value)
     return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
 }
 
-std::optional<std::string_view> Model::lookupStringId(const simfil::StringId) const
+std::optional<std::string_view> Model::lookupStringId(const simfil::StringHandle&) const
 {
     return {};
 }
@@ -317,8 +317,9 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
     return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
-ModelNode::Ptr ModelPool::newValue(StringId handle) {
-    return ModelNode(shared_from_this(), {PooledString, static_cast<uint32_t>(handle)});
+ModelNode::Ptr ModelPool::newValue(const StringHandle& handle)
+{
+    return ModelNode(shared_from_this(), {PooledString, static_cast<uint32_t>(handle.value)});
 }
 
 model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
@@ -358,7 +359,7 @@ void ModelPool::setStrings(std::shared_ptr<StringPool> const& strings)
     }
 }
 
-std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId id) const
+std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringHandle& id) const
 {
     return impl_->strings_->resolve(id);
 }

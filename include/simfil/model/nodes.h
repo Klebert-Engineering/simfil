@@ -210,13 +210,13 @@ struct ModelNode
     [[nodiscard]] virtual ValueType type() const;
 
     /// Get a child by name
-    [[nodiscard]] virtual Ptr get(StringId const& f) const;
+    [[nodiscard]] virtual Ptr get(StringHandle const& f) const;
 
     /// Get a child by index
     [[nodiscard]] virtual Ptr at(int64_t i) const;
 
     /// Get an Object model's field names
-    [[nodiscard]] virtual StringId keyAt(int64_t i) const;
+    [[nodiscard]] virtual StringHandle keyAt(int64_t i) const;
 
     /// Get the number of children
     [[nodiscard]] virtual uint32_t size() const;
@@ -243,37 +243,37 @@ struct ModelNode
     virtual bool iterate(IterCallback const& cb) const; // NOLINT (allow discard)
 
     /// Iterator Support
-    /// * `fieldNames()`: Returns range object which supports `for(StringId const& f: node.fieldNames())`
+    /// * `fieldNames()`: Returns range object which supports `for(StringHandle const& f: node.fieldNames())`
     /// * `fields()`: Returns range object which supports `for(auto const& [fieldId, value] : node.fields())`
     /// * Normal `begin()`/`end()`: Supports `for(ModelNode::Ptr child : node)`
 
-    // Implement fieldNames() by creating an iterator for StringId
-    class StringIdIterator
+    // Implement fieldNames() by creating an iterator for StringHandle
+    class StringHandleIterator
     {
         int64_t index;
         ModelNode const* parent;
     public:
         using iterator_category = std::input_iterator_tag;
-        using value_type = StringId;
+        using value_type = StringHandle;
         using difference_type = std::ptrdiff_t;
-        using pointer = StringId*;
-        using reference = StringId&;
-        StringIdIterator(int64_t idx, ModelNode const* p) : index(idx), parent(p) {}
-        StringIdIterator& operator++() { ++index; return *this; }
-        bool operator==(const StringIdIterator& other) const { return index == other.index; }
-        bool operator!=(const StringIdIterator& other) const { return index != other.index; }
-        StringId operator*() const { return parent->keyAt(index); }
+        using pointer = StringHandle*;
+        using reference = StringHandle&;
+        StringHandleIterator(int64_t idx, ModelNode const* p) : index(idx), parent(p) {}
+        StringHandleIterator& operator++() { ++index; return *this; }
+        bool operator==(const StringHandleIterator& other) const { return index == other.index; }
+        bool operator!=(const StringHandleIterator& other) const { return index != other.index; }
+        StringHandle operator*() const { return parent->keyAt(index); }
     };
     class StringIdRange
     {
         ModelNode const* node;
     public:
         explicit StringIdRange(ModelNode const* const n) : node(n) {}
-        [[nodiscard]] StringIdIterator begin() const { return node->fieldNamesBegin(); }
-        [[nodiscard]] StringIdIterator end() const { return node->fieldNamesEnd(); }
+        [[nodiscard]] StringHandleIterator begin() const { return node->fieldNamesBegin(); }
+        [[nodiscard]] StringHandleIterator end() const { return node->fieldNamesEnd(); }
     };
-    [[nodiscard]] StringIdIterator fieldNamesBegin() const { return {0, this}; }
-    [[nodiscard]] StringIdIterator fieldNamesEnd() const { return {size(), this}; }
+    [[nodiscard]] StringHandleIterator fieldNamesBegin() const { return {0, this}; }
+    [[nodiscard]] StringHandleIterator fieldNamesEnd() const { return {size(), this}; }
     [[nodiscard]] auto fieldNames() const { return StringIdRange{this}; }
 
     // Implement fields() by creating an iterator for field-value pairs
@@ -283,7 +283,7 @@ struct ModelNode
         ModelNode const* parent;
     public:
         using iterator_category = std::input_iterator_tag;
-        using value_type = std::pair<StringId, Ptr>;
+        using value_type = std::pair<StringHandle, Ptr>;
         using difference_type = std::ptrdiff_t;
         using pointer = value_type*;
         using reference = value_type&;
@@ -291,7 +291,7 @@ struct ModelNode
         FieldIterator& operator++() { ++index; return *this; }
         bool operator==(const FieldIterator& other) const { return index == other.index; }
         bool operator!=(const FieldIterator& other) const { return index != other.index; }
-        std::pair<StringId, Ptr> operator*() const { return std::make_pair(parent->keyAt(index), parent->at(index)); }
+        value_type operator*() const { return std::make_pair(parent->keyAt(index), parent->at(index)); }
     };
     class FieldRange
     {
@@ -360,9 +360,9 @@ struct ModelNodeBase : public ModelNode
 
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
-    [[nodiscard]] ModelNode::Ptr get(const StringId&) const override;
+    [[nodiscard]] ModelNode::Ptr get(const StringHandle&) const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
-    [[nodiscard]] StringId keyAt(int64_t) const override;
+    [[nodiscard]] StringHandle keyAt(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
 
@@ -525,8 +525,8 @@ struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
-    [[nodiscard]] ModelNode::Ptr get(const StringId &) const override;
-    [[nodiscard]] StringId keyAt(int64_t) const override;
+    [[nodiscard]] ModelNode::Ptr get(const StringHandle&) const override;
+    [[nodiscard]] StringHandle keyAt(int64_t) const override;
     bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
@@ -537,13 +537,13 @@ protected:
     struct Field
     {
         Field() = default;
-        Field(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
-        StringId name_ = StringPool::Empty;
+        Field(StringHandle name, ModelNodeAddress a) : name_(name), node_(a) {}
+        StringHandle name_ = StringPool::Empty;
         ModelNodeAddress node_;
 
         template<typename S>
         void serialize(S& s) {
-            s.value2b(name_);
+            s.object(name_);
             s.object(node_);
         }
     };
@@ -579,6 +579,7 @@ struct Object : public BaseObject<ModelPool, ModelNode>
     Object& addField(std::string_view const& name, int64_t const& value);
     Object& addField(std::string_view const& name, double const& value);
     Object& addField(std::string_view const& name, std::string_view const& value);
+    Object& addField(std::string_view const& name, StringHandle const& value);
 
     [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
 
@@ -610,16 +611,16 @@ public:
         return fields_.size() + (members_ != InvalidArrayIndex ? Object::size() : 0);
     }
 
-    [[nodiscard]] ModelNode::Ptr get(const StringId & field) const override {
+    [[nodiscard]] ModelNode::Ptr get(const StringHandle& field) const override {
         for (auto const& [k, v] : fields_)
-            if (k == field)
+            if (field == k)
                 return v(static_cast<LambdaThisType const&>(*this));
         if (members_ != InvalidArrayIndex)
             return Object::get(field);
         return {};
     }
 
-    [[nodiscard]] StringId keyAt(int64_t i) const override {
+    [[nodiscard]] StringHandle keyAt(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].first;
         if (members_ != InvalidArrayIndex)
@@ -648,7 +649,7 @@ protected:
         : Object(InvalidArrayIndex, pool, a) {}
 
     sfl::small_vector<
-        std::pair<StringId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
+        std::pair<StringHandle, std::function<ModelNode::Ptr(LambdaThisType const&)>>,
         MaxProceduralFields> fields_;
 };
 

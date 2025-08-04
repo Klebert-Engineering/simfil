@@ -12,11 +12,10 @@
 #include <ostream>
 #include <deque>
 
+#include "string-handle.h"
+
 namespace simfil
 {
-
-using StringId = uint16_t;
-static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
 
 /**
  * Fast and efficient case-insensitive string interner,
@@ -24,7 +23,7 @@ static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
  */
 struct StringPool
 {
-    enum StaticStringIds : StringId {
+    enum StaticStringIds : StringHandle::Type {
         Empty = 0,
         OverlaySum,
         OverlayValue,
@@ -45,20 +44,20 @@ struct StringPool
 
     /// Use this function to lookup a stored string, or insert it
     /// if it doesn't exist yet.
-    StringId emplace(std::string_view const& str);
+    StringHandle emplace(std::string_view const& str);
 
     /// Returns the ID of the given string, or `Empty` if
     /// no such string was ever inserted.
-    StringId get(std::string_view const& str);
+    StringHandle get(std::string_view const& str);
 
     /// Get the actual string for the given ID, or
     ///  nullopt if the given ID is invalid.
     /// Virtual to allow defining an inherited StringPool which understands
     /// additional StaticStringIds.
-    virtual std::optional<std::string_view> resolve(StringId const& id) const;
+    virtual std::optional<std::string_view> resolve(StringHandle const& id) const;
 
     /// Get highest stored field id
-    StringId highest() const;
+    StringHandle highest() const;
 
     /// Get stats
     size_t size() const;
@@ -67,11 +66,11 @@ struct StringPool
     size_t misses() const;
 
     /// Add a static key-string mapping - Warning: Not thread-safe.
-    void addStaticKey(StringId k, std::string const& v);
+    void addStaticKey(const StringHandle& k, std::string const& v);
 
     /// Serialization - write to stream, starting from a specific
     ///  id offset if necessary (for partial serialisation).
-    virtual void write(std::ostream& outputStream, StringId offset = {}) const;  // NOLINT
+    virtual void write(std::ostream& outputStream, StringHandle offset = {}) const;  // NOLINT
     virtual void read(std::istream& inputStream);
 
     /// Check if the content of the string pools is logically identical.
@@ -84,11 +83,11 @@ private:
     mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<
         std::string_view,
-        StringId>
+        StringHandle>
         idForString_;
-    std::unordered_map<StringId, std::string_view> stringForId_;
+    std::unordered_map<StringHandle, std::string_view> stringForId_;
     std::deque<std::string> storedStrings_;
-    StringId nextId_ = FirstDynamicId;
+    StringHandle nextId_ = FirstDynamicId;
     std::atomic_int64_t byteSize_{0};
     std::atomic_int64_t cacheHits_{0};
     std::atomic_int64_t cacheMisses_{0};
