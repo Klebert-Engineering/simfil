@@ -183,6 +183,12 @@ struct CompletionOptions
 
     // Timeout in milliseconds, 0 means no timeout.
     size_t timeoutMs = 0;
+
+    // Enable smart-case completion
+    bool smartCase = true;
+
+    // Sort candidates
+    bool sorted = true;
 };
 
 /**
@@ -192,10 +198,14 @@ struct CompletionCandidate
 {
     std::string text;
     SourceLocation location;
+    enum class Type {
+      WORD  = 1,
+      FIELD = 2,
+    } type;
 
     auto operator<=>(const CompletionCandidate& r) const
     {
-        return std::tie(text, location.offset, location.size) <=> std::tie(r.text, r.location.offset, r.location.size);
+        return std::tie(text, location.offset, location.size, type) <=> std::tie(r.text, r.location.offset, r.location.size, r.type);
     }
 };
 

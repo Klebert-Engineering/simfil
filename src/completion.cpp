@@ -2,7 +2,9 @@
 
 #include "expressions.h"
 #include "simfil/result.h"
+#include "simfil/simfil.h"
 
+#include <cctype>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -10,20 +12,37 @@
 namespace
 {
 
-auto startsWith(std::string_view str, std::string_view prefix)
+/// Returns true if the given string contains at least one
+/// uppercase character.
+auto containsUppercaseCharacter(std::string_view str)
+{
+    static const auto loc = std::locale();
+
+    return std::any_of(str.begin(), str.end(), [](auto c) {
+        return std::isupper(c, loc);
+    });
+}
+
+/// Returns if `str` starts with `prefix`.
+auto startsWith(std::string_view str, std::string_view prefix, bool caseSensitive)
 {
     static const auto loc = std::locale();
 
     if (prefix.size() > str.size())
         return false;
 
-    for (auto i = 0; i < std::min<std::string_view::size_type>(str.size(), prefix.size()); ++i)
-        if (std::tolower(str[i], loc) != std::tolower(prefix[i], loc))
+    for (auto i = 0; i < std::min<std::string_view::size_type>(str.size(), prefix.size()); ++i) {
+        if (caseSensitive && str[i] != prefix[i])
             return false;
+        if (!caseSensitive && std::tolower(str[i], loc) != std::tolower(prefix[i], loc))
+            return false;
+    }
 
     return true;
 }
 
+/// Returns true, if the given field name needs
+/// escaping by using the index operator: `["<field-name>"]`.
 auto needsEscaping(std::string_view str)
 {
     if (!str.empty() && isdigit(str[0]))
@@ -57,23 +76,50 @@ auto escapeKey(std::string_view str)
     return escaped;
 }
 
+/// Complete a single WORD starting with `prefix` at `loc`.
+auto completeWords(simfil::Context& ctx, std::string_view prefix, simfil::Completion& comp, simfil::SourceLocation loc) -> simfil::Result
+{
+    using simfil::Result;
+
+    // Generate completion candidates for uppercase string constants from string pool.
+    auto stringPool = ctx.env->strings();
+    const auto& strings = stringPool->strings();
+
+    const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
+    for (const auto& str : strings) {
+        if (comp.size() >= comp.limit)
+            return Result::Stop;
+
+        // Check if string is all uppercase + underscores + digits.
+        const auto isWORD = !str.empty() && std::all_of(str.begin(), str.end(), [](char c) {
+            return std::isupper(c) || c == '_' || std::isdigit(c);
+        });
+
+        if (isWORD && str.size() >= prefix.size() && startsWith(str, prefix, caseSensitive)) {
+            comp.add(str, loc, simfil::CompletionCandidate::Type::WORD);
+        }
+    }
+
+    return Result::Continue;
+}
+
 }
 
 namespace simfil
 {
 
-CompletionFieldExpr::CompletionFieldExpr(std::string prefix, Completion* comp, const Token& token)
+CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token)
     : Expr(token)
     , prefix_(std::move(prefix))
     , comp_(comp)
 {}
 
-auto CompletionFieldExpr::type() const -> Type
+auto CompletionFieldOrWordExpr::type() const -> Type
 {
     return Type::PATH;
 }
 
-auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -81,6 +127,9 @@ auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& r
     if (val.isa(ValueType::Undef))
         return res(ctx, val);
 
+    const auto caseSensitive = comp_->options.smartCase && containsUppercaseCharacter(prefix_);
+
+    // First we try to complete fields
     for (StringId id : val.node->fieldNames()) {
         if (comp_->size() >= comp_->limit)
             return Result::Stop;
@@ -90,29 +139,33 @@ auto CompletionFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& r
             continue;
         const auto& key = *keyPtr;
 
-        if (key.size() >= prefix_.size() && startsWith(key, prefix_)) {
+        if (key.size() >= prefix_.size() && startsWith(key, prefix_, caseSensitive)) {
             if (needsEscaping(key)) {
-                comp_->add(escapeKey(key), sourceLocation());
+                comp_->add(escapeKey(key), sourceLocation(), CompletionCandidate::Type::FIELD);
             } else {
-                comp_->add(std::string{key}, sourceLocation());
+                comp_->add(std::string{key}, sourceLocation(), CompletionCandidate::Type::FIELD);
             }
         }
     }
 
+    // If not in a path, we try to complete words
+    if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
+        return r;
+
     return res(ctx, Value::null());
 }
 
-auto CompletionFieldExpr::toString() const -> std::string
+auto CompletionFieldOrWordExpr::toString() const -> std::string
 {
     return prefix_;
 }
 
-auto CompletionFieldExpr::clone() const -> std::unique_ptr<Expr>
+auto CompletionFieldOrWordExpr::clone() const -> std::unique_ptr<Expr>
 {
-    throw std::runtime_error("Cannot clone CompletionFieldExpr");
+    throw std::runtime_error("Cannot clone CompletionFieldOrWordExpr");
 }
 
-auto CompletionFieldExpr::accept(ExprVisitor& v) -> void
+auto CompletionFieldOrWordExpr::accept(ExprVisitor& v) -> void
 {
     v.visit(*this);
 }
@@ -282,23 +335,8 @@ auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& re
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
 
-    // Generate completion candidates for uppercase string constants from string pool.
-    auto stringPool = ctx.env->strings();
-    const auto& strings = stringPool->strings();
-
-    for (const auto& str : strings) {
-        if (comp_->size() >= comp_->limit)
-            return Result::Stop;
-
-        // Check if string is uppercase.
-        bool isUppercase = !str.empty() && std::all_of(str.begin(), str.end(), [](char c) {
-            return std::isupper(c) || c == '_' || std::isdigit(c);
-        });
-
-        if (isUppercase && str.size() >= prefix_.size() && startsWith(str, prefix_)) {
-            comp_->add(str, sourceLocation());
-        }
-    }
+    if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
+        return r;
 
     return res(ctx, Value::undef());
 }

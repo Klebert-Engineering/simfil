@@ -648,7 +648,7 @@ public:
 
         /* Single field name */
         if (t.containsPoint(comp_->point)) {
-            return std::make_unique<CompletionFieldExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
+            return std::make_unique<CompletionFieldOrWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
         }
         return std::make_unique<FieldExpr>(std::move(word));
     }
@@ -708,7 +708,7 @@ public:
 
         if (!*right) {
             Token expectedWord(Token::WORD, "", t.end, t.end);
-            right = std::make_unique<CompletionFieldExpr>("", comp_, expectedWord);
+            right = std::make_unique<CompletionFieldOrWordExpr>("", comp_, expectedWord);
         }
 
         return std::make_unique<PathExpr>(std::move(left), std::move(*right));
@@ -829,7 +829,7 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     Parser p(&env, *tokens, Parser::Mode::Relaxed);
     setupParser(p);
 
-    Completion comp(point);
+    Completion comp(point, options);
     if (options.limit > 0)
         comp.limit = options.limit;
 
@@ -856,7 +856,13 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
         return Result::Continue;
     }));
 
-    return std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
+    auto candidates = std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
+    if (options.sorted)
+        std::sort(candidates.begin(), candidates.end(), [](const auto& left, const auto& right) {
+            return left.text < right.text;
+        });
+
+    return candidates;
 }
 
 auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag) -> expected<std::vector<Value>, Error>

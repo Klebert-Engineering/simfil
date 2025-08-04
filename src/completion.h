@@ -19,13 +19,15 @@ class ExprVisitor;
  */
 struct Completion
 {
-    explicit Completion(std::size_t point)
-        : point(point)
+    Completion(std::size_t point, CompletionOptions options)
+        : point(point), options(options)
     {}
 
-    auto add(std::string str, SourceLocation location)
+    Completion(const Completion&) = delete;
+
+    auto add(std::string str, SourceLocation location, CompletionCandidate::Type type)
     {
-        candidates.insert({std::move(str), location});
+        candidates.insert({std::move(str), location, type});
     }
 
     auto size() const
@@ -36,12 +38,13 @@ struct Completion
     std::size_t point;
     std::size_t limit = 1000;
     std::set<CompletionCandidate> candidates;
+    CompletionOptions options;
 };
 
-class CompletionFieldExpr : public Expr
+class CompletionFieldOrWordExpr : public Expr
 {
 public:
-    CompletionFieldExpr(std::string prefix, Completion* comp, const Token& token);
+    CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result override;
