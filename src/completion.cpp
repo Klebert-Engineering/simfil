@@ -18,7 +18,7 @@ auto containsUppercaseCharacter(std::string_view str)
 {
     static const auto loc = std::locale();
 
-    return std::any_of(str.begin(), str.end(), [](auto c) {
+    return std::ranges::any_of(str, [](auto c) {
         return std::isupper(c, loc);
     });
 }
@@ -77,7 +77,7 @@ auto escapeKey(std::string_view str)
 }
 
 /// Complete a single WORD starting with `prefix` at `loc`.
-auto completeWords(simfil::Context& ctx, std::string_view prefix, simfil::Completion& comp, simfil::SourceLocation loc) -> simfil::Result
+auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::Completion& comp, simfil::SourceLocation loc) -> simfil::Result
 {
     using simfil::Result;
 

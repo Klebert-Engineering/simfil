@@ -4,7 +4,7 @@
 
 #include "common.hpp"
 
-auto model = R"json(
+const auto model = R"json(
 {
   "f": 1,
   "fi": 2,

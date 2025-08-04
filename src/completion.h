@@ -20,14 +20,15 @@ class ExprVisitor;
 struct Completion
 {
     Completion(std::size_t point, CompletionOptions options)
-        : point(point), options(options)
+        : point(point), options(std::move(options))
     {}
 
     Completion(const Completion&) = delete;
+    Completion& operator=(const Completion&) = delete;
 
     auto add(std::string str, SourceLocation location, CompletionCandidate::Type type)
     {
-        candidates.insert({std::move(str), location, type});
+        candidates.emplace(std::move(str), location, type);
     }
 
     auto size() const
