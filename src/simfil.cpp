@@ -858,7 +858,7 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
 
     auto candidates = std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
     if (options.sorted)
-        std::stable_sort(candidates.begin(), candidates.end(), [](const auto& left, const auto& right) {
+        std::ranges::stable_sort(candidates, [](const auto& left, const auto& right) {
             return left.text < right.text;
         });
 

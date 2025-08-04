@@ -80,11 +80,11 @@ TEST_CASE("CompleteString", "[completion.string-const]") {
 TEST_CASE("CompleteFieldOrString") {
     // Complete both the field and the constants
     EXPECT_COMPLETION("cons", {}, "constant", Type::FIELD);
-    EXPECT_COMPLETION("cons", {}, "CONSTANT_1", Type::WORD);
+    EXPECT_COMPLETION("cons", {}, "CONSTANT_1", Type::CONSTANT);
 
     // Do not complete the field
-    EXPECT_COMPLETION("CONS", {}, "CONSTANT_1", Type::WORD, 2);
-    EXPECT_COMPLETION("CONS", {}, "CONSTANT_2", Type::WORD, 2);
+    EXPECT_COMPLETION("CONS", {}, "CONSTANT_1", Type::CONSTANT, 2);
+    EXPECT_COMPLETION("CONS", {}, "CONSTANT_2", Type::CONSTANT, 2);
 }
 
 TEST_CASE("CompleteSorted") {

@@ -91,12 +91,12 @@ auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::
             return Result::Stop;
 
         // Check if string is all uppercase + underscores + digits.
-        const auto isWORD = !str.empty() && std::all_of(str.begin(), str.end(), [](char c) {
+        const auto isWORD = !str.empty() && std::ranges::all_of(str, [](char c) {
             return std::isupper(c) || c == '_' || std::isdigit(c);
         });
 
         if (isWORD && str.size() >= prefix.size() && startsWith(str, prefix, caseSensitive)) {
-            comp.add(str, loc, simfil::CompletionCandidate::Type::WORD);
+            comp.add(str, loc, simfil::CompletionCandidate::Type::CONSTANT);
         }
     }
 

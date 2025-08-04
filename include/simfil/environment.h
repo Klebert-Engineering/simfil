@@ -196,12 +196,14 @@ struct CompletionOptions
  */
 struct CompletionCandidate
 {
+    enum class Type {
+      CONSTANT = 1,
+      FIELD    = 2,
+    };
+
     std::string text;
     SourceLocation location;
-    enum class Type {
-      WORD  = 1,
-      FIELD = 2,
-    } type;
+    Type type;
 
     CompletionCandidate(std::string text, SourceLocation location, Type type)
         : text(std::move(text)), location(std::move(location)), type(type)
