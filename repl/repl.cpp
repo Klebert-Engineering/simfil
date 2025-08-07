@@ -90,7 +90,11 @@ char* command_generator(const char* text, int state)
                 return nullptr;
 
             for (const auto& candidate : *comp) {
-                matches.push_back(query.substr(0, candidate.location.offset) + candidate.text);
+                std::string suffix;
+                if (candidate.type == simfil::CompletionCandidate::Type::FUNCTION)
+                    suffix = "(";
+
+                matches.push_back(query.substr(0, candidate.location.offset) + candidate.text + suffix);
             }
         }
     }

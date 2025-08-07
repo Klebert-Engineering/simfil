@@ -46,9 +46,9 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
     return vals;
 }
 
-auto CompleteQuery(std::string_view query, size_t point) -> std::vector<CompletionCandidate>
+auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json) -> std::vector<CompletionCandidate>
 {
-    auto model = simfil::json::parse(TestModel);
+    auto model = simfil::json::parse(json.value_or(TestModel));
     Environment env(model->strings());
 
     CompletionOptions opts;
