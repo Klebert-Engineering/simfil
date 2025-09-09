@@ -7,7 +7,7 @@ endif ()
 if (NOT TARGET sfl::sfl)
   FetchContent_Declare(sfl
     GIT_REPOSITORY "https://github.com/slavenf/sfl-library.git"
-    GIT_TAG        "master"
+    GIT_TAG        "1.10.1"
     GIT_SHALLOW    ON)
   FetchContent_MakeAvailable(sfl)
 endif()
