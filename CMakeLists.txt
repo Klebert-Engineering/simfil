@@ -50,7 +50,7 @@ set(CPM_USE_LOCAL_PACKAGES OFF)
 if (NOT CPM_INITIALIZED)
   add_subdirectory(cmake/CPM.cmake)
 endif ()
-include(cmake/Dependencies.cmake)
+include(cmake/deps.cmake)
 
 #####################
 # Main simfil library
