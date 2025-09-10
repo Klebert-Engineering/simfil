@@ -41,7 +41,19 @@ else()
   set(LIBRARY_TYPE STATIC)
 endif()
 
-include(deps.cmake)
+#####################
+# Dependencies via CPM (CMake Package Manager)
+
+set(CPM_DOWNLOAD_ALL ON)
+set(CPM_USE_LOCAL_PACKAGES OFF)
+# Include CPM.cmake
+if (NOT CPM_INITIALIZED)
+  add_subdirectory(cmake/CPM.cmake)
+endif ()
+include(cmake/Dependencies.cmake)
+
+#####################
+# Main simfil library
 
 add_library(simfil ${LIBRARY_TYPE}
   src/environment.cpp
@@ -142,6 +154,9 @@ if (SIMFIL_WITH_COVERAGE)
 endif()
 
 add_library(simfil::simfil ALIAS simfil)
+
+#####################
+# Tests / Repl / Examples
 
 if (SIMFIL_WITH_TESTS)
   add_subdirectory(test)
