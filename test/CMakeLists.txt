@@ -25,6 +25,8 @@ if (MSVC)
     RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:simfil>)
 endif()
 
+# Make Catch2 CMake module available, brought in via CPM
+list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")
 include(Catch)
 include(CTest)
 catch_discover_tests(test.simfil)
