@@ -61,18 +61,19 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("1/null", "null");
     REQUIRE_AST("null/1", "null");
 
-    auto GetError = [&](std::string_view query) {
+    auto GetError = [&](std::string_view query) -> std::string {
         Environment env(Environment::WithNewStringCache);
         auto ast = compile(env, query);
 
         REQUIRE(!ast);
         if (!ast)
-            throw ast.error();
+            return ast.error().message;
+        return "Ok";
     };
 
     /* Division by zero */
-    CHECK_THROWS(GetError("1/0"));
-    CHECK_THROWS(GetError("1%0"));
+    REQUIRE(GetError("1/0") == "Division by zero");
+    REQUIRE(GetError("1%0") == "Division by zero");
 
     /* String */
     REQUIRE_AST("'a'+null", "\"anull\"");

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <string_view>
 #include <string>
+#include <iostream>
 
 namespace simfil
 {
@@ -419,31 +420,31 @@ struct OperatorDiv
     DENY_OTHER()
     NULL_AS_NULL()
 
-    auto operator()(int64_t l, int64_t r) const -> int64_t
+    auto operator()(int64_t l, int64_t r) const -> tl::expected<int64_t, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
         return static_cast<int64_t>(l / r);
     }
 
-    auto operator()(int64_t l, double r) const -> double
+    auto operator()(int64_t l, double r) const -> tl::expected<double, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
         return static_cast<double>(l / r);
     }
 
-    auto operator()(double l, int64_t r) const -> double
+    auto operator()(double l, int64_t r) const -> tl::expected<double, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
         return static_cast<double>(l / r);
     }
 
-    auto operator()(double l, double r) const -> double
+    auto operator()(double l, double r) const -> tl::expected<double, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
         return static_cast<double>(l / r);
     }
 };
@@ -454,10 +455,10 @@ struct OperatorMod
     DENY_OTHER()
     NULL_AS_NULL()
 
-    auto operator()(int64_t l, int64_t r) const -> int64_t
+    auto operator()(int64_t l, int64_t r) const -> tl::expected<int64_t, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
         return static_cast<int64_t>(l % r);
     }
 };
@@ -628,6 +629,14 @@ inline auto makeOperatorResult(Value value) -> tl::expected<Value, Error>
     return value;
 }
 
+template <class _Operator, class _CType>
+inline auto makeOperatorResult(tl::expected<_CType, Error> value) -> tl::expected<Value, Error>
+{
+    if (!value)
+        return tl::unexpected<Error>(std::move(value.error()));
+    return Value::make(std::forward<_CType>(std::move(value.value())));
+}
+
 template <class _Operator>
 inline auto makeOperatorResult(InvalidOperands) -> tl::expected<Value, Error>
 {
@@ -710,12 +719,15 @@ struct BinaryOperatorDispatcher
             }
         })();
 
-        // Try to find the operand types
         if (!result) {
-            auto ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(lhs).value_or(Value::strref("unknown")).toString();
-            auto rtype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(rhs).value_or(Value::strref("unknown")).toString();
-
-            return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands {} and {} for operator {}", ltype, rtype, Operator::name()));
+            // Try to find the operand types
+            auto& error = result.error();
+            if (error.type == Error::InvalidOperands) {
+                auto ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(lhs).value_or(Value::strref("unknown")).toString();
+                auto rtype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(rhs).value_or(Value::strref("unknown")).toString();
+                return tl::unexpected<Error>(Error::InvalidOperands,
+                                             fmt::format("Invalid operands {} and {} for operator {}", ltype, rtype, Operator::name()));
+            }
         }
 
         return result;

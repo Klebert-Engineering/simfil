@@ -76,7 +76,7 @@ TEST_CASE("Regular Expression", "[complex.regexp]") {
 }
 
 TEST_CASE("Runtime Error", "[complex.runtime-error]") {
-    REQUIRE_THROWS(JoinedResult("1 / (nonexisting as int)", invoice)); /* Division by zero */
+    REQUIRE_RESULT("1 / (nonexisting as int)", "ERROR: Division by zero");
 }
 
 TEST_CASE("Multimap JSON", "[multimap.serialization]") {

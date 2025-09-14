@@ -26,9 +26,10 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
     env.functions["panic"] = &panicFn;
 
     auto ast = compile(env, query, false);
-    if (!ast)
-        INFO(ast.error().message);
-    REQUIRE(ast.has_value());
+    if (!ast) {
+        INFO("ERROR: " << ast.error().message);
+        return fmt::format("ERROR: {}", ast.error().message);
+    }
 
     INFO("AST: " << (*ast)->expr().toString());
 
@@ -37,7 +38,6 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
         INFO("ERROR: " << res.error().message);
         return fmt::format("ERROR: {}", res.error().message);
     }
-    REQUIRE(res);
 
     std::string vals;
     for (const auto& vv : *res) {
