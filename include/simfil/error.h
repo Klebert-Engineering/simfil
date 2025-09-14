@@ -21,6 +21,7 @@ struct Error
         IOError,
 
         // Evaluation errors
+        DivisionByZero,
         UnknownFunction,
         RuntimeError,
         InternalError,

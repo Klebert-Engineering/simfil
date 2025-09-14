@@ -157,7 +157,7 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
 
     std::deque<Value> values;
     auto stub = Context(env, Context::Phase::Compilation);
-    (void)(*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
+    auto res = (*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         n += 1;
         if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.node)) {
             values.push_back(std::move(vv));
@@ -167,6 +167,7 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
         values.clear();
         return Result::Stop;
     }));
+    TRY_EXPECTED(res);
 
     /* Warn about constant results */
     if (!values.empty() && std::ranges::all_of(values.begin(), values.end(), [](const Value& v) {
@@ -878,9 +879,7 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
         values.push_back(std::move(value));
         return Result::Continue;
     }));
-
-    if (!res)
-        return tl::unexpected<Error>(std::move(res.error()));
+    TRY_EXPECTED(res);
 
     if (diag) {
         diag->collect(*mutableAST);
