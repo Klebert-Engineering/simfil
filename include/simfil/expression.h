@@ -51,7 +51,7 @@ public:
     virtual auto toString() const -> std::string = 0;
 
     /* Evaluation wrapper */
-    auto eval(Context ctx, Value val, const ResultFn& res) -> Result
+    auto eval(Context ctx, Value val, const ResultFn& res) -> tl::expected<Result, Error>
     {
         if (ctx.canceled())
             return Result::Stop;
@@ -79,7 +79,7 @@ public:
 
 private:
     /* Abstract evaluation implementation */
-    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result = 0;
+    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> = 0;
 
     SourceLocation sourceLocation_;
 };

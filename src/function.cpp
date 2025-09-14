@@ -135,7 +135,7 @@ auto boolify(const Value& v) -> bool
      * Undef if any argument is Undef. */
     if (v.isa(ValueType::Undef))
         return false;
-    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).as<ValueType::Bool>();
+    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).value_or(Value::f()).as<ValueType::Bool>();
 }
 }
 
@@ -152,7 +152,7 @@ auto CountFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.empty())
         raise<std::runtime_error>("count(...) expects one argument; got "s + std::to_string(args.size()));
@@ -195,7 +195,7 @@ auto TraceFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     Value name  = Value::undef();
     Value limit = Value::undef();
@@ -255,7 +255,7 @@ auto RangeFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.size() != 2)
         raise<std::runtime_error>("range(begin, end) expects 2 arguments; got "s + std::to_string(args.size()));
@@ -289,7 +289,7 @@ auto ReFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.size() != 1)
         raise<std::runtime_error>("re(expr) expects 1 arguments; got "s + std::to_string(args.size()));
@@ -325,7 +325,7 @@ auto ArrFn::ident() const -> const FnInfo&
 }
 
 
-auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.empty())
         return res(ctx, Value::null());
@@ -398,7 +398,7 @@ ContainerType split(std::string_view what,
 }
 }
 
-auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     Value str = Value::undef();
     Value sep = Value::undef();
@@ -436,7 +436,7 @@ auto SelectFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     Value idx = Value::undef();
     Value cnt = Value::undef();
@@ -455,7 +455,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, co
     if (icnt <= 0)
         icnt = std::numeric_limits<int>::max();
 
-    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = -1](Context ctx, Value vv) mutable {
+    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = -1](Context ctx, Value vv) mutable -> tl::expected<Result, Error> {
         ++n;
         if (ctx.phase == Context::Phase::Compilation)
             if (vv.isa(ValueType::Undef))
@@ -483,7 +483,7 @@ auto SumFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.empty() || args.size() > 3)
         raise<std::runtime_error>("sum: Expected at least 1 argument; got "s + std::to_string(args.size()));
@@ -498,7 +498,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
             return Result::Continue;
         }));
 
-    (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
+    (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable -> tl::expected<Result, Error> {
         if (subexpr) {
             auto ov = model_ptr<OverlayNode>::make(vv);
             ov->set(StringPool::OverlaySum, sum);
@@ -515,7 +515,11 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
             if (sum.isa(ValueType::Null)) {
                 sum = std::move(vv);
             } else {
-                sum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv);
+                if (auto newSum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv)) {
+                    sum = std::move(newSum.value());
+                } else {
+                    return tl::unexpected<Error>(std::move(newSum.error()));
+                }
             }
         }
 
@@ -538,12 +542,12 @@ auto KeysFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> Result
+auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.size() != 1)
         raise<std::runtime_error>("keys: Expected 1 argument; got "s + std::to_string(args.size()));
 
-    auto result = args[0]->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value vv) {
+    auto result = args[0]->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value vv) -> tl::expected<Result, Error> {
         if (ctx.phase == Context::Phase::Compilation)
             if (vv.isa(ValueType::Undef))
                 return res(ctx, std::move(vv));

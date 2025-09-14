@@ -24,7 +24,7 @@ public:
         return Type::FIELD;
     }
 
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result override
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override
     {
         return Result::Stop;
     }

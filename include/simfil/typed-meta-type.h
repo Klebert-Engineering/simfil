@@ -5,6 +5,7 @@
 #include "value.h"
 #include "operator.h"
 #include "exception-handler.h"
+#include "transient.h"
 
 namespace simfil
 {
@@ -17,7 +18,7 @@ namespace simfil
 template <class Type>
 struct TypedMetaType : MetaType
 {
-    TypedMetaType(std::string ident)
+    explicit TypedMetaType(std::string ident)
         : MetaType(std::move(ident))
     {}
 
@@ -35,48 +36,48 @@ struct TypedMetaType : MetaType
         return nullptr;
     }
 
-    auto init() const -> void*
+    auto init() const -> void* override
     {
         return new Type();
     }
 
-    auto copy(void* ptr) const -> void*
+    auto copy(void* ptr) const -> void* override
     {
         return new Type(*((Type*)ptr));
     }
 
-    auto deinit(void* ptr) const -> void
+    auto deinit(void* ptr) const -> void override
     {
         delete (Type*)ptr;
     }
 
-    auto unaryOp(std::string_view op, const TransientObject& obj) const -> Value
+    auto unaryOp(std::string_view op, const TransientObject& obj) const -> tl::expected<Value, Error> override
     {
         return unaryOp(op, *(const Type*)obj.data);
     }
 
-    auto binaryOp(std::string_view op, const TransientObject& obj, const Value& v) const -> Value
+    auto binaryOp(std::string_view op, const TransientObject& obj, const Value& v) const -> tl::expected<Value, Error> override
     {
         return binaryOp(op, *(const Type*)obj.data, v);
     }
 
-    auto binaryOp(std::string_view op, const Value& v, const TransientObject& obj) const -> Value
+    auto binaryOp(std::string_view op, const Value& v, const TransientObject& obj) const -> tl::expected<Value, Error> override
     {
         return binaryOp(op, v, *(const Type*)obj.data);
     }
 
-    auto unpack(const TransientObject& obj, std::function<bool(Value)> fn) const -> void
+    auto unpack(const TransientObject& obj, std::function<bool(Value)> fn) const -> tl::expected<void, Error> override
     {
         return unpack(*(const Type*)obj.data, fn);
     }
 
-    virtual auto unaryOp(std::string_view op, const Type&) const -> Value = 0;
-    virtual auto binaryOp(std::string_view op, const Type&, const Value&) const -> Value = 0;
-    virtual auto binaryOp(std::string_view op, const Value&, const Type&) const -> Value = 0;
+    virtual auto unaryOp(std::string_view op, const Type&) const -> tl::expected<Value, Error> = 0;
+    virtual auto binaryOp(std::string_view op, const Type&, const Value&) const -> tl::expected<Value, Error> = 0;
+    virtual auto binaryOp(std::string_view op, const Value&, const Type&) const -> tl::expected<Value, Error> = 0;
 
-    virtual auto unpack(const Type&, std::function<bool(Value)> fn) const -> void
+    virtual auto unpack(const Type&, std::function<bool(Value)> fn) const -> tl::expected<void, Error>
     {
-        raise<InvalidOperandsError>("...");
+        return tl::unexpected<Error>(Error::Unimplemented, "Type has no unpack operator");
     }
 };
 

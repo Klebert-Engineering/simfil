@@ -2,7 +2,7 @@
 
 #include "simfil/model/nodes.h"
 #include "simfil/operator.h"
-#include "fmt/core.h"
+#include "fmt/format.h"
 
 namespace simfil
 {
@@ -22,7 +22,7 @@ auto IRangeType::make(int64_t a, int64_t b) -> Value
     return {ValueType::TransientObject, std::move(obj)};
 }
 
-auto IRangeType::unaryOp(std::string_view op, const IRange& self) const -> Value
+auto IRangeType::unaryOp(std::string_view op, const IRange& self) const -> tl::expected<Value, Error>
 {
     if (op == OperatorTypeof::name())
         return Value::make(ident);
@@ -36,16 +36,16 @@ auto IRangeType::unaryOp(std::string_view op, const IRange& self) const -> Value
     if (op == OperatorLen::name())
         return Value::make(static_cast<int64_t>(self.high() - self.low()));
 
-    raise<InvalidOperandsError>(op);
+    return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", op));
 }
 
-auto IRangeType::binaryOp(std::string_view op, const IRange& l, const Value& r) const -> Value
+auto IRangeType::binaryOp(std::string_view op, const IRange& l, const Value& r) const -> tl::expected<Value, Error>
 {
     /* Range ==/!= operator checks if the other operand is _in_ the range (for int/float) */
     if (op == OperatorNeq::name()) {
         auto res = binaryOp(OperatorEq::name(), l, r);
-        if (res.isa(ValueType::Bool))
-            return Value::make(!res.as<ValueType::Bool>());
+        if (res->isa(ValueType::Bool))
+            return Value::make(!res->template as<ValueType::Bool>());
         assert(0);
     }
 
@@ -62,18 +62,18 @@ auto IRangeType::binaryOp(std::string_view op, const IRange& l, const Value& r) 
         return Value::f();
     }
 
-    raise<InvalidOperandsError>(op);
+    return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", op));
 }
 
-auto IRangeType::binaryOp(std::string_view op, const Value& l, const IRange& r) const -> Value
+auto IRangeType::binaryOp(std::string_view op, const Value& l, const IRange& r) const -> tl::expected<Value, Error>
 {
     if (op == OperatorEq::name() || op == OperatorNeq::name())
         return binaryOp(op, r, l);
 
-    raise<InvalidOperandsError>(op);
+    return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", op));
 }
 
-auto IRangeType::unpack(const IRange& self, std::function<bool(Value)> res) const -> void
+auto IRangeType::unpack(const IRange& self, std::function<bool(Value)> res) const -> tl::expected<void, Error>
 {
     auto begin = self.begin;
     auto end = self.end;
@@ -85,8 +85,9 @@ auto IRangeType::unpack(const IRange& self, std::function<bool(Value)> res) cons
     do {
         i += step;
         if (!res(Value(ValueType::Int, static_cast<int64_t>(i))))
-            return;
+            return {};
     } while (i != end);
+    return {};
 }
 
 ReType ReType::Type;
@@ -104,7 +105,7 @@ auto ReType::make(std::string_view expr) -> Value
     return Value(ValueType::TransientObject, std::move(obj));
 }
 
-auto ReType::unaryOp(std::string_view op, const Re& self) const -> Value
+auto ReType::unaryOp(std::string_view op, const Re& self) const -> tl::expected<Value, Error>
 {
     if (op == OperatorTypeof::name())
         return Value::make(ident);
@@ -115,15 +116,15 @@ auto ReType::unaryOp(std::string_view op, const Re& self) const -> Value
     if (op == OperatorAsString::name())
         return Value::make(self.str);
 
-    raise<InvalidOperandsError>(op);
+    return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", op));
 }
 
-auto ReType::binaryOp(std::string_view op, const Re& l, const Value& r) const -> Value
+auto ReType::binaryOp(std::string_view op, const Re& l, const Value& r) const -> tl::expected<Value, Error>
 {
     return binaryOp(op, r, l);
 }
 
-auto ReType::binaryOp(std::string_view op, const Value& l, const Re& r) const -> Value
+auto ReType::binaryOp(std::string_view op, const Value& l, const Re& r) const -> tl::expected<Value, Error>
 {
     if (l.isa(ValueType::Null))
         return Value::null();
@@ -144,7 +145,7 @@ auto ReType::binaryOp(std::string_view op, const Value& l, const Re& r) const ->
     if (op == OperatorNeq::name())
         return Value::t();
 
-    raise<InvalidOperandsError>(op);
+    return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", op));
 }
 
 }

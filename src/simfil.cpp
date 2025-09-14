@@ -873,17 +873,20 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
 
     auto mutableAST = ast.expr().clone();
 
-    std::vector<Value> res;
-    mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&res](Context, Value value) {
-        res.push_back(std::move(value));
+    std::vector<Value> values;
+    auto res = mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&values](Context, Value value) {
+        values.push_back(std::move(value));
         return Result::Continue;
     }));
+
+    if (!res)
+        return tl::unexpected<Error>(std::move(res.error()));
 
     if (diag) {
         diag->collect(*mutableAST);
     }
 
-    return res;
+    return values;
 }
 
 auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> expected<std::vector<Diagnostics::Message>, Error>
