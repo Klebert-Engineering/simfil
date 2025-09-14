@@ -12,12 +12,22 @@ struct Token;
 struct Error
 {
     enum Type {
+        // Parser Errors
         ParserError,
         InvalidType,
         InvalidExpression,
         ExpectedEOF,
         NullModel,
         IOError,
+
+        // Evaluation errors
+        UnknownFunction,
+        RuntimeError,
+        InternalError,
+        InvalidOperator,
+        InvalidOperands,
+
+        Unimplemented,
     };
 
     explicit Error(Type type);

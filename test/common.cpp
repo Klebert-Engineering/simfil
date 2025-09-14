@@ -33,8 +33,10 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
     INFO("AST: " << (*ast)->expr().toString());
 
     auto res = eval(env, **ast, *model->root(0), nullptr);
-    if (!res)
-        INFO(res.error().message);
+    if (!res) {
+        INFO("ERROR: " << res.error().message);
+        return fmt::format("ERROR: {}", res.error().message);
+    }
     REQUIRE(res);
 
     std::string vals;

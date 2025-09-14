@@ -2,10 +2,12 @@
 
 #pragma once
 
-#include "fmt/format.h"
+#include "simfil/error.h"
 #include "simfil/value.h"
 #include "exception-handler.h"
+#include "fmt/format.h"
 
+#include <tl/expected.hpp>
 #include <cstdint>
 #include <string_view>
 #include <string>
@@ -24,19 +26,6 @@ struct InvalidOperands {
         return {};
     }
 };
-
-/**
- * Exception for invalid operand types.
- */
-struct InvalidOperandsError : std::exception
-{
-    std::string operatorName;
-
-    explicit InvalidOperandsError(std::string_view opName)
-        : operatorName(opName)
-    {}
-};
-
 
 #define NAME(str)                               \
     static const char * name() {                \
@@ -628,21 +617,21 @@ namespace impl
 {
 
 template <class _Operator, class _CType>
-Value makeOperatorResult(_CType&& value)
+inline auto makeOperatorResult(_CType&& value) -> tl::expected<Value, Error>
 {
     return Value::make(std::forward<_CType>(value));
 }
 
 template <class _Operator>
-inline Value makeOperatorResult(Value value)
+inline auto makeOperatorResult(Value value) -> tl::expected<Value, Error>
 {
     return value;
 }
 
 template <class _Operator>
-inline Value makeOperatorResult(InvalidOperands)
+inline auto makeOperatorResult(InvalidOperands) -> tl::expected<Value, Error>
 {
-    raise<InvalidOperandsError>(_Operator::name());
+    return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", _Operator::name()));
 }
 
 }
@@ -650,34 +639,23 @@ inline Value makeOperatorResult(InvalidOperands)
 template <class _Operator>
 struct UnaryOperatorDispatcher
 {
-    static auto dispatch(const Value& value) -> Value
+    static auto dispatch(const Value& value) -> tl::expected<Value, Error>
     {
-        try {
-            if (value.isa(ValueType::TransientObject)) {
-                const auto& obj = value.as<ValueType::TransientObject>();
-                return obj.meta->unaryOp(_Operator::name(), obj);
-            }
-
-            return value.visit(UnaryOperatorDispatcher());
-        } catch (const InvalidOperandsError& err) {
-            std::string ltype;
-            try {
-                ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(value).toString();
-            } catch (...) {
-                ltype = valueType2String(value.type);
-            }
-            raise<std::runtime_error>("Invalid operand "s + ltype +
-                                     " for operator "s + std::string(err.operatorName));
+        if (value.isa(ValueType::TransientObject)) {
+            const auto& obj = value.as<ValueType::TransientObject>();
+            return obj.meta->unaryOp(_Operator::name(), obj);
         }
+
+        return value.visit(UnaryOperatorDispatcher());
     }
 
-    auto operator()(UndefinedType) -> Value
+    auto operator()(UndefinedType) -> tl::expected<Value, Error>
     {
         return Value::undef();
     }
 
     template <class _Value>
-    auto operator()(const _Value& rhs) -> Value
+    auto operator()(const _Value& rhs) -> tl::expected<Value, Error>
     {
         return impl::makeOperatorResult<_Operator>(_Operator()(rhs));
     }
@@ -691,13 +669,13 @@ struct BinaryOperatorDispatcherRHS
         : lhs(lhs)
     {}
 
-    auto operator()(UndefinedType) -> Value
+    auto operator()(UndefinedType) -> tl::expected<Value, Error>
     {
         return Value::undef();
     }
 
     template <class Right>
-    auto operator()(const Right& rhs) -> Value
+    auto operator()(const Right& rhs) -> tl::expected<Value, Error>
     {
         return impl::makeOperatorResult<Operator>(Operator()(lhs, rhs));
     }
@@ -708,48 +686,52 @@ struct BinaryOperatorDispatcher
 {
     const Value& value;
 
-    static auto dispatch(const Value& lhs, const Value& rhs) -> Value
+    static auto dispatch(const Value& lhs, const Value& rhs) -> tl::expected<Value, Error>
     {
-        try {
+        auto result = ([&]() -> tl::expected<Value, Error> {
             if (lhs.isa(ValueType::TransientObject)) {
-                if (rhs.isa(ValueType::Undef))
+                if (rhs.isa(ValueType::Undef)) {
                     return Value::undef();
-                const auto& obj = lhs.as<ValueType::TransientObject>();
-                return obj.meta->binaryOp(Operator::name(), obj, rhs);
+                } else {
+                    const auto& obj = lhs.as<ValueType::TransientObject>();
+                    return obj.meta->binaryOp(Operator::name(), obj, rhs);
+                }
             }
-
-            if (rhs.isa(ValueType::TransientObject)) {
-                if (lhs.isa(ValueType::Undef))
+            else if (rhs.isa(ValueType::TransientObject)) {
+                if (lhs.isa(ValueType::Undef)) {
                     return Value::undef();
-                const auto& obj = rhs.as<ValueType::TransientObject>();
-                return obj.meta->binaryOp(Operator::name(), lhs, obj);
+                } else {
+                    const auto& obj = rhs.as<ValueType::TransientObject>();
+                    return obj.meta->binaryOp(Operator::name(), lhs, obj);
+                }
             }
+            else {
+                return lhs.visit(BinaryOperatorDispatcher<Operator>(rhs));
+            }
+        })();
 
-            return lhs.visit(BinaryOperatorDispatcher<Operator>(rhs));
-        } catch (const InvalidOperandsError& err) {
-            std::string ltype, rtype;
-            try {
-                ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(lhs).toString();
-                rtype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(rhs).toString();
-            } catch (...) {
-                ltype = valueType2String(lhs.type);
-                rtype = valueType2String(rhs.type);
-            }
-            raise<std::runtime_error>(fmt::format("Invalid operands {} and {} for operator {}", ltype, rtype, err.operatorName));
+        // Try to find the operand types
+        if (!result) {
+            auto ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(lhs).value_or(Value::strref("unknown")).toString();
+            auto rtype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(rhs).value_or(Value::strref("unknown")).toString();
+
+            return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands {} and {} for operator {}", ltype, rtype, Operator::name()));
         }
+
+        return result;
     }
 
     explicit BinaryOperatorDispatcher(const Value& value)
         : value(value)
     {}
 
-    auto operator()(UndefinedType) -> Value
+    auto operator()(UndefinedType) -> tl::expected<Value, Error>
     {
         return Value::undef();
     }
 
     template <class Left>
-    auto operator()(const Left& lhs) -> Value
+    auto operator()(const Left& lhs) -> tl::expected<Value, Error>
     {
         return value.visit(BinaryOperatorDispatcherRHS<Left, Operator>(lhs));
     }

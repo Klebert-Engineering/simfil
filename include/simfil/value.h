@@ -367,8 +367,8 @@ public:
         if (isa(ValueType::TransientObject)) {
             const auto& obj = std::get<TransientObject>(value);
             if (obj.meta) {
-                if (Value vv = obj.meta->unaryOp("string", obj); vv.isa(ValueType::String))
-                    return vv.as<ValueType::String>();
+                if (auto vv = obj.meta->unaryOp("string", obj); vv && vv->isa(ValueType::String))
+                    return vv->template as<ValueType::String>();
                 return "<"s + obj.meta->ident + ">"s;
             }
         }

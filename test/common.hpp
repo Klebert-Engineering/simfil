@@ -63,17 +63,17 @@ public:
     {
         static const FnInfo info{
           "panic",
-          "Thrown an exception",
+          "Thrown an error",
           "panic()"
         };
 
         return info;
     }
 
-    auto eval(Context ctx, Value, const std::vector<ExprPtr>&, const ResultFn& res) const -> Result override
+    auto eval(Context ctx, Value, const std::vector<ExprPtr>&, const ResultFn& res) const -> tl::expected<Result, Error> override
     {
         if (ctx.phase != Context::Phase::Compilation)
-            throw std::runtime_error("Panic!");
+            return tl::unexpected<Error>(Error::RuntimeError, "Panic!");
 
         return res(ctx, Value::undef());
     }

@@ -32,7 +32,7 @@ struct CountedResultFn : ResultFn
     CountedResultFn(const CountedResultFn&) = delete;
     CountedResultFn(CountedResultFn&&) = delete;
 
-    auto operator()(Context ctx, Value vv) const -> Result override
+    auto operator()(Context ctx, Value vv) const -> tl::expected<Result, Error> override
     {
         assert(!finished);
         ++calls;
@@ -59,7 +59,7 @@ auto boolify(const Value& v) -> bool
      * Undef if any argument is Undef. */
     if (v.isa(ValueType::Undef))
         return false;
-    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).as<ValueType::Bool>();
+    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).value_or(Value::f()).as<ValueType::Bool>();
 }
 
 }
@@ -71,7 +71,7 @@ auto WildcardExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return ores(ctx, Value::undef());
@@ -131,7 +131,7 @@ auto AnyChildExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -187,7 +187,7 @@ auto FieldExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase != Context::Compilation)
         evaluations_++;
@@ -254,7 +254,7 @@ auto MultiConstExpr::constant() const -> bool
     return true;
 }
 
-auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> Result
+auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
 {
     for (const auto& v : values_) {
         if (res(ctx, v) == Result::Stop)
@@ -300,7 +300,7 @@ auto ConstExpr::constant() const -> bool
     return true;
 }
 
-auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> Result
+auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
 {
     return res(ctx, value_);
 }
@@ -332,12 +332,12 @@ auto SubscriptExpr::type() const -> Type
     return Type::SUBSCRIPT;
 }
 
-auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
     auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, Value lval) {
-        return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, const Value& ival) {
+        return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, const Value& ival) -> tl::expected<Result, Error> {
             /* Field subscript */
             if (lval.node) {
                 ModelNode::Ptr node;
@@ -359,7 +359,10 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -
                 else
                     ctx.env->warn("Invalid subscript index type "s + valueType2String(ival.type), this->toString());
             } else {
-                return res(ctx, BinaryOperatorDispatcher<OperatorSubscript>::dispatch(lval, ival));
+                auto v = BinaryOperatorDispatcher<OperatorSubscript>::dispatch(lval, ival);
+                if (!v)
+                    return tl::unexpected<Error>(std::move(v.error()));
+                return res(ctx, std::move(v.value()));
             }
 
             return Result::Continue;
@@ -399,18 +402,21 @@ auto SubExpr::type() const -> Type
     return Type::SUBEXPR;
 }
 
-auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     /* Do not return null unless we have _no_ matching value. */
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, const Value& lv) {
-        return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) {
+    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, const Value& lv) -> tl::expected<Result, Error> {
+        return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) -> tl::expected<Result, Error> {
             auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
-            if (bv.isa(ValueType::Undef))
+            if (!bv)
+                return tl::unexpected<Error>(std::move(bv.error()));
+
+            if (bv->isa(ValueType::Undef))
                 return Result::Continue;
 
-            if (bv.isa(ValueType::Bool) && bv.as<ValueType::Bool>())
+            if (bv->isa(ValueType::Bool) && bv->template as<ValueType::Bool>())
                 return res(ctx, lv);
 
             return Result::Continue;
@@ -444,7 +450,7 @@ auto AnyExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto subctx = ctx;
     auto result = false; /* At least one value is true  */
@@ -514,7 +520,7 @@ auto EachExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto subctx = ctx;
     auto result = true; /* All values are true  */
@@ -584,21 +590,23 @@ auto CallExpression::type() const -> Type
     return Type::VALUE;
 }
 
-auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (!fn_)
         fn_ = ctx.env->findFunction(name_);
     if (!fn_)
-        raise<std::runtime_error>("Unknown function "s + name_);
+        return tl::unexpected<Error>(Error::UnknownFunction, fmt::format("Unknown function '{}'", name_));
 
     auto anyval = false;
     auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value vv) {
         anyval = true;
         return res(ctx, std::move(vv));
     }));
-
+    if (!result)
+        return result;
     if (!anyval)
-        return res(ctx, Value::null()); /* Expressions _must_ return at least one value! */
+        return tl::unexpected<Error>(Error::InternalError, "Function did not call result callback");
+
     return result;
 }
 
@@ -648,11 +656,11 @@ auto PathExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value v) {
+    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value v) -> tl::expected<Result, Error> {
         if (v.isa(ValueType::Undef))
             return Result::Continue;
 
@@ -661,7 +669,7 @@ auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Res
 
         ++hits_;
 
-        return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value vv) {
+        return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value vv) -> tl::expected<Result, Error> {
             if (vv.isa(ValueType::Undef))
                 return Result::Continue;
 
@@ -699,7 +707,7 @@ auto UnpackExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto anyval = false;
     auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value v) {
@@ -751,19 +759,22 @@ auto UnaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
-    return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value val) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value val) -> tl::expected<Result, Error> {
         if (val.isa(ValueType::Undef))
             return res(ctx, std::move(val));
 
         if (val.isa(ValueType::TransientObject)) {
             const auto& obj = val.as<ValueType::TransientObject>();
-            return res(ctx, obj.meta->unaryOp(ident_, obj));
+            auto v = obj.meta->unaryOp(ident_, obj);
+            if (!v)
+                return tl::unexpected<Error>(std::move(v.error()));
+            return res(ctx, std::move(v.value()));
         }
 
-        raise<std::runtime_error>(fmt::format("Invalid operator '{}' for value of type {}",
-                                                ident_, valueType2String(val.type)));
+        return tl::unexpected<Error>(Error::InvalidOperator,
+                                     fmt::format("Invalid operator '{}' for value of type {}", ident_, valueType2String(val.type)));
     }));
 }
 
@@ -793,25 +804,32 @@ auto BinaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, const Value& lval) {
-        return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](const Context& ctx, const Value& rval) {
+        return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](const Context& ctx, const Value& rval) -> tl::expected<Result, Error> {
             if (lval.isa(ValueType::Undef) || rval.isa(ValueType::Undef))
                 return res(ctx, Value::undef());
 
             if (lval.isa(ValueType::TransientObject)) {
                 const auto& obj = lval.as<ValueType::TransientObject>();
-                return res(ctx, obj.meta->binaryOp(ident_, obj, rval));
+                auto v = obj.meta->binaryOp(ident_, obj, rval);
+                if (!v)
+                    return tl::unexpected<Error>(std::move(v.error()));
+                return res(ctx, std::move(v.value()));
             }
 
             if (rval.isa(ValueType::TransientObject)) {
                 const auto& obj = rval.as<ValueType::TransientObject>();
-                return res(ctx, obj.meta->binaryOp(ident_, lval, obj));
+                auto v = obj.meta->binaryOp(ident_, obj, rval);
+                if (!v)
+                    return tl::unexpected<Error>(std::move(v.error()));
+                return res(ctx, std::move(v.value()));
             }
 
-            raise<std::runtime_error>(fmt::format("Invalid operator '{}' for values of type {} and {}",
-                                                    ident_, valueType2String(lval.type), valueType2String(rval.type)));
+            return tl::unexpected<Error>(Error::InvalidOperator,
+                                         fmt::format("Invalid operator '{}' for values of type {} and {}",
+                                                     ident_, valueType2String(lval.type), valueType2String(rval.type)));
         }));
     }));
 }
@@ -844,16 +862,20 @@ auto AndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     /* Operator and behaves like in lua:
-        * 'a and b' returns a if 'not a?' else b is returned */
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value lval) {
+     * 'a and b' returns a if 'not a?' else b is returned */
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value lval) -> tl::expected<Result, Error> {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
-        if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-            if (!v.as<ValueType::Bool>())
+        auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
+        if (!v)
+            return tl::unexpected<Error>(std::move(v.error()));
+
+        if (v->isa(ValueType::Bool))
+            if (!v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
         return right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, Value rval) {
@@ -890,17 +912,22 @@ auto OrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     /* Operator or behaves like in lua:
      * 'a or b' returns a if 'a?' else b is returned */
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) -> tl::expected<Result, Error> {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
         ++leftEvaluations_;
-        if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-            if (v.as<ValueType::Bool>())
+
+        auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
+        if (!v)
+            return tl::unexpected<Error>(std::move(v.error()));
+
+        if (v->isa(ValueType::Bool))
+            if (v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
         ++rightEvaluations_;

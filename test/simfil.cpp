@@ -281,6 +281,10 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
     REQUIRE_AST("Trace(1)",      "(Trace 1)");
 }
 
+TEST_CASE("PanicFunction", "[eval.panic-function]") {
+    REQUIRE_RESULT("panic()", "ERROR: Panic!");
+}
+
 TEST_CASE("OperatorOrShortCircuit", "[eval.operator-or-short-circuit]") {
     REQUIRE_RESULT("true or panic()", "true");
 }

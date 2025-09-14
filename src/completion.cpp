@@ -136,7 +136,7 @@ auto CompletionFieldOrWordExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -245,7 +245,7 @@ auto CompletionAndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (left_)
         (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
@@ -305,7 +305,7 @@ auto CompletionOrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (left_)
         (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
@@ -352,7 +352,7 @@ auto CompletionWordExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
