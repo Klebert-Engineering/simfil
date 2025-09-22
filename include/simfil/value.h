@@ -4,6 +4,7 @@
 #include <string>
 #include <cstdint>
 #include <cassert>
+#include <bitset>
 
 #include "model/nodes.h"
 #include "transient.h"

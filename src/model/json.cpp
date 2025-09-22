@@ -5,11 +5,13 @@
 
 #include <nlohmann/json.hpp>
 
+#include "../expected.h"
+
 namespace simfil::json
 {
 using json = nlohmann::json;
 
-static ModelNode::Ptr build(const json& j, ModelPool & model)
+static auto build(const json& j, ModelPool & model) -> tl::expected<ModelNode::Ptr, Error>
 {
     switch (j.type()) {
     case json::value_t::null:
@@ -23,45 +25,64 @@ static ModelNode::Ptr build(const json& j, ModelPool & model)
     case json::value_t::number_integer:
         return model.newValue(j.get<int64_t>());
     case json::value_t::string:
-        return model.newValue((StringId)model.strings()->emplace(j.get<std::string>()));
+        if (auto stringId = model.strings()->emplace(j.get<std::string>()); stringId)
+            return model.newValue((StringId)*stringId);
+        else
+            return tl::unexpected<Error>(stringId.error());
     default:
         break;
     }
 
     if (j.is_object()) {
         auto object = model.newObject(j.size());
-        for (auto&& [key, value] : j.items())
-            object->addField(key, build(value, model));
+        for (auto&& [key, value] : j.items()) {
+            auto child = build(value, model);
+            TRY_EXPECTED(child);
+            object->addField(key, *child);
+        }
         return object;
     }
 
     if (j.is_array()) {
         auto array = model.newArray(j.size());
-        for (const auto& value : j)
-            array->append(build(value, model));
+        for (const auto& value : j) {
+            auto child = build(value, model);
+            TRY_EXPECTED(child);
+            array->append(*child);
+        }
         return array;
     }
 
     return {};
 }
 
-void parse(std::istream& input, ModelPoolPtr const& model)
+auto parse(std::istream& input, ModelPoolPtr const& model) -> tl::expected<void, Error>
 {
-    model->addRoot(build(json::parse(input), *model));
-    model->validate();
+    auto root = build(json::parse(input), *model);
+    if (!root)
+        return tl::unexpected<Error>(root.error());
+    model->addRoot(*root);
+    return model->validate();
 }
 
-void parse(const std::string& input, ModelPoolPtr const& model)
+auto parse(const std::string& input, ModelPoolPtr const& model) -> tl::expected<void, Error>
 {
-    model->addRoot(build(json::parse(input), *model));
-    model->validate();
+    auto root = build(json::parse(input), *model);
+    if (!root)
+        return tl::unexpected<Error>(root.error());
+    model->addRoot(*root);
+    return model->validate();
 }
 
-ModelPoolPtr parse(const std::string& input)
+auto parse(const std::string& input) -> tl::expected<ModelPoolPtr, Error>
 {
     auto model = std::make_shared<simfil::ModelPool>();
-    model->addRoot(build(json::parse(input), *model));
-    model->validate();
+    auto root = build(json::parse(input), *model);
+    if (!root)
+        return tl::unexpected<Error>(root.error());
+    model->addRoot(*root);
+    if (auto res = model->validate(); !res)
+        return tl::unexpected<Error>(res.error());
     return model;
 }
 

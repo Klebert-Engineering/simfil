@@ -27,6 +27,15 @@ struct Error
         InternalError,
         InvalidOperator,
         InvalidOperands,
+        InvalidArguments,
+        ExpectedSingleValue,
+        TypeMissmatch,
+
+        // Model related runtime errors
+        StringPoolOverflow,
+        EncodeDecodeError,
+        FieldNotFound,
+        IndexOutOfRange,
 
         Unimplemented,
     };
@@ -35,6 +44,8 @@ struct Error
     Error(Type type, std::string message);
     Error(Type type, std::string message, SourceLocation location);
     Error(Type type, std::string message, const Token& token);
+
+    auto operator==(const Error& o) const -> bool = default;
 
     Type type;
     SourceLocation location;

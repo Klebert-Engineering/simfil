@@ -11,6 +11,9 @@
 #include <istream>
 #include <ostream>
 #include <deque>
+#include <tl/expected.hpp>
+
+#include "simfil/error.h"
 
 namespace simfil
 {
@@ -45,7 +48,7 @@ struct StringPool
 
     /// Use this function to lookup a stored string, or insert it
     /// if it doesn't exist yet.
-    StringId emplace(std::string_view const& str);
+    auto emplace(std::string_view const& str) -> tl::expected<StringId, Error>;
 
     /// Returns the ID of the given string, or `Empty` if
     /// no such string was ever inserted.
@@ -67,12 +70,12 @@ struct StringPool
     size_t misses() const;
 
     /// Add a static key-string mapping - Warning: Not thread-safe.
-    void addStaticKey(StringId k, std::string const& v);
+    void addStaticKey(StringId id, std::string const& value);
 
     /// Serialization - write to stream, starting from a specific
     ///  id offset if necessary (for partial serialisation).
-    virtual void write(std::ostream& outputStream, StringId offset = {}) const;  // NOLINT
-    virtual void read(std::istream& inputStream);
+    virtual auto write(std::ostream& outputStream, StringId offset = {}) const -> tl::expected<void, Error>;  // NOLINT
+    virtual auto read(std::istream& inputStream) -> tl::expected<void, Error>;
 
     /// Check if the content of the string pools is logically identical.
     bool operator== (StringPool const& other) const;

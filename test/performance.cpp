@@ -119,7 +119,9 @@ static auto result(const ModelPoolPtr& model, std::string_view query)
     REQUIRE(ast.has_value());
     INFO("AST: " << (*ast)->expr().toString());
 
-    return eval(env, **ast, *model->root(0), nullptr);
+    auto root = model->root(0);
+    REQUIRE(root);
+    return eval(env, **ast, **root, nullptr);
 }
 
 static auto joined_result(const ModelPoolPtr& model, std::string_view query)

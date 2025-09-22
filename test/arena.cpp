@@ -75,7 +75,8 @@ TEST_CASE("ArrayArena clear and shrink_to_fit", "[ArrayArena]") {
         arena.clear();
         ArrayIndex array2 = arena.new_array(2);
         REQUIRE(array2 == 0);
-        REQUIRE_THROWS_AS(arena.at(array1, 0), std::out_of_range);
+        REQUIRE(!arena.at(array1, 0));
+        REQUIRE(arena.at(array1, 0).error().type == Error::IndexOutOfRange);
     }
 
     SECTION("shrink_to_fit") {

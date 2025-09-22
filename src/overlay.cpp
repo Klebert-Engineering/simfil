@@ -3,9 +3,10 @@
 namespace simfil
 {
 
-void OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
+tl::expected<void, Error> OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
     cb(OverlayNode(n));
+    return {};
 }
 
 OverlayNode::OverlayNode(Value const& val)

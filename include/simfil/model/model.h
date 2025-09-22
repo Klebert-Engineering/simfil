@@ -2,6 +2,7 @@
 #pragma once
 
 #include "simfil/model/string-pool.h"
+#include "tl/expected.hpp"
 #if defined(SIMFIL_WITH_MODEL_JSON)
 #  include "nlohmann/json.hpp"
 #endif
@@ -55,7 +56,7 @@ public:
      *  Get a callback with the actual class of the given node.
      *  This facilitates the Virtual Function Table role of the Model.
      */
-    virtual void resolve(ModelNode const& n, ResolveFn const& cb) const;
+    virtual tl::expected<void, Error> resolve(ModelNode const& n, ResolveFn const& cb) const;
 
     /** Add a small scalar value and get its model node view */
     ModelNode::Ptr newSmallValue(bool value);
@@ -116,19 +117,19 @@ public:
      * Get a callback with the actual class of the given node.
      * This facilitates the Virtual Function Table role of the ModelPool.
      */
-    void resolve(ModelNode const& n, ResolveFn const& cb) const override;
+    tl::expected<void, Error> resolve(ModelNode const& n, ResolveFn const& cb) const override;
 
     /** Clear all columns and roots */
     virtual void clear();
 
-    /** Check for errors, throw if there are any */
-    void validate() const;
+    /** Check for errors and returns them */
+    tl::expected<void, Error> validate() const;
 
     /** Get number of root nodes */
     [[nodiscard]] size_t numRoots() const;
 
     /** Get specific root node */
-    [[nodiscard]] ModelNode::Ptr root(size_t const& i) const;
+    [[nodiscard]] tl::expected<ModelNode::Ptr, Error> root(size_t const& i) const;
 
     /** Designate a model node index as a root */
     void addRoot(ModelNode::Ptr const& rootNode);
@@ -166,13 +167,13 @@ public:
      * Note: This will potentially create new field entries in the newDict,
      * for field names which were not there before.
      */
-    virtual void setStrings(std::shared_ptr<simfil::StringPool> const& strings);
+    virtual auto setStrings(std::shared_ptr<simfil::StringPool> const& strings) -> tl::expected<void, Error>;
 
     std::optional<std::string_view> lookupStringId(StringId id) const override;
 
     /** Serialization */
-    virtual void write(std::ostream& outputStream);
-    virtual void read(std::istream& inputStream);
+    virtual tl::expected<void, Error> write(std::ostream& outputStream);
+    virtual tl::expected<void, Error> read(std::istream& inputStream);
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
     /** JSON Serialization */
