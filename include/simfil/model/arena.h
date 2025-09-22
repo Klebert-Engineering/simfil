@@ -2,13 +2,16 @@
 
 #pragma once
 
+#include <functional>
 #include <vector>
 #include <shared_mutex>
 #include <mutex>
 #include <cmath>
+#include <tl/expected.hpp>
 #include <sfl/segmented_vector.hpp>
 
-#include "../exception-handler.h"
+#include "simfil/exception-handler.h"
+#include "simfil/error.h"
 
 // Define this to enable array arena read-write locking.
 // #define ARRAY_ARENA_THREAD_SAFE
@@ -101,11 +104,13 @@ public:
      * @return A reference to the element at the specified index.
      * @throws std::out_of_range if the index is out of the array bounds.
      */
-    ElementType_& at(ArrayIndex const& a, size_t const& i) {
-        return at_impl<ElementType_&>(*this, a, i);
+    tl::expected<std::reference_wrapper<ElementType_>, Error>
+    at(ArrayIndex const& a, size_t const& i) {
+        return at_impl<ElementType_>(*this, a, i);
     }
-    ElementType_ const& at(ArrayIndex const& a, size_t const& i) const {
-        return at_impl<ElementType_ const&>(*this, a, i);
+    tl::expected<std::reference_wrapper<const ElementType_>, Error>
+    at(ArrayIndex const& a, size_t const& i) const {
+        return at_impl<ElementType_ const>(*this, a, i);
     }
 
     /**
@@ -207,7 +212,8 @@ public:
             : arena_(arena), array_index_(array_index), elem_index_(elem_index) {}
 
         ElementRef operator*() {
-            return arena_.at(array_index_, elem_index_);
+            // Unchecked access!
+            return *arena_.at(array_index_, elem_index_);
         }
 
         ArrayIterator& operator++() {
@@ -385,7 +391,8 @@ private:
     }
 
     template <typename ElementTypeRef, typename Self>
-    static ElementTypeRef at_impl(Self& self, ArrayIndex const& a, size_t const& i)
+    static tl::expected<std::reference_wrapper<ElementTypeRef>, Error>
+    at_impl(Self& self, ArrayIndex const& a, size_t const& i)
     {
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(self.lock_);
@@ -396,7 +403,7 @@ private:
             if (remaining < current->capacity && remaining < current->size)
                 return self.data_[current->offset + remaining];
             if (current->next == InvalidArrayIndex)
-                raise<std::out_of_range>("Index out of range");
+                return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
             remaining -= current->capacity;
             current = &self.continuations_[current->next];
         }

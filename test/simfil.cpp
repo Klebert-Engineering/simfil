@@ -189,8 +189,9 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
     )json";
 
     const auto model = simfil::json::parse(doc);
+    REQUIRE(model);
     auto test = [&model](auto query) {
-        Environment env(model->strings());
+        Environment env(model.value()->strings());
 
         auto ast = compile(env, query, false);
         if (!ast)
@@ -200,7 +201,10 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
 
         INFO("AST: " << (*ast)->expr().toString());
 
-        return eval(env, **ast, *model->root(0), nullptr).value().front().template as<ValueType::Bool>();
+        auto root = model.value()->root(0);
+        REQUIRE(root);
+
+        return eval(env, **ast, **root, nullptr).value().front().template as<ValueType::Bool>();
     };
 
     /* Test some field with different value types for different objects */
@@ -436,25 +440,25 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
     // Recognize dangling object member pointer
     pool->clear();
     pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
-    REQUIRE_THROWS(pool->validate());
+    REQUIRE(!pool->validate());
 
     // Recognize dangling array member pointer
     pool->clear();
     pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Arrays, 666}));
-    REQUIRE_THROWS(pool->validate());
+    REQUIRE(!pool->validate());
 
     // Recognize dangling root
     pool->clear();
     pool->addRoot(ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
-    REQUIRE_THROWS(pool->validate());
+    REQUIRE(!pool->validate());
 
     // An empty model should be valid
     pool->clear();
-    REQUIRE_NOTHROW(pool->validate());
+    REQUIRE(pool->validate());
 
     // An empty object should also be valid
     pool->newObject()->addField("good", pool->newObject());
-    REQUIRE_NOTHROW(pool->validate());
+    REQUIRE(pool->validate());
 }
 
 TEST_CASE("Procedural Object Node", "[model.procedural]") {
@@ -492,20 +496,36 @@ TEST_CASE("Object/Array Extend", "[model.extend]") {
         testObjectB->addField("height", (int64_t)220);
         testObjectB->addField("age", (int64_t)55);
 
-        REQUIRE(testObjectA->size() == 2);
-        REQUIRE(testObjectB->size() == 2);
-        REQUIRE(Value(testObjectA->get("name")->value()).toString() == "hans");
-        REQUIRE(Value(testObjectA->get("occupation")->value()).toString() == "baker");
-        REQUIRE(!testObjectA->get("height"));
-        REQUIRE(!testObjectA->get("age"));
-        testObjectA->extend(testObjectB);
+        {
+            REQUIRE(testObjectA->size() == 2);
+            REQUIRE(testObjectB->size() == 2);
+            auto nameValue = testObjectA->get("name");
+            REQUIRE(nameValue);
+            REQUIRE(Value(nameValue.value()->value()).toString() == "hans");
+            auto occupationValue = testObjectA->get("occupation");
+            REQUIRE(occupationValue);
+            REQUIRE(Value(occupationValue.value()->value()).toString() == "baker");
+            REQUIRE(!testObjectA->get("height"));
+            REQUIRE(!testObjectA->get("age"));
+            testObjectA->extend(testObjectB);
+        }
 
-        REQUIRE(testObjectA->size() == 4);
-        REQUIRE(testObjectB->size() == 2);
-        REQUIRE(Value(testObjectA->get("name")->value()).toString() == "hans");
-        REQUIRE(Value(testObjectA->get("occupation")->value()).toString() == "baker");
-        REQUIRE(Value(testObjectA->get("height")->value()).as<ValueType::Int>() == 220ll);
-        REQUIRE(Value(testObjectA->get("age")->value()).as<ValueType::Int>() == 55ll);
+        {
+            REQUIRE(testObjectA->size() == 4);
+            REQUIRE(testObjectB->size() == 2);
+            auto nameValue = testObjectA->get("name");
+            REQUIRE(nameValue);
+            REQUIRE(Value(nameValue.value()->value()).toString() == "hans");
+            auto occupationValue = testObjectA->get("occupation");
+            REQUIRE(occupationValue);
+            REQUIRE(Value(occupationValue.value()->value()).toString() == "baker");
+            auto heightValue = testObjectA->get("height");
+            REQUIRE(heightValue);
+            REQUIRE(Value(heightValue.value()->value()).as<ValueType::Int>() == 220ll);
+            auto ageValue = testObjectA->get("age");
+            REQUIRE(ageValue);
+            REQUIRE(Value(ageValue.value()->value()).as<ValueType::Int>() == 55ll);
+        }
     }
 
     SECTION("Extend array")

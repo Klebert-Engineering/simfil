@@ -21,7 +21,8 @@ auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
 auto JoinedResult(std::string_view query, std::optional<std::string> json) -> std::string
 {
     auto model = simfil::json::parse(std::string(json.value_or(TestModel)));
-    Environment env(model->strings());
+    REQUIRE(model);
+    Environment env(model.value()->strings());
 
     env.functions["panic"] = &panicFn;
 
@@ -33,7 +34,8 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
 
     INFO("AST: " << (*ast)->expr().toString());
 
-    auto res = eval(env, **ast, *model->root(0), nullptr);
+    auto root = model.value()->root(0);
+    auto res = eval(env, **ast, **root, nullptr);
     if (!res) {
         INFO("ERROR: " << res.error().message);
         return fmt::format("ERROR: {}", res.error().message);
@@ -51,16 +53,19 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
 auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json) -> std::vector<CompletionCandidate>
 {
     auto model = simfil::json::parse(json.value_or(TestModel));
-    Environment env(model->strings());
+    REQUIRE(model);
+    Environment env(model.value()->strings());
 
     CompletionOptions opts;
-    return complete(env, query, point, *model->root(0), opts).value_or(std::vector<CompletionCandidate>());
+    auto root = model.value()->root(0);
+    return complete(env, query, point, **root, opts).value_or(std::vector<CompletionCandidate>());
 }
 
 auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::Message>
 {
     auto model = simfil::json::parse(TestModel);
-    Environment env(model->strings());
+    REQUIRE(model);
+    Environment env(model.value()->strings());
 
     env.functions["panic"] = &panicFn;
 
@@ -72,7 +77,8 @@ auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::M
     INFO("AST: " << (*ast)->expr().toString());
 
     Diagnostics diag;
-    auto res = eval(env, **ast, *model->root(0), &diag);
+    auto root = model.value()->root(0);
+    auto res = eval(env, **ast, **root, &diag);
     if (!res)
         INFO(res.error().message);
     REQUIRE(res);

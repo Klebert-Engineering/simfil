@@ -14,7 +14,7 @@ struct OverlayNodeStorage final : public Model
 
     explicit OverlayNodeStorage(Value const& val) : value_(val) {} // NOLINT
 
-    void resolve(ModelNode const& n, ResolveFn const& cb) const override;
+    tl::expected<void, Error> resolve(ModelNode const& n, ResolveFn const& cb) const override;
 };
 
 /** Node for injecting member fields */

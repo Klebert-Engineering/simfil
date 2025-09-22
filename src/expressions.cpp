@@ -821,7 +821,7 @@ auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res)
 
             if (rval.isa(ValueType::TransientObject)) {
                 const auto& obj = rval.as<ValueType::TransientObject>();
-                auto v = obj.meta->binaryOp(ident_, obj, rval);
+                auto v = obj.meta->binaryOp(ident_, lval, obj);
                 if (!v)
                     return tl::unexpected<Error>(std::move(v.error()));
                 return res(ctx, std::move(v.value()));

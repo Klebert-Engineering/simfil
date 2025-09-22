@@ -32,7 +32,13 @@ int main()
     }
 
     // Evalualte query and get result of type simfil::Value.
-    auto result = simfil::eval(env, **ast, *model->root(0), nullptr);
+    auto root = model->root(0);
+    if (!root) {
+        std::cerr << root.error().message << '\n';
+        return -1;
+    }
+
+    auto result = simfil::eval(env, **ast, **root, nullptr);
     if (!result) {
         std::cerr << result.error().message << '\n';
         return -1;

@@ -1,5 +1,6 @@
 #include "simfil/model/string-pool.h"
 #include "simfil/exception-handler.h"
+#include "simfil/error.h"
 
 #include <bitsery/adapter/stream.h>
 #include <bitsery/bitsery.h>
@@ -89,7 +90,7 @@ StringPool::StringPool(const StringPool& other)
     cacheMisses_ = other.cacheMisses_.load();
 }
 
-StringId StringPool::emplace(std::string_view const& str)
+auto StringPool::emplace(std::string_view const& str) -> tl::expected<StringId, Error>
 {
     {
         std::shared_lock lock(stringStoreMutex_);
@@ -112,7 +113,7 @@ StringId StringPool::emplace(std::string_view const& str)
         auto& storedString = storedStrings_.emplace_back(str);
         StringId id = nextId_++;
         if (nextId_ < id) {
-            raise<std::overflow_error>("StringPool id overflow!");
+            return tl::unexpected<Error>(Error::StringPoolOverflow, "StringPool id overflow!");
         }
         idForString_.emplace(storedString, id);
         stringForId_.emplace(id, storedString);
@@ -177,7 +178,7 @@ void StringPool::addStaticKey(StringId id, const std::string& value)
     stringForId_.emplace(id, storedString);
 }
 
-void StringPool::write(std::ostream& outputStream, const StringId offset) const  // NOLINT
+auto StringPool::write(std::ostream& outputStream, const StringId offset) const -> tl::expected<void, Error> // NOLINT
 {
     std::shared_lock stringStoreReadAccess(stringStoreMutex_);
     bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
@@ -201,9 +202,11 @@ void StringPool::write(std::ostream& outputStream, const StringId offset) const 
             s.text1b(it->second, std::numeric_limits<uint16_t>::max());
         }
     }
+
+    return {};
 }
 
-void StringPool::read(std::istream& inputStream)
+auto StringPool::read(std::istream& inputStream) -> tl::expected<void, Error>
 {
     std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
@@ -232,10 +235,13 @@ void StringPool::read(std::istream& inputStream)
     }
 
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
-        raise<std::runtime_error>(fmt::format(
-            "Failed to read StringPool: Error {}",
-            static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
+      return tl::unexpected<Error>(
+          Error::EncodeDecodeError,
+          fmt::format("Failed to read StringPool: Error {}",
+                      static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
+
+    return {};
 }
 
 bool StringPool::operator==(const StringPool &other) const {

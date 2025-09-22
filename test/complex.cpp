@@ -104,17 +104,18 @@ TEST_CASE("Multimap JSON", "[multimap.serialization]") {
 
 TEST_CASE("Serialization", "[complex.serialization]") {
     auto model = json::parse(invoice);
+    REQUIRE(model);
 
     SECTION("Test Model write/read")
     {
         std::stringstream stream;
-        model->write(stream);
+        model.value()->write(stream);
 
         auto recoveredModel = std::make_shared<ModelPool>();
         recoveredModel->read(stream);
-        CHECK_THROWS(recoveredModel->validate());
-        recoveredModel->setStrings(model->strings());
-        recoveredModel->validate();
+        REQUIRE(!recoveredModel->validate());
+        recoveredModel->setStrings(model.value()->strings());
+        REQUIRE(recoveredModel->validate());
 
         std::function<void(ModelNode::Ptr, ModelNode::Ptr)> require_equals = [&](auto l, auto r)
         {
@@ -134,22 +135,24 @@ TEST_CASE("Serialization", "[complex.serialization]") {
             }
         };
 
-        REQUIRE(model->numRoots() == recoveredModel->numRoots());
-        require_equals(model->root(0), recoveredModel->root(0));
+        REQUIRE(model.value()->numRoots() == recoveredModel->numRoots());
+        REQUIRE(model.value()->root(0));
+        REQUIRE(recoveredModel->root(0));
+        require_equals(*model.value()->root(0), *recoveredModel->root(0));
     }
 
     SECTION("Test Fields write/read")
     {
         std::stringstream stream;
-        model->strings()->write(stream);
+        REQUIRE(model.value()->strings()->write(stream));
 
         const auto recoveredFields = std::make_shared<StringPool>();
-        recoveredFields->read(stream);
+        REQUIRE(recoveredFields->read(stream));
 
-        REQUIRE(model->strings()->size() == recoveredFields->size());
-        REQUIRE(model->strings()->highest() == recoveredFields->highest());
-        REQUIRE(model->strings()->bytes() == recoveredFields->bytes());
+        REQUIRE(model.value()->strings()->size() == recoveredFields->size());
+        REQUIRE(model.value()->strings()->highest() == recoveredFields->highest());
+        REQUIRE(model.value()->strings()->bytes() == recoveredFields->bytes());
         for (StringId sId = 0; sId <= recoveredFields->highest(); ++sId)
-            REQUIRE(model->strings()->resolve(sId) == recoveredFields->resolve(StringId(sId)));
+            REQUIRE(model.value()->strings()->resolve(sId) == recoveredFields->resolve(StringId(sId)));
     }
 }

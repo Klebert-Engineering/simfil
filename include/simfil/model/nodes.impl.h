@@ -1,5 +1,7 @@
 #pragma once
 #include "nodes.h"
+#include "tl/expected.hpp"
+#include <functional>
 
 namespace simfil
 {
@@ -24,7 +26,9 @@ ModelNode::Ptr BaseArray<ModelType, ModelNodeType>::at(int64_t i) const
 {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
-    return ModelNode::Ptr::make(model_, storage_->at(members_, i));
+    if (auto value = storage_->at(members_, i); value)
+        return ModelNode::Ptr::make(model_, value->get());
+    return {};
 }
 
 template <class ModelType, class ModelNodeType>
@@ -96,7 +100,9 @@ ModelNode::Ptr BaseObject<ModelType, ModelNodeType>::at(int64_t i) const
 {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
-    return ModelNode::Ptr::make(model_, storage_->at(members_, i).node_);
+    if (auto value = storage_->at(members_, i); value)
+        return ModelNode::Ptr::make(model_, value->get().node_);
+    return {};
 }
 
 template <class ModelType, class ModelNodeType>
@@ -104,7 +110,9 @@ StringId BaseObject<ModelType, ModelNodeType>::keyAt(int64_t i) const
 {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
-    return storage_->at(members_, i).name_;
+    if (auto value = storage_->at(members_, i); value)
+        return value->get().name_;
+    return {};
 }
 
 template <class ModelType, class ModelNodeType>
@@ -146,12 +154,14 @@ bool BaseObject<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback
 }
 
 template <class ModelType, class ModelNodeType>
-BaseObject<ModelType, ModelNodeType>& BaseObject<ModelType, ModelNodeType>::addFieldInternal(
+tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error> BaseObject<ModelType, ModelNodeType>::addFieldInternal(
     std::string_view const& name,
     ModelNode::Ptr const& value)
 {
     auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, value->addr());
+    if (!fieldId)
+        return tl::unexpected<Error>(std::move(fieldId.error()));
+    storage_->emplace_back(members_, *fieldId, value->addr());
     return *this;
 }
 
