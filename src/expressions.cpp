@@ -32,11 +32,11 @@ struct CountedResultFn : ResultFn
     CountedResultFn(const CountedResultFn&) = delete;
     CountedResultFn(CountedResultFn&&) = delete;
 
-    auto operator()(Context ctx, Value vv) const -> tl::expected<Result, Error> override
+    auto operator()(Context ctx, const Value& vv) const noexcept -> tl::expected<Result, Error> override
     {
         assert(!finished);
         ++calls;
-        return fn(ctx, std::move(vv));
+        return fn(ctx, vv);
     }
 
     /* NOTE: You _must_ call finish before destruction! */
