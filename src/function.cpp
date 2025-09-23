@@ -47,7 +47,7 @@ struct ArgParser
         }
 
         auto subctx = ctx;
-        auto res = args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable -> tl::expected<Result, Error> {
+        auto res = args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value&& vv) mutable -> tl::expected<Result, Error> {
             if (++n > 1) [[unlikely]] {
                 return tl::unexpected<Error>(Error::ExpectedSingleValue,
                                              fmt::format("expeted single argument value for argument {} for function {}", name, functionName));
@@ -84,7 +84,7 @@ struct ArgParser
         }
 
         auto subctx = ctx;
-        auto res = args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable -> tl::expected<Result, Error> {
+        auto res = args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value&& vv) mutable -> tl::expected<Result, Error> {
             if (++n > 1) {
                 return tl::unexpected<Error>(Error::ExpectedSingleValue,
                                              fmt::format("{}: argument {} must return a single value", functionName, name));
@@ -291,7 +291,7 @@ auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const 
                                      fmt::format("'re' expects 1 argument, got {}", args.size()));
 
     auto subctx = ctx;
-    return args[0]->eval(subctx, val, LambdaResultFn([&](Context, Value vv) -> tl::expected<Result, Error> {
+    return args[0]->eval(subctx, val, LambdaResultFn([&](Context, Value&& vv) -> tl::expected<Result, Error> {
         if (vv.isa(ValueType::Undef))
             return res(ctx, Value::undef());
 
@@ -328,7 +328,7 @@ auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
         return res(ctx, Value::null());
 
     for (const auto& arg : args) {
-        if (auto r = arg->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value vv) {
+        if (auto r = arg->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value&& vv) {
             return res(ctx, std::move(vv));
         })); r && *r == Result::Stop)
             return Result::Stop;
@@ -460,7 +460,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, co
     if (icnt <= 0)
         icnt = std::numeric_limits<int>::max();
 
-    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = -1](Context ctx, Value vv) mutable -> tl::expected<Result, Error> {
+    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = -1](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
         ++n;
         if (ctx.phase == Context::Phase::Compilation)
             if (vv.isa(ValueType::Undef))
@@ -499,12 +499,12 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
     Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
     Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
     if (initval)
-        (void)initval->eval(ctx, val, LambdaResultFn([&](Context ctx, Value vv) {
+        (void)initval->eval(ctx, val, LambdaResultFn([&](Context ctx, Value&& vv) {
             sum = std::move(vv);
             return Result::Continue;
         }));
 
-    (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable -> tl::expected<Result, Error> {
+    (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
         if (subexpr) {
             auto ov = model_ptr<OverlayNode>::make(vv);
             ov->set(StringPool::OverlaySum, sum);
@@ -512,7 +512,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const
             ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n)));
             n += 1;
 
-            subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, auto vv) {
+            subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, Value&& vv) {
                 ov->set(StringPool::OverlaySum, vv);
                 sum = vv;
                 return Result::Continue;

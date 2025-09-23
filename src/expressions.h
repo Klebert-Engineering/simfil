@@ -105,6 +105,7 @@ public:
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error> override;
     auto clone() const -> ExprPtr override;
     void accept(ExprVisitor& v) override;
     auto toString() const -> std::string override;
@@ -178,6 +179,7 @@ public:
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
     auto toString() const -> std::string override;
     auto clone() const -> ExprPtr override;
     void accept(ExprVisitor& v) override;
@@ -228,6 +230,7 @@ public:
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error> override;
     auto clone() const -> ExprPtr override;
     void accept(ExprVisitor& v) override;
     auto toString() const -> std::string override;
@@ -245,6 +248,7 @@ public:
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
     auto clone() const -> ExprPtr override;
     void accept(ExprVisitor& v) override;
     auto toString() const -> std::string override;

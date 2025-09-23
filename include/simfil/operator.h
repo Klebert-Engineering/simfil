@@ -663,8 +663,8 @@ struct UnaryOperatorDispatcher
         return Value::undef();
     }
 
-    template <class _Value>
-    auto operator()(const _Value& rhs) -> tl::expected<Value, Error>
+    template <class Value_>
+    auto operator()(const Value_& rhs) -> tl::expected<Value, Error>
     {
         return impl::makeOperatorResult<_Operator>(_Operator()(rhs));
     }
