@@ -48,7 +48,7 @@ struct ArgParser
 
         auto subctx = ctx;
         auto res = args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value vv) mutable -> tl::expected<Result, Error> {
-            if (++n > 1) {
+            if (++n > 1) [[unlikely]] {
                 return tl::unexpected<Error>(Error::ExpectedSingleValue,
                                              fmt::format("expeted single argument value for argument {} for function {}", name, functionName));
             }
@@ -59,7 +59,7 @@ struct ArgParser
                 return Result::Continue;
             }
 
-            if (!vv.isa(type)) {
+            if (!vv.isa(type)) [[unlikely]] {
                 return tl::unexpected<Error>(Error::TypeMissmatch,
                                              fmt::format("invalid type for argument {} for function {}", name, functionName));
             }
@@ -69,7 +69,7 @@ struct ArgParser
             return Result::Continue;
         }));
 
-        if (!res)
+        if (!res) [[unlikely]]
             error = std::move(res.error());
 
         ++idx;
@@ -103,7 +103,7 @@ struct ArgParser
             outValue = std::move(vv);
             return Result::Continue;
         }));
-        if (!res)
+        if (!res) [[unlikely]]
             error = std::move(res.error());
 
         ++idx;
@@ -113,8 +113,8 @@ struct ArgParser
     [[nodiscard]]
     auto ok() const -> tl::expected<bool, Error>
     {
-        if (error)
-            return tl::unexpected<Error>(error.value());
+        if (error) [[unlikely]]
+            return tl::unexpected<Error>(*error);
         return !anyUndef;
     }
 };
@@ -263,7 +263,7 @@ auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
         .ok();
     if (!ok)
         return tl::unexpected<Error>(std::move(ok.error()));
-    if (!ok.value())
+    if (!ok.value()) [[unlikely]]
         return res(ctx, Value::undef());
 
     auto ibegin = begin.as<ValueType::Int>();
@@ -412,7 +412,7 @@ auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, con
         return tl::unexpected<Error>(std::move(ok.error()));
 
     auto subctx = ctx;
-    if (!ok.value())
+    if (!ok.value()) [[unlikely]]
         return res(subctx, Value::undef());
 
     auto items = split(str.as<ValueType::String>(), sep.as<ValueType::String>(), !keepEmpty.as<ValueType::Bool>());
@@ -452,7 +452,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, co
     if (!ok)
         return tl::unexpected<Error>(std::move(ok.error()));
 
-    if (!ok.value())
+    if (!ok.value()) [[unlikely]]
         return res(ctx, Value::undef());
 
     auto iidx = idx.as<ValueType::Int>();

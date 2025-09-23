@@ -83,28 +83,29 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
         Context& ctx;
         ResultFn& res;
 
-        auto iterate(ModelNode const& val, int depth)
+        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> Result
         {
-            if (val.type() == ValueType::Null)
+            if (val.type() == ValueType::Null) [[unlikely]]
                 return Result::Continue;
 
-            if (res(ctx, Value::field(val)) == Result::Stop)
-                return Result::Stop;
+            auto result = res(ctx, Value::field(val));
+            if (!result || *result == Result::Stop) [[unlikely]]
+                return result ? *result : Result::Stop;
 
-            auto result = Result::Continue;
-            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
-                if (iterate(subNode, depth + 1) == Result::Stop) {
-                    result = Result::Stop;
+            Result finalResult = Result::Continue;
+            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) -> bool {
+                if (iterate(subNode) == Result::Stop) {
+                    finalResult = Result::Stop;
                     return false;
                 }
                 return true;
             }));
 
-            return result;
-        };
+            return finalResult;
+        }
     };
 
-    auto r = Iterate{ctx, res}.iterate(*val.node, 0);
+    auto r = val.node ? Iterate{ctx, res}.iterate(*val.node) : Result::Continue;
     res.ensureCall();
     return r;
 }
@@ -139,10 +140,9 @@ auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> 
     if (!val.node || !val.node->size())
         return res(ctx, Value::null());
 
-    auto result = Result::Continue;
-    val.node->iterate(ModelNode::IterLambda([&](auto subNode) {
-        if (res(ctx, Value::field(std::move(subNode))) == Result::Stop) {
-            result = Result::Stop;
+    val.node->iterate(ModelNode::IterLambda([&](auto subNode) -> bool {
+        auto result = res(ctx, Value::field(std::move(subNode)));
+        if (!result || *result == Result::Stop) {
             return false;
         }
         return true;
@@ -202,13 +202,13 @@ auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl:
     if (!val.node)
         return res(ctx, Value::null());
 
-    if (!nameId_)
+    if (!nameId_) [[unlikely]] {
         nameId_ = ctx.env->strings()->get(name_);
-
-    if (!nameId_)
-        /* If the field name is not in the string cache, then there
-           is no field with that name. */
-        return res(ctx, Value::null());
+        if (!nameId_)
+            /* If the field name is not in the string cache, then there
+               is no field with that name. */
+            return res(ctx, Value::null());
+    }
 
     /* Enter sub-node */
     if (auto sub = val.node->get(nameId_)) {
@@ -410,7 +410,7 @@ auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::
     auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, const Value& lv) -> tl::expected<Result, Error> {
         return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) -> tl::expected<Result, Error> {
             auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
-            if (!bv)
+            if (!bv) [[unlikely]]
                 return tl::unexpected<Error>(std::move(bv.error()));
 
             if (bv->isa(ValueType::Undef))
@@ -592,10 +592,11 @@ auto CallExpression::type() const -> Type
 
 auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
-    if (!fn_)
+    if (!fn_) [[unlikely]] {
         fn_ = ctx.env->findFunction(name_);
-    if (!fn_)
-        return tl::unexpected<Error>(Error::UnknownFunction, fmt::format("Unknown function '{}'", name_));
+        if (!fn_)
+            return tl::unexpected<Error>(Error::UnknownFunction, fmt::format("Unknown function '{}'", name_));
+    }
 
     auto anyval = false;
     auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value vv) {
