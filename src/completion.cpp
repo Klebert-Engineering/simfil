@@ -147,7 +147,7 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
     const auto caseSensitive = comp_->options.smartCase && containsUppercaseCharacter(prefix_);
 
     // First we try to complete fields
-    for (StringId id : val.node->fieldNames()) {
+    for (StringId id : val.node()->fieldNames()) {
         if (comp_->size() >= comp_->limit)
             return Result::Stop;
 

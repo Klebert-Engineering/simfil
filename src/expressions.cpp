@@ -105,7 +105,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
         }
     };
 
-    auto r = val.node ? Iterate{ctx, res}.iterate(*val.node) : Result::Continue;
+    auto r = val.nodePtr() ? Iterate{ctx, res}.iterate(**val.nodePtr()) : Result::Continue;
     res.ensureCall();
     return r;
 }
@@ -137,10 +137,10 @@ auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> 
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
 
-    if (!val.node || !val.node->size())
+    if (!val.node() || !val.node()->size())
         return res(ctx, Value::null());
 
-    val.node->iterate(ModelNode::IterLambda([&](auto subNode) -> bool {
+    val.node()->iterate(ModelNode::IterLambda([&](auto subNode) -> bool {
         auto result = res(ctx, Value::field(std::move(subNode)));
         if (!result || *result == Result::Stop) {
             return false;
@@ -199,7 +199,7 @@ auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl:
     if (name_ == "_")
         return res(ctx, val);
 
-    if (!val.node)
+    if (!val.node())
         return res(ctx, Value::null());
 
     if (!nameId_) [[unlikely]] {
@@ -211,7 +211,7 @@ auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl:
     }
 
     /* Enter sub-node */
-    if (auto sub = val.node->get(nameId_)) {
+    if (auto sub = val.node()->get(nameId_)) {
         hits_++;
         return res(ctx, Value::field(*sub));
     }
@@ -339,19 +339,19 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -
     auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, Value lval) {
         return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, const Value& ival) -> tl::expected<Result, Error> {
             /* Field subscript */
-            if (lval.node) {
+            if (lval.node()) {
                 ModelNode::Ptr node;
 
                 /* Array subscript */
                 if (ival.isa(ValueType::Int)) {
                     auto index = ival.as<ValueType::Int>();
-                    node = lval.node->at(index);
+                    node = lval.node()->at(index);
                 }
                 /* String subscript */
                 else if (ival.isa(ValueType::String)) {
                     auto key = ival.as<ValueType::String>();
                     if (auto keyStrId = ctx.env->strings()->get(key))
-                        node = lval.node->get(keyStrId);
+                        node = lval.node()->get(keyStrId);
                 }
 
                 if (node)
@@ -665,7 +665,7 @@ auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl:
         if (v.isa(ValueType::Undef))
             return Result::Continue;
 
-        if (v.isa(ValueType::Null) && !v.node)
+        if (v.isa(ValueType::Null) && !v.node())
             return Result::Continue;
 
         ++hits_;
@@ -674,7 +674,7 @@ auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl:
             if (vv.isa(ValueType::Undef))
                 return Result::Continue;
 
-            if (vv.isa(ValueType::Null) && !vv.node)
+            if (vv.isa(ValueType::Null) && !vv.node())
                 return Result::Continue;
 
             return res(ctx, std::move(vv));
