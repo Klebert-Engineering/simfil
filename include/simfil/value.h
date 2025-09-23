@@ -217,7 +217,7 @@ template <ValueType ArgType>
 struct ValueAs
 {
     template <class VariantType>
-    static auto get(const VariantType& v) -> decltype(auto)
+    static inline auto get(const VariantType& v) noexcept -> decltype(auto)
     {
         return std::get<typename ValueTypeInfo<ArgType>::Type>(v);
     }
@@ -323,9 +323,21 @@ public:
     Value& operator=(const Value&) = default;
     Value& operator=(Value&&) = default;
 
-    [[nodiscard]] auto isa(ValueType test) const
+    [[nodiscard]] auto isa(ValueType test) const noexcept
     {
         return type == test;
+    }
+    
+    [[nodiscard]] bool asBool() const noexcept {
+        return std::get<bool>(value);
+    }
+    
+    [[nodiscard]] int64_t asInt() const noexcept {
+        return std::get<int64_t>(value);
+    }
+    
+    [[nodiscard]] double asFloat() const noexcept {
+        return std::get<double>(value);
     }
 
     template <ValueType ArgType>
@@ -334,31 +346,35 @@ public:
         return ValueAs<ArgType>::get(value);
     }
 
-    [[nodiscard]] auto isBool(bool v) const
+    [[nodiscard]] auto isBool(bool v) const noexcept
     {
-        return isa(ValueType::Bool) && this->as<ValueType::Bool>() == v;
+        return type == ValueType::Bool && asBool() == v;
     }
 
     template <class Visitor>
     [[nodiscard]] auto visit(Visitor fn) const
     {
-        if (type == ValueType::Undef)
+        switch (type) {
+        case ValueType::Undef:
             return fn(UndefinedType{});
-        if (type == ValueType::Null)
+        case ValueType::Null:
             return fn(NullType{});
-        if (type == ValueType::Bool)
-            return fn(this->template as<ValueType::Bool>());
-        if (type == ValueType::Int)
-            return fn(this->template as<ValueType::Int>());
-        if (type == ValueType::Float)
-            return fn(this->template as<ValueType::Float>());
-        if (type == ValueType::String)
+        case ValueType::Bool:
+            return fn(asBool());
+        case ValueType::Int:
+            return fn(asInt());
+        case ValueType::Float:
+            return fn(asFloat());
+        case ValueType::String:
             return fn(this->template as<ValueType::String>());
-        if (type == ValueType::TransientObject)
+        case ValueType::TransientObject:
             return fn(this->template as<ValueType::TransientObject>());
-        if (type == ValueType::Object || type == ValueType::Array) {
-            if (node) return fn(*node);
-            else return fn(NullType{});
+        case ValueType::Object:
+        case ValueType::Array:
+            if (node) [[likely]]
+                return fn(*node);
+            else
+                return fn(NullType{});
         }
         return fn(UndefinedType{});
     }
@@ -376,7 +392,8 @@ public:
         return visit(impl::ValueToString());
     }
 
-    [[nodiscard]] auto getScalar() {
+    [[nodiscard]] auto getScalar() noexcept
+    {
         struct {
             void operator() (std::monostate const& v) {result = v;}
             void operator() (bool const& v) {result = v;}
@@ -392,7 +409,8 @@ public:
     }
 
     /// Get the string_view of this Value if it has one.
-    std::string_view const* stringViewValue() {
+    std::string_view const* stringViewValue() noexcept
+    {
         return std::get_if<std::string_view>(&value);
     }
 
