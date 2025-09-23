@@ -554,13 +554,13 @@ auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, cons
         return tl::unexpected<Error>(Error::InvalidArguments,
                                      fmt::format("'keys' expects 1 argument got {}", args.size()));
 
-    auto result = args[0]->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value vv) -> tl::expected<Result, Error> {
+    auto result = args[0]->eval(ctx, val, LambdaResultFn([&res](Context ctx, const Value& vv) -> tl::expected<Result, Error> {
         if (ctx.phase == Context::Phase::Compilation)
             if (vv.isa(ValueType::Undef))
-                return res(ctx, std::move(vv));
+                return res(ctx, vv);
 
-        if (vv.node)
-            for (auto&& fieldName : vv.node->fieldNames()) {
+        if (vv.nodePtr())
+            for (auto&& fieldName : vv.node()->fieldNames()) {
                 if (auto key = ctx.env->stringPool->resolve(fieldName)) {
                     if (res(ctx, Value::strref(*key)) == Result::Stop)
                         return Result::Stop;
