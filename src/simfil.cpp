@@ -157,7 +157,7 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
 
     std::deque<Value> values;
     auto stub = Context(env, Context::Phase::Compilation);
-    auto res = (*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
+    auto res = (*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable {
         n += 1;
         if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.nodePtr())) {
             values.push_back(std::move(vv));
@@ -875,7 +875,7 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     auto mutableAST = ast.expr().clone();
 
     std::vector<Value> values;
-    auto res = mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&values](Context, Value value) {
+    auto res = mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&values](Context, Value&& value) {
         values.push_back(std::move(value));
         return Result::Continue;
     }));
