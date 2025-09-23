@@ -332,14 +332,6 @@ public:
         return std::get<bool>(value);
     }
     
-    [[nodiscard]] int64_t asInt() const noexcept {
-        return std::get<int64_t>(value);
-    }
-    
-    [[nodiscard]] double asFloat() const noexcept {
-        return std::get<double>(value);
-    }
-
     template <ValueType ArgType>
     [[nodiscard]] auto as() const -> decltype(auto)
     {
@@ -362,9 +354,9 @@ public:
         case ValueType::Bool:
             return fn(asBool());
         case ValueType::Int:
-            return fn(asInt());
+            return fn(this->template as<ValueType::Int>());
         case ValueType::Float:
-            return fn(asFloat());
+            return fn(this->template as<ValueType::Float>());
         case ValueType::String:
             return fn(this->template as<ValueType::String>());
         case ValueType::TransientObject:
