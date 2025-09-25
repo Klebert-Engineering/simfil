@@ -155,6 +155,10 @@ TEST_CASE("Big model query performance", "[perf.big-model-benchmark]") {
     BENCHMARK("Query field id") {
         return result(model, "count(*.id == 25)");
     };
+
+    BENCHMARK("Query field keys recursive") {
+        return result(model, "count(keys(**))");
+    };
 }
 
 #define REQUIRE_RESULT(query, result) \
