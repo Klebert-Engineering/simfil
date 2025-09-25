@@ -42,7 +42,7 @@ struct ArgParser
     auto arg(const char* name, ValueType type, Value& outValue) -> ArgParser&
     {
         if (args.size() <= idx) {
-            error = Error(Error::InvalidArguments, fmt::format("missing argumnt {} for function {}", name, this->functionName));
+            error = Error(Error::InvalidArguments, fmt::format("missing argument {} for function {}", name, this->functionName));
             return *this;
         }
 
@@ -142,7 +142,7 @@ auto CountFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto CountFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.empty())
         return tl::unexpected<Error>(Error::InvalidArguments,
@@ -186,7 +186,7 @@ auto TraceFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto TraceFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     Value name  = Value::undef();
     Value limit = Value::undef();
@@ -248,7 +248,7 @@ auto RangeFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto RangeFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.size() != 2)
         return tl::unexpected<Error>(Error::InvalidArguments,
@@ -284,7 +284,7 @@ auto ReFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto ReFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.size() != 1)
         return tl::unexpected<Error>(Error::InvalidArguments,
@@ -322,7 +322,7 @@ auto ArrFn::ident() const -> const FnInfo&
 }
 
 
-auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto ArrFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.empty())
         return res(ctx, Value::null());
@@ -397,7 +397,7 @@ ContainerType split(std::string_view what,
 }
 }
 
-auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto SplitFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     Value str = Value::undef();
     Value sep = Value::undef();
@@ -439,7 +439,7 @@ auto SelectFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto SelectFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     Value idx = Value::undef();
     Value cnt = Value::undef();
@@ -488,7 +488,7 @@ auto SumFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.empty() || args.size() > 3)
         return tl::unexpected<Error>(Error::InvalidArguments,
@@ -548,7 +548,7 @@ auto KeysFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto KeysFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (args.size() != 1)
         return tl::unexpected<Error>(Error::InvalidArguments,

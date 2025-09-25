@@ -70,7 +70,7 @@ public:
         return info;
     }
 
-    auto eval(Context ctx, Value, const std::vector<ExprPtr>&, const ResultFn& res) const -> tl::expected<Result, Error> override
+    auto eval(Context ctx, const Value&, const std::vector<ExprPtr>&, const ResultFn& res) const -> tl::expected<Result, Error> override
     {
         if (ctx.phase != Context::Phase::Compilation)
             return tl::unexpected<Error>(Error::RuntimeError, "Panic!");

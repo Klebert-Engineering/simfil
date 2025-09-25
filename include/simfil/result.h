@@ -8,10 +8,6 @@
 namespace simfil
 {
 
-/**
- * Result value callback.
- * Return `false` to stop evaluation.
- */
 enum Result { Continue = 1, Stop = 0 };
 
 struct ResultFn
