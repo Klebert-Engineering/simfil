@@ -14,49 +14,6 @@ namespace simfil
 {
 struct Context;
 
-struct ArgumentCountError : std::exception
-{
-    const Function* fn;
-    size_t min;
-    size_t max;
-    size_t have;
-
-    ArgumentCountError(const Function& fn, size_t min, size_t max, size_t have)
-        : fn(&fn), min(min), max(max), have(have)
-    {}
-
-    mutable std::string msg;
-    auto what() const noexcept -> const char* override;
-};
-
-struct ArgumentTypeError : std::exception
-{
-    const Function* fn;
-    size_t index;
-    std::string want;
-    std::string have;
-
-    ArgumentTypeError(const Function& fn, size_t index, std::string want, std::string have)
-        : fn(&fn), index(index), want(std::move(want)), have(std::move(have))
-    {}
-
-    mutable std::string msg;
-    auto what() const noexcept -> const char* override;
-};
-
-struct ArgumentValueCountError : std::exception
-{
-    const Function* fn;
-    size_t index;
-
-    ArgumentValueCountError(const Function& fn, size_t index)
-        : fn(&fn), index(index)
-    {}
-
-    mutable std::string msg;
-    auto what() const noexcept -> const char* override;
-};
-
 /**
  * Function info.
  */
@@ -76,7 +33,7 @@ public:
     virtual ~Function() = default;
 
     virtual auto ident() const -> const FnInfo& = 0;
-    virtual auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> = 0;
+    virtual auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> = 0;
 };
 
 class CountFn : public Function
@@ -87,7 +44,7 @@ public:
     CountFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class TraceFn : public Function
@@ -98,7 +55,7 @@ public:
     TraceFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class RangeFn : public Function
@@ -109,7 +66,7 @@ public:
     RangeFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class ReFn : public Function
@@ -120,7 +77,7 @@ public:
     ReFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class ArrFn : public Function
@@ -131,7 +88,7 @@ public:
     ArrFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class SplitFn : public Function
@@ -142,7 +99,7 @@ public:
     SplitFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class SelectFn : public Function
@@ -153,7 +110,7 @@ public:
     SelectFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class SumFn : public Function
@@ -164,7 +121,7 @@ public:
     SumFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 class KeysFn : public Function
@@ -175,14 +132,14 @@ public:
     KeysFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, Value, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
 /** Utility functions for working with arguments*/
 namespace util
 {
 
-inline auto evalArg1Any(Context ctx, Value val, const ExprPtr& expr) -> std::tuple<bool, Value>
+inline auto evalArg1Any(Context ctx, const Value& val, const ExprPtr& expr) -> std::tuple<bool, Value>
 {
     if (!expr)
         return {false, Value::undef()};
@@ -198,7 +155,7 @@ inline auto evalArg1Any(Context ctx, Value val, const ExprPtr& expr) -> std::tup
 }
 
 template <class CType>
-auto evalArg1(Context ctx, Value val, const ExprPtr& expr, CType fallback = {}) -> std::tuple<bool, CType>
+auto evalArg1(Context ctx, const Value& val, const ExprPtr& expr, CType fallback = {}) -> std::tuple<bool, CType>
 {
     auto&& [ok, value] = evalArg1Any(ctx, val, expr);
     if (ok)
