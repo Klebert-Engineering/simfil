@@ -39,6 +39,13 @@ struct CountedResultFn : ResultFn
         return fn(ctx, vv);
     }
 
+    auto operator()(Context ctx, Value&& vv) const noexcept -> tl::expected<Result, Error> override
+    {
+        assert(!finished);
+        ++calls;
+        return fn(ctx, std::move(vv));
+    }
+
     /* NOTE: You _must_ call finish before destruction! */
     auto ensureCall()
     {
@@ -189,15 +196,20 @@ auto FieldExpr::type() const -> Type
 
 auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
+    return ieval(ctx, Value{val}, res);
+}
+
+auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+{
     if (ctx.phase != Context::Compilation)
         evaluations_++;
 
     if (val.isa(ValueType::Undef))
-        return res(ctx, val);
+        return res(ctx, std::move(val));
 
     /* Special case: _ points to the current node */
     if (name_ == "_")
-        return res(ctx, val);
+        return res(ctx, std::move(val));
 
     if (!val.node())
         return res(ctx, Value::null());
@@ -335,8 +347,7 @@ auto SubscriptExpr::type() const -> Type
 auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
-
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, Value lval) {
+    auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, const Value& lval) {
         return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, const Value& ival) -> tl::expected<Result, Error> {
             /* Field subscript */
             if (lval.node()) {
@@ -403,6 +414,11 @@ auto SubExpr::type() const -> Type
 }
 
 auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
+{
+    return ieval(ctx, Value{val}, ores);
+}
+
+auto SubExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     /* Do not return null unless we have _no_ matching value. */
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
@@ -592,6 +608,11 @@ auto CallExpression::type() const -> Type
 
 auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
+    return ieval(ctx, Value{val}, res);
+}
+
+auto CallExpression::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+{
     if (!fn_) [[unlikely]] {
         fn_ = ctx.env->findFunction(name_);
         if (!fn_)
@@ -599,7 +620,7 @@ auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -
     }
 
     auto anyval = false;
-    auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value vv) {
+    auto result = fn_->eval(ctx, std::move(val), args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value&& vv) {
         anyval = true;
         return res(ctx, std::move(vv));
     }));
@@ -659,9 +680,14 @@ auto PathExpr::type() const -> Type
 
 auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
+    return ieval(ctx, Value{val}, ores);
+}
+
+auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error>
+{
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value v) -> tl::expected<Result, Error> {
+    auto r = left_->eval(ctx, std::move(val), LambdaResultFn([this, &res](Context ctx, Value&& v) -> tl::expected<Result, Error> {
         if (v.isa(ValueType::Undef))
             return Result::Continue;
 
@@ -670,7 +696,7 @@ auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl:
 
         ++hits_;
 
-        return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value vv) -> tl::expected<Result, Error> {
+        return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value&& vv) -> tl::expected<Result, Error> {
             if (vv.isa(ValueType::Undef))
                 return Result::Continue;
 
@@ -711,7 +737,7 @@ auto UnpackExpr::type() const -> Type
 auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto anyval = false;
-    auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value v) {
+    auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value&& v) {
         if (v.isa(ValueType::TransientObject)) {
             const auto& obj = v.as<ValueType::TransientObject>();
             auto r = Result::Continue;
@@ -762,7 +788,7 @@ auto UnaryWordOpExpr::type() const -> Type
 
 auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
-    return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value val) -> tl::expected<Result, Error> {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value&& val) -> tl::expected<Result, Error> {
         if (val.isa(ValueType::Undef))
             return res(ctx, std::move(val));
 
@@ -867,7 +893,7 @@ auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::e
 {
     /* Operator and behaves like in lua:
      * 'a and b' returns a if 'not a?' else b is returned */
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value lval) -> tl::expected<Result, Error> {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value&& lval) -> tl::expected<Result, Error> {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
@@ -879,7 +905,7 @@ auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::e
             if (!v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
-        return right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, Value rval) {
+        return right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, Value&& rval) {
             return res(ctx, std::move(rval));
         }));
     }));
@@ -917,7 +943,7 @@ auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::ex
 {
     /* Operator or behaves like in lua:
      * 'a or b' returns a if 'a?' else b is returned */
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) -> tl::expected<Result, Error> {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value&& lval) -> tl::expected<Result, Error> {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
@@ -932,7 +958,7 @@ auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::ex
                 return res(ctx, std::move(lval));
 
         ++rightEvaluations_;
-        return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value rval) {
+        return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value&& rval) {
             return res(ctx, std::move(rval));
         }));
     }));
