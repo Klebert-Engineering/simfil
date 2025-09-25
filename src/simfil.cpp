@@ -159,7 +159,7 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
     auto stub = Context(env, Context::Phase::Compilation);
     auto res = (*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
         n += 1;
-        if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.node)) {
+        if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.nodePtr())) {
             values.push_back(std::move(vv));
             return Result::Continue;
         }
