@@ -120,14 +120,15 @@ static auto isSymbolWord(std::string_view sv) -> bool
 /**
  * RIIA Helper for calling function at destruction.
  */
+template <class Fun>
 struct scoped {
-    std::function<void()> f;
+    Fun f;
 
-    explicit scoped(std::function<void()> f) : f(std::move(f)) {}
+    explicit scoped(Fun f) : f(std::move(f)) {}
     scoped(scoped&& s) noexcept : f(std::move(s.f)) { s.f = nullptr; }
     scoped(const scoped& s) = delete;
     ~scoped() {
-        try { if (f) { f(); } } catch (...) {}
+        f();
     }
 };
 
