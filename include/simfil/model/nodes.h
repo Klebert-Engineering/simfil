@@ -109,29 +109,23 @@ struct model_ptr
         return model_ptr(std::in_place, std::forward<Args>(args)...);
     }
 
-    inline void ensureModelIsNotNull() const {
-        if (!data_.model_ || !data_.addr_) {
-            raise<std::runtime_error>("Attempt to dereference null model_ptr!");
-        }
-    }
-
     inline T& operator* () {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return data_;
     }
 
     inline T* operator-> () {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return &data_;
     }
 
     inline T const& operator* () const {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return data_;
     }
 
     inline T const* operator-> () const {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return &data_;
     }
 
