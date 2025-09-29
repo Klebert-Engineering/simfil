@@ -6,6 +6,7 @@
 #include "simfil/function.h"
 
 #include "fmt/core.h"
+#include "src/expected.h"
 
 namespace simfil
 {
@@ -473,7 +474,7 @@ auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::e
     auto undef = false;  /* At least one value is undef */
 
     for (const auto& arg : args_) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+        auto res = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -484,7 +485,7 @@ auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::e
             result = result || boolify(vv);
             return result ? Result::Stop : Result::Continue;
         }));
-
+        TRY_EXPECTED(res);
         if (result || undef)
             break;
     }
@@ -543,7 +544,7 @@ auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::
     auto undef = false; /* At least one value is undef */
 
     for (const auto& arg : args_) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+        auto res = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -553,7 +554,7 @@ auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::
             result = result && boolify(vv);
             return result ? Result::Continue : Result::Stop;
         }));
-
+        TRY_EXPECTED(res);
         if (!result || undef)
             break;
     }
