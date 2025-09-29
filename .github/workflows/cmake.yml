@@ -39,6 +39,7 @@ jobs:
       with:
         name: 'Catch2 Benchmark (v3)'
         tool: 'catch2'
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         output-file-path: benchmark.txt
         #external-data-json-path: ./cache/benchmark-data.json
         alert-threshold: '150%'

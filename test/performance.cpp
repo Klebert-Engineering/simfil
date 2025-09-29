@@ -3,6 +3,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
+#include <chrono>
+#include <thread>
 #include <vector>
 #include <cstdint>
 
@@ -145,6 +147,7 @@ TEST_CASE("Big model query performance", "[perf.big-model-benchmark]") {
     const auto model = generate_model(1000);
 
     BENCHMARK("Query typeof Recursive") {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
         return result(model, "count(typeof ** == 'notatype')");
     };
 
