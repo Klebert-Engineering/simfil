@@ -211,9 +211,11 @@ public:
         ArrayIterator(ArrayArenaRef arena, ArrayIndex array_index, size_t elem_index)
             : arena_(arena), array_index_(array_index), elem_index_(elem_index) {}
 
-        ElementRef operator*() {
+        ElementRef operator*() noexcept {
+            auto res = arena_.at(array_index_, elem_index_);
+            assert(res);
             // Unchecked access!
-            return *arena_.at(array_index_, elem_index_);
+            return *res;
         }
 
         ArrayIterator& operator++() {
