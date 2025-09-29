@@ -10,6 +10,40 @@ on:
       - '**/*.txt'
 
 jobs:
+  benchmark:
+    name: Benchmark tests
+    runs-on: ubuntu
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - name: Install dependencies
+      run: |
+        sudo apt-get update && sudo apt-get install ninja-build
+    - name: Build
+      run: |
+        mkdir build
+        cmake . -Bbuild -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release
+    - name: Run benchmark
+      run: |
+        ./build/test/test.simfil | tee benchmark.txt
+        cat 'benchmark.txt'
+    - name: Download previous benchmark data
+      uses: actions/cache@v4
+      with:
+        path: ./cache
+        key: ${{ runner.os }}-benchmark
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        name: 'Catch2 Benchmark (v3)'
+        tool: 'catch2'
+        output-file-path: benchmark.txt
+        #external-data-json-path: ./cache/benchmark-data.json
+        alert-threshold: '150%'
+        fail-on-alert: true
+
   build-linux:
     name: Linux
     runs-on: ubuntu-latest
@@ -23,12 +57,17 @@ jobs:
     - name: Build
       run: |
         mkdir build
-        cmake . -B build -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO
+        cmake . -Bbuild -GNinja -DSIMFIL_FPIC=YES -DSIMFIL_SHARED=NO -DCMAKE_BUILD_TYPE=Debug
         cmake --build build
-    - name: Run CTest
+    - name: Run tests
       working-directory: build/test
       run: |
         ctest --verbose --output-junit result-junit.xml
+    - name: Download previous benchmark data
+      uses: actions/cache@v4
+      with:
+        path: ./cache
+        key: ${{ runner.os }}-benchmark
     - name: Publish Test Results
       uses: EnricoMi/publish-unit-test-result-action@v2
       id: test-results
