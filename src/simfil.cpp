@@ -869,10 +869,10 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
 
     /* Show a hint to prepend `** =` */
     if (showWildcardHint)
-        candidates.insert(candidates.begin(), {fmt::format("** = {}", query),
-                                               SourceLocation(0, query.size()),
-                                               CompletionCandidate::Type::HINT,
-                                               "Expand to wildcard query"});
+        candidates.emplace_back(fmt::format("** = {}", query),
+                                SourceLocation(0, query.size()),
+                                CompletionCandidate::Type::HINT,
+                                "Expand to wildcard query");
 
     return candidates;
 }
