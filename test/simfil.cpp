@@ -24,6 +24,22 @@ static constexpr auto StaticTestKey = StringPool::NextStaticId;
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
     REQUIRE(Compile(input, true)->expr().toString() == (output));
 
+TEST_CASE("Int", "[ast.integer]") {
+    REQUIRE_AST("1", "1");
+    REQUIRE_AST("123", "123");
+    REQUIRE_AST("-1", "-1");
+    REQUIRE_AST("0xff", "255");
+    REQUIRE_AST("-0xff", "-255");
+}
+
+TEST_CASE("Float", "[ast.float]") {
+    REQUIRE_AST("1.0", "1.000000");
+    REQUIRE_AST("1.5", "1.500000");
+    REQUIRE_AST("-1.0", "-1.000000");
+    REQUIRE_AST("1e2", "100.000000");
+    REQUIRE_AST("1e-2", "0.010000");
+}
+
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
     REQUIRE_AST("a.b", "(. a b)");

@@ -77,6 +77,10 @@ TEST_CASE("CompleteString", "[completion.string-const]") {
     EXPECT_COMPLETION("1 > C", {}, "CONSTANT_1");
 }
 
+TEST_CASE("CompleteFunction", "[completion.function]") {
+    EXPECT_COMPLETION("spl", {}, "split", Type::FUNCTION);
+}
+
 TEST_CASE("CompleteFieldOrString") {
     // Complete both the field and the constants
     EXPECT_COMPLETION("cons", {}, "constant", Type::FIELD);
