@@ -44,9 +44,9 @@ auto IRangeType::binaryOp(std::string_view op, const IRange& l, const Value& r) 
     /* Range ==/!= operator checks if the other operand is _in_ the range (for int/float) */
     if (op == OperatorNeq::name()) {
         auto res = binaryOp(OperatorEq::name(), l, r);
-        if (res->isa(ValueType::Bool))
+        if (res && res->isa(ValueType::Bool))
             return Value::make(!res->template as<ValueType::Bool>());
-        assert(0);
+        return res;
     }
 
     if (op == OperatorEq::name()) {
