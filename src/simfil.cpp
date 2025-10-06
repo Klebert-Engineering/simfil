@@ -1,6 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/model/nodes.h"
 #include "simfil/model/string-pool.h"
+#include "simfil/sourcelocation.h"
 #include "simfil/token.h"
 #include "simfil/operator.h"
 #include "simfil/value.h"
@@ -844,9 +845,12 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     auto ast = std::move(*astResult);
 
     /* Expand a single value to `** == <value>` */
+    auto showWildcardHint = false;
     if (options.autoWildcard && ast && ast->constant()) {
         ast = std::make_unique<BinaryExpr<OperatorEq>>(
             std::make_unique<WildcardExpr>(), std::move(ast));
+
+        showWildcardHint = true;
     }
 
     Context ctx(&env);
@@ -862,6 +866,13 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
         std::ranges::stable_sort(candidates, [](const auto& left, const auto& right) {
             return left.text < right.text;
         });
+
+    /* Show a hint to prepend `** =` */
+    if (showWildcardHint)
+        candidates.insert(candidates.begin(), {fmt::format("** = {}", query),
+                                               SourceLocation(0, query.size()),
+                                               CompletionCandidate::Type::HINT,
+                                               "Expand to wildcard query"});
 
     return candidates;
 }

@@ -356,6 +356,11 @@ auto CompletionWordExpr::type() const -> Type
     return Type::VALUE;
 }
 
+auto CompletionWordExpr::constant() const -> bool
+{
+    return true;
+}
+
 auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
