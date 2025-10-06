@@ -87,8 +87,12 @@ TEST_CASE("CompleteFieldOrString") {
     EXPECT_COMPLETION("cons", {}, "CONSTANT_1", Type::CONSTANT);
 
     // Do not complete the field
-    EXPECT_COMPLETION("CONS", {}, "CONSTANT_1", Type::CONSTANT, 2);
-    EXPECT_COMPLETION("CONS", {}, "CONSTANT_2", Type::CONSTANT, 2);
+    EXPECT_COMPLETION("CONS", {}, "CONSTANT_1", Type::CONSTANT, 3); // 3 entries bc. of `** =`
+    EXPECT_COMPLETION("CONS", {}, "CONSTANT_2", Type::CONSTANT, 3);
+}
+
+TEST_CASE("CompleteWildcardEquals") {
+    EXPECT_COMPLETION("A_CONST", {}, "** = A_CONST", Type::HINT);
 }
 
 TEST_CASE("CompleteSorted") {
