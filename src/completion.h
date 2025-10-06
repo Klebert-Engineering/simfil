@@ -92,6 +92,7 @@ public:
     CompletionWordExpr(std::string prefix, Completion* comp, const Token& token);
 
     auto type() const -> Type override;
+    auto constant() const -> bool override;
     auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> override;
     auto clone() const -> std::unique_ptr<Expr> override;
     auto accept(ExprVisitor& v) -> void override;

@@ -200,6 +200,7 @@ struct CompletionCandidate
       CONSTANT = 1,
       FIELD    = 2,
       FUNCTION = 3,
+      HINT     = 4,
     };
 
     std::string text;        // Text to insert
