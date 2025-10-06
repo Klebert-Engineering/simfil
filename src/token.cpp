@@ -435,7 +435,7 @@ std::optional<Token> scanSyntax(Scanner& s)
         {"/", Token::OP_DIV},
         {"%", Token::OP_MOD},
         {"<<",Token::OP_LSHIFT},
-        {">>",Token::OP_LSHIFT},
+        {">>",Token::OP_RSHIFT},
         {"~", Token::OP_BITINV},
         {"|", Token::OP_BITOR},
         {"&", Token::OP_BITAND},
