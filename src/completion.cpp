@@ -144,10 +144,14 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
     if (val.isa(ValueType::Undef))
         return res(ctx, val);
 
+    const auto node = val.node();
+    if (!node)
+        return Result::Stop;
+
     const auto caseSensitive = comp_->options.smartCase && containsUppercaseCharacter(prefix_);
 
     // First we try to complete fields
-    for (StringId id : val.node()->fieldNames()) {
+    for (StringId id : node->fieldNames()) {
         if (comp_->size() >= comp_->limit)
             return Result::Stop;
 
