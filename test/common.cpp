@@ -68,6 +68,7 @@ auto CompleteQuery(std::string_view query, size_t point, std::optional<std::stri
     Environment env(model.value()->strings());
 
     CompletionOptions opts;
+    opts.autoWildcard = true;
     auto root = model.value()->root(0);
     return complete(env, query, point, **root, opts).value_or(std::vector<CompletionCandidate>());
 }
