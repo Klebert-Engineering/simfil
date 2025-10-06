@@ -311,6 +311,7 @@ struct ModelNode
         using reference = value_type&;
         ChildIterator(int64_t const idx, ModelNode const* const p) : index(idx), parent(p) {}
         ChildIterator& operator++() { ++index; return *this; }
+        ChildIterator& operator--() { --index; return *this; }
         bool operator==(const ChildIterator& other) const { return index == other.index; }
         bool operator!=(const ChildIterator& other) const { return index != other.index; }
         Ptr operator*() const { return parent->at(index); }

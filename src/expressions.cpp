@@ -1,12 +1,14 @@
 #include "expressions.h"
 
 #include "simfil/environment.h"
+#include "simfil/model/nodes.h"
 #include "simfil/result.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
 
 #include "fmt/core.h"
 #include "src/expected.h"
+#include <iterator>
 
 namespace simfil
 {
@@ -86,36 +88,42 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
 
     CountedResultFn<const ResultFn&> res(ores, ctx);
 
-    struct Iterate
-    {
-        Context& ctx;
-        ResultFn& res;
+    if (!val.nodePtr()) {
+        res.ensureCall();
+        return Result::Continue;
+    }
 
-        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> Result
-        {
-            if (val.type() == ValueType::Null) [[unlikely]]
-                return Result::Continue;
+    std::vector<ModelNode::Ptr> stack;
+    stack.reserve(250);
+    stack.push_back(*val.nodePtr());
 
-            auto result = res(ctx, Value::field(val));
-            if (!result || *result == Result::Stop) [[unlikely]]
-                return result ? *result : Result::Stop;
+    // Temorary children array, re-used to save
+    // free/malloc calls.
+    std::vector<ModelNode::Ptr> children;
 
-            Result finalResult = Result::Continue;
-            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) -> bool {
-                if (iterate(subNode) == Result::Stop) {
-                    finalResult = Result::Stop;
-                    return false;
-                }
-                return true;
-            }));
+    while (!stack.empty()) {
+        auto top = stack.back();
+        stack.pop_back();
 
-            return finalResult;
+        //if (top->type() == ValueType::Null) [[unlikely]]
+        //    continue;
+
+        auto result = res(ctx, Value::field(*top));
+        if (!result || *result == Result::Stop) {
+            res.ensureCall();
+            return result ? *result : Result::Stop;
         }
-    };
 
-    auto r = val.nodePtr() ? Iterate{ctx, res}.iterate(**val.nodePtr()) : Result::Continue;
+        top->iterate(ModelNode::IterLambda([&children](auto&& child) {
+            children.push_back(ModelNode::Ptr(child));
+            return true;
+        }));
+        stack.insert(stack.end(), std::make_move_iterator(children.rbegin()), std::make_move_iterator(children.rend()));
+        children.clear();
+    }
+
     res.ensureCall();
-    return r;
+    return Result::Continue;
 }
 
 auto WildcardExpr::clone() const -> ExprPtr
