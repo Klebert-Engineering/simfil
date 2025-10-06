@@ -130,6 +130,7 @@ TEST_CASE("Tokenize symbols", "[token.symbol]") {
     REQUIRE(getFirstType("<")      == Token::Type::OP_LT);
     REQUIRE(getFirstType("< <")    == Token::Type::OP_LT);
     REQUIRE(getFirstType("<<")     == Token::Type::OP_LSHIFT);
+    REQUIRE(getFirstType(">>")     == Token::Type::OP_RSHIFT);
     REQUIRE(getFirstType("typeof") == Token::Type::OP_TYPEOF);
 }
 

@@ -44,10 +44,14 @@ TEST_CASE("Wildcard", "[ast.wildcard]") {
 TEST_CASE("OperatorConst", "[ast.operator]") {
     /* Arithmetic */
     REQUIRE_AST("-1",  "-1");
+    REQUIRE_AST("-1.1","-1.100000");
     REQUIRE_AST("1+2", "3");
-    REQUIRE_AST("1-2", "-1");
+    REQUIRE_AST("1.5+2", "3.500000");
+    REQUIRE_AST("1.5-2", "-0.500000");
     REQUIRE_AST("2*2", "4");
+    REQUIRE_AST("2.5*2", "5.000000");
     REQUIRE_AST("8/2", "4");
+    REQUIRE_AST("3/2.0", "1.500000");
     REQUIRE_AST("-a",  "(- a)");
     REQUIRE_AST("a+2", "(+ a 2)");
     REQUIRE_AST("2+a", "(+ 2 a)");
@@ -60,6 +64,8 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("null-1", "null");
     REQUIRE_AST("1/null", "null");
     REQUIRE_AST("null/1", "null");
+    REQUIRE_AST("null%null", "null");
+    REQUIRE_AST("null/null", "null");
 
     auto GetError = [&](std::string_view query) -> std::string {
         Environment env(Environment::WithNewStringCache);
@@ -84,11 +90,20 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("1!=1", "false");
 
     REQUIRE_AST("2>1",  "true");
+    REQUIRE_AST("1>=1",  "true");
+    REQUIRE_AST("1.0>=1",  "true");
+    REQUIRE_AST("1>=1.0",  "true");
     REQUIRE_AST("1<2", "true");
     REQUIRE_AST("2<1", "false");
     REQUIRE_AST("2<=2", "true");
     REQUIRE_AST("2<=1", "false");
     REQUIRE_AST("1<=1.1", "true");
+    REQUIRE_AST("1.0<=1", "true");
+    REQUIRE_AST("1.0<=1.0", "true");
+    REQUIRE_AST("'a'<'b'", "true");
+    REQUIRE_AST("'a'<='b'", "true");
+    REQUIRE_AST("'b'>'a'", "true");
+    REQUIRE_AST("'b'>='b'", "true");
 
     /* Null behaviour */
     REQUIRE_AST("1<null", "false");
@@ -113,6 +128,9 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("2*(1+1)", "4");
 
     /* Casts */
+    REQUIRE_AST("1 as float",      "1.000000");
+    REQUIRE_AST("true as float",   "1.000000");
+    REQUIRE_AST("1.5 as int",      "1");
     REQUIRE_AST("'123' as int",    "123");
     REQUIRE_AST("'123' as float",  "123.000000");
     REQUIRE_AST("'123' as bool",   "true");
@@ -123,6 +141,12 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("false as string", "\"false\"");
     REQUIRE_AST("null as string",  "\"null\"");
     REQUIRE_AST("range(1,3) as string", "\"1..3\"");
+
+    /* Bool Cast */
+    REQUIRE_AST("123?", "true");
+    REQUIRE_AST("0.0?", "true");
+    REQUIRE_AST("false?", "false");
+    REQUIRE_AST("null?", "false");
 
     /* Unpack */
     REQUIRE_AST("null ...",         "null");
@@ -149,6 +173,16 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("a{1}",     "(sub a 1)");
     REQUIRE_AST("1{a}",     "(sub 1 a)");
     REQUIRE_AST("a{a}",     "(sub a a)");
+
+    /* Length */
+    REQUIRE_AST("#'abc'",   "3");
+
+    /* Bit */
+    REQUIRE_AST("~0xf0",       "-241");
+    REQUIRE_AST("0x80 >> 2",   "32");
+    REQUIRE_AST("32 << 2",     "128");
+    REQUIRE_AST("0xf0 & 0x80", "128");
+    REQUIRE_AST("0xf0 | 0x01", "241");
 }
 
 TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
@@ -221,6 +255,16 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
 
     /* Test that all-expressions need to hold true for all objects */
     REQUIRE(test("all(*.another=1)") == false);
+}
+
+TEST_CASE("OperatorNegate", "[ast.operator-negate]") {
+    REQUIRE_AST("-(1)", "-1");
+    REQUIRE_AST("-(1.0)", "-1.000000");
+}
+
+TEST_CASE("OperatorNot", "[ast.operator-not]") {
+    REQUIRE_AST("not true", "false");
+    REQUIRE_AST("not false", "true");
 }
 
 TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
