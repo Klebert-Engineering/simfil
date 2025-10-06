@@ -21,6 +21,9 @@ static constexpr auto StaticTestKey = StringPool::NextStaticId;
 #define REQUIRE_AST(input, output) \
     REQUIRE(Compile(input, false)->expr().toString() == (output));
 
+#define REQUIRE_ERROR(input) \
+    REQUIRE(CompileError(input, false).message != "");
+
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
     REQUIRE(Compile(input, true)->expr().toString() == (output));
 
@@ -201,6 +204,14 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("0xf0 | 0x01", "241");
 }
 
+TEST_CASE("OperatorLength", "[ast.operator-length]") {
+    REQUIRE_ERROR("#0");
+    REQUIRE_ERROR("#0.0");
+    REQUIRE_ERROR("#true");
+    REQUIRE_AST("#null", "null");
+    REQUIRE_AST("#'abc'", "3");
+}
+
 TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
     REQUIRE_AST("1=\"A\"", "false");
     REQUIRE_AST("1!=\"A\"", "true");
@@ -274,25 +285,47 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
 }
 
 TEST_CASE("OperatorNegate", "[ast.operator-negate]") {
+    REQUIRE_ERROR("-('abc')");
+    REQUIRE_ERROR("-(true)");
     REQUIRE_AST("-(1)", "-1");
     REQUIRE_AST("-(1.0)", "-1.000000");
+    REQUIRE_AST("-(null)", "null");
+}
+
+TEST_CASE("OperatorSubstract", "[ast.operator-substract]") {
+    REQUIRE_AST("1-2", "-1");
+    REQUIRE_AST("1-2.0", "-1.000000");
+    REQUIRE_AST("1-null", "null");
+    REQUIRE_AST("1.0-2", "-1.000000");
+    REQUIRE_AST("1.0-2.0", "-1.000000");
+    REQUIRE_AST("1.0-null", "null");
+    REQUIRE_ERROR("1-true");
+    REQUIRE_ERROR("true-1");
+    REQUIRE_ERROR("true-false");
 }
 
 TEST_CASE("OperatorNot", "[ast.operator-not]") {
     REQUIRE_AST("not true", "false");
     REQUIRE_AST("not false", "true");
+    REQUIRE_AST("not 'abc'", "false");
+    REQUIRE_AST("not 1", "false");
+    REQUIRE_AST("not 1.0", "false");
+    REQUIRE_AST("not null", "true");
 }
 
 TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
     /* Or */
     REQUIRE_AST("null or 1", "1");
+    REQUIRE_AST("false or 1", "1");
     REQUIRE_AST("1 or null", "1");
     REQUIRE_AST("1 or 2",    "1");
     REQUIRE_AST("a or b",    "(or a b)");
 
     /* And */
     REQUIRE_AST("null and 1", "null");
+    REQUIRE_AST("false and 1", "false");
     REQUIRE_AST("1 and null", "null");
+    REQUIRE_AST("true and 2", "2");
     REQUIRE_AST("1 and 2",    "2");
     REQUIRE_AST("a and b",    "(and a b)");
 }

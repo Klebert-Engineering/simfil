@@ -80,6 +80,7 @@ public:
 };
 
 auto Compile(std::string_view query, bool autoWildcard = false) -> ASTPtr;
+auto CompileError(std::string_view query, bool autoWildcard = false) -> Error;
 auto JoinedResult(std::string_view query, std::optional<std::string> json = {}) -> std::string;
 auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json = {}) -> std::vector<CompletionCandidate>;
 auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::Message>;

@@ -71,6 +71,7 @@ struct InvalidOperands {
 struct OperatorNegate
 {
     NAME("-")
+    NULL_AS_NULL()
     DENY_OTHER()
     DECL_OPERATION(int64_t, -)
     DECL_OPERATION(double,  -)
