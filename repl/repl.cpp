@@ -79,7 +79,6 @@ char* command_generator(const char* text, int state)
         if (current_env) {
             simfil::CompletionOptions opts;
             opts.limit = 25;
-            opts.autoWildcard = options.auto_wildcard;
 
             auto root = model->root(0);
             if (!root)

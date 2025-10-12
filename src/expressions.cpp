@@ -193,7 +193,7 @@ FieldExpr::FieldExpr(std::string name, const Token& token)
 
 auto FieldExpr::type() const -> Type
 {
-    return Type::PATH;
+    return Type::FIELD;
 }
 
 auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
@@ -339,23 +339,6 @@ auto ConstExpr::toString() const -> std::string
 auto ConstExpr::value() const -> const Value&
 {
     return value_;
-}
-
-auto CompletionConstExpr::constant() const -> bool
-{
-    return false;
-}
-
-auto CompletionConstExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<CompletionConstExpr>(value_);
-}
-
-auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
-{
-    if (ctx.phase == Context::Compilation)
-        return res(ctx, Value::undef());
-    return res(ctx, value_);
 }
 
 SubscriptExpr::SubscriptExpr(ExprPtr left, ExprPtr index)
