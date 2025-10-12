@@ -38,7 +38,7 @@ inline bool isSimpleFieldComparison(const Expr* expr) {
             leftIsFieldOrEnum = true;
         } else if (const auto* left = dynamic_cast<const ConstExpr*>(compExpr->left_.get())) {
             // Test if the value is a WORD.
-            auto value = left->value();
+            const auto& value = left->value();
             if (value.isa(ValueType::String)) {
                 auto str = value.as<ValueType::String>();
                 auto loc = std::locale();
