@@ -15,6 +15,7 @@
 #include "fmt/core.h"
 
 #include "expressions.h"
+#include "expression-patterns.h"
 #include "completion.h"
 #include "expected.h"
 
@@ -640,7 +641,7 @@ public:
                 if (t.containsPoint(comp_->point)) {
                     return std::make_unique<CompletionWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
                 }
-                return std::make_unique<ConstExpr>(Value::make<std::string>(std::move(word)));
+                return std::make_unique<CompletionConstExpr>(Value::make<std::string>(std::move(word)));
             }
             /* Constant */
             else if (auto constant = p.env->findConstant(word)) {
@@ -890,13 +891,25 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     TRY_EXPECTED(astResult);
     auto ast = std::move(*astResult);
 
-    /* Expand a single value to `** == <value>` */
-    auto showWildcardHint = false;
+    // Determine which hints to show.
+    auto showConstantWildcardHint = false;
+    auto showComparisonWildcardHint = false;
+    
+    // Check for simple constant expressions.
     if (options.autoWildcard && ast && ast->constant()) {
         ast = std::make_unique<BinaryExpr<OperatorEq>>(
             std::make_unique<WildcardExpr>(), std::move(ast));
+        showConstantWildcardHint = true;
+    }
 
-        showWildcardHint = true;
+    // Test the query for patterns and hint for converting it
+    // to a wildcard query by prepending `**.` to the query.
+    if (options.showWildcardHints) {
+        if (isSingleValueExpression(ast.get()))
+            showConstantWildcardHint = true;
+
+        if (isSimpleFieldComparison(ast.get()))
+            showComparisonWildcardHint = true;
     }
 
     Context ctx(&env);
@@ -913,9 +926,15 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
             return left.text < right.text;
         });
 
-    /* Show a hint to prepend `** =` */
-    if (showWildcardHint)
+    // Show special hints for wildcard expansion.
+    if (showConstantWildcardHint)
         candidates.emplace_back(fmt::format("** = {}", query),
+                                SourceLocation(0, query.size()),
+                                CompletionCandidate::Type::HINT,
+                                "Expand to wildcard query");
+    
+    if (showComparisonWildcardHint)
+        candidates.emplace_back(fmt::format("**.{}", query),
                                 SourceLocation(0, query.size()),
                                 CompletionCandidate::Type::HINT,
                                 "Expand to wildcard query");

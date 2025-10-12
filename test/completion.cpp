@@ -37,7 +37,6 @@ auto FindCompletion(std::string_view query, std::optional<size_t> point, std::st
         REQUIRE(comp.size() > 0);
 
     for (const auto& item : comp) {
-        INFO(item.text);
         if (item.text == what && (!type || item.type == *type))
             return true;
     }
@@ -46,6 +45,7 @@ auto FindCompletion(std::string_view query, std::optional<size_t> point, std::st
 
 auto EXPECT_COMPLETION(std::string_view query, std::optional<size_t> point, std::string_view what, std::optional<Type> type = {}, size_t count = 0)
 {
+    INFO("Query: " << query);
     REQUIRE(FindCompletion(query, point, what, type, count) == true);
 }
 
@@ -93,6 +93,15 @@ TEST_CASE("CompleteFieldOrString") {
 
 TEST_CASE("CompleteWildcardEquals") {
     EXPECT_COMPLETION("A_CONST", {}, "** = A_CONST", Type::HINT);
+}
+
+TEST_CASE("CompleteWildcardComparison") {
+    EXPECT_COMPLETION("field == 123", {}, "**.field == 123", Type::HINT);
+    EXPECT_COMPLETION("name != \"test\"", {}, "**.name != \"test\"", Type::HINT);
+    EXPECT_COMPLETION("count < 10", {}, "**.count < 10", Type::HINT);
+    EXPECT_COMPLETION("value >= 5.0", {}, "**.value >= 5.0", Type::HINT);
+    EXPECT_COMPLETION("STATUS_ACTIVE == \"active\"", {}, "**.STATUS_ACTIVE == \"active\"", Type::HINT);
+    EXPECT_COMPLETION("TYPE_ENUM != 42", {}, "**.TYPE_ENUM != 42", Type::HINT);
 }
 
 TEST_CASE("CompleteSorted") {

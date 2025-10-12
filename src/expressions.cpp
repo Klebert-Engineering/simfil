@@ -7,6 +7,7 @@
 
 #include "fmt/core.h"
 #include "src/expected.h"
+#include <memory>
 
 namespace simfil
 {
@@ -333,6 +334,28 @@ auto ConstExpr::toString() const -> std::string
     if (value_.isa(ValueType::String))
         return "\""s + value_.toString() + "\""s;
     return value_.toString();
+}
+
+auto ConstExpr::value() const -> const Value&
+{
+    return value_;
+}
+
+auto CompletionConstExpr::constant() const -> bool
+{
+    return false;
+}
+
+auto CompletionConstExpr::clone() const -> ExprPtr
+{
+    return std::make_unique<CompletionConstExpr>(value_);
+}
+
+auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
+{
+    if (ctx.phase == Context::Compilation)
+        return res(ctx, Value::undef());
+    return res(ctx, value_);
 }
 
 SubscriptExpr::SubscriptExpr(ExprPtr left, ExprPtr index)
