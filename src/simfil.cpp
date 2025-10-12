@@ -719,71 +719,114 @@ public:
     Completion* comp_;
 };
 
+namespace
+{
+// Static stateles parselets re-used by all parser instances
+const ScalarParser<int64_t> intParser;
+const ScalarParser<double> floatParser;
+const ScalarParser<std::string> stringParser;
+const RegExpParser regexpParser;
+const UnaryOpParser<OperatorNegate> negateParser;
+const UnaryOpParser<OperatorBitInv> bitInvParser;
+const UnaryOpParser<OperatorNot> notParser;
+const UnaryOpParser<OperatorLen> lenParser;
+const UnaryOpParser<OperatorTypeof> typeofParser;
+const UnaryPostOpParser<OperatorBool> boolParser;
+const BinaryOpParser<OperatorAdd, Precedence::TERM> addParser;
+const BinaryOpParser<OperatorSub, Precedence::TERM> subParser;
+const BinaryOpParser<OperatorMul, Precedence::PRODUCT> mulParser;
+const BinaryOpParser<OperatorDiv, Precedence::PRODUCT> divParser;
+const BinaryOpParser<OperatorMod, Precedence::PRODUCT> modParser;
+const BinaryOpParser<OperatorBitAnd, Precedence::BITWISE> bitAndParser;
+const BinaryOpParser<OperatorBitOr, Precedence::BITWISE> bitOrParser;
+const BinaryOpParser<OperatorBitXor, Precedence::BITWISE> bitXorParser;
+const BinaryOpParser<OperatorShl, Precedence::BITWISE> shlParser;
+const BinaryOpParser<OperatorShr, Precedence::BITWISE> shrParser;
+const BinaryOpParser<OperatorEq, Precedence::EQUALITY> eqParser;
+const BinaryOpParser<OperatorNeq, Precedence::EQUALITY> neqParser;
+const BinaryOpParser<OperatorLt, Precedence::EQUALITY> ltParser;
+const BinaryOpParser<OperatorLtEq, Precedence::EQUALITY> lteqParser;
+const BinaryOpParser<OperatorGt, Precedence::EQUALITY> gtParser;
+const BinaryOpParser<OperatorGtEq, Precedence::EQUALITY> gteqParser;
+const AndOrParser andOrParser;
+const CastParser castParser;
+const ParenParser parenParser;
+const SubSelectParser subSelectParser;
+const SubscriptParser subscriptParser;
+const WordParser wordParser;
+const PathParser pathParser;
+const UnpackOpParser unpackParser;
+const WordOpParser wordOpParser;
+const ConstParser trueParser{Value::t()};
+const ConstParser falseParser{Value::f()};
+const ConstParser nullParser{Value::null()};
+}
+
 static auto setupParser(Parser& p)
 {
     /* Scalars */
-    p.prefixParsers[Token::C_TRUE]  = std::make_unique<ConstParser>(Value::t());
-    p.prefixParsers[Token::C_FALSE] = std::make_unique<ConstParser>(Value::f());
-    p.prefixParsers[Token::C_NULL]  = std::make_unique<ConstParser>(Value::null());
-    p.prefixParsers[Token::INT]     = std::make_unique<ScalarParser<int64_t>>();
-    p.prefixParsers[Token::FLOAT]   = std::make_unique<ScalarParser<double>>();
-    p.prefixParsers[Token::STRING]  = std::make_unique<ScalarParser<std::string>>();
-    p.prefixParsers[Token::REGEXP]  = std::make_unique<RegExpParser>();
+    p.prefixParsers[Token::C_TRUE]  = &trueParser;
+    p.prefixParsers[Token::C_FALSE] = &falseParser;
+    p.prefixParsers[Token::C_NULL]  = &nullParser;
+    p.prefixParsers[Token::INT]     = &intParser;
+    p.prefixParsers[Token::FLOAT]   = &floatParser;
+    p.prefixParsers[Token::STRING]  = &stringParser;
+    p.prefixParsers[Token::REGEXP]  = &regexpParser;
 
     /* Unary Operators */
-    p.prefixParsers[Token::OP_SUB]    = std::make_unique<UnaryOpParser<OperatorNegate>>();
-    p.prefixParsers[Token::OP_BITINV] = std::make_unique<UnaryOpParser<OperatorBitInv>>();
-    p.prefixParsers[Token::OP_NOT]    = std::make_unique<UnaryOpParser<OperatorNot>>();
-    p.prefixParsers[Token::OP_LEN]    = std::make_unique<UnaryOpParser<OperatorLen>>();
-    p.infixParsers[Token::OP_BOOL]    = std::make_unique<UnaryPostOpParser<OperatorBool>>();
-    p.prefixParsers[Token::OP_TYPEOF] = std::make_unique<UnaryOpParser<OperatorTypeof>>();
-    p.infixParsers[Token::OP_UNPACK]  = std::make_unique<UnpackOpParser>();
-    p.infixParsers[Token::WORD]       = std::make_unique<WordOpParser>();
+    p.prefixParsers[Token::OP_SUB]    = &negateParser;
+    p.prefixParsers[Token::OP_BITINV] = &bitInvParser;
+    p.prefixParsers[Token::OP_NOT]    = &notParser;
+    p.prefixParsers[Token::OP_LEN]    = &lenParser;
+    p.infixParsers[Token::OP_BOOL]    = &boolParser;
+    p.prefixParsers[Token::OP_TYPEOF] = &typeofParser;
+    p.infixParsers[Token::OP_UNPACK]  = &unpackParser;
+    p.infixParsers[Token::WORD]       = &wordOpParser;
 
     /* Binary Operators */
-    p.infixParsers[Token::OP_ADD]   = std::make_unique<BinaryOpParser<OperatorAdd, Precedence::TERM>>();
-    p.infixParsers[Token::OP_SUB]   = std::make_unique<BinaryOpParser<OperatorSub, Precedence::TERM>>();
-    p.infixParsers[Token::OP_TIMES] = std::make_unique<BinaryOpParser<OperatorMul, Precedence::PRODUCT>>();
-    p.infixParsers[Token::OP_DIV]   = std::make_unique<BinaryOpParser<OperatorDiv, Precedence::PRODUCT>>();
-    p.infixParsers[Token::OP_MOD]   = std::make_unique<BinaryOpParser<OperatorMod, Precedence::PRODUCT>>();
+    p.infixParsers[Token::OP_ADD]   = &addParser;
+    p.infixParsers[Token::OP_SUB]   = &subParser;
+    p.infixParsers[Token::OP_TIMES] = &mulParser;
+    p.infixParsers[Token::OP_DIV]   = &divParser;
+    p.infixParsers[Token::OP_MOD]   = &modParser;
 
     /* Bit Operators */
-    p.infixParsers[Token::OP_BITAND] = std::make_unique<BinaryOpParser<OperatorBitAnd, Precedence::BITWISE>>();
-    p.infixParsers[Token::OP_BITOR]  = std::make_unique<BinaryOpParser<OperatorBitOr, Precedence::BITWISE>>();
-    p.infixParsers[Token::OP_BITXOR] = std::make_unique<BinaryOpParser<OperatorBitXor, Precedence::BITWISE>>();
-    p.infixParsers[Token::OP_LSHIFT] = std::make_unique<BinaryOpParser<OperatorShl, Precedence::BITWISE>>();
-    p.infixParsers[Token::OP_RSHIFT] = std::make_unique<BinaryOpParser<OperatorShr, Precedence::BITWISE>>();
+    p.infixParsers[Token::OP_BITAND] = &bitAndParser;
+    p.infixParsers[Token::OP_BITOR]  = &bitOrParser;
+    p.infixParsers[Token::OP_BITXOR] = &bitXorParser;
+    p.infixParsers[Token::OP_LSHIFT] = &shlParser;
+    p.infixParsers[Token::OP_RSHIFT] = &shrParser;
 
     /* Comparison/Test */
-    p.infixParsers[Token::OP_EQ]     = std::make_unique<BinaryOpParser<OperatorEq,   Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_NOT_EQ] = std::make_unique<BinaryOpParser<OperatorNeq,  Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_LT]     = std::make_unique<BinaryOpParser<OperatorLt,   Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_LTEQ]   = std::make_unique<BinaryOpParser<OperatorLtEq, Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_GT]     = std::make_unique<BinaryOpParser<OperatorGt,   Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_GTEQ]   = std::make_unique<BinaryOpParser<OperatorGtEq, Precedence::EQUALITY>>();
-    p.infixParsers[Token::OP_AND]    = std::make_unique<AndOrParser>();
-    p.infixParsers[Token::OP_OR]     = std::make_unique<AndOrParser>();
+    p.infixParsers[Token::OP_EQ]     = &eqParser;
+    p.infixParsers[Token::OP_NOT_EQ] = &neqParser;
+    p.infixParsers[Token::OP_LT]     = &ltParser;
+    p.infixParsers[Token::OP_LTEQ]   = &lteqParser;
+    p.infixParsers[Token::OP_GT]     = &gtParser;
+    p.infixParsers[Token::OP_GTEQ]   = &gteqParser;
+    p.infixParsers[Token::OP_AND]    = &andOrParser;
+    p.infixParsers[Token::OP_OR]     = &andOrParser;
 
     /* Cast */
-    p.infixParsers[Token::OP_CAST]   = std::make_unique<CastParser>();
+    p.infixParsers[Token::OP_CAST]   = &castParser;
 
     /* Subexpressions/Subscript */
-    p.prefixParsers[Token::LPAREN] = std::make_unique<ParenParser>();     /* (...) */
-    p.prefixParsers[Token::LBRACE] = std::make_unique<SubSelectParser>(); /* {...} */
-    p.infixParsers[Token::LBRACE] = std::make_unique<SubSelectParser>();
-    p.prefixParsers[Token::LBRACK] = std::make_unique<SubscriptParser>(); /* [...] */
-    p.infixParsers[Token::LBRACK] = std::make_unique<SubscriptParser>();
+    p.prefixParsers[Token::LPAREN] = &parenParser;     /* (...) */
+    p.prefixParsers[Token::LBRACE] = &subSelectParser; /* {...} */
+    p.infixParsers[Token::LBRACE] = &subSelectParser;
+    p.prefixParsers[Token::LBRACK] = &subscriptParser; /* [...] */
+    p.infixParsers[Token::LBRACK] = &subscriptParser;
 
     /* Ident/Function */
-    p.prefixParsers[Token::WORD] = std::make_unique<WordParser>();
-    p.prefixParsers[Token::SELF] = std::make_unique<WordParser>();
+    p.prefixParsers[Token::WORD] = &wordParser;
+    p.prefixParsers[Token::SELF] = &wordParser;
 
     /* Wildcards */
-    p.prefixParsers[Token::WILDCARD] = std::make_unique<WordParser>();
-    p.prefixParsers[Token::OP_TIMES] = std::make_unique<WordParser>();
+    p.prefixParsers[Token::WILDCARD] = &wordParser;
+    p.prefixParsers[Token::OP_TIMES] = &wordParser;
 
     /* Paths */
-    p.infixParsers[Token::DOT]  = std::make_unique<PathParser>();
+    p.infixParsers[Token::DOT]  = &pathParser;
 }
 
 auto compile(Environment& env, std::string_view query, bool any, bool autoWildcard) -> expected<ASTPtr, Error>
@@ -835,10 +878,13 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     if (options.limit > 0)
         comp.limit = options.limit;
 
-    p.prefixParsers[Token::WORD]  = std::make_unique<CompletionWordParser>(&comp);
-    p.infixParsers[Token::DOT]    = std::make_unique<CompletionPathParser>(&comp);
-    p.infixParsers[Token::OP_AND] = std::make_unique<CompletionAndOrParser>(&comp);
-    p.infixParsers[Token::OP_OR]  = std::make_unique<CompletionAndOrParser>(&comp);
+    CompletionWordParser wordCompletionParser(&comp);
+    CompletionPathParser pathCompletionParser(&comp);
+    CompletionAndOrParser andOrCompletionParser(&comp);
+    p.prefixParsers[Token::WORD]  = &wordCompletionParser;
+    p.infixParsers[Token::DOT]    = &pathCompletionParser;
+    p.infixParsers[Token::OP_AND] = &andOrCompletionParser;
+    p.infixParsers[Token::OP_OR]  = &andOrCompletionParser;
 
     auto astResult = p.parse();
     TRY_EXPECTED(astResult);

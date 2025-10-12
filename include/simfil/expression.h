@@ -133,7 +133,7 @@ private:
     /* The original query string of the AST */
     std::string queryString_;
 
-    /* The actuall AST */
+    /* The actual AST */
     ExprPtr expr_;
 };
 
