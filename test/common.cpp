@@ -61,14 +61,17 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
     return vals;
 }
 
-auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json) -> std::vector<CompletionCandidate>
+auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json, const CompletionOptions* options) -> std::vector<CompletionCandidate>
 {
     auto model = simfil::json::parse(json.value_or(TestModel));
     REQUIRE(model);
     Environment env(model.value()->strings());
 
     CompletionOptions opts;
-    opts.autoWildcard = true;
+    opts.showWildcardHints = true;
+    if (options)
+        opts = *options;
+
     auto root = model.value()->root(0);
     return complete(env, query, point, **root, opts).value_or(std::vector<CompletionCandidate>());
 }

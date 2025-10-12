@@ -1,21 +1,52 @@
 #pragma once
 
 #include "expressions.h"
+#include "simfil/expression.h"
+#include "simfil/model/nodes.h"
+#include "src/completion.h"
+
 #include <algorithm>
 #include <cctype>
 
 namespace simfil
 {
 
-/**
- * Checks if the root expression is a single (constant) value.
- */
-inline bool isSingleValueExpression(const Expr* expr) {
+inline auto isSingleValueExpression(const Expr* expr) -> bool {
     if (!expr)
         return false;
 
-    if (dynamic_cast<const ConstExpr*>(expr)) {
+    if (dynamic_cast<const CompletionWordExpr*>(expr))
         return true;
+
+    if (auto* v = dynamic_cast<const ConstExpr*>(expr))
+        return true;
+
+    return false;
+}
+
+/**
+ * Checks if the root expression is a single (constant) value
+ * or a field.
+ */
+inline auto isSingleValueOrFieldExpression(const Expr* expr) -> bool {
+    if (!expr)
+        return false;
+
+    if (expr->type() == Expr::Type::FIELD)
+        return true;
+
+    if (dynamic_cast<const CompletionWordExpr*>(expr))
+        return true;
+
+    if (auto* v = dynamic_cast<const ConstExpr*>(expr)) {
+        const auto value = v->value();
+        if (value.isa(ValueType::String)) {
+            auto str = value.as<ValueType::String>();
+            auto loc = std::locale();
+            return std::all_of(str.begin(), str.end(), [&](auto c) {
+                return c == '_' || std::isupper(c, loc);
+            }) && !str.empty();
+        }
     }
 
     return false;
@@ -25,7 +56,7 @@ inline bool isSingleValueExpression(const Expr* expr) {
  * Checks if the root expression is a comparison of the following form:
  *   `<single-field or enum-string-constant> <comparison-operator> <constant-value>`
  */
-inline bool isSimpleFieldComparison(const Expr* expr) {
+inline auto isFieldComparison(const Expr* expr) -> bool {
     if (!expr)
         return false;
     
@@ -38,6 +69,7 @@ inline bool isSimpleFieldComparison(const Expr* expr) {
             leftIsFieldOrEnum = true;
         } else if (const auto* left = dynamic_cast<const ConstExpr*>(compExpr->left_.get())) {
             // Test if the value is a WORD.
+            // This is not optimal
             const auto& value = left->value();
             if (value.isa(ValueType::String)) {
                 auto str = value.as<ValueType::String>();
@@ -53,23 +85,23 @@ inline bool isSimpleFieldComparison(const Expr* expr) {
         return leftIsFieldOrEnum && rightIsConstant;
     };
     
-    if (auto* eqExpr = dynamic_cast<const BinaryExpr<OperatorEq>*>(expr)) {
-        return checkComparison(eqExpr);
+    if (auto* e = dynamic_cast<const BinaryExpr<OperatorEq>*>(expr)) {
+        return checkComparison(e);
     }
-    if (auto* neqExpr = dynamic_cast<const BinaryExpr<OperatorNeq>*>(expr)) {
-        return checkComparison(neqExpr);
+    if (auto* e = dynamic_cast<const BinaryExpr<OperatorNeq>*>(expr)) {
+        return checkComparison(e);
     }
-    if (auto* ltExpr = dynamic_cast<const BinaryExpr<OperatorLt>*>(expr)) {
-        return checkComparison(ltExpr);
+    if (auto* e = dynamic_cast<const BinaryExpr<OperatorLt>*>(expr)) {
+        return checkComparison(e);
     }
-    if (auto* lteqExpr = dynamic_cast<const BinaryExpr<OperatorLtEq>*>(expr)) {
-        return checkComparison(lteqExpr);
+    if (auto* e = dynamic_cast<const BinaryExpr<OperatorLtEq>*>(expr)) {
+        return checkComparison(e);
     }
-    if (auto* gtExpr = dynamic_cast<const BinaryExpr<OperatorGt>*>(expr)) {
-        return checkComparison(gtExpr);
+    if (auto* e = dynamic_cast<const BinaryExpr<OperatorGt>*>(expr)) {
+        return checkComparison(e);
     }
-    if (auto* gteqExpr = dynamic_cast<const BinaryExpr<OperatorGtEq>*>(expr)) {
-        return checkComparison(gteqExpr);
+    if (auto* e = dynamic_cast<const BinaryExpr<OperatorGtEq>*>(expr)) {
+        return checkComparison(e);
     }
     
     return false;

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "simfil/expression.h"
 #include "simfil/token.h"
 #include "simfil/environment.h"
 
-#include <limits>
+#include "expressions.h"
+
 #include <string>
 #include <set>
 #include <memory>
@@ -100,6 +100,20 @@ public:
 
     std::string prefix_;
     Completion* comp_;
+};
+
+/**
+ * A special expression to prevent constant value
+ * evaluation during completion.
+ */
+class CompletionConstExpr : public ConstExpr
+{
+public:
+    using ConstExpr::ConstExpr;
+
+    auto constant() const -> bool override;
+    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error> override;
 };
 
 }

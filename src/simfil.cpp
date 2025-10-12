@@ -482,7 +482,7 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
 
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        if (auto err = expect(left, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
+        if (auto err = expect(left, Expr::Type::FIELD, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
             return *err;
 
         auto _ = scopedNotInPath(p);
@@ -523,7 +523,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
 
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        if (auto err = expect(left, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
+        if (auto err = expect(left, Expr::Type::FIELD, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
             return *err;
 
         auto _ = scopedNotInPath(p);
@@ -893,22 +893,18 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
 
     // Determine which hints to show.
     auto showConstantWildcardHint = false;
+    auto showFieldWildcardHint = false;
     auto showComparisonWildcardHint = false;
-    
-    // Check for simple constant expressions.
-    if (options.autoWildcard && ast && ast->constant()) {
-        ast = std::make_unique<BinaryExpr<OperatorEq>>(
-            std::make_unique<WildcardExpr>(), std::move(ast));
-        showConstantWildcardHint = true;
-    }
-
-    // Test the query for patterns and hint for converting it
-    // to a wildcard query by prepending `**.` to the query.
     if (options.showWildcardHints) {
+        // Test the query for patterns and hint for converting it
+        // to a wildcard query by prepending `**.` to the query.
         if (isSingleValueExpression(ast.get()))
             showConstantWildcardHint = true;
 
-        if (isSimpleFieldComparison(ast.get()))
+        if (isSingleValueOrFieldExpression(ast.get()))
+            showFieldWildcardHint = true;
+
+        if (isFieldComparison(ast.get()))
             showComparisonWildcardHint = true;
     }
 
@@ -927,17 +923,23 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
         });
 
     // Show special hints for wildcard expansion.
+    if (showFieldWildcardHint)
+        candidates.emplace_back(fmt::format("**.{}", query),
+                                SourceLocation(0, query.size()),
+                                CompletionCandidate::Type::HINT,
+                                fmt::format("Query field '{}' recursive", query));
+
     if (showConstantWildcardHint)
         candidates.emplace_back(fmt::format("** = {}", query),
                                 SourceLocation(0, query.size()),
                                 CompletionCandidate::Type::HINT,
-                                "Expand to wildcard query");
-    
+                                fmt::format("Query fields matching '{}' recursive", query));
+
     if (showComparisonWildcardHint)
         candidates.emplace_back(fmt::format("**.{}", query),
                                 SourceLocation(0, query.size()),
                                 CompletionCandidate::Type::HINT,
-                                "Expand to wildcard query");
+                                "Expand to recursive query");
 
     return candidates;
 }

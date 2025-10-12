@@ -133,7 +133,7 @@ CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Complet
 
 auto CompletionFieldOrWordExpr::type() const -> Type
 {
-    return Type::PATH;
+    return Type::FIELD;
 }
 
 auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
@@ -385,6 +385,23 @@ auto CompletionWordExpr::clone() const -> std::unique_ptr<Expr>
 auto CompletionWordExpr::accept(ExprVisitor& v) -> void
 {
     v.visit(*this);
+}
+
+auto CompletionConstExpr::constant() const -> bool
+{
+    return false;
+}
+
+auto CompletionConstExpr::clone() const -> ExprPtr
+{
+    return std::make_unique<CompletionConstExpr>(value_);
+}
+
+auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
+{
+    if (ctx.phase == Context::Compilation)
+        return res(ctx, Value::undef());
+    return res(ctx, value_);
 }
 
 }
