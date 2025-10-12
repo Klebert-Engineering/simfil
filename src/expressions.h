@@ -152,8 +152,21 @@ public:
     void accept(ExprVisitor& v) override;
     auto toString() const -> std::string override;
 
+    auto value() const -> const Value&;
+
 protected:
     const Value value_;
+};
+
+/** A special expression to prevent constant value evaluation during completion. */
+class CompletionConstExpr : public ConstExpr
+{
+public:
+    using ConstExpr::ConstExpr;
+
+    auto constant() const -> bool override;
+    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error> override;
 };
 
 class SubscriptExpr : public Expr
