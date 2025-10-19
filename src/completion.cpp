@@ -1,6 +1,7 @@
 #include "completion.h"
 
 #include "expressions.h"
+#include "simfil/model/string-pool.h"
 #include "simfil/result.h"
 #include "simfil/simfil.h"
 #include "simfil/function.h"
@@ -146,21 +147,25 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
 
     const auto node = val.node();
     if (!node)
-        return Result::Stop;
+        return res(ctx, val);
 
     const auto caseSensitive = comp_->options.smartCase && containsUppercaseCharacter(prefix_);
 
     // First we try to complete fields
     for (StringId id : node->fieldNames()) {
-        if (comp_->size() >= comp_->limit)
+        if (comp_->size() >= comp_->limit) {
             return Result::Stop;
+        }
+
+        if (id == StringPool::Empty)
+            continue;
 
         auto keyPtr = ctx.env->strings()->resolve(id);
         if (!keyPtr || keyPtr->empty())
             continue;
         const auto& key = *keyPtr;
 
-        if (key.size() >= prefix_.size() && startsWith(key, prefix_, caseSensitive)) {
+        if (startsWith(key, prefix_, caseSensitive)) {
             if (needsEscaping(key)) {
                 comp_->add(escapeKey(key), sourceLocation(), CompletionCandidate::Type::FIELD);
             } else {
