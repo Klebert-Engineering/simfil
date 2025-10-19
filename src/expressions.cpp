@@ -92,21 +92,31 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
         Context& ctx;
         ResultFn& res;
 
-        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> Result
+        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> tl::expected<Result, Error>
         {
             if (val.type() == ValueType::Null) [[unlikely]]
                 return Result::Continue;
 
             auto result = res(ctx, Value::field(val));
-            if (!result || *result == Result::Stop) [[unlikely]]
-                return result ? *result : Result::Stop;
+            if (!result)
+                return tl::unexpected<Error>(result.error());
 
-            Result finalResult = Result::Continue;
+            if (*result == Result::Stop) [[unlikely]]
+                return *result;
+
+            tl::expected<Result, Error> finalResult = Result::Continue;
             val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) -> bool {
-                if (iterate(subNode) == Result::Stop) {
+                auto subResult = iterate(subNode);
+                if (!subResult) {
+                    finalResult = std::move(subResult);
+                    return false;
+                }
+
+                if (*subResult == Result::Stop) {
                     finalResult = Result::Stop;
                     return false;
                 }
+
                 return true;
             }));
 
@@ -114,7 +124,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
         }
     };
 
-    auto r = val.nodePtr() ? Iterate{ctx, res}.iterate(**val.nodePtr()) : Result::Continue;
+    auto r = val.nodePtr() ? Iterate{ctx, res}.iterate(**val.nodePtr()) : tl::expected<Result, Error>(Result::Continue);
     res.ensureCall();
     return r;
 }
