@@ -1,6 +1,8 @@
 project(test.simfil)
 
-set(CMAKE_CXX_STANDARD 17) # Required for catch2
+set(CMAKE_CXX_STANDARD 20) # Required for catch2
+target_compile_features(Catch2 PRIVATE cxx_std_20)
+target_compile_features(Catch2WithMain PRIVATE cxx_std_20)
 
 add_executable(test.simfil
   common.hpp
