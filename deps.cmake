@@ -52,7 +52,7 @@ if (SIMFIL_WITH_TESTS)
   if (NOT TARGET Catch2::Catch2WithMain)
     FetchContent_Declare(catch2
       GIT_REPOSITORY "https://github.com/catchorg/Catch2.git"
-      GIT_TAG        "v3.5.2"
+      GIT_TAG        "v3.11.0"
       GIT_SHALLOW    ON
       FIND_PACKAGE_ARGS)
     FetchContent_MakeAvailable(catch2)
