@@ -11,7 +11,9 @@ add_executable(test.simfil
   completion.cpp
   complex.cpp
   performance.cpp
-  arena.cpp)
+  arena.cpp
+  error.cpp
+  operator.cpp)
 
 target_link_libraries(test.simfil
   PUBLIC
