@@ -66,44 +66,6 @@ enum Precedence {
 };
 
 /**
- *
- */
-template <class ...Type>
-static auto expect(const ExprPtr& e, Type... types) -> std::optional<unexpected<Error>>
-{
-    const auto type2str = [](Expr::Type t) {
-        switch (t) {
-        case Expr::Type::FIELD:     return "field"s;
-        case Expr::Type::PATH:      return "path"s;
-        case Expr::Type::SUBEXPR:   return "subexpression"s;
-        case Expr::Type::SUBSCRIPT: return "subscript"s;
-        case Expr::Type::VALUE:     return "value"s;
-        }
-        return "error"s;
-    };
-
-    if (!e)
-        return unexpected<Error>(Error::InvalidExpression, "Expected expression");
-
-    if constexpr (sizeof...(types) >= 1) {
-        Expr::Type list[] = {types...};
-        for (auto i = 0; i < sizeof...(types); ++i) {
-            if (e->type() == list[i])
-                return {};
-        }
-
-        std::string typeNames;
-        for (auto i = 0; i < sizeof...(types); ++i) {
-            if (!typeNames.empty())
-                typeNames += " or ";
-            typeNames += type2str(list[i]);
-        }
-
-        return unexpected<Error>(Error::InvalidExpression, fmt::format("Expected {} got {}", typeNames, type2str(e->type())));
-    }
-}
-
-/**
  * Returns if a word should be parsed as a symbol (string).
  * This is true for all UPPER_CASE words.
  */
@@ -482,9 +444,6 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
 
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        if (auto err = expect(left, Expr::Type::FIELD, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
-            return *err;
-
         auto _ = scopedNotInPath(p);
         auto body = p.parseTo(Token::RBRACK);
         if (!body)
@@ -523,9 +482,6 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
 
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        if (auto err = expect(left, Expr::Type::FIELD, Expr::Type::PATH, Expr::Type::VALUE, Expr::Type::SUBEXPR, Expr::Type::SUBSCRIPT))
-            return *err;
-
         auto _ = scopedNotInPath(p);
         auto body = p.parseTo(Token::RBRACE);
         if (!body)

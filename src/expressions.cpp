@@ -1,13 +1,16 @@
 #include "expressions.h"
 
+#include "fmt/format.h"
 #include "simfil/environment.h"
 #include "simfil/result.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
 
 #include "fmt/core.h"
+#include "fmt/ranges.h"
 #include "src/expected.h"
 #include <memory>
+#include <ranges>
 
 namespace simfil
 {
@@ -141,7 +144,7 @@ void WildcardExpr::accept(ExprVisitor& v)
 
 auto WildcardExpr::toString() const -> std::string
 {
-    return "**";
+    return "**"s;
 }
 
 AnyChildExpr::AnyChildExpr() = default;
@@ -183,7 +186,7 @@ void AnyChildExpr::accept(ExprVisitor& v)
 
 auto AnyChildExpr::toString() const -> std::string
 {
-    return "*";
+    return "*"s;
 }
 
 FieldExpr::FieldExpr(std::string name)
@@ -300,14 +303,11 @@ void MultiConstExpr::accept(ExprVisitor& v)
 
 auto MultiConstExpr::toString() const -> std::string
 {
-    auto list = ""s;
-    for (const auto& v : values_) {
-        if (!list.empty())
-            list += " ";
-        list += v.toString();
-    }
+    auto items = values_ | std::views::transform([](const auto& arg) {
+        return arg.toString();
+    });
 
-    return "{"s + list + "}"s;
+    return fmt::format("{{{}}}", fmt::join(items, " "));
 }
 
 ConstExpr::ConstExpr(Value value)
@@ -342,7 +342,7 @@ void ConstExpr::accept(ExprVisitor& v)
 auto ConstExpr::toString() const -> std::string
 {
     if (value_.isa(ValueType::String))
-        return "\""s + value_.toString() + "\""s;
+        return fmt::format("\"{}\"", value_.toString());
     return value_.toString();
 }
 
@@ -412,7 +412,7 @@ void SubscriptExpr::accept(ExprVisitor& v)
 
 auto SubscriptExpr::toString() const -> std::string
 {
-    return "(index "s + left_->toString() + " "s + index_->toString() + ")"s;
+    return fmt::format("(index {} {})", left_->toString(), index_->toString());
 }
 
 SubExpr::SubExpr(ExprPtr sub)
@@ -461,7 +461,7 @@ auto SubExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expec
 
 auto SubExpr::toString() const -> std::string
 {
-    return "(sub "s + left_->toString() + " "s + sub_->toString() + ")"s;
+    return fmt::format("(sub {} {})", left_->toString(), sub_->toString());
 }
 
 auto SubExpr::clone() const -> ExprPtr
@@ -537,11 +537,11 @@ auto AnyExpr::toString() const -> std::string
     if (args_.empty())
         return "any()"s;
 
-    auto s = "(any"s;
-    for (const auto& arg : args_) {
-        s += " "s + arg->toString();
-    }
-    return s + ")"s;
+    auto items = args_ | std::views::transform([](const auto& arg) {
+        return arg->toString();
+    });
+
+    return fmt::format("(any {})", fmt::join(items, " "));
 }
 
 EachExpr::EachExpr(std::vector<ExprPtr> args)
@@ -606,11 +606,11 @@ auto EachExpr::toString() const -> std::string
     if (args_.empty())
         return "each()"s;
 
-    auto s = "(each"s;
-    for (const auto& arg : args_) {
-        s += " "s + arg->toString();
-    }
-    return s + ")"s;
+    auto items = args_ | std::views::transform([](const auto& arg) {
+        return arg->toString();
+    });
+
+    return fmt::format("(each {})", fmt::join(items, " "));
 }
 
 CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)
@@ -668,13 +668,13 @@ void CallExpression::accept(ExprVisitor& v)
 auto CallExpression::toString() const -> std::string
 {
     if (args_.empty())
-        return "("s + name_ + ")"s;
+        return fmt::format("({})", name_);
 
-    std::string s = "("s + name_;
-    for (const auto& arg : args_) {
-        s += " "s + arg->toString();
-    }
-    return s + ")"s;
+    auto items = args_ | std::views::transform([](const auto& arg) {
+        return arg->toString();
+    });
+
+    return fmt::format("({} {})", name_, fmt::join(items, " "));
 }
 
 PathExpr::PathExpr(ExprPtr right)
@@ -739,7 +739,7 @@ void PathExpr::accept(ExprVisitor& v)
 
 auto PathExpr::toString() const -> std::string
 {
-    return "(. "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("(. {} {})", left_->toString(), right_->toString());
 }
 
 UnpackExpr::UnpackExpr(ExprPtr sub)
@@ -790,7 +790,7 @@ void UnpackExpr::accept(ExprVisitor& v)
 
 auto UnpackExpr::toString() const -> std::string
 {
-    return "(... "s + sub_->toString() + ")"s;
+    return fmt::format("(... {})", sub_->toString());
 }
 
 UnaryWordOpExpr::UnaryWordOpExpr(std::string ident, ExprPtr left)
@@ -834,7 +834,7 @@ auto UnaryWordOpExpr::clone() const -> ExprPtr
 
 auto UnaryWordOpExpr::toString() const -> std::string
 {
-    return "("s + ident_ + " "s + left_->toString() + ")"s;
+    return fmt::format("({} {})", ident_, left_->toString());
 }
 
 BinaryWordOpExpr::BinaryWordOpExpr(std::string ident, ExprPtr left, ExprPtr right)
@@ -890,7 +890,7 @@ auto BinaryWordOpExpr::clone() const -> ExprPtr
 
 auto BinaryWordOpExpr::toString() const -> std::string
 {
-    return "("s + ident_ + " "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("({} {} {})", ident_, left_->toString(), right_->toString());
 }
 
 AndExpr::AndExpr(ExprPtr left, ExprPtr right)
@@ -940,7 +940,7 @@ auto AndExpr::clone() const -> ExprPtr
 
 auto AndExpr::toString() const -> std::string
 {
-    return "(and "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("(and {} {})", left_->toString(), right_->toString());
 }
 
 OrExpr::OrExpr(ExprPtr left, ExprPtr right)
@@ -994,7 +994,7 @@ auto OrExpr::clone() const -> ExprPtr
 
 auto OrExpr::toString() const -> std::string
 {
-    return "(or "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("(or {} {})", left_->toString(), right_->toString());
 }
 
 void ExprVisitor::visit(Expr& e)
