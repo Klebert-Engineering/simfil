@@ -506,7 +506,7 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
             return Result::Continue;
         }));
 
-    (void)args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
+    auto argRes = args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
         if (subexpr) {
             auto ov = model_ptr<OverlayNode>::make(vv);
             ov->set(StringPool::OverlaySum, sum);
@@ -514,11 +514,12 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
             ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n)));
             n += 1;
 
-            subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, Value&& vv) {
+            auto subRes = subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, Value&& vv) {
                 ov->set(StringPool::OverlaySum, vv);
                 sum = vv;
                 return Result::Continue;
             }));
+            TRY_EXPECTED(subRes);
         } else {
             if (sum.isa(ValueType::Null)) {
                 sum = std::move(vv);
@@ -533,6 +534,7 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
 
         return Result::Continue;
     }));
+    TRY_EXPECTED(argRes);
 
     return res(ctx, sum);
 }

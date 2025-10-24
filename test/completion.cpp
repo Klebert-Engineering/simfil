@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <string_view>
 #include <optional>
-#include <iostream>
 
 #include "common.hpp"
 #include "simfil/environment.h"

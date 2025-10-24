@@ -63,7 +63,7 @@ public:
     {
         static const FnInfo info{
           "panic",
-          "Thrown an error",
+          "Raise an error",
           "panic()"
         };
 

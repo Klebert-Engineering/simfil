@@ -46,6 +46,8 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
     INFO("AST: " << (*ast)->expr().toString());
 
     auto root = model.value()->root(0);
+    REQUIRE(root);
+
     auto res = eval(env, **ast, **root, nullptr);
     if (!res) {
         INFO("ERROR: " << res.error().message);
