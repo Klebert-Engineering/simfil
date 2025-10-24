@@ -284,8 +284,10 @@ auto MultiConstExpr::constant() const -> bool
 auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
 {
     for (const auto& v : values_) {
-        if (res(ctx, v) == Result::Stop)
+        if (auto r = res(ctx, v); r && *r == Result::Stop)
             return Result::Stop;
+        else if (!r)
+            return tl::unexpected<Error>(std::move(r.error()));
     }
 
     return Result::Continue;
@@ -754,7 +756,7 @@ auto UnpackExpr::type() const -> Type
 auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto anyval = false;
-    auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value&& v) {
+    auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value&& v) -> tl::expected<Result, Error> {
         if (v.isa(ValueType::TransientObject)) {
             const auto& obj = v.as<ValueType::TransientObject>();
             auto r = Result::Continue;
@@ -767,8 +769,10 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl
                 return Result::Stop;
         } else {
             anyval = true;
-            if (res(ctx, std::move(v)) == Result::Stop)
+            if (auto r = res(ctx, std::move(v)); r && *r == Result::Stop)
                 return Result::Stop;
+            else if (!r)
+                return tl::unexpected<Error>(std::move(r.error()));
         }
         return Result::Continue;
     }));

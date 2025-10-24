@@ -173,3 +173,18 @@ TEST_CASE("Big model queries", "[perf.big-model-queries]") {
     REQUIRE_RESULT("count(*.id == 250)", "1");
     CALLGRIND_STOP_INSTRUMENTATION;
 }
+
+TEST_CASE("Slow Compile Time Query", "[perf.slow-compile-time-query]") {
+    if (RUNNING_ON_VALGRIND) {
+        SKIP("Skipping benchmarks when running under valgrind");
+    }
+
+    const auto model = generate_model(1);
+
+    BENCHMARK("Find Primes") {
+        auto value = result(model, "count(range(1,1000)...{count((_ % range(1,_)...) == 0) == 2})");
+        REQUIRE(value);
+        REQUIRE(value->front().template as<ValueType::Int>() == 168);
+        return value;
+    };
+}
