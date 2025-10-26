@@ -335,7 +335,7 @@ auto ArrFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
         })); r && *r == Result::Stop)
             return Result::Stop;
         else if (!r)
-            return tl::unexpected<Error>(r.error());
+            return tl::unexpected<Error>(std::move(r.error()));
     }
 
     return Result::Continue;
@@ -500,11 +500,16 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
 
     Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
     Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
-    if (initval)
-        (void)initval->eval(ctx, val, LambdaResultFn([&sum](Context, Value&& vv) {
+    if (initval) {
+        auto initRes = initval->eval(ctx, val, LambdaResultFn([&sum](Context, Value&& vv) {
             sum = std::move(vv);
             return Result::Continue;
         }));
+
+        TRY_EXPECTED(initRes);
+        if (sum.isa(ValueType::Undef))
+            return res(ctx, sum);
+    }
 
     auto argRes = args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
         if (subexpr) {
@@ -566,8 +571,10 @@ auto KeysFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& arg
         if (vv.nodePtr())
             for (auto&& fieldName : vv.node()->fieldNames()) {
                 if (auto key = ctx.env->stringPool->resolve(fieldName)) {
-                    if (res(ctx, Value::strref(*key)) == Result::Stop)
+                    if (auto r = res(ctx, Value::strref(*key)); r && *r == Result::Stop)
                         return Result::Stop;
+                    else if (!r)
+                        return tl::unexpected<Error>(std::move(r.error()));
                 }
             }
         return Result::Continue;

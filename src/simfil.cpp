@@ -138,7 +138,7 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
     if (!values.empty() && std::ranges::all_of(values.begin(), values.end(), [](const Value& v) {
         return v.isa(ValueType::Null);
     }))
-        env->warn("Expression is alway null"s, (*expr)->toString());
+        env->warn("Expression is always null"s, (*expr)->toString());
 
     if (!values.empty() && values[0].isa(ValueType::Bool) && std::ranges::all_of(values.begin(), values.end(), [&](const Value& v) {
         return v.isBool(values[0].as<ValueType::Bool>());

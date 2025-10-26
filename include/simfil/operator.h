@@ -625,13 +625,13 @@ inline auto makeOperatorResult(CType_&& value) -> tl::expected<Value, Error>
 }
 
 template <class Operator_>
-inline auto makeOperatorResult(Value value) -> tl::expected<Value, Error>
+inline auto makeOperatorResult(Value&& value) -> tl::expected<Value, Error>
 {
-    return value;
+    return std::forward<Value>(value);
 }
 
 template <class Operator_, class CType_>
-inline auto makeOperatorResult(tl::expected<CType_, Error> value) -> tl::expected<Value, Error>
+inline auto makeOperatorResult(tl::expected<CType_, Error>&& value) -> tl::expected<Value, Error>
 {
     if (!value)
         return tl::unexpected<Error>(std::move(value.error()));
@@ -722,7 +722,7 @@ struct BinaryOperatorDispatcher
 
         if (!result) {
             // Try to find the operand types
-            auto& error = result.error();
+            const auto& error = result.error();
             if (error.type == Error::InvalidOperands) {
                 auto ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(lhs).value_or(Value::strref("unknown")).toString();
                 auto rtype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(rhs).value_or(Value::strref("unknown")).toString();

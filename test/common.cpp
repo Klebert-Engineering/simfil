@@ -9,6 +9,7 @@ auto CompileError(std::string_view query, bool autoWildcard) -> Error
 {
     Environment env(Environment::WithNewStringCache);
     env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
+    env.functions["panic"] = &panicFn;
 
     auto ast = compile(env, query, false, autoWildcard);
     REQUIRE(!ast.has_value());
@@ -20,6 +21,7 @@ auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
 {
     Environment env(Environment::WithNewStringCache);
     env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
+    env.functions["panic"] = &panicFn;
 
     auto ast = compile(env, query, false, autoWildcard);
     if (!ast)
