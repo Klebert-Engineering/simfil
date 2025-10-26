@@ -165,19 +165,19 @@ struct OperatorTypeof
         return n;
     }
 
-    auto operator()(const std::string&) -> std::string_view
+    auto operator()(const std::string&) const -> std::string_view
     {
         static auto n = "string"sv;
         return n;
     }
 
-    auto operator()(const ModelNode& v) -> std::string_view
+    auto operator()(const ModelNode&) const -> std::string_view
     {
         static auto n = "model"sv;
         return n;
     }
 
-    auto operator()(const TransientObject& v) -> std::string_view
+    auto operator()(const TransientObject&) const -> std::string_view
     {
         // Handled by MetaType::unaryOp
         return ""sv;

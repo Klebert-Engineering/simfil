@@ -197,7 +197,7 @@ TEST_CASE("Value As", "[value.as]") {
 TEST_CASE("Value visit() method", "[value.visit]") {
     SECTION("Visit UndefinedType") {
         auto val = Value::undef();
-        auto result = val.visit([](auto&& v) -> std::string {
+        auto result = val.visit([](const auto& v) -> std::string {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, UndefinedType>) {
                 return "undefined";
@@ -210,7 +210,7 @@ TEST_CASE("Value visit() method", "[value.visit]") {
     
     SECTION("Visit NullType") {
         auto val = Value::null();
-        auto result = val.visit([](auto&& v) -> std::string {
+        auto result = val.visit([](const auto& v) -> std::string {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, NullType>) {
                 return "null";
@@ -223,7 +223,7 @@ TEST_CASE("Value visit() method", "[value.visit]") {
     SECTION("Visit bool") {
         auto val = Value::t()
 ;
-        auto result = val.visit([](auto&& v) -> bool {
+        auto result = val.visit([](const auto& v) -> bool {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, bool>) {
                 return v;
@@ -235,7 +235,7 @@ TEST_CASE("Value visit() method", "[value.visit]") {
     
     SECTION("Visit int64_t") {
         auto val = Value::make(int64_t(42));
-        auto result = val.visit([](auto&& v) -> int64_t {
+        auto result = val.visit([](const auto& v) -> int64_t {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, int64_t>) {
                 return v;
@@ -247,7 +247,7 @@ TEST_CASE("Value visit() method", "[value.visit]") {
     
     SECTION("Visit double") {
         auto val = Value::make(3.14);
-        auto result = val.visit([](auto&& v) -> double {
+        auto result = val.visit([](const auto& v) -> double {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, double>) {
                 return v;
@@ -259,7 +259,7 @@ TEST_CASE("Value visit() method", "[value.visit]") {
     
     SECTION("Visit string") {
         auto val = Value::make("Preordain"s);
-        auto result = val.visit([](auto&& v) -> std::string {
+        auto result = val.visit([](const auto& v) -> std::string {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, std::string>) {
                 return v;
@@ -274,7 +274,7 @@ TEST_CASE("Value visit() method", "[value.visit]") {
         auto objNode = model->newObject(0);
         auto val = Value::field(objNode);
         
-        auto result = val.visit([](auto&& v) -> bool {
+        auto result = val.visit([](const auto& v) -> bool {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, ModelNode>) {
                 return true;
@@ -288,7 +288,7 @@ TEST_CASE("Value visit() method", "[value.visit]") {
     
     SECTION("Visit ModelNode with null pointer") {
         Value val(ValueType::Object);
-        auto result = val.visit([](auto&& v) -> bool {
+        auto result = val.visit([](const auto& v) -> bool {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, NullType>) {
                 return true;
@@ -347,7 +347,6 @@ TEST_CASE("Value utility methods", "[value.utilities]") {
         auto model = std::make_shared<ModelPool>();
         auto objNode = model->newObject(0);
         auto val = Value::field(objNode);
-        auto node = val.node();
         REQUIRE(val.node() != nullptr);
         
         REQUIRE(Value::make<int64_t>(42).node() == nullptr);
@@ -388,16 +387,16 @@ TEST_CASE("getNumeric() function", "[value.numeric]") {
     }
     
     SECTION("getNumeric from double") {
-        ScalarValueType scalar = 2.718;
+        ScalarValueType scalar = 1.5;
         auto [ok, result] = getNumeric<float>(scalar);
         REQUIRE(ok);
-        REQUIRE(result == Catch::Approx(2.718f));
+        REQUIRE(result == Catch::Approx(1.5f));
     }
     
     SECTION("getNumeric from int64_t") {
-        ScalarValueType scalar = int64_t(99);
+        ScalarValueType scalar = int64_t(123);
         auto [ok, result] = getNumeric<int>(scalar);
         REQUIRE(ok);
-        REQUIRE(result == 99);
+        REQUIRE(result == 123);
     }
 }

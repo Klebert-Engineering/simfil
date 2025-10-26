@@ -154,7 +154,7 @@ auto CountFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
     int64_t count = 0;
 
     for (const auto& arg : args) {
-        auto res = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+        auto evalRes = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -164,7 +164,7 @@ auto CountFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
             count += boolify(vv) ? 1 : 0;
             return Result::Continue;
         }));
-        TRY_EXPECTED(res);
+        TRY_EXPECTED(evalRes);
 
         if (undef)
             break;
@@ -501,7 +501,7 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
     Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
     Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
     if (initval)
-        (void)initval->eval(ctx, val, LambdaResultFn([&](Context ctx, Value&& vv) {
+        (void)initval->eval(ctx, val, LambdaResultFn([&sum](Context, Value&& vv) {
             sum = std::move(vv);
             return Result::Continue;
         }));

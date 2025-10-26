@@ -11,7 +11,7 @@ using namespace simfil;
 using namespace std::string_literals;
 
 #define REQUIRE_INVALID_OPERANDS(v) \
-    static_assert(std::is_same_v<decltype((v)), InvalidOperands>);
+    static_assert(std::is_same_v<decltype((v)), InvalidOperands>)
 
 TEST_CASE("Unary operators", "[operator.unary]") {
     SECTION("OperatorNegate") {

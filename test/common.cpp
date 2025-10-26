@@ -8,7 +8,7 @@ static const PanicFn panicFn{};
 auto CompileError(std::string_view query, bool autoWildcard) -> Error
 {
     Environment env(Environment::WithNewStringCache);
-    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
+    env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
 
     auto ast = compile(env, query, false, autoWildcard);
     REQUIRE(!ast.has_value());
@@ -19,7 +19,7 @@ auto CompileError(std::string_view query, bool autoWildcard) -> Error
 auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
 {
     Environment env(Environment::WithNewStringCache);
-    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
+    env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
 
     auto ast = compile(env, query, false, autoWildcard);
     if (!ast)

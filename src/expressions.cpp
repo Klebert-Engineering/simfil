@@ -108,7 +108,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
                 return *result;
 
             tl::expected<Result, Error> finalResult = Result::Continue;
-            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) -> bool {
+            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
                 auto subResult = iterate(subNode);
                 if (!subResult) {
                     finalResult = std::move(subResult);

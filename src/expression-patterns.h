@@ -39,11 +39,11 @@ inline auto isSingleValueOrFieldExpression(const Expr* expr) -> bool {
         return true;
 
     if (auto* v = dynamic_cast<const ConstExpr*>(expr)) {
-        const auto value = v->value();
+        const auto& value = v->value();
         if (value.isa(ValueType::String)) {
             auto str = value.as<ValueType::String>();
             auto loc = std::locale();
-            return std::all_of(str.begin(), str.end(), [&](auto c) {
+            return std::ranges::all_of(str, [&](auto c) {
                 return c == '_' || std::isupper(c, loc);
             }) && !str.empty();
         }
@@ -74,7 +74,7 @@ inline auto isFieldComparison(const Expr* expr) -> bool {
             if (value.isa(ValueType::String)) {
                 auto str = value.as<ValueType::String>();
                 auto loc = std::locale();
-                leftIsFieldOrEnum = std::all_of(str.begin(), str.end(), [&](auto c) {
+                leftIsFieldOrEnum = std::ranges::all_of(str, [&](auto c) {
                     return c == '_' || std::isupper(c, loc);
                 }) && str.size() > 0;
             }
