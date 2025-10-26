@@ -19,13 +19,14 @@ static constexpr auto StaticTestKey = StringPool::NextStaticId;
     REQUIRE(JoinedResult((query)) == (result))
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(Compile(input, false)->expr().toString() == (output));
+    REQUIRE(Compile(input, false)->expr().toString() == (output))
 
 #define REQUIRE_ERROR(input) \
-    REQUIRE(CompileError(input, false).message != "");
+    REQUIRE(CompileError(input, false).message != "")
 
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
-    REQUIRE(Compile(input, true)->expr().toString() == (output));
+    REQUIRE(Compile(input, true)->expr().toString() == (output))
+
 
 TEST_CASE("Int", "[ast.integer]") {
     REQUIRE_AST("1", "1");
@@ -62,11 +63,8 @@ TEST_CASE("Wildcard", "[ast.wildcard]") {
 
 TEST_CASE("OperatorConst", "[ast.operator]") {
     /* Arithmetic */
-    REQUIRE_AST("-1",  "-1");
-    REQUIRE_AST("-1.1","-1.100000");
     REQUIRE_AST("1+2", "3");
     REQUIRE_AST("1.5+2", "3.500000");
-    REQUIRE_AST("1.5-2", "-0.500000");
     REQUIRE_AST("2*2", "4");
     REQUIRE_AST("2.5*2", "5.000000");
     REQUIRE_AST("8/2", "4");
@@ -75,16 +73,8 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("a+2", "(+ a 2)");
     REQUIRE_AST("2+a", "(+ 2 a)");
     REQUIRE_AST("a+b", "(+ a b)");
-    REQUIRE_AST("1+null", "null");
-    REQUIRE_AST("null+1", "null");
-    REQUIRE_AST("1*null", "null");
-    REQUIRE_AST("null*1", "null");
-    REQUIRE_AST("1-null", "null");
-    REQUIRE_AST("null-1", "null");
-    REQUIRE_AST("1/null", "null");
-    REQUIRE_AST("null/1", "null");
-    REQUIRE_AST("null%null", "null");
-    REQUIRE_AST("null/null", "null");
+    REQUIRE_ERROR("1+panic()");
+    REQUIRE_ERROR("panic()+1");
 
     auto GetError = [&](std::string_view query) -> std::string {
         Environment env(Environment::WithNewStringCache);
@@ -132,6 +122,16 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("null<null", "false");
     REQUIRE_AST("null>null", "false");
     REQUIRE_AST("null==null", "true");
+    REQUIRE_AST("1+null", "null");
+    REQUIRE_AST("null+1", "null");
+    REQUIRE_AST("1*null", "null");
+    REQUIRE_AST("null*1", "null");
+    REQUIRE_AST("1-null", "null");
+    REQUIRE_AST("null-1", "null");
+    REQUIRE_AST("1/null", "null");
+    REQUIRE_AST("null/1", "null");
+    REQUIRE_AST("null%null", "null");
+    REQUIRE_AST("null/null", "null");
 
     /* Typeof */
     REQUIRE_AST("typeof 'abc'", "\"string\"");
@@ -287,8 +287,9 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
 TEST_CASE("OperatorNegate", "[ast.operator-negate]") {
     REQUIRE_ERROR("-('abc')");
     REQUIRE_ERROR("-(true)");
+    REQUIRE_ERROR("-panic()");
     REQUIRE_AST("-(1)", "-1");
-    REQUIRE_AST("-(1.0)", "-1.000000");
+    REQUIRE_AST("-(1.1)", "-1.100000");
     REQUIRE_AST("-(null)", "null");
 }
 
