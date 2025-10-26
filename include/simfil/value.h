@@ -431,6 +431,7 @@ public:
             void operator() (std::string const& v) {result = v;}
             void operator() (std::string_view const& v) {result = v;}
             void operator() (TransientObject const&) {}
+            void operator() (ModelNode::Ptr const&) {}
             ScalarValueType result;
         } scalarVisitor;
         std::visit(scalarVisitor, value);
