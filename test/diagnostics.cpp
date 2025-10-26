@@ -28,7 +28,7 @@ TEST_CASE("UnknownField", "[diag.unknown-field]") {
 }
 
 TEST_CASE("ComparatorTypeMissmatch", "[diag.comparator-type-missmatch]") {
-    EXPECT_DIAGNOSTIC_MESSAGE_CONTAINING("*['string'] > 123", "All values compared to");
+    EXPECT_DIAGNOSTIC_MESSAGE_CONTAINING("['string'] > 123", "All values compared to true. Left hand types are string");
 }
 
 TEST_CASE("AnyUnknownField", "[diag.any-suppress-if-any]") {

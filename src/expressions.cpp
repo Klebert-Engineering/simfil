@@ -162,16 +162,20 @@ auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> 
     if (!val.node() || !val.node()->size())
         return res(ctx, Value::null());
 
-    val.node()->iterate(ModelNode::IterLambda([&](auto subNode) -> bool {
+    std::optional<Error> error;
+    val.node()->iterate(ModelNode::IterLambda([&error, &ctx, &res](auto subNode) -> bool {
         auto result = res(ctx, Value::field(std::move(subNode)));
-        if (!result || *result == Result::Stop) {
+        if (!result) {
+            error = std::move(result.error());
             return false;
         }
+        if (*result == Result::Stop)
+            return false;
         return true;
     }));
-
-   return Result::Continue;
-   //return result;
+    if (error)
+        return tl::unexpected<Error>(std::move(*error));
+    return Result::Continue;
 }
 
 auto AnyChildExpr::clone() const -> ExprPtr
@@ -390,14 +394,14 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -
                     ctx.env->warn("Invalid subscript index type "s + valueType2String(ival.type), this->toString());
             } else {
                 auto v = BinaryOperatorDispatcher<OperatorSubscript>::dispatch(lval, ival);
-                if (!v)
-                    return tl::unexpected<Error>(std::move(v.error()));
+                TRY_EXPECTED(v);
                 return res(ctx, std::move(v.value()));
             }
 
             return Result::Continue;
         }));
     }));
+    TRY_EXPECTED(r);
     res.ensureCall();
     return r;
 }
@@ -776,6 +780,7 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl
         }
         return Result::Continue;
     }));
+    TRY_EXPECTED(r);
 
     if (!anyval)
         r = res(ctx, Value::null());

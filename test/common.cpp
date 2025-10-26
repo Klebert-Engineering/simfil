@@ -77,6 +77,7 @@ auto CompleteQuery(std::string_view query, size_t point, std::optional<std::stri
         opts = *options;
 
     auto root = model.value()->root(0);
+    REQUIRE(root);
     return complete(env, query, point, **root, opts).value_or(std::vector<CompletionCandidate>());
 }
 
@@ -97,6 +98,7 @@ auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::M
 
     Diagnostics diag;
     auto root = model.value()->root(0);
+    REQUIRE(root);
     auto res = eval(env, **ast, **root, &diag);
     if (!res)
         INFO(res.error().message);

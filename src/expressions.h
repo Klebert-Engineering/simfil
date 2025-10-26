@@ -444,8 +444,7 @@ public:
                         ++falseResults_;
                 }
 
-                return res(ctx, std::move(operatorResult.value())
-);
+                return res(ctx, std::move(operatorResult.value()));
             }));
         }));
     }

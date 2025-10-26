@@ -625,9 +625,9 @@ inline auto makeOperatorResult(CType_&& value) -> tl::expected<Value, Error>
 }
 
 template <class Operator_>
-inline auto makeOperatorResult(Value&& value) -> tl::expected<Value, Error>
+inline auto makeOperatorResult(Value value) -> tl::expected<Value, Error>
 {
-    return std::forward<Value>(value);
+    return value;
 }
 
 template <class Operator_, class CType_>
