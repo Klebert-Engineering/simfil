@@ -358,7 +358,9 @@ TEST_CASE("ModeSetter", "[ast.mode-setter]") {
 }
 
 TEST_CASE("UtilityFns", "[ast.functions]") {
-    REQUIRE_AST("range(a,b)",    "(range a b)"); /* Can not optimize */
+    REQUIRE_ERROR("range(panic(), 5)");
+    REQUIRE_ERROR("range(1, panic())");
+    REQUIRE_AST("range(a,b)",    "(range a b)"); /* Ca not optimize */
     REQUIRE_AST("range(1,5)",    "1..5");
     REQUIRE_AST("range(1,5)==0", "false");
     REQUIRE_AST("range(1,5)==3", "true");
