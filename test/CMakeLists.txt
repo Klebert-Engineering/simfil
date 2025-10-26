@@ -15,6 +15,7 @@ add_executable(test.simfil
   performance.cpp
   arena.cpp
   error.cpp
+  value.cpp
   operator.cpp)
 
 target_link_libraries(test.simfil
