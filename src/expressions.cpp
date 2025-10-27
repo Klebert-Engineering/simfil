@@ -566,7 +566,7 @@ auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::
     auto undef = false; /* At least one value is undef */
 
     for (const auto& arg : args_) {
-        auto res = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+        auto argRes = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -576,7 +576,7 @@ auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::
             result = result && boolify(vv);
             return result ? Result::Continue : Result::Stop;
         }));
-        TRY_EXPECTED(res);
+        TRY_EXPECTED(argRes);
         if (!result || undef)
             break;
     }
