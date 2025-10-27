@@ -310,6 +310,11 @@ public:
         const auto type = node.type();
         if (type == ValueType::Object || type == ValueType::Array) {
             return Value{type, model_ptr<ModelNode>(node)};
+        } else if (type == ValueType::String) {
+            auto value = node.value();
+            if (auto view = std::get_if<std::string_view>(&value))
+                return Value::make(std::string(*view));
+            return Value{std::move(value)};
         } else {
             return Value{node.value()};
         }
@@ -320,6 +325,11 @@ public:
         const auto type = node.type();
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(std::move(node))};
+        } else if (type == ValueType::String) {
+            auto value = node.value();
+            if (auto view = std::get_if<std::string_view>(&value))
+                return Value::make(std::string(*view));
+            return Value{std::move(value)};
         } else {
             return Value{node.value()};
         }
