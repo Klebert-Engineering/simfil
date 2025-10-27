@@ -87,12 +87,14 @@ static auto isSymbolWord(std::string_view sv) -> bool
 template <class Fun>
 struct scoped {
     Fun f;
+    bool call = true;
 
     explicit scoped(Fun f) : f(std::move(f)) {}
-    scoped(scoped&& s) noexcept : f(std::move(s.f)) { s.f = nullptr; }
+    scoped(scoped&& s) noexcept : f(std::move(s.f)) { s.call = false; }
     scoped(const scoped& s) = delete;
     ~scoped() {
-        f();
+        if (call)
+            f();
     }
 };
 
