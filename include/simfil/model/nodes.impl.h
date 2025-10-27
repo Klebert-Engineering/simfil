@@ -162,7 +162,7 @@ tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error
     if (!fieldId)
         return tl::unexpected<Error>(std::move(fieldId.error()));
     storage_->emplace_back(members_, *fieldId, value->addr());
-    return *this;
+    return std::ref(*this);
 }
 
 }  // namespace simfil
