@@ -158,3 +158,34 @@ TEST_CASE("Token location", "[token.location]") {
     REQUIRE(tokens[3].begin == pos); REQUIRE(tokens[3].end == pos+3); pos+=4; /* and  */
     REQUIRE(tokens[4].begin == pos); REQUIRE(tokens[4].end == pos+4); pos+=4; /* true */
 }
+
+TEST_CASE("Token to string", "[token.to-string]") {
+    auto tokens = tokenize("1 1.5 'Æthervial' re'.* Familiar' abc ()[]{},:._ * ** "
+                           "null true false + - * / % << >> & | ^ ~ not and or "
+                           "== != < <= > >= ? # typeof as ...");
+    REQUIRE(tokens);
+
+    auto i = 0;
+    #define REQUIRE_STR(expr) do { REQUIRE((*tokens)[i].toString() == (expr)); ++i; } while (false)
+
+    REQUIRE_STR("1");
+    REQUIRE_STR("1.500000");
+    REQUIRE_STR("'Æthervial'");
+    REQUIRE_STR("re'.* Familiar'");
+    REQUIRE_STR("abc");
+    REQUIRE_STR("("); REQUIRE_STR(")");
+    REQUIRE_STR("["); REQUIRE_STR("]");
+    REQUIRE_STR("{"); REQUIRE_STR("}");
+    REQUIRE_STR(","); REQUIRE_STR(":");
+    REQUIRE_STR("."); REQUIRE_STR("_");
+    REQUIRE_STR("*"); REQUIRE_STR("**");
+    REQUIRE_STR("null"); REQUIRE_STR("true"); REQUIRE_STR("false");
+    REQUIRE_STR("+"); REQUIRE_STR("-"); REQUIRE_STR("*"); REQUIRE_STR("/");
+    REQUIRE_STR("%");
+    REQUIRE_STR("<<"); REQUIRE_STR(">>"); REQUIRE_STR("&"); REQUIRE_STR("|"); REQUIRE_STR("^"); REQUIRE_STR("~");
+    REQUIRE_STR("not"); REQUIRE_STR("and"); REQUIRE_STR("or");
+    REQUIRE_STR("=="); REQUIRE_STR("!="); REQUIRE_STR("<");
+    REQUIRE_STR("<="); REQUIRE_STR(">"); REQUIRE_STR(">=");
+    REQUIRE_STR("?"); REQUIRE_STR("#"); REQUIRE_STR("typeof");
+    REQUIRE_STR("as"); REQUIRE_STR("...");
+}

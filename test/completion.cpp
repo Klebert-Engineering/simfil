@@ -99,6 +99,12 @@ TEST_CASE("Complete in Expression", "[completion.complete-mid-expression]") {
     EXPECT_COMPLETION("sub.ch > 123", 6, "child");
 }
 
+TEST_CASE("Complete in unclosed expression", "[completion.complete-in-unclosed-expr]") {
+    EXPECT_COMPLETION("(field + oth", {}, "other");
+    EXPECT_COMPLETION("_{field + oth", {}, "other");
+    EXPECT_COMPLETION("*[field + oth", {}, "other");
+}
+
 TEST_CASE("Complete SmartCas", "[completion.smart-case]") {
     // Complete both the field and the constants
     EXPECT_COMPLETION("cons", {}, "constant", Type::FIELD, 4);

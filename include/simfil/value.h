@@ -87,10 +87,8 @@ inline auto valueType2String(ValueType t) -> const char*
     case ValueType::TransientObject: return "transient";
     case ValueType::Object: return "object";
     case ValueType::Array:  return "array";
-    default:
-        assert(0 && "unreachable");
-        return "unknown";
     }
+    assert(0 && "unreachable"); return "unknown"; // GCOVR_EXCL_LINE
 }
 
 

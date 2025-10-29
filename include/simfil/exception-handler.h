@@ -46,6 +46,7 @@ private:
 template<typename ExceptionType, typename... Args>
 [[noreturn]] void raise(Args&&... args)
 {
+    // GCOVR_EXCL_START
     ExceptionType exceptionInstance(std::forward<Args>(args)...);
 
     if (auto const& excHandler = ThrowHandler::instance().get()) {
@@ -55,6 +56,7 @@ template<typename ExceptionType, typename... Args>
             errorMessage = exceptionInstance.what();
         excHandler(typeName, errorMessage);
     }
+    // GCOVR_EXCL_STOP
 
     throw std::move(exceptionInstance);
 }
