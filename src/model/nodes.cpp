@@ -246,10 +246,9 @@ Array& Array::append(std::string_view const& value) {storage_->push_back(members
 tl::expected<void, Error> Array::extend(model_ptr<Array> const& other) {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
-        if (auto value = storage_->at(other->members_, i))
-            storage_->push_back(members_, *value);
-        else
-            return tl::unexpected<Error>(std::move(value.error()));
+        auto value = storage_->at(other->members_, i);
+        TRY_EXPECTED(value);
+        storage_->push_back(members_, *value);
     }
     return {};
 }
@@ -311,10 +310,9 @@ tl::expected<void, Error> Object::extend(model_ptr<Object> const& other)
 {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
-        if (auto value = storage_->at(other->members_, i))
-            storage_->push_back(members_, *value);
-        else
-            return tl::unexpected<Error>(std::move(value.error()));
+        auto value = storage_->at(other->members_, i);
+        TRY_EXPECTED(value);
+        storage_->push_back(members_, *value);
     }
     return {};
 }

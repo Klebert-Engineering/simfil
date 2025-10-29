@@ -16,6 +16,8 @@
 #include <sfl/segmented_vector.hpp>
 #include <tl/expected.hpp>
 
+#include "../expected.h"
+
 namespace simfil
 {
 
@@ -363,8 +365,7 @@ auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::ex
         for (auto& member : memberArray) {
             if (auto resolvedName = oldStrings->resolve(member.name_)) {
                 auto stringId = strings->emplace(*resolvedName);
-                if (!stringId)
-                   return tl::unexpected<Error>(std::move(stringId.error()));
+                TRY_EXPECTED(stringId);
                 member.name_ = *stringId;
             }
         }

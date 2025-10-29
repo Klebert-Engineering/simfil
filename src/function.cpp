@@ -198,8 +198,7 @@ auto TraceFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
         .opt("limit", ValueType::Int, limit, Value::make(static_cast<int64_t>(-1)))
         .opt("name",  ValueType::String, name, Value::make(args[0]->toString()))
         .ok();
-    if (!ok)
-        return tl::unexpected<Error>(std::move(ok.error()));
+    TRY_EXPECTED(ok);
 
     /* Never run in compilation phase */
     if (ctx.phase == Context::Phase::Compilation)
@@ -263,8 +262,7 @@ auto RangeFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
         .arg("begin", ValueType::Int, begin)
         .arg("end",   ValueType::Int, end)
         .ok();
-    if (!ok)
-        return tl::unexpected<Error>(std::move(ok.error()));
+    TRY_EXPECTED(ok);
     if (!ok.value()) [[unlikely]]
         return res(ctx, Value::undef());
 
@@ -330,12 +328,12 @@ auto ArrFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
         return res(ctx, Value::null());
 
     for (const auto& arg : args) {
-        if (auto r = arg->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value&& vv) {
+        auto r = arg->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value &&vv) {
             return res(ctx, std::move(vv));
-        })); r && *r == Result::Stop)
+        }));
+        TRY_EXPECTED(r);
+        if (*r == Result::Stop)
             return Result::Stop;
-        else if (!r)
-            return tl::unexpected<Error>(std::move(r.error()));
     }
 
     return Result::Continue;
@@ -410,8 +408,7 @@ auto SplitFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
         .arg("separator", ValueType::String, sep)
         .opt("keepEmpty", ValueType::Bool, keepEmpty, Value::t())
         .ok();
-    if (!ok)
-        return tl::unexpected<Error>(std::move(ok.error()));
+    TRY_EXPECTED(ok);
 
     auto subctx = ctx;
     if (!ok.value()) [[unlikely]]
@@ -419,10 +416,10 @@ auto SplitFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
 
     auto items = split(str.as<ValueType::String>(), sep.as<ValueType::String>(), !keepEmpty.as<ValueType::Bool>());
     for (auto&& item : items) {
-        if (auto r = res(subctx, Value::make(std::move(item))); r && *r == Result::Stop)
+        auto r = res(subctx, Value::make(std::move(item)));
+        TRY_EXPECTED(r);
+        if (*r == Result::Stop)
             break;
-        else if (!r)
-            return tl::unexpected<Error>(r.error());
     }
 
     return Result::Continue;
@@ -451,8 +448,7 @@ auto SelectFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& a
         .arg("index", ValueType::Int, idx)
         .opt("limit", ValueType::Int, cnt, Value::make(static_cast<int64_t>(1)))
         .ok();
-    if (!ok)
-        return tl::unexpected<Error>(std::move(ok.error()));
+    TRY_EXPECTED(ok);
 
     if (!ok.value()) [[unlikely]]
         return res(ctx, Value::undef());
@@ -529,11 +525,9 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
             if (sum.isa(ValueType::Null)) {
                 sum = std::move(vv);
             } else {
-                if (auto newSum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv)) {
-                    sum = std::move(newSum.value());
-                } else {
-                    return tl::unexpected<Error>(std::move(newSum.error()));
-                }
+                auto newSum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv);
+                TRY_EXPECTED(newSum);
+                sum = std::move(newSum.value());
             }
         }
 
@@ -571,10 +565,10 @@ auto KeysFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& arg
         if (vv.nodePtr())
             for (auto&& fieldName : vv.node()->fieldNames()) {
                 if (auto key = ctx.env->stringPool->resolve(fieldName)) {
-                    if (auto r = res(ctx, Value::strref(*key)); r && *r == Result::Stop)
+                    auto r = res(ctx, Value::strref(*key));
+                    TRY_EXPECTED(r);
+                    if (*r == Result::Stop)
                         return Result::Stop;
-                    else if (!r)
-                        return tl::unexpected<Error>(std::move(r.error()));
                 }
             }
         return Result::Continue;

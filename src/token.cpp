@@ -480,7 +480,7 @@ auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
         }
 
         if (s.hasError())
-            return unexpected<Error>(s.error());
+            return unexpected<Error>(std::move(s.error()));
     }
     tokens.emplace_back(Token::NIL, expr.size(), expr.size());
 

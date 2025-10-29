@@ -101,9 +101,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
                 return Result::Continue;
 
             auto result = res(ctx, Value::field(val));
-            if (!result)
-                return tl::unexpected<Error>(result.error());
-
+            TRY_EXPECTED(result);
             if (*result == Result::Stop) [[unlikely]]
                 return *result;
 
@@ -288,10 +286,10 @@ auto MultiConstExpr::constant() const -> bool
 auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
 {
     for (const auto& v : values_) {
-        if (auto r = res(ctx, v); r && *r == Result::Stop)
+        auto r = res(ctx, v);
+        TRY_EXPECTED(r);
+        if (*r == Result::Stop)
             return Result::Stop;
-        else if (!r)
-            return tl::unexpected<Error>(std::move(r.error()));
     }
 
     return Result::Continue;
@@ -449,9 +447,7 @@ auto SubExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expec
     auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, const Value& lv) -> tl::expected<Result, Error> {
         return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) -> tl::expected<Result, Error> {
             auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
-            if (!bv) [[unlikely]]
-                return tl::unexpected<Error>(std::move(bv.error()));
-
+            TRY_EXPECTED(bv);
             if (bv->isa(ValueType::Undef))
                 return Result::Continue;
 
@@ -773,10 +769,10 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl
                 return Result::Stop;
         } else {
             anyval = true;
-            if (auto r = res(ctx, std::move(v)); r && *r == Result::Stop)
+            auto r = res(ctx, std::move(v));
+            TRY_EXPECTED(r);
+            if (*r == Result::Stop)
                 return Result::Stop;
-            else if (!r)
-                return tl::unexpected<Error>(std::move(r.error()));
         }
         return Result::Continue;
     }));
@@ -821,8 +817,7 @@ auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) 
         if (val.isa(ValueType::TransientObject)) {
             const auto& obj = val.as<ValueType::TransientObject>();
             auto v = obj.meta->unaryOp(ident_, obj);
-            if (!v)
-                return tl::unexpected<Error>(std::move(v.error()));
+            TRY_EXPECTED(v);
             return res(ctx, std::move(v.value()));
         }
 
@@ -867,16 +862,14 @@ auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res)
             if (lval.isa(ValueType::TransientObject)) {
                 const auto& obj = lval.as<ValueType::TransientObject>();
                 auto v = obj.meta->binaryOp(ident_, obj, rval);
-                if (!v)
-                    return tl::unexpected<Error>(std::move(v.error()));
+                TRY_EXPECTED(v);
                 return res(ctx, std::move(v.value()));
             }
 
             if (rval.isa(ValueType::TransientObject)) {
                 const auto& obj = rval.as<ValueType::TransientObject>();
                 auto v = obj.meta->binaryOp(ident_, lval, obj);
-                if (!v)
-                    return tl::unexpected<Error>(std::move(v.error()));
+                TRY_EXPECTED(v);
                 return res(ctx, std::move(v.value()));
             }
 
@@ -924,9 +917,7 @@ auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::e
             return res(ctx, lval);
 
         auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
-        if (!v)
-            return tl::unexpected<Error>(std::move(v.error()));
-
+        TRY_EXPECTED(v);
         if (v->isa(ValueType::Bool))
             if (!v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
@@ -976,9 +967,7 @@ auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::ex
         ++leftEvaluations_;
 
         auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
-        if (!v)
-            return tl::unexpected<Error>(std::move(v.error()));
-
+        TRY_EXPECTED(v);
         if (v->isa(ValueType::Bool))
             if (v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
