@@ -842,6 +842,9 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     p.infixParsers[Token::OP_OR]  = &andOrCompletionParser;
 
     auto astResult = p.parse();
+    if (!p.match(Token::Type::NIL))
+        return unexpected<Error>(Error::ExpectedEOF, "Expected end-of-input; got "s + p.current().toString());
+
     TRY_EXPECTED(astResult);
     auto ast = std::move(*astResult);
 
