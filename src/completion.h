@@ -1,10 +1,10 @@
 #pragma once
 
-#include "simfil/expression.h"
 #include "simfil/token.h"
 #include "simfil/environment.h"
 
-#include <limits>
+#include "expressions.h"
+
 #include <string>
 #include <set>
 #include <memory>
@@ -48,7 +48,7 @@ public:
     CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result override;
+    auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> override;
     auto clone() const -> std::unique_ptr<Expr> override;
     auto accept(ExprVisitor& v) -> void override;
     auto toString() const -> std::string override;
@@ -64,7 +64,7 @@ public:
     CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
     void accept(ExprVisitor& v) override;
     auto clone() const -> ExprPtr override;
     auto toString() const -> std::string override;
@@ -78,7 +78,7 @@ public:
     CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> Result override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
     void accept(ExprVisitor& v) override;
     auto clone() const -> ExprPtr override;
     auto toString() const -> std::string override;
@@ -92,13 +92,28 @@ public:
     CompletionWordExpr(std::string prefix, Completion* comp, const Token& token);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result override;
+    auto constant() const -> bool override;
+    auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> override;
     auto clone() const -> std::unique_ptr<Expr> override;
     auto accept(ExprVisitor& v) -> void override;
     auto toString() const -> std::string override;
 
     std::string prefix_;
     Completion* comp_;
+};
+
+/**
+ * A special expression to prevent constant value
+ * evaluation during completion.
+ */
+class CompletionConstExpr : public ConstExpr
+{
+public:
+    using ConstExpr::ConstExpr;
+
+    auto constant() const -> bool override;
+    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error> override;
 };
 
 }

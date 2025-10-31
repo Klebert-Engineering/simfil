@@ -79,13 +79,12 @@ char* command_generator(const char* text, int state)
         if (current_env) {
             simfil::CompletionOptions opts;
             opts.limit = 25;
-            opts.autoWildcard = options.auto_wildcard;
 
             auto root = model->root(0);
             if (!root)
                 return nullptr;
 
-            auto comp = simfil::complete(*current_env, query, rl_point, *root, opts);
+            auto comp = simfil::complete(*current_env, query, rl_point, **root, opts);
             if (!comp)
                 return nullptr;
 
@@ -142,7 +141,11 @@ static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std:
 
     if (!model->numRoots()) {
         model->addRoot(simfil::ModelNode::Ptr());
-        auto res = simfil::eval(env, ast, *model->root(0), &diag);
+        auto root = model->root(0);
+        if (!root)
+            return result;
+
+        auto res = simfil::eval(env, ast, **root, &diag);
         if (res)
             result[0] = std::move(*res);
         // TODO: Output eval errors
@@ -163,7 +166,13 @@ static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std:
             size_t next;
             while ((next = idx++) < model->numRoots()) {
                 try {
-                    auto res = simfil::eval(env, ast, *model->root(next), &diag);
+                    auto root = model->root(next);
+                    if (!root) {
+                        std::cerr << "Error: " << root.error().message << "\n";
+                        continue;
+                    }
+
+                    auto res = simfil::eval(env, ast, **root, &diag);
                     if (res)
                         result[next] = std::move(*res);
                     // TODO: Output eval errors
@@ -226,7 +235,8 @@ int main(int argc, char *argv[])
 #if defined(SIMFIL_WITH_MODEL_JSON)
         std::cout << "Parsing " << filename << "\n";
         auto f = std::ifstream(std::string(filename));
-        simfil::json::parse(f, model);
+        if (auto res = simfil::json::parse(f, model); !res)
+            std::cerr << "Error: " << res.error().message << "\n";
 #endif
     };
 

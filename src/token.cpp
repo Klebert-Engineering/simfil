@@ -435,7 +435,7 @@ std::optional<Token> scanSyntax(Scanner& s)
         {"/", Token::OP_DIV},
         {"%", Token::OP_MOD},
         {"<<",Token::OP_LSHIFT},
-        {">>",Token::OP_LSHIFT},
+        {">>",Token::OP_RSHIFT},
         {"~", Token::OP_BITINV},
         {"|", Token::OP_BITOR},
         {"&", Token::OP_BITAND},
@@ -480,7 +480,7 @@ auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
         }
 
         if (s.hasError())
-            return unexpected<Error>(s.error());
+            return unexpected<Error>(std::move(s.error()));
     }
     tokens.emplace_back(Token::NIL, expr.size(), expr.size());
 

@@ -50,17 +50,35 @@ public:
     /* Debug */
     virtual auto toString() const -> std::string = 0;
 
-    /* Evaluation wrapper */
-    auto eval(Context ctx, Value val, const ResultFn& res) -> Result
+    auto eval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
     {
         if (ctx.canceled())
             return Result::Stop;
 
-        auto dbg = ctx.env->debug;
-        if (dbg) dbg->evalBegin(*this, ctx, val, res);
-        auto r = ieval(ctx, val, res);
-        if (dbg) dbg->evalEnd(*this);
-        return r;
+        if (auto dbg = ctx.env->debug) [[unlikely]] {
+            auto dbgVal = Value{val};
+            dbg->evalBegin(*this, ctx, dbgVal, res);
+            auto r = ieval(ctx, std::move(dbgVal), res);
+            dbg->evalEnd(*this);
+            return r;
+        }
+
+        return ieval(ctx, val, res);
+    }
+
+    auto eval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+    {
+        if (ctx.canceled())
+            return Result::Stop;
+
+        if (auto dbg = ctx.env->debug) [[unlikely]] {
+            dbg->evalBegin(*this, ctx, val, res);
+            auto r = ieval(ctx, std::move(val), res);
+            dbg->evalEnd(*this);
+            return r;
+        }
+
+        return ieval(ctx, std::move(val), res);
     }
 
     /* Recursive clone */
@@ -79,7 +97,12 @@ public:
 
 private:
     /* Abstract evaluation implementation */
-    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> Result = 0;
+    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> = 0;
+    
+    /* Move-optimized evaluation implementation */
+    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) -> tl::expected<Result, Error> {
+        return ieval(ctx, value, result);
+    }
 
     SourceLocation sourceLocation_;
 };
@@ -110,7 +133,7 @@ private:
     /* The original query string of the AST */
     std::string queryString_;
 
-    /* The actuall AST */
+    /* The actual AST */
     ExprPtr expr_;
 };
 

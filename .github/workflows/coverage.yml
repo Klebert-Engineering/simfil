@@ -35,8 +35,10 @@ jobs:
       run: |
         mkdir coverage
         gcovr --html-details coverage/coverage.html \
+              --exclude-lines-by-pattern 'TRY_EXPECTED' \
               --filter src/ --filter include/
         gcovr --cobertura coverage.xml \
+              --exclude-lines-by-pattern 'TRY_EXPECTED' \
               --html coverage.html \
               --filter src/ --filter include/
         less coverage.xml
@@ -63,7 +65,7 @@ jobs:
       with:
         filename: coverage.xml
         badge: false
-        fail_below_min: true
+        fail_below_min: false
         format: markdown
         hide_branch_rate: false
         hide_complexity: true

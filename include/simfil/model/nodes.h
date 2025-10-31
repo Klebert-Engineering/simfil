@@ -5,7 +5,6 @@
 #include <type_traits>
 #include <variant>
 #include <functional>
-#include <bitset>
 
 #include "arena.h"
 #include "string-pool.h"
@@ -110,29 +109,23 @@ struct model_ptr
         return model_ptr(std::in_place, std::forward<Args>(args)...);
     }
 
-    inline void ensureModelIsNotNull() const {
-        if (!data_.model_ || !data_.addr_) {
-            raise<std::runtime_error>("Attempt to dereference null model_ptr!");
-        }
-    }
-
     inline T& operator* () {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return data_;
     }
 
     inline T* operator-> () {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return &data_;
     }
 
     inline T const& operator* () const {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return data_;
     }
 
     inline T const* operator-> () const {
-        ensureModelIsNotNull();
+        assert(data_.model_ && data_.addr_);
         return &data_;
     }
 
@@ -500,7 +493,7 @@ struct Array : public BaseArray<ModelPool, ModelNode>
     /**
      * Append all elements from `other` to this array.
      */
-    Array& extend(model_ptr<Array> const& other);
+    tl::expected<void, Error> extend(model_ptr<Array> const& other);
 
 protected:
     Array() = default;
@@ -518,7 +511,8 @@ struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
 
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
-    BaseObject& addField(std::string_view const& name, model_ptr<OtherModelNodeType> const& value) {
+    tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error>
+    addField(std::string_view const& name, model_ptr<OtherModelNodeType> const& value) {
         return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
     }
 
@@ -556,7 +550,8 @@ protected:
     BaseObject(ModelConstPtr pool, ModelNodeAddress);
     BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
 
-    BaseObject& addFieldInternal(std::string_view const& name, ModelNode::Ptr const& value={});
+    tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error>
+    addFieldInternal(std::string_view const& name, ModelNode::Ptr const& value={});
 
     Storage* storage_ = nullptr;
     ArrayIndex members_ = 0;
@@ -573,19 +568,19 @@ struct Object : public BaseObject<ModelPool, ModelNode>
     using BaseObject<ModelPool, ModelNode>::get;
     using BaseObject<ModelPool, ModelNode>::addField;
 
-    Object& addBool(std::string_view const& name, bool value);
-    Object& addField(std::string_view const& name, uint16_t value);
-    Object& addField(std::string_view const& name, int16_t value);
-    Object& addField(std::string_view const& name, int64_t const& value);
-    Object& addField(std::string_view const& name, double const& value);
-    Object& addField(std::string_view const& name, std::string_view const& value);
+    tl::expected<void, Error> addBool(std::string_view const& name, bool value);
+    tl::expected<void, Error> addField(std::string_view const& name, uint16_t value);
+    tl::expected<void, Error> addField(std::string_view const& name, int16_t value);
+    tl::expected<void, Error> addField(std::string_view const& name, int64_t const& value);
+    tl::expected<void, Error> addField(std::string_view const& name, double const& value);
+    tl::expected<void, Error> addField(std::string_view const& name, std::string_view const& value);
 
-    [[nodiscard]] ModelNode::Ptr get(std::string_view const& fieldName) const;
+    [[nodiscard]] tl::expected<ModelNode::Ptr, Error> get(std::string_view const& fieldName) const;
 
     /**
      * Adopt all fields from the `other` object into this one.
      */
-    Object& extend(model_ptr<Object> const& other);
+    tl::expected<void, Error> extend(model_ptr<Object> const& other);
 
 protected:
     Object() = default;

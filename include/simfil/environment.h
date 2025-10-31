@@ -175,8 +175,8 @@ struct Debug
  */
 struct CompletionOptions
 {
-    // Auto insert a wildcard if the first token is a field name.
-    bool autoWildcard = false;
+    // Show hints about completing certain queries to a wildcard query.
+    bool showWildcardHints = true;
 
     // Limit of candidates.
     size_t limit = 15;
@@ -200,6 +200,7 @@ struct CompletionCandidate
       CONSTANT = 1,
       FIELD    = 2,
       FUNCTION = 3,
+      HINT     = 4,
     };
 
     std::string text;        // Text to insert

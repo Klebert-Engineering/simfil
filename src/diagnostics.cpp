@@ -2,9 +2,10 @@
 
 #include "simfil/diagnostics.h"
 
-#include "levenshtein.h"
 #include "expressions.h"
 
+#include <cctype>
+#include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/stream.h>
@@ -111,31 +112,6 @@ auto Diagnostics::read(std::istream& stream) -> tl::expected<void, Error>
     return {};
 }
 
-
-static auto findSimilarString(std::string_view source, const StringPool& pool) -> std::string
-{
-    std::string_view best;
-    auto bestScore = std::numeric_limits<int>::max();
-
-    const auto isDollar = source[0] == '$';
-    for (const auto& target : pool.strings()) {
-        const auto targetIsDollar = target[0] == '$';
-        if (isDollar != targetIsDollar)
-            continue;
-        if (target == source)
-            continue;
-
-        const auto score = levenshtein(source, target);
-        if (score < bestScore) {
-            bestScore = score;
-            best = target;
-        }
-    }
-
-    return std::string(best);
-}
-
-
 auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::vector<Diagnostics::Message>
 {
     struct Visitor : ExprVisitor
@@ -164,17 +140,7 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
             if (iter->second > 0)
                 return;
 
-            // Generate "did you mean ...?" messages for missing fields
-            auto guess = findSimilarString(e.name_, *env.strings());
-            if (!guess.empty()) {
-                std::string fix = ast.query();
-                if (auto loc = e.sourceLocation(); loc.size > 0)
-                    fix.replace(loc.offset, loc.size, guess);
-
-                addMessage(fmt::format("No matches for field '{}'. Did you mean '{}'?", e.name_, guess), e, fix);
-            } else {
-                addMessage(fmt::format("No matches for field '{}'.", e.name_, guess), e, {});
-            }
+            addMessage(fmt::format("No matches for field '{}'.", e.name_), e, {});
         }
 
         void visitComparisonOperator(ComparisonExprBase& e, bool expectedResult)

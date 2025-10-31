@@ -5,10 +5,23 @@
 
 static const PanicFn panicFn{};
 
+auto CompileError(std::string_view query, bool autoWildcard) -> Error
+{
+    Environment env(Environment::WithNewStringCache);
+    env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
+    env.functions["panic"] = &panicFn;
+
+    auto ast = compile(env, query, false, autoWildcard);
+    REQUIRE(!ast.has_value());
+
+    return std::move(ast.error());
+}
+
 auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
 {
     Environment env(Environment::WithNewStringCache);
-    env.constants.emplace("a_number", simfil::Value::make((int64_t)123));
+    env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
+    env.functions["panic"] = &panicFn;
 
     auto ast = compile(env, query, false, autoWildcard);
     if (!ast)
@@ -21,21 +34,27 @@ auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
 auto JoinedResult(std::string_view query, std::optional<std::string> json) -> std::string
 {
     auto model = simfil::json::parse(std::string(json.value_or(TestModel)));
-    Environment env(model->strings());
+    REQUIRE(model);
+    Environment env(model.value()->strings());
 
     env.functions["panic"] = &panicFn;
 
     auto ast = compile(env, query, false);
-    if (!ast)
-        INFO(ast.error().message);
-    REQUIRE(ast.has_value());
+    if (!ast) {
+        INFO("ERROR: " << ast.error().message);
+        return fmt::format("ERROR: {}", ast.error().message);
+    }
 
     INFO("AST: " << (*ast)->expr().toString());
 
-    auto res = eval(env, **ast, *model->root(0), nullptr);
-    if (!res)
-        INFO(res.error().message);
-    REQUIRE(res);
+    auto root = model.value()->root(0);
+    REQUIRE(root);
+
+    auto res = eval(env, **ast, **root, nullptr);
+    if (!res) {
+        INFO("ERROR: " << res.error().message);
+        return fmt::format("ERROR: {}", res.error().message);
+    }
 
     std::string vals;
     for (const auto& vv : *res) {
@@ -46,19 +65,27 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
     return vals;
 }
 
-auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json) -> std::vector<CompletionCandidate>
+auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json, const CompletionOptions* options) -> std::vector<CompletionCandidate>
 {
     auto model = simfil::json::parse(json.value_or(TestModel));
-    Environment env(model->strings());
+    REQUIRE(model);
+    Environment env(model.value()->strings());
 
     CompletionOptions opts;
-    return complete(env, query, point, *model->root(0), opts).value_or(std::vector<CompletionCandidate>());
+    opts.showWildcardHints = true;
+    if (options)
+        opts = *options;
+
+    auto root = model.value()->root(0);
+    REQUIRE(root);
+    return complete(env, query, point, **root, opts).value_or(std::vector<CompletionCandidate>());
 }
 
 auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::Message>
 {
     auto model = simfil::json::parse(TestModel);
-    Environment env(model->strings());
+    REQUIRE(model);
+    Environment env(model.value()->strings());
 
     env.functions["panic"] = &panicFn;
 
@@ -70,7 +97,9 @@ auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::M
     INFO("AST: " << (*ast)->expr().toString());
 
     Diagnostics diag;
-    auto res = eval(env, **ast, *model->root(0), &diag);
+    auto root = model.value()->root(0);
+    REQUIRE(root);
+    auto res = eval(env, **ast, **root, &diag);
     if (!res)
         INFO(res.error().message);
     REQUIRE(res);

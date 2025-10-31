@@ -7,12 +7,15 @@
 #endif
 
 #include "model.h"
+#include "simfil/error.h"
+
+#include <tl/expected.hpp>
 
 namespace simfil::json
 {
 
-void parse(std::istream& input, ModelPoolPtr const& model);
-void parse(const std::string& input, ModelPoolPtr const& model);
-ModelPoolPtr parse(const std::string& input);
+auto parse(std::istream& input, ModelPoolPtr const& model) -> tl::expected<void, Error>;
+auto parse(const std::string& input, ModelPoolPtr const& model) -> tl::expected<void, Error>;
+auto parse(const std::string& input) -> tl::expected<ModelPoolPtr, Error>;
 
 }

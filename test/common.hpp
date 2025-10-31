@@ -63,23 +63,24 @@ public:
     {
         static const FnInfo info{
           "panic",
-          "Thrown an exception",
+          "Raise an error",
           "panic()"
         };
 
         return info;
     }
 
-    auto eval(Context ctx, Value, const std::vector<ExprPtr>&, const ResultFn& res) const -> Result override
+    auto eval(Context ctx, const Value&, const std::vector<ExprPtr>&, const ResultFn& res) const -> tl::expected<Result, Error> override
     {
         if (ctx.phase != Context::Phase::Compilation)
-            throw std::runtime_error("Panic!");
+            return tl::unexpected<Error>(Error::RuntimeError, "Panic!");
 
         return res(ctx, Value::undef());
     }
 };
 
 auto Compile(std::string_view query, bool autoWildcard = false) -> ASTPtr;
+auto CompileError(std::string_view query, bool autoWildcard = false) -> Error;
 auto JoinedResult(std::string_view query, std::optional<std::string> json = {}) -> std::string;
-auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json = {}) -> std::vector<CompletionCandidate>;
+auto CompleteQuery(std::string_view query, size_t point, std::optional<std::string> json = {}, const CompletionOptions* = nullptr) -> std::vector<CompletionCandidate>;
 auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::Message>;

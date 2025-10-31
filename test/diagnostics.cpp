@@ -1,6 +1,7 @@
 #include <string_view>
 #include <sstream>
 
+#include "catch2/catch_test_macros.hpp"
 #include "common.hpp"
 
 auto FindMessage(std::string_view query, std::string_view needle) {
@@ -27,7 +28,7 @@ TEST_CASE("UnknownField", "[diag.unknown-field]") {
 }
 
 TEST_CASE("ComparatorTypeMissmatch", "[diag.comparator-type-missmatch]") {
-    EXPECT_DIAGNOSTIC_MESSAGE_CONTAINING("*['string'] > 123", "All values compared to");
+    EXPECT_DIAGNOSTIC_MESSAGE_CONTAINING("['string'] > 123", "All values compared to true. Left hand types are string");
 }
 
 TEST_CASE("AnyUnknownField", "[diag.any-suppress-if-any]") {
@@ -40,13 +41,16 @@ TEST_CASE("OrShortCircuit", "[diag.suppress-short-circuitted-or]") {
 
 TEST_CASE("DiagnosticsSerialization", "[diag.serialization]") {
     auto model = simfil::json::parse(TestModel);
-    Environment env(model->strings());
+    REQUIRE(model);
+    Environment env(model.value()->strings());
 
     // Create two diagnostic messages.
     Diagnostics originalDiag;
     auto ast = compile(env, "**.number == \"string\" or **.number == \"string\"");
     REQUIRE(ast.has_value());
-    eval(env, **ast, *model->root(0), &originalDiag);
+    auto root = model.value()->root(0);
+    REQUIRE(root);
+    eval(env, **ast, **root, &originalDiag);
 
     std::stringstream stream;
     auto writeResult = originalDiag.write(stream);

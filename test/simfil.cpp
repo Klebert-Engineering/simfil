@@ -19,10 +19,33 @@ static constexpr auto StaticTestKey = StringPool::NextStaticId;
     REQUIRE(JoinedResult((query)) == (result))
 
 #define REQUIRE_AST(input, output) \
-    REQUIRE(Compile(input, false)->expr().toString() == (output));
+    REQUIRE(Compile(input, false)->expr().toString() == (output))
 
 #define REQUIRE_AST_AUTOWILDCARD(input, output) \
-    REQUIRE(Compile(input, true)->expr().toString() == (output));
+    REQUIRE(Compile(input, true)->expr().toString() == (output))
+
+#define REQUIRE_ERROR(input) \
+    REQUIRE(CompileError(input, false).message != "")
+
+#define REQUIRE_PANIC(input) \
+    REQUIRE_RESULT((input), "ERROR: Panic!")
+
+
+TEST_CASE("Int", "[ast.integer]") {
+    REQUIRE_AST("1", "1");
+    REQUIRE_AST("123", "123");
+    REQUIRE_AST("-1", "-1");
+    REQUIRE_AST("0xff", "255");
+    REQUIRE_AST("-0xff", "-255");
+}
+
+TEST_CASE("Float", "[ast.float]") {
+    REQUIRE_AST("1.0", "1.000000");
+    REQUIRE_AST("1.5", "1.500000");
+    REQUIRE_AST("-1.0", "-1.000000");
+    REQUIRE_AST("1e2", "100.000000");
+    REQUIRE_AST("1e-2", "0.010000");
+}
 
 TEST_CASE("Path", "[ast.path]") {
     REQUIRE_AST("a", "a");
@@ -43,36 +66,32 @@ TEST_CASE("Wildcard", "[ast.wildcard]") {
 
 TEST_CASE("OperatorConst", "[ast.operator]") {
     /* Arithmetic */
-    REQUIRE_AST("-1",  "-1");
     REQUIRE_AST("1+2", "3");
-    REQUIRE_AST("1-2", "-1");
+    REQUIRE_AST("1.5+2", "3.500000");
     REQUIRE_AST("2*2", "4");
+    REQUIRE_AST("2.5*2", "5.000000");
     REQUIRE_AST("8/2", "4");
+    REQUIRE_AST("3/2.0", "1.500000");
     REQUIRE_AST("-a",  "(- a)");
     REQUIRE_AST("a+2", "(+ a 2)");
     REQUIRE_AST("2+a", "(+ 2 a)");
     REQUIRE_AST("a+b", "(+ a b)");
-    REQUIRE_AST("1+null", "null");
-    REQUIRE_AST("null+1", "null");
-    REQUIRE_AST("1*null", "null");
-    REQUIRE_AST("null*1", "null");
-    REQUIRE_AST("1-null", "null");
-    REQUIRE_AST("null-1", "null");
-    REQUIRE_AST("1/null", "null");
-    REQUIRE_AST("null/1", "null");
+    REQUIRE_PANIC("1+panic()");
+    REQUIRE_PANIC("panic()+1");
 
-    auto GetError = [&](std::string_view query) {
+    auto GetError = [&](std::string_view query) -> std::string {
         Environment env(Environment::WithNewStringCache);
         auto ast = compile(env, query);
 
         REQUIRE(!ast);
         if (!ast)
-            throw ast.error();
+            return ast.error().message;
+        return "Ok";
     };
 
     /* Division by zero */
-    CHECK_THROWS(GetError("1/0"));
-    CHECK_THROWS(GetError("1%0"));
+    REQUIRE(GetError("1/0") == "Division by zero");
+    REQUIRE(GetError("1%0") == "Division by zero");
 
     /* String */
     REQUIRE_AST("'a'+null", "\"anull\"");
@@ -83,11 +102,20 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("1!=1", "false");
 
     REQUIRE_AST("2>1",  "true");
+    REQUIRE_AST("1>=1",  "true");
+    REQUIRE_AST("1.0>=1",  "true");
+    REQUIRE_AST("1>=1.0",  "true");
     REQUIRE_AST("1<2", "true");
     REQUIRE_AST("2<1", "false");
     REQUIRE_AST("2<=2", "true");
     REQUIRE_AST("2<=1", "false");
     REQUIRE_AST("1<=1.1", "true");
+    REQUIRE_AST("1.0<=1", "true");
+    REQUIRE_AST("1.0<=1.0", "true");
+    REQUIRE_AST("'a'<'b'", "true");
+    REQUIRE_AST("'a'<='b'", "true");
+    REQUIRE_AST("'b'>'a'", "true");
+    REQUIRE_AST("'b'>='b'", "true");
 
     /* Null behaviour */
     REQUIRE_AST("1<null", "false");
@@ -97,6 +125,16 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("null<null", "false");
     REQUIRE_AST("null>null", "false");
     REQUIRE_AST("null==null", "true");
+    REQUIRE_AST("1+null", "null");
+    REQUIRE_AST("null+1", "null");
+    REQUIRE_AST("1*null", "null");
+    REQUIRE_AST("null*1", "null");
+    REQUIRE_AST("1-null", "null");
+    REQUIRE_AST("null-1", "null");
+    REQUIRE_AST("1/null", "null");
+    REQUIRE_AST("null/1", "null");
+    REQUIRE_AST("null%null", "null");
+    REQUIRE_AST("null/null", "null");
 
     /* Typeof */
     REQUIRE_AST("typeof 'abc'", "\"string\"");
@@ -112,6 +150,9 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("2*(1+1)", "4");
 
     /* Casts */
+    REQUIRE_AST("1 as float",      "1.000000");
+    REQUIRE_AST("true as float",   "1.000000");
+    REQUIRE_AST("1.5 as int",      "1");
     REQUIRE_AST("'123' as int",    "123");
     REQUIRE_AST("'123' as float",  "123.000000");
     REQUIRE_AST("'123' as bool",   "true");
@@ -122,6 +163,12 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("false as string", "\"false\"");
     REQUIRE_AST("null as string",  "\"null\"");
     REQUIRE_AST("range(1,3) as string", "\"1..3\"");
+
+    /* Bool Cast */
+    REQUIRE_AST("123?", "true");
+    REQUIRE_AST("0.0?", "true");
+    REQUIRE_AST("false?", "false");
+    REQUIRE_AST("null?", "false");
 
     /* Unpack */
     REQUIRE_AST("null ...",         "null");
@@ -148,6 +195,24 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("a{1}",     "(sub a 1)");
     REQUIRE_AST("1{a}",     "(sub 1 a)");
     REQUIRE_AST("a{a}",     "(sub a a)");
+
+    /* Length */
+    REQUIRE_AST("#'abc'",   "3");
+
+    /* Bit */
+    REQUIRE_AST("~0xf0",       "-241");
+    REQUIRE_AST("0x80 >> 2",   "32");
+    REQUIRE_AST("32 << 2",     "128");
+    REQUIRE_AST("0xf0 & 0x80", "128");
+    REQUIRE_AST("0xf0 | 0x01", "241");
+}
+
+TEST_CASE("OperatorLength", "[ast.operator-length]") {
+    REQUIRE_ERROR("#0");
+    REQUIRE_ERROR("#0.0");
+    REQUIRE_ERROR("#true");
+    REQUIRE_AST("#null", "null");
+    REQUIRE_AST("#'abc'", "3");
 }
 
 TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
@@ -188,8 +253,9 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
     )json";
 
     const auto model = simfil::json::parse(doc);
+    REQUIRE(model);
     auto test = [&model](auto query) {
-        Environment env(model->strings());
+        Environment env(model.value()->strings());
 
         auto ast = compile(env, query, false);
         if (!ast)
@@ -199,7 +265,10 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
 
         INFO("AST: " << (*ast)->expr().toString());
 
-        return eval(env, **ast, *model->root(0), nullptr).value().front().template as<ValueType::Bool>();
+        auto root = model.value()->root(0);
+        REQUIRE(root);
+
+        return eval(env, **ast, **root, nullptr).value().front().template as<ValueType::Bool>();
     };
 
     /* Test some field with different value types for different objects */
@@ -218,16 +287,49 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
     REQUIRE(test("all(*.another=1)") == false);
 }
 
+TEST_CASE("OperatorNegate", "[ast.operator-negate]") {
+    REQUIRE_ERROR("-('abc')");
+    REQUIRE_ERROR("-(true)");
+    REQUIRE_PANIC("-panic()");
+    REQUIRE_AST("-(1)", "-1");
+    REQUIRE_AST("-(1.1)", "-1.100000");
+    REQUIRE_AST("-(null)", "null");
+}
+
+TEST_CASE("OperatorSubstract", "[ast.operator-substract]") {
+    REQUIRE_AST("1-2", "-1");
+    REQUIRE_AST("1-2.0", "-1.000000");
+    REQUIRE_AST("1-null", "null");
+    REQUIRE_AST("1.0-2", "-1.000000");
+    REQUIRE_AST("1.0-2.0", "-1.000000");
+    REQUIRE_AST("1.0-null", "null");
+    REQUIRE_ERROR("1-true");
+    REQUIRE_ERROR("true-1");
+    REQUIRE_ERROR("true-false");
+}
+
+TEST_CASE("OperatorNot", "[ast.operator-not]") {
+    REQUIRE_AST("not true", "false");
+    REQUIRE_AST("not false", "true");
+    REQUIRE_AST("not 'abc'", "false");
+    REQUIRE_AST("not 1", "false");
+    REQUIRE_AST("not 1.0", "false");
+    REQUIRE_AST("not null", "true");
+}
+
 TEST_CASE("OperatorAndOr", "[ast.operator-and-or]") {
     /* Or */
     REQUIRE_AST("null or 1", "1");
+    REQUIRE_AST("false or 1", "1");
     REQUIRE_AST("1 or null", "1");
     REQUIRE_AST("1 or 2",    "1");
     REQUIRE_AST("a or b",    "(or a b)");
 
     /* And */
     REQUIRE_AST("null and 1", "null");
+    REQUIRE_AST("false and 1", "false");
     REQUIRE_AST("1 and null", "null");
+    REQUIRE_AST("true and 2", "2");
     REQUIRE_AST("1 and 2",    "2");
     REQUIRE_AST("a and b",    "(and a b)");
 }
@@ -259,7 +361,9 @@ TEST_CASE("ModeSetter", "[ast.mode-setter]") {
 }
 
 TEST_CASE("UtilityFns", "[ast.functions]") {
-    REQUIRE_AST("range(a,b)",    "(range a b)"); /* Can not optimize */
+    REQUIRE_PANIC("range(panic(), 5)");
+    REQUIRE_PANIC("range(1, panic())");
+    REQUIRE_AST("range(a,b)",    "(range a b)"); /* Ca not optimize */
     REQUIRE_AST("range(1,5)",    "1..5");
     REQUIRE_AST("range(1,5)==0", "false");
     REQUIRE_AST("range(1,5)==3", "true");
@@ -279,6 +383,10 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
     /* Test case-insensitivity */
     REQUIRE_AST("TRACE(1)",      "(TRACE 1)");
     REQUIRE_AST("Trace(1)",      "(Trace 1)");
+}
+
+TEST_CASE("PanicFunction", "[eval.panic-function]") {
+    REQUIRE_RESULT("panic()", "ERROR: Panic!");
 }
 
 TEST_CASE("OperatorOrShortCircuit", "[eval.operator-or-short-circuit]") {
@@ -355,43 +463,64 @@ TEST_CASE("Single Values", "[yaml.single-values]") {
     REQUIRE_RESULT("sub.sub.a", "sub sub a");
 }
 
-TEST_CASE("Model Functions", "[yaml.mode-functions]") {
-    SECTION("Test any(... ) with values generated by arr(...)") {
+TEST_CASE("Model Functions", "[yaml.model-functions]") {
+    SECTION("Test any(...)") {
         REQUIRE_RESULT("any(arr(null, null))", "false");
         REQUIRE_RESULT("any(arr(true, null))", "true");
         REQUIRE_RESULT("any(arr(null, true))", "true");
         REQUIRE_RESULT("any(arr(true, true))", "true");
     }
-    SECTION("Test each(... ) with values generated by arr(...)") {
+    SECTION("Test each(...)") {
         REQUIRE_RESULT("each(arr(null, null))", "false");
         REQUIRE_RESULT("each(arr(true, null))", "false");
         REQUIRE_RESULT("each(arr(null, true))", "false");
         REQUIRE_RESULT("each(arr(true, true))", "true");
     }
-    SECTION("Test arr(... )") {
+    SECTION("Test arr(...)") {
         REQUIRE_RESULT("arr(2,3,5,7,'ok')", "2|3|5|7|ok");
+
+        REQUIRE_PANIC("arr(0,panic(),2)");
     }
-    SECTION("Test split(... )") {
+    SECTION("Test split(...)") {
         REQUIRE_RESULT("split('hello.this.is.a.test.', '.')", "hello|this|is|a|test|");
         REQUIRE_RESULT("split('hello.this.is.a.test.', '.', false)", "hello|this|is|a|test");
+
+        REQUIRE_PANIC("split(panic(), '.')");
+        REQUIRE_PANIC("split('a.b.c', panic())");
     }
-    SECTION("Test select(... )") {
+    SECTION("Test select(...)") {
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), a)", "b");
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 0)", "a");
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 1, 2)", "b|c");
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 1, 0)", "b|c|d");
+
+        REQUIRE_PANIC("select(panic(), 0)");
+        REQUIRE_PANIC("select(0, panic())");
     }
-    SECTION("Test sum(... )") {
+    SECTION("Test sum(...)") {
         REQUIRE_RESULT("sum(range(1, 10)...)", "55");
         REQUIRE_RESULT("sum(range(1, 10)..., $sum + $val)", "55");
         REQUIRE_RESULT("sum(range(1, 10)..., $sum + $val, 10)", "65");
         REQUIRE_RESULT("sum(range(1, 10)..., $sum * $val, 1)", "3628800");
+
+        REQUIRE_PANIC("sum(panic())");
+        REQUIRE_PANIC("sum(range(1, 10)..., panic())");
+        REQUIRE_PANIC("sum(range(1, 10)..., 0, panic())");
     }
-    SECTION("Count non-false values generated by arr(...)") {
+    SECTION("Count non-false values of arr(...)") {
         REQUIRE_RESULT("count(arr(null, null))", "0");
         REQUIRE_RESULT("count(arr(true, null))", "1");
         REQUIRE_RESULT("count(arr(null, true))", "1");
         REQUIRE_RESULT("count(arr(true, true))", "2");
+
+        REQUIRE_PANIC("count(panic())");
+    }
+    SECTION("Count model keys") {
+        REQUIRE_RESULT("count(keys(**))", "50");
+
+        REQUIRE_PANIC("keys(panic())");
+        REQUIRE_PANIC("keys(**.{panic()})");
+        REQUIRE_PANIC("panic(keys(**))");
     }
 }
 
@@ -431,25 +560,25 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
     // Recognize dangling object member pointer
     pool->clear();
     pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
-    REQUIRE_THROWS(pool->validate());
+    REQUIRE(!pool->validate());
 
     // Recognize dangling array member pointer
     pool->clear();
     pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Arrays, 666}));
-    REQUIRE_THROWS(pool->validate());
+    REQUIRE(!pool->validate());
 
     // Recognize dangling root
     pool->clear();
     pool->addRoot(ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
-    REQUIRE_THROWS(pool->validate());
+    REQUIRE(!pool->validate());
 
     // An empty model should be valid
     pool->clear();
-    REQUIRE_NOTHROW(pool->validate());
+    REQUIRE(pool->validate());
 
     // An empty object should also be valid
     pool->newObject()->addField("good", pool->newObject());
-    REQUIRE_NOTHROW(pool->validate());
+    REQUIRE(pool->validate());
 }
 
 TEST_CASE("Procedural Object Node", "[model.procedural]") {
@@ -487,20 +616,36 @@ TEST_CASE("Object/Array Extend", "[model.extend]") {
         testObjectB->addField("height", (int64_t)220);
         testObjectB->addField("age", (int64_t)55);
 
-        REQUIRE(testObjectA->size() == 2);
-        REQUIRE(testObjectB->size() == 2);
-        REQUIRE(Value(testObjectA->get("name")->value()).toString() == "hans");
-        REQUIRE(Value(testObjectA->get("occupation")->value()).toString() == "baker");
-        REQUIRE(!testObjectA->get("height"));
-        REQUIRE(!testObjectA->get("age"));
-        testObjectA->extend(testObjectB);
+        {
+            REQUIRE(testObjectA->size() == 2);
+            REQUIRE(testObjectB->size() == 2);
+            auto nameValue = testObjectA->get("name");
+            REQUIRE(nameValue);
+            REQUIRE(Value(nameValue.value()->value()).toString() == "hans");
+            auto occupationValue = testObjectA->get("occupation");
+            REQUIRE(occupationValue);
+            REQUIRE(Value(occupationValue.value()->value()).toString() == "baker");
+            REQUIRE(!testObjectA->get("height"));
+            REQUIRE(!testObjectA->get("age"));
+            testObjectA->extend(testObjectB);
+        }
 
-        REQUIRE(testObjectA->size() == 4);
-        REQUIRE(testObjectB->size() == 2);
-        REQUIRE(Value(testObjectA->get("name")->value()).toString() == "hans");
-        REQUIRE(Value(testObjectA->get("occupation")->value()).toString() == "baker");
-        REQUIRE(Value(testObjectA->get("height")->value()).as<ValueType::Int>() == 220ll);
-        REQUIRE(Value(testObjectA->get("age")->value()).as<ValueType::Int>() == 55ll);
+        {
+            REQUIRE(testObjectA->size() == 4);
+            REQUIRE(testObjectB->size() == 2);
+            auto nameValue = testObjectA->get("name");
+            REQUIRE(nameValue);
+            REQUIRE(Value(nameValue.value()->value()).toString() == "hans");
+            auto occupationValue = testObjectA->get("occupation");
+            REQUIRE(occupationValue);
+            REQUIRE(Value(occupationValue.value()->value()).toString() == "baker");
+            auto heightValue = testObjectA->get("height");
+            REQUIRE(heightValue);
+            REQUIRE(Value(heightValue.value()->value()).as<ValueType::Int>() == 220ll);
+            auto ageValue = testObjectA->get("age");
+            REQUIRE(ageValue);
+            REQUIRE(Value(ageValue.value()->value()).as<ValueType::Int>() == 55ll);
+        }
     }
 
     SECTION("Extend array")

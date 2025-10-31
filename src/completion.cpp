@@ -1,6 +1,7 @@
 #include "completion.h"
 
 #include "expressions.h"
+#include "simfil/model/string-pool.h"
 #include "simfil/result.h"
 #include "simfil/simfil.h"
 #include "simfil/function.h"
@@ -133,10 +134,10 @@ CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Complet
 
 auto CompletionFieldOrWordExpr::type() const -> Type
 {
-    return Type::PATH;
+    return Type::FIELD;
 }
 
-auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -144,19 +145,27 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
     if (val.isa(ValueType::Undef))
         return res(ctx, val);
 
+    const auto node = val.node();
+    if (!node)
+        return res(ctx, val);
+
     const auto caseSensitive = comp_->options.smartCase && containsUppercaseCharacter(prefix_);
 
     // First we try to complete fields
-    for (StringId id : val.node->fieldNames()) {
-        if (comp_->size() >= comp_->limit)
+    for (StringId id : node->fieldNames()) {
+        if (comp_->size() >= comp_->limit) {
             return Result::Stop;
+        }
+
+        if (id == StringPool::Empty)
+            continue;
 
         auto keyPtr = ctx.env->strings()->resolve(id);
         if (!keyPtr || keyPtr->empty())
             continue;
         const auto& key = *keyPtr;
 
-        if (key.size() >= prefix_.size() && startsWith(key, prefix_, caseSensitive)) {
+        if (startsWith(key, prefix_, caseSensitive)) {
             if (needsEscaping(key)) {
                 comp_->add(escapeKey(key), sourceLocation(), CompletionCandidate::Type::FIELD);
             } else {
@@ -245,7 +254,7 @@ auto CompletionAndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (left_)
         (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
@@ -305,7 +314,7 @@ auto CompletionOrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (left_)
         (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
@@ -352,7 +361,12 @@ auto CompletionWordExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CompletionWordExpr::constant() const -> bool
+{
+    return true;
+}
+
+auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -376,6 +390,23 @@ auto CompletionWordExpr::clone() const -> std::unique_ptr<Expr>
 auto CompletionWordExpr::accept(ExprVisitor& v) -> void
 {
     v.visit(*this);
+}
+
+auto CompletionConstExpr::constant() const -> bool
+{
+    return false;
+}
+
+auto CompletionConstExpr::clone() const -> ExprPtr
+{
+    return std::make_unique<CompletionConstExpr>(value_);
+}
+
+auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
+{
+    if (ctx.phase == Context::Compilation)
+        return res(ctx, Value::undef());
+    return res(ctx, value_);
 }
 
 }

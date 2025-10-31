@@ -36,11 +36,11 @@ public:
 
     auto make(int64_t a, int64_t b) -> Value;
 
-    auto unaryOp(std::string_view op, const IRange& self) const -> Value override;
-    auto binaryOp(std::string_view op, const IRange& l, const Value& r) const -> Value override;
-    auto binaryOp(std::string_view op, const Value& l, const IRange& r) const -> Value override;
+    auto unaryOp(std::string_view op, const IRange& self) const -> tl::expected<Value, Error> override;
+    auto binaryOp(std::string_view op, const IRange& l, const Value& r) const -> tl::expected<Value, Error> override;
+    auto binaryOp(std::string_view op, const Value& l, const IRange& r) const -> tl::expected<Value, Error> override;
 
-    auto unpack(const IRange& , std::function<bool(Value)> res) const -> void override;
+    auto unpack(const IRange& , std::function<bool(Value)> res) const -> tl::expected<void, Error> override;
 };
 
 struct Re
@@ -58,9 +58,9 @@ public:
 
     auto make(std::string_view expr) -> Value;
 
-    auto unaryOp(std::string_view op, const Re&) const -> Value override;
-    auto binaryOp(std::string_view op, const Re&, const Value&) const -> Value override;
-    auto binaryOp(std::string_view op, const Value&, const Re&) const -> Value override;
+    auto unaryOp(std::string_view op, const Re&) const -> tl::expected<Value, Error> override;
+    auto binaryOp(std::string_view op, const Re&, const Value&) const -> tl::expected<Value, Error> override;
+    auto binaryOp(std::string_view op, const Value&, const Re&) const -> tl::expected<Value, Error> override;
 };
 
 }

@@ -24,7 +24,7 @@ public:
         return Type::FIELD;
     }
 
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result override
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override
     {
         return Result::Stop;
     }
@@ -237,14 +237,14 @@ auto Parser::parseList(Token::Type stop) -> expected<std::vector<ExprPtr>, Error
 auto Parser::findPrefixParser(const Token& t) const -> const PrefixParselet*
 {
     if (auto iter = prefixParsers.find(t.type); iter != prefixParsers.end())
-        return iter->second.get();
+        return iter->second;
     return nullptr;
 }
 
 auto Parser::findInfixParser(const Token& t) const -> const InfixParselet*
 {
     if (auto iter = infixParsers.find(t.type); iter != infixParsers.end())
-        return iter->second.get();
+        return iter->second;
     return nullptr;
 }
 }

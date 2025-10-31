@@ -4,6 +4,7 @@
 #include <string>
 #include <cstdint>
 #include <cassert>
+#include <bitset>
 
 #include "model/nodes.h"
 #include "transient.h"
@@ -86,10 +87,8 @@ inline auto valueType2String(ValueType t) -> const char*
     case ValueType::TransientObject: return "transient";
     case ValueType::Object: return "object";
     case ValueType::Array:  return "array";
-    default:
-        assert(0 && "unreachable");
-        return "unknown";
     }
+    assert(0 && "unreachable"); return "unknown"; // GCOVR_EXCL_LINE
 }
 
 
@@ -169,6 +168,11 @@ struct ValueType4CType<ModelNode> {
     static constexpr ValueType Type = ValueType::Object;
 };
 
+template <>
+struct ValueType4CType<ModelNode::Ptr> {
+    static constexpr ValueType Type = ValueType::Object;
+};
+
 template <ValueType>
 struct ValueTypeInfo;
 
@@ -216,7 +220,7 @@ template <ValueType ArgType>
 struct ValueAs
 {
     template <class VariantType>
-    static auto get(const VariantType& v) -> decltype(auto)
+    static inline auto get(const VariantType& v) noexcept -> decltype(auto)
     {
         return std::get<typename ValueTypeInfo<ArgType>::Type>(v);
     }
@@ -233,6 +237,30 @@ struct ValueAs<ValueType::String>
         if (auto str = std::get_if<std::string_view>(&v))
             return std::string(*str);
         return ""s;
+    }
+};
+
+template <>
+struct ValueAs<ValueType::Object>
+{
+    template <class VariantType>
+    static auto get(const VariantType& v) -> ModelNode::Ptr
+    {
+        if (auto nodePtr = std::get_if<ModelNode::Ptr>(&v))
+            return *nodePtr;
+        return {};
+    }
+};
+
+template <>
+struct ValueAs<ValueType::Array>
+{
+    template <class VariantType>
+    static auto get(const VariantType& v) -> ModelNode::Ptr
+    {
+        if (auto nodePtr = std::get_if<ModelNode::Ptr>(&v))
+            return *nodePtr;
+        return {};
     }
 };
 
@@ -277,20 +305,43 @@ public:
 
     static auto field(const ModelNode& node) -> Value
     {
-        return {node.type(), node.value(), model_ptr<ModelNode>(node)};
+        const auto type = node.type();
+        if (type == ValueType::Object || type == ValueType::Array) {
+            return Value{type, model_ptr<ModelNode>(node)};
+        } else if (type == ValueType::String) {
+            auto value = node.value();
+            if (auto view = std::get_if<std::string_view>(&value))
+                return Value::make(std::string(*view));
+            return Value{std::move(value)};
+        } else {
+            return Value{node.value()};
+        }
     }
 
     static auto field(ModelNode&& node) -> Value
     {
-        auto type = node.type();
-        auto value = node.value();
-        return {type, std::move(value), model_ptr<ModelNode>(std::move(node))};
+        const auto type = node.type();
+        if (type == ValueType::Object || type == ValueType::Array) {
+            return {type, model_ptr<ModelNode>(std::move(node))};
+        } else if (type == ValueType::String) {
+            auto value = node.value();
+            if (auto view = std::get_if<std::string_view>(&value))
+                return Value::make(std::string(*view));
+            return Value{std::move(value)};
+        } else {
+            return Value{node.value()};
+        }
     }
 
     template <class ModelNodeT>
     static auto field(const model_ptr<ModelNodeT>& node) -> Value
     {
-        return {node->type(), node->value(), node};
+        const auto type = node->type();
+        if (type == ValueType::Object || type == ValueType::Array) {
+            return {type, model_ptr<ModelNode>(node)};
+        } else {
+            return Value{node->value()};
+        }
     }
 
     Value(ValueType type)  // NOLINT
@@ -303,17 +354,12 @@ public:
           , value(std::forward<ArgType>(value))
     {}
 
-    Value(ValueType type, ScalarValueType&& value_, ModelNode::Ptr node)
-        : type(type), node(std::move(node))
-    {
-        std::visit([this](auto&& v){value = v;}, value_);
-    }
 
     Value(ScalarValueType&& value_)  // NOLINT
     {
         std::visit([this](auto&& v){
             type = ValueType4CType<std::decay_t<decltype(v)>>::Type;
-            value = v;
+            value = std::forward<decltype(v)>(v);
         }, value_);
     }
 
@@ -322,42 +368,50 @@ public:
     Value& operator=(const Value&) = default;
     Value& operator=(Value&&) = default;
 
-    [[nodiscard]] auto isa(ValueType test) const
+    [[nodiscard]] auto isa(ValueType test) const noexcept
     {
         return type == test;
     }
-
+    
+    [[nodiscard]] bool asBool() const noexcept {
+        return std::get<bool>(value);
+    }
+    
     template <ValueType ArgType>
     [[nodiscard]] auto as() const -> decltype(auto)
     {
         return ValueAs<ArgType>::get(value);
     }
 
-    [[nodiscard]] auto isBool(bool v) const
+    [[nodiscard]] auto isBool(bool v) const noexcept
     {
-        return isa(ValueType::Bool) && this->as<ValueType::Bool>() == v;
+        return type == ValueType::Bool && asBool() == v;
     }
 
     template <class Visitor>
     [[nodiscard]] auto visit(Visitor fn) const
     {
-        if (type == ValueType::Undef)
+        switch (type) {
+        case ValueType::Undef:
             return fn(UndefinedType{});
-        if (type == ValueType::Null)
+        case ValueType::Null:
             return fn(NullType{});
-        if (type == ValueType::Bool)
-            return fn(this->template as<ValueType::Bool>());
-        if (type == ValueType::Int)
+        case ValueType::Bool:
+            return fn(asBool());
+        case ValueType::Int:
             return fn(this->template as<ValueType::Int>());
-        if (type == ValueType::Float)
+        case ValueType::Float:
             return fn(this->template as<ValueType::Float>());
-        if (type == ValueType::String)
+        case ValueType::String:
             return fn(this->template as<ValueType::String>());
-        if (type == ValueType::TransientObject)
+        case ValueType::TransientObject:
             return fn(this->template as<ValueType::TransientObject>());
-        if (type == ValueType::Object || type == ValueType::Array) {
-            if (node) return fn(*node);
-            else return fn(NullType{});
+        case ValueType::Object:
+        case ValueType::Array:
+            if (auto nodePtr = std::get_if<ModelNode::Ptr>(&value); nodePtr && *nodePtr) [[likely]]
+                return fn(**nodePtr);
+            else
+                return fn(NullType{});
         }
         return fn(UndefinedType{});
     }
@@ -367,15 +421,16 @@ public:
         if (isa(ValueType::TransientObject)) {
             const auto& obj = std::get<TransientObject>(value);
             if (obj.meta) {
-                if (Value vv = obj.meta->unaryOp("string", obj); vv.isa(ValueType::String))
-                    return vv.as<ValueType::String>();
+                if (auto vv = obj.meta->unaryOp("string", obj); vv && vv->isa(ValueType::String))
+                    return vv->template as<ValueType::String>();
                 return "<"s + obj.meta->ident + ">"s;
             }
         }
         return visit(impl::ValueToString());
     }
 
-    [[nodiscard]] auto getScalar() {
+    [[nodiscard]] auto getScalar() noexcept
+    {
         struct {
             void operator() (std::monostate const& v) {result = v;}
             void operator() (bool const& v) {result = v;}
@@ -384,15 +439,28 @@ public:
             void operator() (std::string const& v) {result = v;}
             void operator() (std::string_view const& v) {result = v;}
             void operator() (TransientObject const&) {}
+            void operator() (ModelNode::Ptr const&) {}
             ScalarValueType result;
         } scalarVisitor;
         std::visit(scalarVisitor, value);
         return scalarVisitor.result;
     }
 
-    /// Get the string_view of this Value if it has one.
-    std::string_view const* stringViewValue() {
+    std::string_view const* stringViewValue() noexcept
+    {
         return std::get_if<std::string_view>(&value);
+    }
+
+    ModelNode::Ptr const* nodePtr() const noexcept
+    {
+        return std::get_if<ModelNode::Ptr>(&value);
+    }
+
+    ModelNode const* node() const noexcept
+    {
+        if (auto ptr = nodePtr(); ptr)
+            return &**ptr;
+        return nullptr;
     }
 
     ValueType type;
@@ -403,9 +471,8 @@ public:
         double,
         std::string,
         std::string_view,
-        TransientObject> value;
-
-    ModelNode::Ptr node;
+        TransientObject,
+        ModelNode::Ptr> value;
 };
 
 template <typename ResultT, typename ValueT>

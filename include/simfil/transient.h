@@ -4,6 +4,9 @@
 
 #include <string>
 #include <string_view>
+#include <tl/expected.hpp>
+
+#include "error.h"
 
 namespace simfil
 {
@@ -20,7 +23,7 @@ struct MetaType
      *       - Make Value::node optionally owning its ptr
      *       - Set ModelNode instance for objects you create */
 
-    MetaType(std::string ident)
+    explicit MetaType(std::string ident)
         : ident(std::move(ident))
     {}
 
@@ -32,12 +35,12 @@ struct MetaType
     virtual auto deinit(void*) const -> void = 0;
 
     /* Operators */
-    virtual auto unaryOp(std::string_view op, const TransientObject&) const -> Value = 0;
-    virtual auto binaryOp(std::string_view op, const TransientObject&, const Value&) const -> Value = 0;
-    virtual auto binaryOp(std::string_view op, const Value&, const TransientObject&) const -> Value = 0;
+    virtual auto unaryOp(std::string_view op, const TransientObject&) const -> tl::expected<Value, Error> = 0;
+    virtual auto binaryOp(std::string_view op, const TransientObject&, const Value&) const -> tl::expected<Value, Error> = 0;
+    virtual auto binaryOp(std::string_view op, const Value&, const TransientObject&) const -> tl::expected<Value, Error> = 0;
 
     /* Unpack */
-    virtual auto unpack(const TransientObject&, std::function<bool(Value)>) const -> void = 0; /* cb return false to stop! */
+    virtual auto unpack(const TransientObject&, std::function<bool(Value)>) const -> tl::expected<void, Error> = 0; /* cb return false to stop! */
 };
 
 /**
@@ -61,19 +64,19 @@ struct TransientObject
         return *this;
     }
 
-    TransientObject(TransientObject&& other)
-        : meta(std::move(other.meta))
-        , data(std::move(other.data))
+    TransientObject(TransientObject&& other) noexcept
+        : meta(other.meta)
+        , data(other.data)
     {
         other.meta = nullptr;
         other.data = nullptr;
     }
 
-    auto operator=(TransientObject&& other)
+    TransientObject& operator=(TransientObject&& other) noexcept
     {
         meta->deinit(data);
-        meta = std::move(other.meta);
-        data = std::move(other.data);
+        meta = other.meta;
+        data = other.data;
         other.meta = nullptr;
         other.data = nullptr;
         return *this;

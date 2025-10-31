@@ -3,6 +3,11 @@
 #include "simfil/value.h"
 #include "simfil/model/nodes.h"
 
+#include "../expected.h"
+#include "tl/expected.hpp"
+
+#include <fmt/format.h>
+
 namespace simfil
 {
 
@@ -238,64 +243,78 @@ Array& Array::append(int64_t const& value) {storage_->push_back(members_, model(
 Array& Array::append(double const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 Array& Array::append(std::string_view const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
 
-Array& Array::extend(model_ptr<Array> const& other) {
+tl::expected<void, Error> Array::extend(model_ptr<Array> const& other) {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
-        storage_->push_back(members_, storage_->at(other->members_, i));
+        auto value = storage_->at(other->members_, i);
+        TRY_EXPECTED(value);
+        storage_->push_back(members_, *value);
     }
-    return *this;
+    return {};
 }
 
 /** Model Node impls for an object. */
 
-ModelNode::Ptr Object::get(std::string_view const& fieldName) const {
+tl::expected<ModelNode::Ptr, Error> Object::get(std::string_view const& fieldName) const {
     auto fieldId = model().strings()->emplace(fieldName);
-    return get(fieldId);
+    TRY_EXPECTED(fieldId);
+    auto field = get(*fieldId);
+    if (!field)
+        return tl::unexpected<Error>(Error::FieldNotFound, fmt::format("No such field {}", fieldName));
+    return field;
 }
 
-Object& Object::addBool(std::string_view const& name, bool value) {
+tl::expected<void, Error> Object::addBool(std::string_view const& name, bool value) {
     auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
-    return *this;
+    TRY_EXPECTED(fieldId);
+    storage_->emplace_back(members_, *fieldId, model().newSmallValue(value)->addr());
+    return {};
 }
 
-Object& Object::addField(std::string_view const& name, uint16_t value) {
+tl::expected<void, Error> Object::addField(std::string_view const& name, uint16_t value) {
     auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
-    return *this;
+    TRY_EXPECTED(fieldId);
+    storage_->emplace_back(members_, *fieldId, model().newSmallValue(value)->addr());
+    return {};
 }
 
-Object& Object::addField(std::string_view const& name, int16_t value) {
+tl::expected<void, Error> Object::addField(std::string_view const& name, int16_t value) {
     auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, model().newSmallValue(value)->addr());
-    return *this;
+    TRY_EXPECTED(fieldId);
+    storage_->emplace_back(members_, *fieldId, model().newSmallValue(value)->addr());
+    return {};
 }
 
-Object& Object::addField(std::string_view const& name, int64_t const& value) {
+tl::expected<void, Error> Object::addField(std::string_view const& name, int64_t const& value) {
     auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
-    return *this;
+    TRY_EXPECTED(fieldId);
+    storage_->emplace_back(members_, *fieldId, model().newValue(value)->addr());
+    return {};
 }
 
-Object& Object::addField(std::string_view const& name, double const& value) {
+tl::expected<void, Error> Object::addField(std::string_view const& name, double const& value) {
     auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
-    return *this;
+    TRY_EXPECTED(fieldId);
+    storage_->emplace_back(members_, *fieldId, model().newValue(value)->addr());
+    return {};
 }
 
-Object& Object::addField(std::string_view const& name, std::string_view const& value) {
+tl::expected<void, Error> Object::addField(std::string_view const& name, std::string_view const& value) {
     auto fieldId = model().strings()->emplace(name);
-    storage_->emplace_back(members_, fieldId, model().newValue(value)->addr());
-    return *this;
+    TRY_EXPECTED(fieldId);
+    storage_->emplace_back(members_, *fieldId, model().newValue(value)->addr());
+    return {};
 }
 
-Object& Object::extend(model_ptr<Object> const& other)
+tl::expected<void, Error> Object::extend(model_ptr<Object> const& other)
 {
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
-        storage_->push_back(members_, storage_->at(other->members_, i));
+        auto value = storage_->at(other->members_, i);
+        TRY_EXPECTED(value);
+        storage_->push_back(members_, *value);
     }
-    return *this;
+    return {};
 }
 
 }

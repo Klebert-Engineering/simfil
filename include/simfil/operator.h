@@ -2,10 +2,12 @@
 
 #pragma once
 
-#include "fmt/format.h"
+#include "simfil/error.h"
 #include "simfil/value.h"
 #include "exception-handler.h"
+#include "fmt/format.h"
 
+#include <tl/expected.hpp>
 #include <cstdint>
 #include <string_view>
 #include <string>
@@ -14,6 +16,7 @@ namespace simfil
 {
 
 using namespace std::string_literals;
+using namespace std::string_view_literals;
 
 /**
  * Special return type for operator type mismatch.
@@ -24,19 +27,6 @@ struct InvalidOperands {
         return {};
     }
 };
-
-/**
- * Exception for invalid operand types.
- */
-struct InvalidOperandsError : std::exception
-{
-    std::string operatorName;
-
-    explicit InvalidOperandsError(std::string_view opName)
-        : operatorName(opName)
-    {}
-};
-
 
 #define NAME(str)                               \
     static const char * name() {                \
@@ -81,6 +71,7 @@ struct InvalidOperandsError : std::exception
 struct OperatorNegate
 {
     NAME("-")
+    NULL_AS_NULL()
     DENY_OTHER()
     DECL_OPERATION(int64_t, -)
     DECL_OPERATION(double,  -)
@@ -112,8 +103,8 @@ struct OperatorNot
 {
     NAME("not")
 
-    template <class _Type>
-    auto operator()(const _Type& value) const
+    template <class Type_>
+    auto operator()(const Type_& value) const
     {
         return !OperatorBool()(value);
     }
@@ -150,46 +141,46 @@ struct OperatorTypeof
 {
     NAME("typeof")
 
-    auto operator()(NullType) const -> const std::string&
+    auto operator()(NullType) const -> std::string_view
     {
-        static auto n = "null"s;
+        static auto n = "null"sv;
         return n;
     }
 
-    auto operator()(bool) const -> const std::string&
+    auto operator()(bool) const -> std::string_view
     {
-        static auto n = "bool"s;
+        static auto n = "bool"sv;
         return n;
     }
 
-    auto operator()(int64_t) const -> const std::string&
+    auto operator()(int64_t) const -> std::string_view
     {
-        static auto n = "int"s;
+        static auto n = "int"sv;
         return n;
     }
 
-    auto operator()(double) const -> const std::string&
+    auto operator()(double) const -> std::string_view
     {
-        static auto n = "float"s;
+        static auto n = "float"sv;
         return n;
     }
 
-    auto operator()(const std::string&) const -> const std::string&
+    auto operator()(const std::string&) const -> std::string_view
     {
-        static auto n = "string"s;
+        static auto n = "string"sv;
         return n;
     }
 
-    auto operator()(const ModelNode& v) const -> const std::string&
+    auto operator()(const ModelNode&) const -> std::string_view
     {
-        static auto n = "model"s;
+        static auto n = "model"sv;
         return n;
     }
 
-    auto operator()(const TransientObject& v) const
+    auto operator()(const TransientObject&) const -> std::string_view
     {
         // Handled by MetaType::unaryOp
-        return ""s;
+        return ""sv;
     }
 };
 
@@ -430,32 +421,32 @@ struct OperatorDiv
     DENY_OTHER()
     NULL_AS_NULL()
 
-    auto operator()(int64_t l, int64_t r) const -> int64_t
+    auto operator()(int64_t l, int64_t r) const -> tl::expected<int64_t, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
         return static_cast<int64_t>(l / r);
     }
 
-    auto operator()(int64_t l, double r) const -> double
+    auto operator()(int64_t l, double r) const -> tl::expected<double, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
-        return static_cast<double>(l / r);
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
+        return static_cast<double>(l) / r;
     }
 
-    auto operator()(double l, int64_t r) const -> double
+    auto operator()(double l, int64_t r) const -> tl::expected<double, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
-        return static_cast<double>(l / r);
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
+        return l / static_cast<double>(r);
     }
 
-    auto operator()(double l, double r) const -> double
+    auto operator()(double l, double r) const -> tl::expected<double, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
-        return static_cast<double>(l / r);
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
+        return l / r;
     }
 };
 
@@ -465,10 +456,10 @@ struct OperatorMod
     DENY_OTHER()
     NULL_AS_NULL()
 
-    auto operator()(int64_t l, int64_t r) const -> int64_t
+    auto operator()(int64_t l, int64_t r) const -> tl::expected<int64_t, Error>
     {
         if (r == 0)
-            raise<std::runtime_error>("Division by zero");
+            return tl::unexpected<Error>(Error::DivisionByZero, "Division by zero");
         return static_cast<int64_t>(l % r);
     }
 };
@@ -627,63 +618,60 @@ struct OperatorShr
 namespace impl
 {
 
-template <class _Operator, class _CType>
-Value makeOperatorResult(_CType&& value)
+template <class Operator_, class CType_>
+inline auto makeOperatorResult(CType_&& value) -> tl::expected<Value, Error>
 {
-    return Value::make(std::forward<_CType>(value));
+    return Value::make(std::forward<CType_>(value));
 }
 
-template <class _Operator>
-inline Value makeOperatorResult(Value value)
+template <class Operator_>
+inline auto makeOperatorResult(Value value) -> tl::expected<Value, Error>
 {
     return value;
 }
 
-template <class _Operator>
-inline Value makeOperatorResult(InvalidOperands)
+template <class Operator_, class CType_>
+inline auto makeOperatorResult(tl::expected<CType_, Error>&& value) -> tl::expected<Value, Error>
 {
-    raise<InvalidOperandsError>(_Operator::name());
+    if (!value)
+        return tl::unexpected<Error>(std::move(value.error()));
+    return Value::make(std::forward<CType_>(std::move(value.value())));
+}
+
+template <class Operator_>
+inline auto makeOperatorResult(InvalidOperands) -> tl::expected<Value, Error>
+{
+    return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", Operator_::name()));
 }
 
 }
 
-template <class _Operator>
+template <class Operator_>
 struct UnaryOperatorDispatcher
 {
-    static auto dispatch(const Value& value) -> Value
+    static auto dispatch(const Value& value) -> tl::expected<Value, Error>
     {
-        try {
-            if (value.isa(ValueType::TransientObject)) {
-                const auto& obj = value.as<ValueType::TransientObject>();
-                return obj.meta->unaryOp(_Operator::name(), obj);
-            }
-
-            return value.visit(UnaryOperatorDispatcher());
-        } catch (const InvalidOperandsError& err) {
-            std::string ltype;
-            try {
-                ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(value).toString();
-            } catch (...) {
-                ltype = valueType2String(value.type);
-            }
-            raise<std::runtime_error>("Invalid operand "s + ltype +
-                                     " for operator "s + std::string(err.operatorName));
+        if (value.isa(ValueType::TransientObject)) {
+            const auto& obj = value.as<ValueType::TransientObject>();
+            return obj.meta->unaryOp(Operator_::name(), obj);
         }
+
+        return value.visit(UnaryOperatorDispatcher());
     }
 
-    auto operator()(UndefinedType) -> Value
+    auto operator()(UndefinedType) -> tl::expected<Value, Error>
     {
         return Value::undef();
     }
 
-    template <class _Value>
-    auto operator()(const _Value& rhs) -> Value
+    template <class Value_>
+    auto operator()(const Value_& rhs) -> tl::expected<Value, Error>
     {
-        return impl::makeOperatorResult<_Operator>(_Operator()(rhs));
+        return impl::makeOperatorResult<Operator_>(Operator_()(rhs));
     }
 };
 
-template <class Left, class Operator>
+template <class Left, class Operator_>
 struct BinaryOperatorDispatcherRHS
 {
     const Left& lhs;
@@ -691,15 +679,15 @@ struct BinaryOperatorDispatcherRHS
         : lhs(lhs)
     {}
 
-    auto operator()(UndefinedType) -> Value
+    auto operator()(UndefinedType) -> tl::expected<Value, Error>
     {
         return Value::undef();
     }
 
     template <class Right>
-    auto operator()(const Right& rhs) -> Value
+    auto operator()(const Right& rhs) -> tl::expected<Value, Error>
     {
-        return impl::makeOperatorResult<Operator>(Operator()(lhs, rhs));
+        return impl::makeOperatorResult<Operator_>(Operator_()(lhs, rhs));
     }
 };
 
@@ -708,48 +696,55 @@ struct BinaryOperatorDispatcher
 {
     const Value& value;
 
-    static auto dispatch(const Value& lhs, const Value& rhs) -> Value
+    static auto dispatch(const Value& lhs, const Value& rhs) -> tl::expected<Value, Error>
     {
-        try {
+        auto result = ([&]() -> tl::expected<Value, Error> {
             if (lhs.isa(ValueType::TransientObject)) {
-                if (rhs.isa(ValueType::Undef))
+                if (rhs.isa(ValueType::Undef)) {
                     return Value::undef();
-                const auto& obj = lhs.as<ValueType::TransientObject>();
-                return obj.meta->binaryOp(Operator::name(), obj, rhs);
+                } else {
+                    const auto& obj = lhs.as<ValueType::TransientObject>();
+                    return obj.meta->binaryOp(Operator::name(), obj, rhs);
+                }
             }
-
-            if (rhs.isa(ValueType::TransientObject)) {
-                if (lhs.isa(ValueType::Undef))
+            else if (rhs.isa(ValueType::TransientObject)) {
+                if (lhs.isa(ValueType::Undef)) {
                     return Value::undef();
-                const auto& obj = rhs.as<ValueType::TransientObject>();
-                return obj.meta->binaryOp(Operator::name(), lhs, obj);
+                } else {
+                    const auto& obj = rhs.as<ValueType::TransientObject>();
+                    return obj.meta->binaryOp(Operator::name(), lhs, obj);
+                }
             }
+            else {
+                return lhs.visit(BinaryOperatorDispatcher<Operator>(rhs));
+            }
+        })();
 
-            return lhs.visit(BinaryOperatorDispatcher<Operator>(rhs));
-        } catch (const InvalidOperandsError& err) {
-            std::string ltype, rtype;
-            try {
-                ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(lhs).toString();
-                rtype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(rhs).toString();
-            } catch (...) {
-                ltype = valueType2String(lhs.type);
-                rtype = valueType2String(rhs.type);
+        if (!result) {
+            // Try to find the operand types
+            const auto& error = result.error();
+            if (error.type == Error::InvalidOperands) {
+                auto ltype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(lhs).value_or(Value::strref("unknown")).toString();
+                auto rtype = UnaryOperatorDispatcher<OperatorTypeof>::dispatch(rhs).value_or(Value::strref("unknown")).toString();
+                return tl::unexpected<Error>(Error::InvalidOperands,
+                                             fmt::format("Invalid operands {} and {} for operator {}", ltype, rtype, Operator::name()));
             }
-            raise<std::runtime_error>(fmt::format("Invalid operands {} and {} for operator {}", ltype, rtype, err.operatorName));
         }
+
+        return result;
     }
 
     explicit BinaryOperatorDispatcher(const Value& value)
         : value(value)
     {}
 
-    auto operator()(UndefinedType) -> Value
+    auto operator()(UndefinedType) -> tl::expected<Value, Error>
     {
         return Value::undef();
     }
 
     template <class Left>
-    auto operator()(const Left& lhs) -> Value
+    auto operator()(const Left& lhs) -> tl::expected<Value, Error>
     {
         return value.visit(BinaryOperatorDispatcherRHS<Left, Operator>(lhs));
     }

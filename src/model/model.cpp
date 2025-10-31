@@ -14,11 +14,14 @@
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
 #include <sfl/segmented_vector.hpp>
+#include <tl/expected.hpp>
+
+#include "../expected.h"
 
 namespace simfil
 {
 
-void Model::resolve(const ModelNode& n, const ResolveFn& cb) const
+tl::expected<void, Error> Model::resolve(const ModelNode& n, const ResolveFn& cb) const
 {
     switch (n.addr_.column()) {
         case Null:
@@ -37,8 +40,10 @@ void Model::resolve(const ModelNode& n, const ResolveFn& cb) const
             cb(ValueNode(n));
             break;
         default:
-            raise<std::runtime_error>(fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
+            return tl::unexpected<Error>(Error::RuntimeError,
+                                         fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
     }
+    return {};
 }
 
 struct ModelPool::Impl
@@ -124,31 +129,28 @@ std::vector<std::string> ModelPool::checkForErrors() const
 
     std::function<void(ModelNode::Ptr)> validateModelNode = [&](ModelNode::Ptr node)
     {
-        try {
-            if (node->type() == ValueType::Object) {
-                if (node->addr().column() == Objects)
-                    if (!validateArrayIndex(node->addr().index(), "object", impl_->columns_.objectMemberArrays_))
-                        return;
-                for (auto const& [fieldName, fieldValue] : node->fields()) {
-                    validatePooledString(fieldName);
-                    validateModelNode(fieldValue);
-                }
+        if (node->type() == ValueType::Object) {
+            if (node->addr().column() == Objects)
+                if (!validateArrayIndex(node->addr().index(), "object", impl_->columns_.objectMemberArrays_))
+                    return;
+            for (auto const& [fieldName, fieldValue] : node->fields()) {
+                validatePooledString(fieldName);
+                validateModelNode(fieldValue);
             }
-            else if (node->type() == ValueType::Array) {
-                if (node->addr().column() == Arrays)
-                    if (!validateArrayIndex(node->addr().index(), "arrays", impl_->columns_.arrayMemberArrays_))
-                        return;
-                for (auto const& member : *node)
-                    validateModelNode(member);
-            }
-            else if (node->addr().column() == PooledString) {
-                validatePooledString(static_cast<StringId>(node->addr().index()));
-            }
-            resolve(*node, Lambda([](auto&&) {}));
         }
-        catch (std::exception& e) {
-            errors.emplace_back(e.what());
+        else if (node->type() == ValueType::Array) {
+            if (node->addr().column() == Arrays)
+                if (!validateArrayIndex(node->addr().index(), "arrays", impl_->columns_.arrayMemberArrays_))
+                    return;
+            for (auto const& member : *node)
+                validateModelNode(member);
         }
+        else if (node->addr().column() == PooledString) {
+            validatePooledString(static_cast<StringId>(node->addr().index()));
+        }
+
+        if (auto res = resolve(*node, Lambda([](auto&&) {})); !res)
+            errors.emplace_back(res.error().message);
     };
 
     // Validate objects
@@ -161,18 +163,19 @@ std::vector<std::string> ModelPool::checkForErrors() const
 
     // Validate roots
     for (auto i = 0; i < numRoots(); ++i)
-        validateModelNode(root(i));
+        if (auto node = root(i))
+            validateModelNode(*node);
 
     return errors;
 }
 
-void ModelPool::validate() const
+auto ModelPool::validate() const -> tl::expected<void, Error>
 {
     auto errors = checkForErrors();
     if (!errors.empty()) {
-        raise<std::runtime_error>(
-            fmt::format("Model Error(s): {}", fmt::join(errors, ", ")));
+        return tl::unexpected<Error>(Error::RuntimeError, fmt::format("Model Error(s): {}", fmt::join(errors, ", ")));
     }
+    return {};
 }
 
 void ModelPool::clear()
@@ -192,17 +195,14 @@ void ModelPool::clear()
     clear_and_shrink(columns.arrayMemberArrays_);
 }
 
-void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
+tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
-    auto get = [&n](auto const& vec) -> auto& {
+    auto checkBounds = [&n](auto const& vec) -> std::optional<Error> {
         auto idx = n.addr_.index();
         if (idx >= vec.size())
-            raise<std::runtime_error>(
-                fmt::format(
-                    "Bad node reference: col={}, i={}",
-                    (uint16_t)n.addr_.column(), idx
-                ));
-        return vec[idx];
+            return Error(Error::RuntimeError, fmt::format("bad node reference: col={}, i={}",
+                                                          (uint16_t)n.addr_.column(), idx));
+        return {};
     };
 
     switch (n.addr_.column()) {
@@ -215,17 +215,26 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
         break;
     }
     case Int64: {
-        auto& val = get(impl_->columns_.i64_);
+        if (auto err = checkBounds(impl_->columns_.i64_))
+            return tl::unexpected<Error>(*err);
+        auto idx = n.addr().index();
+        auto& val = impl_->columns_.i64_[idx];
         cb(ValueNode(val, shared_from_this()));
         break;
     }
     case Double: {
-        auto& val = get(impl_->columns_.double_);
+        if (auto err = checkBounds(impl_->columns_.double_))
+            return tl::unexpected<Error>(*err);
+        auto idx = n.addr().index();
+        auto& val = impl_->columns_.double_[idx];
         cb(ValueNode(val, shared_from_this()));
         break;
     }
     case String: {
-        auto& val = get(impl_->columns_.strings_);
+        auto idx = n.addr().index();
+        if (auto err = checkBounds(impl_->columns_.strings_))
+            return tl::unexpected<Error>(*err);
+        auto& val = impl_->columns_.strings_[idx];
         cb(ValueNode(
             // TODO: Make sure that the string view is not turned into a string here.
             std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
@@ -237,17 +246,19 @@ void ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
         cb(ValueNode(str.value_or(std::string_view{}), shared_from_this()));
         break;
     }
-    default: Model::resolve(n, cb);
+    default:
+        return Model::resolve(n, cb);
     }
+    return {};
 }
 
 size_t ModelPool::numRoots() const {
     return impl_->columns_.roots_.size();
 }
 
-ModelNode::Ptr ModelPool::root(size_t const& i) const {
+tl::expected<ModelNode::Ptr, Error> ModelPool::root(size_t const& i) const {
     if ((i < 0) || (i >= impl_->columns_.roots_.size()))
-        raise<std::runtime_error>("Root index does not exist.");
+        return tl::unexpected<Error>(Error::RuntimeError, "Root index does not exist.");
     return ModelNode(shared_from_this(), impl_->columns_.roots_.at(i));
 }
 
@@ -339,23 +350,28 @@ std::shared_ptr<StringPool> ModelPool::strings() const
     return impl_->strings_;
 }
 
-void ModelPool::setStrings(std::shared_ptr<StringPool> const& strings)
+auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::expected<void, Error>
 {
     if (!strings)
-        raise<std::runtime_error>("Attempt to call ModelPool::setStrings(nullptr)!");
+        return tl::unexpected<Error>(Error::RuntimeError, "Attempt to call ModelPool::setStrings(nullptr)!");
 
     auto oldStrings = impl_->strings_;
     impl_->strings_ = strings;
     if (!oldStrings || *strings == *oldStrings)
-        return;
+        return {};
 
     // Translate object field IDs to the new dictionary.
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
         for (auto& member : memberArray) {
-            if (auto resolvedName = oldStrings->resolve(member.name_))
-                member.name_ = strings->emplace(*resolvedName);
+            if (auto resolvedName = oldStrings->resolve(member.name_)) {
+                auto stringId = strings->emplace(*resolvedName);
+                TRY_EXPECTED(stringId);
+                member.name_ = *stringId;
+            }
         }
     }
+
+    return {};
 }
 
 std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId id) const
@@ -371,19 +387,21 @@ Array::Storage& ModelPool::arrayMemberStorage() {
     return impl_->columns_.arrayMemberArrays_;
 }
 
-void ModelPool::write(std::ostream& outputStream) {
+tl::expected<void, Error> ModelPool::write(std::ostream& outputStream) {
     bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
     impl_->readWrite(s);
+    return {};
 }
 
-void ModelPool::read(std::istream& inputStream) {
+tl::expected<void, Error> ModelPool::read(std::istream& inputStream) {
     bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
     impl_->readWrite(s);
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
-        raise<std::runtime_error>(fmt::format(
+        return tl::unexpected<Error>(Error::EncodeDecodeError, fmt::format(
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
+    return {};
 }
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
@@ -392,7 +410,8 @@ nlohmann::json ModelPool::toJson() const
     auto roots = nlohmann::json::array();
     const auto n = numRoots();
     for (auto i = 0u; i < n; ++i) {
-        roots.push_back(root(i)->toJson());
+        if (auto node = root(i))
+            roots.push_back(node.value()->toJson());
     }
 
     return roots;

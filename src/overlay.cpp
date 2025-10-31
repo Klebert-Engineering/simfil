@@ -3,9 +3,10 @@
 namespace simfil
 {
 
-void OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
+tl::expected<void, Error> OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
     cb(OverlayNode(n));
+    return {};
 }
 
 OverlayNode::OverlayNode(Value const& val)
@@ -37,30 +38,30 @@ auto OverlayNode::set(StringId const& key, Value const& child) -> void
 {
     auto iter = model().overlayChildren_.find(key);
     if (iter != model().overlayChildren_.end()) {
-        if (iter->second.node)
-            return iter->second.node;
+        if (iter->second.nodePtr())
+            return *iter->second.nodePtr();
         return ValueNode(iter->second.getScalar());
     }
-    return model().value_.node->get(key);
+    return model().value_.node()->get(key);
 }
 
 [[nodiscard]] ModelNode::Ptr OverlayNode::at(int64_t i) const
 {
-    return model().value_.node->at(i);
+    return model().value_.node()->at(i);
 }
 
 [[nodiscard]] StringId OverlayNode::keyAt(int64_t i) const
 {
-    return model().value_.node->keyAt(i);
+    return model().value_.node()->keyAt(i);
 }
 
 [[nodiscard]] uint32_t OverlayNode::size() const
 {
-    return model().value_.node->size();
+    return model().value_.node()->size();
 }
 
 [[nodiscard]] bool OverlayNode::iterate(IterCallback const& cb) const {
-    return model().value_.node->iterate(cb);
+    return model().value_.node()->iterate(cb);
 }
 
 }

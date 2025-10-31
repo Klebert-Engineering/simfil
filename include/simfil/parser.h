@@ -105,8 +105,8 @@ public:
 
     Context ctx;
     Environment* const env;
-    std::unordered_map<Token::Type, std::unique_ptr<PrefixParselet>> prefixParsers;
-    std::unordered_map<Token::Type, std::unique_ptr<InfixParselet>> infixParsers;
+    std::unordered_map<Token::Type, const PrefixParselet*> prefixParsers;
+    std::unordered_map<Token::Type, const InfixParselet*> infixParsers;
 
 private:
     auto findPrefixParser(const Token& t) const -> const PrefixParselet*;

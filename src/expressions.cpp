@@ -1,11 +1,16 @@
 #include "expressions.h"
 
+#include "fmt/format.h"
 #include "simfil/environment.h"
 #include "simfil/result.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
 
 #include "fmt/core.h"
+#include "fmt/ranges.h"
+#include "src/expected.h"
+#include <memory>
+#include <ranges>
 
 namespace simfil
 {
@@ -32,7 +37,14 @@ struct CountedResultFn : ResultFn
     CountedResultFn(const CountedResultFn&) = delete;
     CountedResultFn(CountedResultFn&&) = delete;
 
-    auto operator()(Context ctx, Value vv) const -> Result override
+    auto operator()(Context ctx, const Value& vv) const noexcept -> tl::expected<Result, Error> override
+    {
+        assert(!finished);
+        ++calls;
+        return fn(ctx, vv);
+    }
+
+    auto operator()(Context ctx, Value&& vv) const noexcept -> tl::expected<Result, Error> override
     {
         assert(!finished);
         ++calls;
@@ -59,7 +71,7 @@ auto boolify(const Value& v) -> bool
      * Undef if any argument is Undef. */
     if (v.isa(ValueType::Undef))
         return false;
-    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).as<ValueType::Bool>();
+    return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).value_or(Value::f()).as<ValueType::Bool>();
 }
 
 }
@@ -71,7 +83,7 @@ auto WildcardExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return ores(ctx, Value::undef());
@@ -83,28 +95,37 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
         Context& ctx;
         ResultFn& res;
 
-        auto iterate(ModelNode const& val, int depth)
+        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> tl::expected<Result, Error>
         {
-            if (val.type() == ValueType::Null)
+            if (val.type() == ValueType::Null) [[unlikely]]
                 return Result::Continue;
 
-            if (res(ctx, Value::field(val)) == Result::Stop)
-                return Result::Stop;
+            auto result = res(ctx, Value::field(val));
+            TRY_EXPECTED(result);
+            if (*result == Result::Stop) [[unlikely]]
+                return *result;
 
-            auto result = Result::Continue;
+            tl::expected<Result, Error> finalResult = Result::Continue;
             val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
-                if (iterate(subNode, depth + 1) == Result::Stop) {
-                    result = Result::Stop;
+                auto subResult = iterate(subNode);
+                if (!subResult) {
+                    finalResult = std::move(subResult);
                     return false;
                 }
+
+                if (*subResult == Result::Stop) {
+                    finalResult = Result::Stop;
+                    return false;
+                }
+
                 return true;
             }));
 
-            return result;
-        };
+            return finalResult;
+        }
     };
 
-    auto r = Iterate{ctx, res}.iterate(*val.node, 0);
+    auto r = val.nodePtr() ? Iterate{ctx, res}.iterate(**val.nodePtr()) : tl::expected<Result, Error>(Result::Continue);
     res.ensureCall();
     return r;
 }
@@ -121,7 +142,7 @@ void WildcardExpr::accept(ExprVisitor& v)
 
 auto WildcardExpr::toString() const -> std::string
 {
-    return "**";
+    return "**"s;
 }
 
 AnyChildExpr::AnyChildExpr() = default;
@@ -131,25 +152,28 @@ auto AnyChildExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
 
-    if (!val.node || !val.node->size())
+    if (!val.node() || !val.node()->size())
         return res(ctx, Value::null());
 
-    auto result = Result::Continue;
-    val.node->iterate(ModelNode::IterLambda([&](auto subNode) {
-        if (res(ctx, Value::field(std::move(subNode))) == Result::Stop) {
-            result = Result::Stop;
+    std::optional<Error> error;
+    val.node()->iterate(ModelNode::IterLambda([&error, &ctx, &res](auto subNode) -> bool {
+        auto result = res(ctx, Value::field(std::move(subNode)));
+        if (!result) {
+            error = std::move(result.error());
             return false;
         }
+        if (*result == Result::Stop)
+            return false;
         return true;
     }));
-
-   return Result::Continue;
-   //return result;
+    if (error)
+        return tl::unexpected<Error>(std::move(*error));
+    return Result::Continue;
 }
 
 auto AnyChildExpr::clone() const -> ExprPtr
@@ -164,7 +188,7 @@ void AnyChildExpr::accept(ExprVisitor& v)
 
 auto AnyChildExpr::toString() const -> std::string
 {
-    return "*";
+    return "*"s;
 }
 
 FieldExpr::FieldExpr(std::string name)
@@ -184,34 +208,39 @@ FieldExpr::FieldExpr(std::string name, const Token& token)
 
 auto FieldExpr::type() const -> Type
 {
-    return Type::PATH;
+    return Type::FIELD;
 }
 
-auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+{
+    return ieval(ctx, Value{val}, res);
+}
+
+auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     if (ctx.phase != Context::Compilation)
         evaluations_++;
 
     if (val.isa(ValueType::Undef))
-        return res(ctx, val);
+        return res(ctx, std::move(val));
 
     /* Special case: _ points to the current node */
     if (name_ == "_")
-        return res(ctx, val);
+        return res(ctx, std::move(val));
 
-    if (!val.node)
+    if (!val.node())
         return res(ctx, Value::null());
 
-    if (!nameId_)
+    if (!nameId_) [[unlikely]] {
         nameId_ = ctx.env->strings()->get(name_);
-
-    if (!nameId_)
-        /* If the field name is not in the string cache, then there
-           is no field with that name. */
-        return res(ctx, Value::null());
+        if (!nameId_)
+            /* If the field name is not in the string cache, then there
+               is no field with that name. */
+            return res(ctx, Value::null());
+    }
 
     /* Enter sub-node */
-    if (auto sub = val.node->get(nameId_)) {
+    if (auto sub = val.node()->get(nameId_)) {
         hits_++;
         return res(ctx, Value::field(*sub));
     }
@@ -254,10 +283,12 @@ auto MultiConstExpr::constant() const -> bool
     return true;
 }
 
-auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> Result
+auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
 {
     for (const auto& v : values_) {
-        if (res(ctx, v) == Result::Stop)
+        auto r = res(ctx, v);
+        TRY_EXPECTED(r);
+        if (*r == Result::Stop)
             return Result::Stop;
     }
 
@@ -276,14 +307,11 @@ void MultiConstExpr::accept(ExprVisitor& v)
 
 auto MultiConstExpr::toString() const -> std::string
 {
-    auto list = ""s;
-    for (const auto& v : values_) {
-        if (!list.empty())
-            list += " ";
-        list += v.toString();
-    }
+    auto items = values_ | std::views::transform([](const auto& arg) {
+        return arg.toString();
+    });
 
-    return "{"s + list + "}"s;
+    return fmt::format("{{{}}}", fmt::join(items, " "));
 }
 
 ConstExpr::ConstExpr(Value value)
@@ -300,7 +328,7 @@ auto ConstExpr::constant() const -> bool
     return true;
 }
 
-auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> Result
+auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
 {
     return res(ctx, value_);
 }
@@ -318,8 +346,13 @@ void ConstExpr::accept(ExprVisitor& v)
 auto ConstExpr::toString() const -> std::string
 {
     if (value_.isa(ValueType::String))
-        return "\""s + value_.toString() + "\""s;
+        return fmt::format("\"{}\"", value_.toString());
     return value_.toString();
+}
+
+auto ConstExpr::value() const -> const Value&
+{
+    return value_;
 }
 
 SubscriptExpr::SubscriptExpr(ExprPtr left, ExprPtr index)
@@ -332,26 +365,25 @@ auto SubscriptExpr::type() const -> Type
     return Type::SUBSCRIPT;
 }
 
-auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
-
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, Value lval) {
-        return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, const Value& ival) {
+    auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, const Value& lval) {
+        return index_->eval(ctx, val, LambdaResultFn([this, &res, &lval](Context ctx, const Value& ival) -> tl::expected<Result, Error> {
             /* Field subscript */
-            if (lval.node) {
+            if (lval.node()) {
                 ModelNode::Ptr node;
 
                 /* Array subscript */
                 if (ival.isa(ValueType::Int)) {
                     auto index = ival.as<ValueType::Int>();
-                    node = lval.node->at(index);
+                    node = lval.node()->at(index);
                 }
                 /* String subscript */
                 else if (ival.isa(ValueType::String)) {
                     auto key = ival.as<ValueType::String>();
                     if (auto keyStrId = ctx.env->strings()->get(key))
-                        node = lval.node->get(keyStrId);
+                        node = lval.node()->get(keyStrId);
                 }
 
                 if (node)
@@ -359,12 +391,15 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -
                 else
                     ctx.env->warn("Invalid subscript index type "s + valueType2String(ival.type), this->toString());
             } else {
-                return res(ctx, BinaryOperatorDispatcher<OperatorSubscript>::dispatch(lval, ival));
+                auto v = BinaryOperatorDispatcher<OperatorSubscript>::dispatch(lval, ival);
+                TRY_EXPECTED(v);
+                return res(ctx, std::move(v.value()));
             }
 
             return Result::Continue;
         }));
     }));
+    TRY_EXPECTED(r);
     res.ensureCall();
     return r;
 }
@@ -381,7 +416,7 @@ void SubscriptExpr::accept(ExprVisitor& v)
 
 auto SubscriptExpr::toString() const -> std::string
 {
-    return "(index "s + left_->toString() + " "s + index_->toString() + ")"s;
+    return fmt::format("(index {} {})", left_->toString(), index_->toString());
 }
 
 SubExpr::SubExpr(ExprPtr sub)
@@ -399,18 +434,24 @@ auto SubExpr::type() const -> Type
     return Type::SUBEXPR;
 }
 
-auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
+{
+    return ieval(ctx, Value{val}, ores);
+}
+
+auto SubExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     /* Do not return null unless we have _no_ matching value. */
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, const Value& lv) {
-        return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) {
+    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, const Value& lv) -> tl::expected<Result, Error> {
+        return sub_->eval(ctx, lv, LambdaResultFn([&res, &lv](const Context& ctx, const Value& vv) -> tl::expected<Result, Error> {
             auto bv = UnaryOperatorDispatcher<OperatorBool>::dispatch(vv);
-            if (bv.isa(ValueType::Undef))
+            TRY_EXPECTED(bv);
+            if (bv->isa(ValueType::Undef))
                 return Result::Continue;
 
-            if (bv.isa(ValueType::Bool) && bv.as<ValueType::Bool>())
+            if (bv->isa(ValueType::Bool) && bv->template as<ValueType::Bool>())
                 return res(ctx, lv);
 
             return Result::Continue;
@@ -422,7 +463,7 @@ auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Resu
 
 auto SubExpr::toString() const -> std::string
 {
-    return "(sub "s + left_->toString() + " "s + sub_->toString() + ")"s;
+    return fmt::format("(sub {} {})", left_->toString(), sub_->toString());
 }
 
 auto SubExpr::clone() const -> ExprPtr
@@ -444,14 +485,14 @@ auto AnyExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto subctx = ctx;
     auto result = false; /* At least one value is true  */
     auto undef = false;  /* At least one value is undef */
 
     for (const auto& arg : args_) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+        auto res = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -462,7 +503,7 @@ auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Resul
             result = result || boolify(vv);
             return result ? Result::Stop : Result::Continue;
         }));
-
+        TRY_EXPECTED(res);
         if (result || undef)
             break;
     }
@@ -498,11 +539,11 @@ auto AnyExpr::toString() const -> std::string
     if (args_.empty())
         return "any()"s;
 
-    auto s = "(any"s;
-    for (const auto& arg : args_) {
-        s += " "s + arg->toString();
-    }
-    return s + ")"s;
+    auto items = args_ | std::views::transform([](const auto& arg) {
+        return arg->toString();
+    });
+
+    return fmt::format("(any {})", fmt::join(items, " "));
 }
 
 EachExpr::EachExpr(std::vector<ExprPtr> args)
@@ -514,14 +555,14 @@ auto EachExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto subctx = ctx;
     auto result = true; /* All values are true  */
     auto undef = false; /* At least one value is undef */
 
     for (const auto& arg : args_) {
-        arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
+        auto argRes = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
             if (ctx.phase == Context::Phase::Compilation) {
                 if (vv.isa(ValueType::Undef)) {
                     undef = true;
@@ -531,7 +572,7 @@ auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Resu
             result = result && boolify(vv);
             return result ? Result::Continue : Result::Stop;
         }));
-
+        TRY_EXPECTED(argRes);
         if (!result || undef)
             break;
     }
@@ -567,11 +608,11 @@ auto EachExpr::toString() const -> std::string
     if (args_.empty())
         return "each()"s;
 
-    auto s = "(each"s;
-    for (const auto& arg : args_) {
-        s += " "s + arg->toString();
-    }
-    return s + ")"s;
+    auto items = args_ | std::views::transform([](const auto& arg) {
+        return arg->toString();
+    });
+
+    return fmt::format("(each {})", fmt::join(items, " "));
 }
 
 CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)
@@ -584,21 +625,29 @@ auto CallExpression::type() const -> Type
     return Type::VALUE;
 }
 
-auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
-    if (!fn_)
+    return ieval(ctx, Value{val}, res);
+}
+
+auto CallExpression::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+{
+    if (!fn_) [[unlikely]] {
         fn_ = ctx.env->findFunction(name_);
-    if (!fn_)
-        raise<std::runtime_error>("Unknown function "s + name_);
+        if (!fn_)
+            return tl::unexpected<Error>(Error::UnknownFunction, fmt::format("Unknown function '{}'", name_));
+    }
 
     auto anyval = false;
-    auto result = fn_->eval(ctx, val, args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value vv) {
+    auto result = fn_->eval(ctx, std::move(val), args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value&& vv) {
         anyval = true;
         return res(ctx, std::move(vv));
     }));
-
+    if (!result)
+        return result;
     if (!anyval)
-        return res(ctx, Value::null()); /* Expressions _must_ return at least one value! */
+        return tl::unexpected<Error>(Error::InternalError, "Function did not call result callback");
+
     return result;
 }
 
@@ -621,13 +670,13 @@ void CallExpression::accept(ExprVisitor& v)
 auto CallExpression::toString() const -> std::string
 {
     if (args_.empty())
-        return "("s + name_ + ")"s;
+        return fmt::format("({})", name_);
 
-    std::string s = "("s + name_;
-    for (const auto& arg : args_) {
-        s += " "s + arg->toString();
-    }
-    return s + ")"s;
+    auto items = args_ | std::views::transform([](const auto& arg) {
+        return arg->toString();
+    });
+
+    return fmt::format("({} {})", name_, fmt::join(items, " "));
 }
 
 PathExpr::PathExpr(ExprPtr right)
@@ -648,24 +697,29 @@ auto PathExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> Result
+auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
+{
+    return ieval(ctx, Value{val}, ores);
+}
+
+auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error>
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
-    auto r = left_->eval(ctx, val, LambdaResultFn([this, &res](Context ctx, Value v) {
+    auto r = left_->eval(ctx, std::move(val), LambdaResultFn([this, &res](Context ctx, Value&& v) -> tl::expected<Result, Error> {
         if (v.isa(ValueType::Undef))
             return Result::Continue;
 
-        if (v.isa(ValueType::Null) && !v.node)
+        if (v.isa(ValueType::Null) && !v.node())
             return Result::Continue;
 
         ++hits_;
 
-        return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value vv) {
+        return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value&& vv) -> tl::expected<Result, Error> {
             if (vv.isa(ValueType::Undef))
                 return Result::Continue;
 
-            if (vv.isa(ValueType::Null) && !vv.node)
+            if (vv.isa(ValueType::Null) && !vv.node())
                 return Result::Continue;
 
             return res(ctx, std::move(vv));
@@ -687,7 +741,7 @@ void PathExpr::accept(ExprVisitor& v)
 
 auto PathExpr::toString() const -> std::string
 {
-    return "(. "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("(. {} {})", left_->toString(), right_->toString());
 }
 
 UnpackExpr::UnpackExpr(ExprPtr sub)
@@ -699,10 +753,10 @@ auto UnpackExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     auto anyval = false;
-    auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value v) {
+    auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value&& v) -> tl::expected<Result, Error> {
         if (v.isa(ValueType::TransientObject)) {
             const auto& obj = v.as<ValueType::TransientObject>();
             auto r = Result::Continue;
@@ -715,11 +769,14 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Re
                 return Result::Stop;
         } else {
             anyval = true;
-            if (res(ctx, std::move(v)) == Result::Stop)
+            auto r = res(ctx, std::move(v));
+            TRY_EXPECTED(r);
+            if (*r == Result::Stop)
                 return Result::Stop;
         }
         return Result::Continue;
     }));
+    TRY_EXPECTED(r);
 
     if (!anyval)
         r = res(ctx, Value::null());
@@ -738,7 +795,7 @@ void UnpackExpr::accept(ExprVisitor& v)
 
 auto UnpackExpr::toString() const -> std::string
 {
-    return "(... "s + sub_->toString() + ")"s;
+    return fmt::format("(... {})", sub_->toString());
 }
 
 UnaryWordOpExpr::UnaryWordOpExpr(std::string ident, ExprPtr left)
@@ -751,19 +808,21 @@ auto UnaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
-    return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value val) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value&& val) -> tl::expected<Result, Error> {
         if (val.isa(ValueType::Undef))
             return res(ctx, std::move(val));
 
         if (val.isa(ValueType::TransientObject)) {
             const auto& obj = val.as<ValueType::TransientObject>();
-            return res(ctx, obj.meta->unaryOp(ident_, obj));
+            auto v = obj.meta->unaryOp(ident_, obj);
+            TRY_EXPECTED(v);
+            return res(ctx, std::move(v.value()));
         }
 
-        raise<std::runtime_error>(fmt::format("Invalid operator '{}' for value of type {}",
-                                                ident_, valueType2String(val.type)));
+        return tl::unexpected<Error>(Error::InvalidOperator,
+                                     fmt::format("Invalid operator '{}' for value of type {}", ident_, valueType2String(val.type)));
     }));
 }
 
@@ -779,7 +838,7 @@ auto UnaryWordOpExpr::clone() const -> ExprPtr
 
 auto UnaryWordOpExpr::toString() const -> std::string
 {
-    return "("s + ident_ + " "s + left_->toString() + ")"s;
+    return fmt::format("({} {})", ident_, left_->toString());
 }
 
 BinaryWordOpExpr::BinaryWordOpExpr(std::string ident, ExprPtr left, ExprPtr right)
@@ -793,25 +852,30 @@ auto BinaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, const Value& lval) {
-        return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](const Context& ctx, const Value& rval) {
+        return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](const Context& ctx, const Value& rval) -> tl::expected<Result, Error> {
             if (lval.isa(ValueType::Undef) || rval.isa(ValueType::Undef))
                 return res(ctx, Value::undef());
 
             if (lval.isa(ValueType::TransientObject)) {
                 const auto& obj = lval.as<ValueType::TransientObject>();
-                return res(ctx, obj.meta->binaryOp(ident_, obj, rval));
+                auto v = obj.meta->binaryOp(ident_, obj, rval);
+                TRY_EXPECTED(v);
+                return res(ctx, std::move(v.value()));
             }
 
             if (rval.isa(ValueType::TransientObject)) {
                 const auto& obj = rval.as<ValueType::TransientObject>();
-                return res(ctx, obj.meta->binaryOp(ident_, lval, obj));
+                auto v = obj.meta->binaryOp(ident_, lval, obj);
+                TRY_EXPECTED(v);
+                return res(ctx, std::move(v.value()));
             }
 
-            raise<std::runtime_error>(fmt::format("Invalid operator '{}' for values of type {} and {}",
-                                                    ident_, valueType2String(lval.type), valueType2String(rval.type)));
+            return tl::unexpected<Error>(Error::InvalidOperator,
+                                         fmt::format("Invalid operator '{}' for values of type {} and {}",
+                                                     ident_, valueType2String(lval.type), valueType2String(rval.type)));
         }));
     }));
 }
@@ -828,7 +892,7 @@ auto BinaryWordOpExpr::clone() const -> ExprPtr
 
 auto BinaryWordOpExpr::toString() const -> std::string
 {
-    return "("s + ident_ + " "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("({} {} {})", ident_, left_->toString(), right_->toString());
 }
 
 AndExpr::AndExpr(ExprPtr left, ExprPtr right)
@@ -844,19 +908,21 @@ auto AndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     /* Operator and behaves like in lua:
-        * 'a and b' returns a if 'not a?' else b is returned */
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value lval) {
+     * 'a and b' returns a if 'not a?' else b is returned */
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, Value&& lval) -> tl::expected<Result, Error> {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
-        if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-            if (!v.as<ValueType::Bool>())
+        auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
+        TRY_EXPECTED(v);
+        if (v->isa(ValueType::Bool))
+            if (!v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
-        return right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, Value rval) {
+        return right_->eval(ctx, val, LambdaResultFn([&res](const Context& ctx, Value&& rval) {
             return res(ctx, std::move(rval));
         }));
     }));
@@ -874,7 +940,7 @@ auto AndExpr::clone() const -> ExprPtr
 
 auto AndExpr::toString() const -> std::string
 {
-    return "(and "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("(and {} {})", left_->toString(), right_->toString());
 }
 
 OrExpr::OrExpr(ExprPtr left, ExprPtr right)
@@ -890,21 +956,24 @@ auto OrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> Result
+auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
     /* Operator or behaves like in lua:
      * 'a or b' returns a if 'a?' else b is returned */
-    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lval) {
+    return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value&& lval) -> tl::expected<Result, Error> {
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
         ++leftEvaluations_;
-        if (auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval); v.isa(ValueType::Bool))
-            if (v.as<ValueType::Bool>())
+
+        auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
+        TRY_EXPECTED(v);
+        if (v->isa(ValueType::Bool))
+            if (v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
         ++rightEvaluations_;
-        return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value rval) {
+        return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value&& rval) {
             return res(ctx, std::move(rval));
         }));
     }));
@@ -923,7 +992,7 @@ auto OrExpr::clone() const -> ExprPtr
 
 auto OrExpr::toString() const -> std::string
 {
-    return "(or "s + left_->toString() + " "s + right_->toString() + ")"s;
+    return fmt::format("(or {} {})", left_->toString(), right_->toString());
 }
 
 void ExprVisitor::visit(Expr& e)

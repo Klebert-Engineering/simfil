@@ -1,11 +1,13 @@
 #pragma once
 
+#include <csignal>
 #include <cstdint>
 #include <bitsery/traits/core/std_defaults.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/ext/std_map.h>
 #include <sfl/segmented_vector.hpp>
 
+#include "bitsery/details/adapter_common.h"
 #include "nodes.h"
 #include "arena.h"
 
@@ -58,8 +60,12 @@ struct ArrayArenaExt
         for (simfil::ArrayIndex i = 0; i < numArrays; ++i) {
             auto size = arena.size(i);
             s.value4b(size);
-            for (size_t j = 0; j < size; ++j)
-                fnc(s, const_cast<ElementType&>(arena.at(i, j)));
+            for (size_t j = 0; j < size; ++j) {
+                if (auto value = arena.at(i, j))
+                    fnc(s, const_cast<ElementType&>(value->get()));
+                else
+                    raise<simfil::Error>(std::move(value.error())); // Bitsery does not support propagating errors
+            }
         }
     }
 
