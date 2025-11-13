@@ -15,7 +15,7 @@ Although `simfil` is made for querying map feature data, it is easy to plug in c
 
 ## Query Language
 
-For details about the language see the [Language Guide](simfil-language.md).
+For details about the language see the [Language Guide](docs/simfil-language.md).
 
 ### Examples
 
@@ -32,7 +32,7 @@ Angelika
 Franz
 ```
 
-#### All persons older than 30 years using a [subquery](simfil-language.md#sub-queries)
+#### All persons older than 30 years using a [subquery](docs/simfil-language.md#sub-queries)
 Subqueries, denoted by braces `{...}` can be used as predicates for the current object. Insides a subquery, the current value is accessible through the special name `_`.
 ```
 *.{age > 30}.name
@@ -42,7 +42,7 @@ Angelika
 Franz
 ```
 
-#### Combining name and surname constructing a temporary value using string [concatenation](simfil-language.md#operators)
+#### Combining name and surname constructing a temporary value using string [concatenation](docs/simfil-language.md#operators)
 ```
 *.(name + " " + surname)
 ```
