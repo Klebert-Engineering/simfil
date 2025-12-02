@@ -152,8 +152,9 @@ The following types can be target types for a cast:
 * `float` - Converts the value to a float. Returns 0 on failure.
 * `string` - Converts the value to a string. Boolean values are converted to either "true" or "false".
 
-<!-- --8<-- [start:operators] -->
 ## Operators
+
+<!-- --8<-- [start:operators] -->
 
 | Operator            | Function                                                                                                |
 |---------------------|---------------------------------------------------------------------------------------------------------|
