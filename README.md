@@ -13,6 +13,8 @@ Although `simfil` is made for querying map feature data, it is easy to plug in c
 - **Speed**: querying models should be fast and scale to multiple cores.
 - **Efficiency**: the internal model should be memory efficient, as `simfil` is designed to query huge amounts of data.
 
+Note: Internals are documented in the [Developer Guide](docs/simfil-dev-guide.md).
+
 ## Query Language
 
 For details about the language see the [Language Guide](docs/simfil-language.md).

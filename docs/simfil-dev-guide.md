@@ -9,12 +9,14 @@ flowchart LR
   Q["Query string"] -->|"tokenize / parse"| AST["AST + Expr tree"]
   AST -->|"intern strings, resolve env"| Eval["Interpreter"]
   ModelPool["ModelPool + StringPool"] --> Eval
-  Env["Environment (functions, constants, meta types, trace)"] --> Eval
+  Env["Environment (functions, constants, trace)"] --> Eval
+  Meta["Meta types (TransientObject ops)"] --> Eval
   Eval --> Values["Result values + diagnostics"]
 ```
 
 - Queries are parsed into an expression tree (`Expr` subclasses).
-- An `Environment` holds registered functions, constants, meta types, string pools, and debug/trace hooks.
+- An `Environment` holds registered functions, constants, string pools, and debug/trace hooks.
+- Meta types live on transient values and provide custom operators or unpack behaviour; they are independent of the environment.
 - `ModelPool` stores data in columnar arenas with interned field names (`StringPool`).
 - The interpreter walks the expression tree against `ModelNode` views, producing `Value` objects and diagnostics.
 
@@ -25,7 +27,8 @@ flowchart LR
 | Model storage | `model/model.h`, `model/nodes.h` | Columnar pool for objects, arrays, scalars; backs every query. | `ModelPool`, `ModelNode`, `ModelNodeAddress`, `StringPool` |
 | Runtime values | `value.h`, `types.h` | Immutable runtime data passed between expressions and functions. | `Value`, `ValueType`, `TransientObject`, `MetaType` |
 | Expressions | `expression.h`, `expressions.*` | AST node classes with `ieval` implementations. | `Expr` subclasses (field, path, call, wildcard, logical, etc.) |
-| Environment | `environment.h` | Registry for functions/constants/meta types; tracing, warnings, timeouts. | `Environment`, `Context`, `Trace`, `Debug` |
+| Environment | `environment.h` | Registry for functions/constants, string pools, tracing, warnings, timeouts. | `Environment`, `Context`, `Trace`, `Debug` |
+| Meta types | `typed-meta-type.h`, `types.*` | Custom operator/unpack implementations on transient values; not part of the environment. | `MetaType`, `TypedMetaType`, `TransientObject`, `IRangeType`, `ReType` |
 | Parser | `parser.cpp`, `expression-patterns.h`, `token.cpp` | Pratt parser building `Expr` trees from tokens. | `Token`, `AST` |
 | Completion | `completion.cpp` | Partial parser that offers path/function suggestions. | `CompletionOptions`, `CompletionCandidate` |
 | Diagnostics | `diagnostics.*`, `error.*` | Parser/runtime errors with source spans. | `Diagnostics`, `Error`, `SourceLocation` |
@@ -146,9 +149,9 @@ Thread-safety is conditional. If `ARRAY_ARENA_THREAD_SAFE` is defined, the arena
 
 ## Parser, tokens, and AST
 
-Simfil uses a Pratt-style parser on top of an explicit token stream. The tokenizer in `token.cpp` first converts the input into a sequence of `Token` structures, each holding a `Type` (such as `WORD`, `INT`, `OP_ADD`, `OP_AND`, `WILDCARD`), an optional `value` for literals, and the character offsets (`begin`, `end`) in the original source string. These offsets are preserved throughout parsing and later attached to expressions via `Expr`’s `sourceLocation`, which is in turn used by the diagnostics machinery to highlight problematic subexpressions.
+Simfil uses a Pratt-style parser on top of an explicit token stream. The tokenizer in `token.cpp` converts the input into `Token` structures carrying a type (`WORD`, `INT`, `OP_ADD`, …), optional literal, and the character offsets (`begin`, `end`). These spans are attached to expressions and later surface in diagnostics.
 
-The parser, implemented in `parser.cpp`, organises parsing logic around prefix and infix “parselets” declared in `expression-patterns.h`. Each parselet is responsible for recognising a syntactic construct at a particular precedence level and for constructing an appropriate `Expr` node. The central routine `Parser::parsePrecedence` performs the familiar Pratt loop: it consumes a prefix expression using the prefix parselet for the current token, and then repeatedly looks for infix parselets with higher precedence to extend the left-hand side.
+Prefix and infix parselets in `expression-patterns.h` map tokens to `Expr` nodes and encode precedence/associativity. `Parser::parsePrecedence` walks the stream, chaining parselets until no higher-precedence infix applies.
 
 ```mermaid
 flowchart LR
@@ -159,23 +162,13 @@ flowchart LR
   ExprTree --> ASTWrapper["AST (query + root Expr)"]
 ```
 
-For example, a field access such as `a.b` results in a `FieldExpr("a")` as the prefix, followed by a `PathExpr(FieldExpr("a"), FieldExpr("b"))` created by the infix parselet for the dot operator. Compound expressions with logical operators (`and`, `or`), arithmetic operators (`+`, `*`, `-`), comparison operators, subqueries (`{...}`), subscripts, and function calls are all assembled in this way. The parselets encode operator precedence and associativity; for instance, `*` binds more tightly than `+`, and `and`/`or` are treated as right-associative binary operators in the expression tree.
-
-Once parsing succeeds, the parser wraps the root `ExprPtr` and the original query string into an `AST` object. The `AST` is an immutable artefact: it does not perform evaluation itself, but serves as the handle for the interpreter and for tooling such as autocompletion and static diagnostics.
-
-Parser errors are reported through `tl::expected<ExprPtr, Error>` and, in failure cases, the parser attaches the offending `Token` to the `Error`. The higher layers turn these errors into `Diagnostics` entries with precise `SourceLocation` information, allowing tooling to underline exactly the substring that could not be parsed.
+The result is an immutable `AST` (query string + root expression). Failures carry the offending token; higher layers translate that into `Diagnostics` entries with precise `SourceLocation`s.
 
 ## Query pipeline
 
-From a caller’s perspective, the typical entry points are `compile` and `eval`. The `compile` function accepts an `Environment` and a query string, feeds the string through the tokenizer and parser, and returns an `AST` on success. During this step, field names and identifiers are interned via the `Environment`’s `StringPool` where appropriate, so subsequent evaluation does not need to look up string identifiers repeatedly.
+From a caller’s perspective, the entry points are `compile` and `eval`. `compile(env, query, …)` tokenises/parses the query and interns identifiers through the environment’s `StringPool` so runtime lookups are cheap.
 
-Evaluation is performed by `eval(env, ast, rootNode, diagnostics)`. The interpreter constructs a `Context` that holds a pointer to the `Environment`, the current phase (compilation or evaluation), and an optional timeout threshold. It then invokes `Expr::eval` on the root expression, passing in a `Value` that wraps the chosen `ModelNode` root and a `ResultFn` implementation that collects results into a `std::vector<Value>`. The `Expr::eval` method itself is a thin wrapper: it enforces cancellation by consulting `Context::canceled()`, invokes optional debug hooks in `Environment::debug`, and then delegates to the expression-specific `ieval` implementation.
-
-Path-oriented expressions such as `FieldExpr`, `PathExpr`, `WildcardExpr`, and `AnyChildExpr` obtain structural information by calling the node interface on the current `Value`’s underlying `ModelNode`. Array and object navigation is expressed entirely in terms of `get`, `at`, `keyAt`, `size`, and `iterate`, which means the interpreter does not need to know concrete node types. Aggregate expressions such as `AnyExpr` and `EachExpr` evaluate their arguments with short-circuiting. Logical operators (`AndExpr`, `OrExpr`) build on this by combining intermediate results with a call to the boolean operator dispatcher; they return either the original left-hand side value or the right-hand side, mirroring the language semantics.
-
-Function calls are represented by `CallExpression`. On the first evaluation, the expression resolves the function name via `Environment::findFunction` and caches the pointer to the resulting `Function`. Subsequent evaluations simply invoke `Function::eval`, passing the current value and the argument expressions. The function is responsible for evaluating its argument expressions in the order and manner it requires, and for returning a `Value` or `Error` via the provided `ResultFn`.
-
-The outcome of evaluation is a sequence of `Value` instances. The interpreter returns these as a `std::vector<Value>` and, if a `Diagnostics` object has been supplied, it also records any runtime warnings (for example, invalid subscript types or unknown functions in relaxed modes). `Environment::trace` and `Environment::warn` provide global hooks for collecting timing information and warnings across evaluations.
+`eval(env, ast, rootNode, diagnostics)` builds a `Context` (phase flag, environment pointer, optional timeout) and drives the root expression while checking cancellation and optional debug hooks. Navigation stays model-agnostic: expressions talk only to the `ModelNode` interface (`get`, `at`, `iterate`, `size`, `keyAt`), so different pools can be swapped in without touching interpreter logic. Short-circuiting is pervasive; errors and warnings flow into `Diagnostics` when provided.
 
 ```mermaid
 sequenceDiagram
@@ -194,19 +187,15 @@ sequenceDiagram
 
 ### Path and wildcard semantics
 
-The core of simfil’s selection semantics is encoded in a small set of expression classes. `FieldExpr` represents simple field access. At evaluation time, it interprets the identifier `"_”` as a reference to the current value itself; for all other names it lazily resolves a `StringId` using the environment’s `StringPool` and then performs an object lookup via `ModelNode::get`. If the field cannot be resolved and evaluation is taking place in compilation phase, the expression yields `undef`, signalling that the shape is not yet known. During the evaluation phase, a missing field yields `null`.
-
-`PathExpr` combines two expressions with the dot operator. It first evaluates the left-hand side and, for each non‑`undef`, non‑`null` result, evaluates the right-hand side using that value as the new input. Results that again evaluate to `undef` or to non-node `null` are suppressed. This design allows chained paths such as `a.b.c` to compose cleanly while preserving error information via `undef`.
-
-The wildcard expressions implement the `*` and `**` behaviour. `AnyChildExpr` simply iterates the immediate children of the current node using `ModelNode::iterate` and passes each child as a `Value::field` to the next stage. `WildcardExpr` extends this by first emitting the current node and then recursively descending into all descendants. Its implementation uses a nested `Iterate` functor that takes a `ModelNode`, forwards it to the result function, and then recurses over `iterate` until either a stop signal is returned or all children have been processed.
-
-`SubExpr` models the `{...}` subquery operator. It can be read as “return this value if the inner filter is true”. Internally, `SubExpr` evaluates its left-hand side to obtain a candidate value and then evaluates the subexpression against that value. If the subexpression yields a boolean `true`, the original left-hand side is forwarded; otherwise, it is discarded. `SubscriptExpr` provides array and object subscripting: it evaluates the left-hand side to obtain a node, then evaluates the index expression. If the index is an integer, it calls `at` on the node; if it is a string, it uses the environment’s `StringPool` to resolve a `StringId` and then calls `get`. If neither case applies, the expression delegates to the subscript operator dispatcher so that meta types can implement their own semantics.
+- `FieldExpr` resolves `_` to the current value; other names are interned via the environment string pool. Missing fields yield `undef` during compilation and `null` at runtime.
+- `PathExpr` chains access (`a.b.c`) while skipping `undef` or non-node `null` results.
+- `*` iterates immediate children; `**` emits the current node and then walks all descendants depth-first.
+- `{…}` keeps the input only if the inner filter is truthy. Subscripts accept integers (array) or strings (object lookup); other index types defer to meta-type-specific subscript logic.
 
 ### Control flow and short-circuiting
 
-Control-flow operators are implemented carefully to preserve simfil’s “truthy but value‑preserving” semantics. `AnyExpr` and `EachExpr` aggregate over a list of argument expressions; they rely on the `boolify` helper, which converts a `Value` to a boolean with the usual rules but treats `undef` as false. `AnyExpr` stops evaluation as soon as one argument evaluates to true and reports either `undef` (if no conclusive value was seen) or a boolean summarising the result. `EachExpr` behaves symmetrically: it halts on the first false argument and only returns true if all arguments evaluate to true and none to `undef`.
-
-The logical operators `AndExpr` and `OrExpr` follow the language-level rule that they return one of their operands, not merely a plain boolean. `AndExpr` evaluates the left-hand side and, if it is truthy, returns the result of the right-hand side; otherwise it returns the left-hand side as-is. `OrExpr` evaluates the left-hand side and, if it is truthy, returns it; otherwise it evaluates and returns the right-hand side. Both operators use the `OperatorBool` dispatcher to determine truthiness, and both short-circuit as soon as the outcome is determined.
+- `Any`/`Each` short-circuit as soon as the outcome is known. `undef` counts as false for control flow but is preserved as a value when needed for diagnostics.
+- `and`/`or` return one of their operands (Lua/JS style) and short-circuit; only `false`/`null` are falsey in the operator dispatcher, but the control-flow helpers treat `undef` as false to avoid leaking unknowns into booleans.
 
 ### Function and meta-type calls (runtime)
 
@@ -224,26 +213,24 @@ sequenceDiagram
 ```
 
 - Functions are looked up case-insensitively.
-- Arity and argument coercion live in the `Function` implementation.
-- Errors propagate via `tl::expected` and are turned into diagnostics at the call site.
+- Functions decide their own evaluation strategy (eager/lazy) and arity checks; errors are surfaced through the provided `ResultFn`.
+- Meta-type operators dispatch through the `meta` pointer on `TransientObject` values.
 
 ## Environment and extension points
 
-- **Functions** – register C++ callables in `Environment::functions` (case-insensitive). Each `Function` advertises arity, evaluation strategy, and can return `Error` for diagnostics.
+- **Functions** – register C++ callables in `Environment::functions` (case-insensitive). Each `Function` owns arity checks and evaluation strategy.
 - **Constants** – fixed `Value`s registered in `Environment::constants`.
-- **Meta types** – derive from `TypedMetaType<T>` (or implement `MetaType`) to add operators and unpacking. Register via `Value::registerMetaType`.
+- **Meta types** – derive from `TypedMetaType<T>` (or implement `MetaType`) to add operators/unpack. Keep the meta instance alive (often as a static singleton) and wrap values in `TransientObject{meta}`; no environment registration is required.
 - **Custom models** – derive from `Model`/`ModelPool` to add columns or override resolution. The JSON adapter (`model/json.cpp`) shows how to expose non-native trees.
-- **Debug hooks** – assign `Environment::debug` callbacks to observe per-expression evaluation (`evalBegin`/`evalEnd`).
-- **Timeouts** – set `Context::timeout` to cancel long-running evaluations.
+- **Debug/trace/timeouts** – assign `Environment::debug` callbacks, use `Environment::trace` hooks, and set `Context::timeout` to cancel long-running evaluations.
 
 ```mermaid
 classDiagram
   Environment o--> Function
-  Environment o--> MetaType
   Environment o--> StringPool
   Function <|-- BuiltinFunction
-  MetaType <|-- TypedMetaType
   Value --> MetaType
+  MetaType <|-- TypedMetaType
 ```
 
 ### Registering a custom function (sketch)
@@ -261,36 +248,15 @@ Environment env(strings);
 env.functions.emplace("myfn", new MyFn());
 ```
 
-### Registering a meta type (sketch)
-
-```c++
-struct Vec2 { double x{}, y{}; };
-struct Vec2Meta : TypedMetaType<Vec2> {
-  Vec2Meta() : TypedMetaType("Vec2") {}
-  auto binaryOp(std::string_view op, const Vec2& a, const Value& b) const -> tl::expected<Value, Error> override {
-    if (op == "+") { /* combine */ }
-    return tl::unexpected(Error{Error::Unimplemented, "op"});
-  }
-  auto binaryOp(std::string_view op, const Value&, const Vec2&) const -> tl::expected<Value, Error> override {
-    return tl::unexpected(Error{Error::Unimplemented, "op"});
-  }
-  auto unaryOp(std::string_view, const Vec2&) const -> tl::expected<Value, Error> override {
-    return tl::unexpected(Error{Error::Unimplemented, "op"});
-  }
-};
-auto vecMeta = std::make_shared<Vec2Meta>();
-Value::registerMetaType(vecMeta);
-```
-
 ## Completion engine
 
 `complete(env, query, caret, options)` returns `CompletionCandidate`s by partially parsing the query and exploring:
 
-- Known fields from the current `ModelNode` (via `Model::resolve`).
-- Registered functions/constants and meta-type constructors.
+- Known fields from the current `ModelNode` (`fieldNames` + string resolution).
+- Registered functions and upper-case constants from the string pool.
 - Smart-case filtering and limit/sort controls from `CompletionOptions`.
 
-Use this in UIs (e.g., erdblick feature search) to propose valid paths and operators as users type.
+Use this in UIs (e.g., erdblick feature search) to propose valid paths and functions while a user types; operators are not completed.
 
 ```mermaid
 flowchart TD
@@ -304,4 +270,7 @@ flowchart TD
 
 ## Summary
 
-With these concepts in mind you can add new operators, plug in domain-specific data models, or trace down performance issues in the interpreter. Cross-check changes against the unit tests and, for integrations like mapget, ensure your string pools are shared so path lookups stay consistent.
+- Environment = functions/constants/strings/debug hooks; meta types live on transient values you construct yourself.
+- The interpreter speaks only `ModelNode`; keep pools swappable and share `StringPool` when IDs must align (e.g., overlays, map tiles).
+- Completion suggests fields/functions/constants but not operators; plan UI affordances accordingly.
+- Use timeouts/diagnostics/trace hooks when integrating into long-running or user-facing systems.
