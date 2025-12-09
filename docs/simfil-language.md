@@ -7,12 +7,14 @@ structured data.
 
 ### Syntax
 
+<!-- --8<-- [start:basics] -->
+
 The syntax of simfil is case-insensitive in all cases but for symbols. This means that `any(...)`, `ANY(...)` and `Any(...)` all compile
 to the same function.
 
 ### Paths
 
-To traverse the document and evaluate nested nodes, simfil provides the
+To traverse objects and evaluate nested nodes, simfil provides the
 path operators `.`, `*` and `**`, the latter two acting as a wildcards (direct child or recursive).
 
 The expression `a.b` evaluates the left side (`a`) and, if it matches the current
@@ -77,6 +79,7 @@ a.b.*{_ == "hello"}
 ```
 
 Specific array elements can be accessed using the subscript `[<expression>]` operator.
+<!-- --8<-- [end:basics] -->
 
 ## Modes
 
@@ -151,6 +154,8 @@ The following types can be target types for a cast:
 
 ## Operators
 
+<!-- --8<-- [start:operators] -->
+
 | Operator            | Function                                                                                                |
 |---------------------|---------------------------------------------------------------------------------------------------------|
 | `[ a ]`             | Array/Object subscript, index expression can be of type `int` or `string`.                              |
@@ -199,9 +204,13 @@ The `!=` operator will always return `true` in such cases.
 | `==`/`=`, `!=`,                        | 2          |
 | `and`, `or`                            | 1          |
 
+<!-- --8<-- [end:operators] -->
+
 ## Functions
 
-### `trace(expr, limit=<...>, name=<...>)`
+<!-- --8<-- [start:functions] -->
+
+#### `trace(expr, limit=<...>, name=<...>)`
 
 Counts and measures all calls to its expression under the identifier `name` or the string
 representation of `expr` if no name is given. Returns the value of `expr`. The result values
@@ -217,7 +226,7 @@ Arguments:
 - `limit` The maximum number of values of `expr` to store with the trace entry
 - `name` A human-readable name of the trace entry; defaults to the string representation of `expr`.
 
-### `range(begin, end)`
+#### `range(begin, end)`
 
 The function returns a value of type `irange`, which overloads the following operators:
 - `==` Tests if an element is inside the range
@@ -234,7 +243,7 @@ range(1, 5) as string => '1..5' # Convert range to string
 range(1, 100)... % 2 == 0 => 50 # Get all even numbers in range 1..100
 ```
 
-### `arr(...)`
+#### `arr(...)`
 
 Returns its arguments.
 ```
@@ -246,7 +255,7 @@ arr(1, 2, 3) => {1, 2, 3}
 v == arr(1, 5, 11) ← Results in three comparisons, one against each element
 ```
 
-### `split(str, sep, keep_empty=true)`
+#### `split(str, sep, keep_empty=true)`
 
 Splits a string into sub-strings
 ```
@@ -258,7 +267,7 @@ split('hello world', ' ')
 split('hello world', ' ') => 'hello', 'world'
 ```
 
-### `select(values..., index, count=1)`
+#### `select(values..., index, count=1)`
 
 Selects a slice of values
 ```
@@ -275,7 +284,7 @@ select(arr('a', 'b', 'c'), 1, 2) => 'b', 'c'
 select(arr('a', 'b', 'c'), 0, 0) => 'a', 'b', 'c'
 ```
 
-### `sum(values..., expr=$sum + $val, init=0)`
+#### `sum(values..., expr=$sum + $val, init=0)`
 
 Returns the sum of all values `values`. Uses the expression `expr` if given.
 Initial value of `$sum` is set to `init`. The result value of `expr` is stored
@@ -294,7 +303,7 @@ sum(list, #$sum > 0 and $sum + ', ' + $val or $val, '')
 ```
 
 
-### `keys(object)`
+#### `keys(object)`
 
 Returns all sub-element keys of object `object`
 
@@ -303,7 +312,7 @@ Returns all sub-element keys of object `object`
 keys(a.b) => 'c', 'd', ...
 ```
 
-### `re(str)`
+#### `re(str)`
 
 Compiles a regular expression string to an `re` object, which holds a compiled regular expression.
 For regular expression literals you can also use a string literal prefixed by `re` as a short form: `re'prefix.*'`.
@@ -316,3 +325,5 @@ a.b = re("prefix.*")
 -- Test if a.b does not match "prefix.*"
 a.b != re("prefix.*")
 ```
+
+<!-- --8<-- [end:functions] -->
