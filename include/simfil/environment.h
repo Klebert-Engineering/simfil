@@ -149,14 +149,14 @@ struct Context
     Phase phase = Evaluation;
 
     /* Timeout after which the evaluation should be canceled. */
-    std::chrono::time_point<std::chrono::steady_clock> timeout = std::chrono::time_point<std::chrono::steady_clock>::max();
+    std::optional<std::chrono::time_point<std::chrono::steady_clock>> timeout;
 
     Context(Environment* env, Phase = Phase::Evaluation);
 
     auto canceled() const -> bool
     {
-        if (phase != Phase::Compilation)
-            return timeout < std::chrono::steady_clock::now();
+        if (phase != Phase::Compilation && timeout)
+            return *timeout < std::chrono::steady_clock::now();
         return false;
     }
 };
