@@ -175,6 +175,29 @@ public:
     virtual tl::expected<void, Error> write(std::ostream& outputStream);
     virtual tl::expected<void, Error> read(std::istream& inputStream);
 
+    struct SerializationSizeStats {
+        size_t rootsBytes = 0;
+        size_t int64Bytes = 0;
+        size_t doubleBytes = 0;
+        size_t stringDataBytes = 0;
+        size_t stringRangeBytes = 0;
+        size_t objectMemberBytes = 0;
+        size_t arrayMemberBytes = 0;
+
+        [[nodiscard]] size_t totalBytes() const
+        {
+            return rootsBytes
+                + int64Bytes
+                + doubleBytes
+                + stringDataBytes
+                + stringRangeBytes
+                + objectMemberBytes
+                + arrayMemberBytes;
+        }
+    };
+
+    [[nodiscard]] SerializationSizeStats serializationSizeStats() const;
+
 #if defined(SIMFIL_WITH_MODEL_JSON)
     /** JSON Serialization */
     virtual nlohmann::json toJson() const;

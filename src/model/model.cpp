@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <variant>
 #include <vector>
+#include <streambuf>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -95,6 +96,42 @@ struct ModelPool::Impl
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
     }
 };
+
+namespace
+{
+class CountingStreambuf : public std::streambuf
+{
+public:
+    size_t size() const { return size_; }
+
+protected:
+    std::streamsize xsputn(const char* /*s*/, std::streamsize count) override
+    {
+        size_ += static_cast<size_t>(count);
+        return count;
+    }
+
+    int overflow(int ch) override
+    {
+        if (ch != EOF)
+            ++size_;
+        return ch;
+    }
+
+private:
+    size_t size_ = 0;
+};
+
+template <class Fn>
+size_t measureBytes(Fn&& fn)
+{
+    CountingStreambuf buf;
+    std::ostream os(&buf);
+    bitsery::Serializer<bitsery::OutputStreamAdapter> s(os);
+    fn(s);
+    return buf.size();
+}
+}
 
 ModelPool::ModelPool()
     : impl_(std::make_unique<ModelPool::Impl>(std::make_shared<StringPool>()))
@@ -372,6 +409,29 @@ auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::ex
     }
 
     return {};
+}
+
+ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
+{
+    constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
+    SerializationSizeStats stats;
+
+    stats.rootsBytes = measureBytes(
+        [&](auto& s) { s.container(impl_->columns_.roots_, maxColumnSize); });
+    stats.int64Bytes = measureBytes(
+        [&](auto& s) { s.container(impl_->columns_.i64_, maxColumnSize); });
+    stats.doubleBytes = measureBytes(
+        [&](auto& s) { s.container(impl_->columns_.double_, maxColumnSize); });
+    stats.stringDataBytes = measureBytes(
+        [&](auto& s) { s.text1b(impl_->columns_.stringData_, maxColumnSize); });
+    stats.stringRangeBytes = measureBytes(
+        [&](auto& s) { s.container(impl_->columns_.strings_, maxColumnSize); });
+    stats.objectMemberBytes = measureBytes(
+        [&](auto& s) { s.ext(impl_->columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
+    stats.arrayMemberBytes = measureBytes(
+        [&](auto& s) { s.ext(impl_->columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
+
+    return stats;
 }
 
 std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId id) const
