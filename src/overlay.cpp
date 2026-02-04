@@ -5,18 +5,20 @@ namespace simfil
 
 tl::expected<void, Error> OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
-    cb(OverlayNode(n));
+    auto node = model_ptr<OverlayNode>::make(n);
+    cb(*node);
     return {};
 }
 
-OverlayNode::OverlayNode(Value const& val)
+OverlayNode::OverlayNode(Value const& val, detail::mp_key key)
     : MandatoryDerivedModelNodeBase<OverlayNodeStorage>(
           std::make_shared<OverlayNodeStorage>(val),
-          {ModelPool::Objects, 0})
+          {ModelPool::Objects, 0},
+          key)
 {}
 
-OverlayNode::OverlayNode(ModelNode const& n)
-    : MandatoryDerivedModelNodeBase<OverlayNodeStorage>(n)
+OverlayNode::OverlayNode(ModelNode const& n, detail::mp_key key)
+    : MandatoryDerivedModelNodeBase<OverlayNodeStorage>(n, key)
 {}
 
 auto OverlayNode::set(StringId const& key, Value const& child) -> void
@@ -40,7 +42,7 @@ auto OverlayNode::set(StringId const& key, Value const& child) -> void
     if (iter != model().overlayChildren_.end()) {
         if (iter->second.nodePtr())
             return *iter->second.nodePtr();
-        return ValueNode(iter->second.getScalar());
+        return model_ptr<ValueNode>::make(iter->second.getScalar());
     }
     return model().value_.node()->get(key);
 }

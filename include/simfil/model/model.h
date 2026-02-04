@@ -72,6 +72,10 @@ public:
      * implementation returns an unset optional.
      */
     virtual std::optional<std::string_view> lookupStringId(StringId id) const;
+
+protected:
+    // Shared passkey for direct node construction in Model/ModelPool implementations.
+    detail::mp_key mpKey_{detail::mp_key{0}};
 };
 
 /**
