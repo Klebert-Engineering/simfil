@@ -7,6 +7,7 @@
 #include <bitset>
 
 #include "model/nodes.h"
+#include "simfil/byte-array.h"
 #include "transient.h"
 
 namespace simfil
@@ -56,6 +57,11 @@ struct ValueToString
     auto operator()(const std::string& v) const
     {
         return v;
+    }
+
+    auto operator()(const ByteArray& v) const
+    {
+        return v.toDisplayString();
     }
 
     auto operator()(const TransientObject&) const
@@ -159,6 +165,11 @@ struct ValueType4CType<std::string_view> {
 };
 
 template <>
+struct ValueType4CType<ByteArray> {
+    static constexpr ValueType Type = ValueType::String;
+};
+
+template <>
 struct ValueType4CType<TransientObject> {
     static constexpr ValueType Type = ValueType::TransientObject;
 };
@@ -236,6 +247,8 @@ struct ValueAs<ValueType::String>
             return *str;
         if (auto str = std::get_if<std::string_view>(&v))
             return std::string(*str);
+        if (auto bytes = std::get_if<ByteArray>(&v))
+            return bytes->toDisplayString();
         return ""s;
     }
 };
@@ -403,6 +416,8 @@ public:
         case ValueType::Float:
             return fn(this->template as<ValueType::Float>());
         case ValueType::String:
+            if (auto bytes = std::get_if<ByteArray>(&value))
+                return fn(*bytes);
             return fn(this->template as<ValueType::String>());
         case ValueType::TransientObject:
             return fn(this->template as<ValueType::TransientObject>());
@@ -438,6 +453,7 @@ public:
             void operator() (double const& v) {result = v;}
             void operator() (std::string const& v) {result = v;}
             void operator() (std::string_view const& v) {result = v;}
+            void operator() (ByteArray const& v) {result = v;}
             void operator() (TransientObject const&) {}
             void operator() (ModelNode::Ptr const&) {}
             ScalarValueType result;
@@ -471,6 +487,7 @@ public:
         double,
         std::string,
         std::string_view,
+        ByteArray,
         TransientObject,
         ModelNode::Ptr> value;
 };

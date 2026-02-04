@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
+#include <iostream>
 
 /**
  * Note: This code is taken from bitsery traits/string.h and adopted
@@ -112,6 +113,7 @@ auto StringPool::emplace(std::string_view const& str) -> tl::expected<StringId, 
         // Store the string to maintain ownership.
         auto& storedString = storedStrings_.emplace_back(str);
         StringId id = nextId_++;
+        std::cerr << fmt::format("Adding string '{}' to string pool @ id: {}", storedString, id) << std::endl;
         if (nextId_ < id) {
             return tl::unexpected<Error>(Error::StringPoolOverflow, "StringPool id overflow!");
         }

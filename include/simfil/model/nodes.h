@@ -8,6 +8,7 @@
 
 #include "arena.h"
 #include "string-pool.h"
+#include "simfil/byte-array.h"
 #include "simfil/error.h"
 
 #include <sfl/small_vector.hpp>
@@ -60,7 +61,8 @@ using ScalarValueType = std::variant<
     int64_t,
     double,
     std::string,
-    std::string_view>;
+    std::string_view,
+    ByteArray>;
 
 /**
  * Why is model_ptr's value on the stack?

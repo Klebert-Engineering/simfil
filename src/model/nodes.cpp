@@ -120,7 +120,9 @@ nlohmann::json ModelNode::toJson() const
             [&j](auto&& v)
             {
                 using T = decltype(v);
-                if constexpr (!std::is_same_v<std::decay_t<T>, std::monostate>) {
+                if constexpr (std::is_same_v<std::decay_t<T>, ByteArray>) {
+                    j = v.toDisplayString();
+                } else if constexpr (!std::is_same_v<std::decay_t<T>, std::monostate>) {
                     j = std::forward<T>(v);
                 } else {
                     j = nullptr;
