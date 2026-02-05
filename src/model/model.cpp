@@ -54,7 +54,6 @@ struct ModelPool::Impl
         strings_(std::move(strings))
     {
         columns_.stringData_.reserve(detail::ColumnPageSize*4);
-        columns_.byteArrayData_.reserve(detail::ColumnPageSize*4);
     }
 
     struct StringRange {
@@ -78,7 +77,6 @@ struct ModelPool::Impl
 
         std::string stringData_;
         sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
-        std::string byteArrayData_;
         sfl::segmented_vector<StringRange, detail::ColumnPageSize> byteArrays_;
 
         Object::Storage objectMemberArrays_;
@@ -95,7 +93,6 @@ struct ModelPool::Impl
         s.container(columns_.double_, maxColumnSize);
         s.text1b(columns_.stringData_, maxColumnSize);
         s.container(columns_.strings_, maxColumnSize);
-        s.text1b(columns_.byteArrayData_, maxColumnSize);
         s.container(columns_.byteArrays_, maxColumnSize);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
@@ -235,7 +232,6 @@ void ModelPool::clear()
     clear_and_shrink(columns.strings_);
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.byteArrays_);
-    clear_and_shrink(columns.byteArrayData_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
 }
@@ -291,7 +287,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
         if (auto err = checkBounds(impl_->columns_.byteArrays_))
             return tl::unexpected<Error>(*err);
         auto& val = impl_->columns_.byteArrays_[idx];
-        auto view = std::string_view(impl_->columns_.byteArrayData_).substr(val.offset_, val.length_);
+        auto view = std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_);
         cb(ValueNode(simfil::ByteArray{view}, shared_from_this()));
         break;
     }
@@ -385,10 +381,10 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 {
     impl_->columns_.byteArrays_.emplace_back(Impl::StringRange{
-        (uint32_t)impl_->columns_.byteArrayData_.size(),
+        (uint32_t)impl_->columns_.stringData_.size(),
         (uint32_t)value.bytes.size()
     });
-    impl_->columns_.byteArrayData_.append(value.bytes.data(), value.bytes.size());
+    impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
     return ModelNode(shared_from_this(), {ByteArray, (uint32_t)impl_->columns_.byteArrays_.size()-1});
 }
 
