@@ -394,17 +394,21 @@ ModelNode::Ptr ModelPool::newValue(StringId handle) {
         ModelNodeAddress{PooledString, static_cast<uint32_t>(handle)});
 }
 
-model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
-    if (n->addr_.column() != Objects)
+// Core ADL resolve hooks for base Object/Array nodes.
+template<>
+model_ptr<Object> resolveInternal(res::tag<Object>, ModelPool const& model, ModelNode const& node)
+{
+    if (node.addr().column() != ModelPool::Objects)
         raise<std::runtime_error>("Cannot cast this node to an object.");
-    return model_ptr<Object>::make(shared_from_this(), n->addr_);
+    return model_ptr<Object>::make(model.shared_from_this(), node.addr());
 }
 
-model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
+template<>
+model_ptr<Array> resolveInternal(res::tag<Array>, ModelPool const& model, ModelNode const& node)
 {
-    if (n->addr_.column() != Arrays)
+    if (node.addr().column() != ModelPool::Arrays)
         raise<std::runtime_error>("Cannot cast this node to an array.");
-    return model_ptr<Array>::make(shared_from_this(), n->addr_);
+    return model_ptr<Array>::make(model.shared_from_this(), node.addr());
 }
 
 std::shared_ptr<StringPool> ModelPool::strings() const
