@@ -303,7 +303,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto& val = impl_->columns_.byteArrays_[idx];
         auto view = std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_);
-        cb(ValueNode(simfil::ByteArray{view}, shared_from_this()));
+        cb(ValueNode(simfil::ByteArray{view}, shared_from_this(), mpKey_));
         break;
     }
     case PooledString: {
@@ -408,7 +408,9 @@ ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
         (uint32_t)value.bytes.size()
     });
     impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
-    return ModelNode(shared_from_this(), {ByteArray, (uint32_t)impl_->columns_.byteArrays_.size()-1});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{ByteArray, (uint32_t)impl_->columns_.byteArrays_.size()-1});
 }
 
 ModelNode::Ptr ModelPool::newValue(StringId handle) {
