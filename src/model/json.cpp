@@ -2,6 +2,7 @@
 
 #include "simfil/model/json.h"
 #include "simfil/model/model.h"
+#include "simfil/base64.h"
 
 #include <nlohmann/json.hpp>
 
@@ -34,6 +35,18 @@ static auto build(const json& j, ModelPool & model) -> tl::expected<ModelNode::P
     }
 
     if (j.is_object()) {
+        if (auto it = j.find("_bytes"); it != j.end() && it->is_boolean() && it->get<bool>()) {
+            auto data = j.find("data");
+            if (data == j.end() || !data->is_string())
+                return tl::unexpected<Error>(Error::ParserError, "Invalid tagged bytes object: expected string field 'data'");
+
+            auto decoded = base64Decode(data->get<std::string>());
+            if (!decoded)
+                return tl::unexpected<Error>(Error::ParserError, "Invalid tagged bytes object: base64 decode failed");
+
+            return model.newValue(ByteArray{std::move(*decoded)});
+        }
+
         auto object = model.newObject(j.size());
         for (auto&& [key, value] : j.items()) {
             auto child = build(value, model);

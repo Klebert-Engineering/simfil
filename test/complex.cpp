@@ -102,6 +102,21 @@ TEST_CASE("Multimap JSON", "[multimap.serialization]") {
     REQUIRE(model->toJson() == nlohmann::json::parse(R"([{"a":[1],"b":[1,2,3],"c":[[1],2],"_multimap":true}])"));
 }
 
+TEST_CASE("Tagged bytes JSON", "[bytes.serialization]") {
+    auto model = std::make_shared<simfil::ModelPool>();
+    auto root = model->newObject(1);
+    model->addRoot(root);
+    root->addField("raw", model->newValue(ByteArray{"A normal string"}));
+
+    auto expected = nlohmann::json::parse(
+        R"([{"raw":{"_bytes":true,"number":null,"data":"QSBub3JtYWwgc3RyaW5n"}}])");
+    REQUIRE(model->toJson() == expected);
+
+    auto roundTrip = json::parse(model->toJson().dump());
+    REQUIRE(roundTrip);
+    REQUIRE(roundTrip.value()->toJson() == expected);
+}
+
 TEST_CASE("Serialization", "[complex.serialization]") {
     auto model = json::parse(invoice);
     REQUIRE(model);

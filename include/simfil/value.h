@@ -61,7 +61,7 @@ struct ValueToString
 
     auto operator()(const ByteArray& v) const
     {
-        return v.toDisplayString();
+        return "b\""s + v.toHex() + "\"";
     }
 
     auto operator()(const TransientObject&) const
@@ -90,6 +90,7 @@ inline auto valueType2String(ValueType t) -> const char*
     case ValueType::Int:    return "int";
     case ValueType::Float:  return "float";
     case ValueType::String: return "string";
+    case ValueType::Bytes:  return "bytes";
     case ValueType::TransientObject: return "transient";
     case ValueType::Object: return "object";
     case ValueType::Array:  return "array";
@@ -103,7 +104,7 @@ inline auto valueType2String(ValueType t) -> const char*
  */
 struct TypeFlags
 {
-    std::bitset<9> flags;
+    std::bitset<10> flags;
 
     auto test(ValueType type) const
     {
@@ -166,7 +167,7 @@ struct ValueType4CType<std::string_view> {
 
 template <>
 struct ValueType4CType<ByteArray> {
-    static constexpr ValueType Type = ValueType::String;
+    static constexpr ValueType Type = ValueType::Bytes;
 };
 
 template <>
@@ -213,6 +214,11 @@ struct ValueTypeInfo<ValueType::String> {
 };
 
 template <>
+struct ValueTypeInfo<ValueType::Bytes> {
+    using Type = ByteArray;
+};
+
+template <>
 struct ValueTypeInfo<ValueType::TransientObject> {
     using Type = TransientObject;
 };
@@ -247,9 +253,17 @@ struct ValueAs<ValueType::String>
             return *str;
         if (auto str = std::get_if<std::string_view>(&v))
             return std::string(*str);
-        if (auto bytes = std::get_if<ByteArray>(&v))
-            return bytes->toDisplayString();
         return ""s;
+    }
+};
+
+template <>
+struct ValueAs<ValueType::Bytes>
+{
+    template <class VariantType>
+    static inline auto get(const VariantType& v) noexcept -> decltype(auto)
+    {
+        return std::get<ByteArray>(v);
     }
 };
 
@@ -416,9 +430,9 @@ public:
         case ValueType::Float:
             return fn(this->template as<ValueType::Float>());
         case ValueType::String:
-            if (auto bytes = std::get_if<ByteArray>(&value))
-                return fn(*bytes);
             return fn(this->template as<ValueType::String>());
+        case ValueType::Bytes:
+            return fn(this->template as<ValueType::Bytes>());
         case ValueType::TransientObject:
             return fn(this->template as<ValueType::TransientObject>());
         case ValueType::Object:

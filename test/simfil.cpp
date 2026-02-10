@@ -116,6 +116,8 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("'a'<='b'", "true");
     REQUIRE_AST("'b'>'a'", "true");
     REQUIRE_AST("'b'>='b'", "true");
+    REQUIRE_AST("b\"89899\" > 5", "true");
+    REQUIRE_AST("b\"89899\" > \"normal-string\"", "false");
 
     /* Null behaviour */
     REQUIRE_AST("1<null", "false");
@@ -142,6 +144,7 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("typeof 123.1", "\"float\"");
     REQUIRE_AST("typeof true",  "\"bool\"");
     REQUIRE_AST("typeof null",  "\"null\"");
+    REQUIRE_AST("typeof b\"ff\"", "\"bytes\"");
 
     /* Precedence */
     REQUIRE_AST("1+1*2",   "3");
@@ -163,6 +166,8 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("false as string", "\"false\"");
     REQUIRE_AST("null as string",  "\"null\"");
     REQUIRE_AST("range(1,3) as string", "\"1..3\"");
+    REQUIRE_AST("b\"89899\" as string", "\"89899\"");
+    REQUIRE_AST("\"A normal string\" as bytes", "b\"41206E6F726D616C20737472696E67\"");
 
     /* Bool Cast */
     REQUIRE_AST("123?", "true");

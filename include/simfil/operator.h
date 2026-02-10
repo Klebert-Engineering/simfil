@@ -179,7 +179,7 @@ struct OperatorTypeof
 
     auto operator()(const ByteArray&) const -> std::string_view
     {
-        static auto n = "string"sv;
+        static auto n = "bytes"sv;
         return n;
     }
 
@@ -291,7 +291,7 @@ struct OperatorAsString
 
     auto operator()(const ByteArray& v) const -> std::string
     {
-        return v.toDisplayString();
+        return v.bytes;
     }
 
     auto operator()(const ModelNode& v) const
@@ -312,6 +312,40 @@ struct OperatorAsString
     }
 
     NULL_AS("null"s);
+};
+
+struct OperatorAsBytes
+{
+    NAME("bytes")
+
+    auto operator()(const ByteArray& v) const -> ByteArray
+    {
+        return v;
+    }
+
+    auto operator()(const std::string& v) const -> ByteArray
+    {
+        return ByteArray{v};
+    }
+
+    auto operator()(const ModelNode&) const
+    {
+        return ByteArray{};
+    }
+
+    auto operator()(const TransientObject&) const
+    {
+        // Handled by MetaType::unaryOp
+        return ByteArray{};
+    }
+
+    template <class Type>
+    auto operator()(Type v) const -> ByteArray
+    {
+        return ByteArray{OperatorAsString()(v)};
+    }
+
+    NULL_AS(ByteArray{"null"});
 };
 
 #undef DENY_OTHER
@@ -504,16 +538,6 @@ struct OperatorEq
         return l.bytes == r.bytes;
     }
 
-    auto operator()(const ByteArray& l, const std::string& r) const
-    {
-        return l.toDisplayString() == r;
-    }
-
-    auto operator()(const std::string& l, const ByteArray& r) const
-    {
-        return l == r.toDisplayString();
-    }
-
     auto operator()(const ByteArray& l, int64_t r) const
     {
         if (auto decoded = l.decodeBigEndianI64())
@@ -577,16 +601,6 @@ struct OperatorLt
             [](unsigned char a, unsigned char b) { return a < b; });
     }
 
-    auto operator()(const ByteArray& l, const std::string& r) const
-    {
-        return l.toDisplayString() < r;
-    }
-
-    auto operator()(const std::string& l, const ByteArray& r) const
-    {
-        return l < r.toDisplayString();
-    }
-
     auto operator()(const ByteArray& l, int64_t r) const
     {
         if (auto decoded = l.decodeBigEndianI64())
@@ -632,16 +646,6 @@ struct OperatorLtEq
     DECL_OPERATION(const std::string&, const std::string&, <=)
 
     auto operator()(const ByteArray& l, const ByteArray& r) const
-    {
-        return OperatorLt()(l, r) || OperatorEq()(l, r);
-    }
-
-    auto operator()(const ByteArray& l, const std::string& r) const
-    {
-        return OperatorLt()(l, r) || OperatorEq()(l, r);
-    }
-
-    auto operator()(const std::string& l, const ByteArray& r) const
     {
         return OperatorLt()(l, r) || OperatorEq()(l, r);
     }

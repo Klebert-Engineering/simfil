@@ -49,6 +49,7 @@ enum class ValueType
     Int,
     Float,
     String,
+    Bytes,
     TransientObject,
     Object,
     Array

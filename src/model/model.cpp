@@ -449,6 +449,8 @@ ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
         [&](auto& s) { s.text1b(impl_->columns_.stringData_, maxColumnSize); });
     stats.stringRangeBytes = measureBytes(
         [&](auto& s) { s.container(impl_->columns_.strings_, maxColumnSize); });
+    stats.stringRangeBytes += measureBytes(
+        [&](auto& s) { s.container(impl_->columns_.byteArrays_, maxColumnSize); });
     stats.objectMemberBytes = measureBytes(
         [&](auto& s) { s.ext(impl_->columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
     stats.arrayMemberBytes = measureBytes(

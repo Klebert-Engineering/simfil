@@ -76,6 +76,12 @@ TEST_CASE("Value Constructors", "[value.value-constructor]") {
         REQUIRE(val.as<ValueType::String>() == "world");
     }
 
+    SECTION("Make ByteArray") {
+        auto val = Value::make(ByteArray{"bytes"});
+        REQUIRE(val.isa(ValueType::Bytes));
+        REQUIRE(val.as<ValueType::Bytes>().bytes == "bytes");
+    }
+
     SECTION("Type constructor") {
         Value val(ValueType::Null);
         REQUIRE(val.isa(ValueType::Null));
@@ -183,6 +189,11 @@ TEST_CASE("Value As", "[value.as]") {
         auto val = Value::field(objNode);
         auto ptr = val.as<ValueType::Object>();
         REQUIRE(!!ptr);
+    }
+
+    SECTION("as<ValueType::Bytes>()") {
+        auto val = Value::make(ByteArray{"abc"});
+        REQUIRE(val.as<ValueType::Bytes>().bytes == "abc");
     }
     
     SECTION("as<ValueType::Array>()") {
@@ -308,6 +319,7 @@ TEST_CASE("Value toString() method", "[value.toString]") {
     REQUIRE(Value::make(int64_t(-123)).toString() == "-123");
     REQUIRE(Value::make(double(3.14)).toString().find("3.14") == 0);
     REQUIRE(Value::make("Ponder"s).toString() == "Ponder");
+    REQUIRE(Value::make(ByteArray{"A normal string"}).toString() == "b\"41206E6F726D616C20737472696E67\"");
 }
 
 TEST_CASE("Value utility methods", "[value.utilities]") {
@@ -360,6 +372,7 @@ TEST_CASE("valueType2String() function", "[value.type2string]") {
     REQUIRE(valueType2String(ValueType::Int) == "int"s);
     REQUIRE(valueType2String(ValueType::Float) == "float"s);
     REQUIRE(valueType2String(ValueType::String) == "string"s);
+    REQUIRE(valueType2String(ValueType::Bytes) == "bytes"s);
     REQUIRE(valueType2String(ValueType::TransientObject) == "transient"s);
     REQUIRE(valueType2String(ValueType::Object) == "object"s);
     REQUIRE(valueType2String(ValueType::Array) == "array"s);

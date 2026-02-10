@@ -95,6 +95,7 @@ TEST_CASE("Unary operators", "[operator.unary]") {
         REQUIRE(op(int64_t(42)) == "int");
         REQUIRE(op(3.14) == "float");
         REQUIRE(op("hello"s) == "string");
+        REQUIRE(op(ByteArray{"ff"}) == "bytes");
     }
 }
 
@@ -128,6 +129,17 @@ TEST_CASE("Type conversion operators", "[operator.conversion]") {
         REQUIRE(op("not a number"s) == 0.0);
         REQUIRE(op(""s) == 0.0);
         REQUIRE(op(NullType{}) == 0.0);
+    }
+
+    SECTION("OperatorAsString") {
+        OperatorAsString op;
+        REQUIRE(op(ByteArray{"89899"}) == "89899");
+    }
+
+    SECTION("OperatorAsBytes") {
+        OperatorAsBytes op;
+        REQUIRE(op("A normal string"s).bytes == "A normal string");
+        REQUIRE(op(ByteArray{"ff"}).bytes == "ff");
     }
 }
 
@@ -220,5 +232,12 @@ TEST_CASE("Binary comparison operators", "[operator.binary.comparison]") {
         REQUIRE(op(int64_t(5), 5.0) == true);
         REQUIRE(op(5.0, int64_t(5)) == true);
         REQUIRE(op(int64_t(5), 5.1) == false);
+        REQUIRE(op(ByteArray{"89899"}, "normal-string"s) == false);
+    }
+
+    SECTION("OperatorGt") {
+        OperatorGt op;
+        REQUIRE(op(ByteArray{"89899"}, int64_t(5)) == true);
+        REQUIRE(op(ByteArray{"89899"}, "normal-string"s) == false);
     }
 }

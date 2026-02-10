@@ -44,6 +44,7 @@ static constexpr std::string_view TypenameBool("bool");
 static constexpr std::string_view TypenameInt("int");
 static constexpr std::string_view TypenameFloat("float");
 static constexpr std::string_view TypenameString("string");
+static constexpr std::string_view TypenameBytes("bytes");
 }
 
 /**
@@ -243,6 +244,8 @@ public:
                 return std::make_unique<UnaryExpr<OperatorAsFloat>>(std::move(left));
             if (name == strings::TypenameString)
                 return std::make_unique<UnaryExpr<OperatorAsString>>(std::move(left));
+            if (name == strings::TypenameBytes)
+                return std::make_unique<UnaryExpr<OperatorAsBytes>>(std::move(left));
 
             return unexpected<Error>(Error::InvalidType, fmt::format("Invalid type name for cast '{}'", name));
         }());
@@ -680,6 +683,7 @@ namespace
 const ScalarParser<int64_t> intParser;
 const ScalarParser<double> floatParser;
 const ScalarParser<std::string> stringParser;
+const ScalarParser<ByteArray> bytesParser;
 const RegExpParser regexpParser;
 const UnaryOpParser<OperatorNegate> negateParser;
 const UnaryOpParser<OperatorBitInv> bitInvParser;
@@ -726,6 +730,7 @@ static auto setupParser(Parser& p)
     p.prefixParsers[Token::INT]     = &intParser;
     p.prefixParsers[Token::FLOAT]   = &floatParser;
     p.prefixParsers[Token::STRING]  = &stringParser;
+    p.prefixParsers[Token::BYTES]   = &bytesParser;
     p.prefixParsers[Token::REGEXP]  = &regexpParser;
 
     /* Unary Operators */

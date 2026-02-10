@@ -1,5 +1,6 @@
 #include "simfil/model/model.h"
 #include "simfil/model/string-pool.h"
+#include "simfil/base64.h"
 #include "simfil/value.h"
 #include "simfil/model/nodes.h"
 
@@ -121,7 +122,14 @@ nlohmann::json ModelNode::toJson() const
             {
                 using T = decltype(v);
                 if constexpr (std::is_same_v<std::decay_t<T>, ByteArray>) {
-                    j = v.toDisplayString();
+                    auto bytes = nlohmann::json::object();
+                    bytes["_bytes"] = true;
+                    if (auto decoded = v.decodeBigEndianI64())
+                        bytes["number"] = *decoded;
+                    else
+                        bytes["number"] = nullptr;
+                    bytes["data"] = base64Encode(v.bytes);
+                    j = std::move(bytes);
                 } else if constexpr (!std::is_same_v<std::decay_t<T>, std::monostate>) {
                     j = std::forward<T>(v);
                 } else {

@@ -136,7 +136,7 @@ count(mylist.*)
 
 ## Types
 
-Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string` and `re`.
+Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes` and `re`.
 Additionally, the `model` type represents compound object/array container nodes.
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
@@ -151,6 +151,9 @@ The following types can be target types for a cast:
 * `int` - Converts the value to an integer. Returns 0 on failure.
 * `float` - Converts the value to a float. Returns 0 on failure.
 * `string` - Converts the value to a string. Boolean values are converted to either "true" or "false".
+* `bytes` - Converts the value to bytes.
+
+Byte literals are written using the `b` prefix, e.g. `b"hello"` or `b'hello'`.
 
 ## Operators
 
@@ -161,12 +164,12 @@ The following types can be target types for a cast:
 | `[ a ]`             | Array/Object subscript, index expression can be of type `int` or `string`.                              |
 | `{ a }`             | Sub-Query (inside sub-query `_`  represents the value the query is applied to).                         |
 | `. b` or `a . b`    | Direct field access; returns the value of field `b` or `null`.                                          |
-| `a as b`            | Cast a to type b (one of `bool`, `int`, `float` or `string`).                                           |
+| `a as b`            | Cast a to type b (one of `bool`, `int`, `float`, `string` or `bytes`).                                  |
 | `a ?`               | Get boolean value of `a` (see ##Types).                                                                 |
 | `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions](#Functions) for example)        |
-| `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"` or `"string"`). |
+| `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"`, `"string"` or `"bytes"`). |
 | `not a`             | Boolean not.                                                                                            |
-| `# a`               | Returns the length of a string or array value.                                                          |
+| `# a`               | Returns the length of a string, bytes, or array value.                                                  |
 | `~ a`               | Bitwise not.                                                                                            |
 | `- a`               | Unary minus.                                                                                            |
 | `a * b`             | Multiplication.                                                                                         |
