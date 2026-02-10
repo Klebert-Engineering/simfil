@@ -10,7 +10,10 @@
 
 #include <memory>
 #include <string_view>
+#include <type_traits>
 #include <vector>
+#include <utility>
+#include <cassert>
 #include <istream>
 #include <ostream>
 
@@ -19,6 +22,38 @@
 
 namespace simfil
 {
+
+namespace res
+{
+// Tag type for ADL-based resolve hooks implemented by model libraries.
+template<typename Target>
+struct tag {};
+}
+
+namespace detail
+{
+template<class T>
+concept HasModelType = requires { typename T::ModelType; };
+
+template<HasModelType T>
+using ModelTypeOf = typename T::ModelType;
+}
+
+/**
+ * ADL customization point for typed node resolution.
+ * Libraries define resolveInternal(tag, model, node) in their namespace.
+ */
+template<typename Target, typename ModelType>
+model_ptr<Target> resolveInternal(res::tag<Target>, ModelType const&, ModelNode const&) = delete;
+
+class ModelPool;
+
+// Built-in resolve hooks for core node types. Declared here so ADL sees them
+// across translation units without relying on friend injection.
+template<>
+model_ptr<Object> resolveInternal(res::tag<Object>, ModelPool const&, ModelNode const&);
+template<>
+model_ptr<Array> resolveInternal(res::tag<Array>, ModelPool const&, ModelNode const&);
 
 /**
  * Basic node model which only resolves trivial node types.
@@ -59,6 +94,60 @@ public:
      */
     virtual tl::expected<void, Error> resolve(ModelNode const& n, ResolveFn const& cb) const;
 
+    /**
+     * Resolve a node to a specific ModelNode subtype using ADL hooks.
+     * This provides a clean cast API without exposing model internals.
+     */
+    template<typename Target = ModelNode>
+    model_ptr<Target> resolve(ModelNodeAddress const& address) const
+    {
+        if constexpr (std::is_same_v<Target, ModelNode>) {
+            return ModelNode::Ptr::make(shared_from_this(), address);
+        }
+        return resolve<Target>(*ModelNode::Ptr::make(shared_from_this(), address));
+    }
+
+    template<typename Target = ModelNode>
+    model_ptr<Target> resolve(ModelNodeAddress const& address, ScalarValueType data) const
+    {
+        if constexpr (std::is_same_v<Target, ModelNode>) {
+            return ModelNode::Ptr::make(shared_from_this(), address, std::move(data));
+        }
+        return resolve<Target>(*ModelNode::Ptr::make(shared_from_this(), address, std::move(data)));
+    }
+
+    template<typename Target>
+    model_ptr<Target> resolve(ModelNode::Ptr const& node) const
+    {
+        return resolve<Target>(*node);
+    }
+
+    template<typename Target>
+    model_ptr<Target> resolve(ModelNode const& node) const
+    {
+        if constexpr (std::is_same_v<Target, ModelNode>) {
+            return model_ptr<ModelNode>(node);
+        }
+        else {
+            if constexpr (!detail::HasModelType<Target>) {
+                static_assert(detail::HasModelType<Target>, "Target must provide a ModelType alias.");
+                return {};
+            }
+            else {
+                using ModelType = detail::ModelTypeOf<Target>;
+#if !defined(NDEBUG)
+                // In debug builds, validate the model type to catch misuse early.
+                auto typedModel = dynamic_cast<ModelType const*>(this);
+                assert(typedModel && "resolve<T> called on incompatible model type.");
+                return resolveInternal(res::tag<Target>{}, *typedModel, node);
+#else
+                // In release builds, avoid RTTI overhead on this hot path.
+                return resolveInternal(res::tag<Target>{}, *static_cast<ModelType const*>(this), node);
+#endif
+            }
+        }
+    }
+
     /** Add a small scalar value and get its model node view */
     ModelNode::Ptr newSmallValue(bool value);
     ModelNode::Ptr newSmallValue(int16_t value);
@@ -73,6 +162,10 @@ public:
      * implementation returns an unset optional.
      */
     virtual std::optional<std::string_view> lookupStringId(StringId id) const;
+
+protected:
+    // Shared passkey for direct node construction in Model/ModelPool implementations.
+    detail::mp_key mpKey_{detail::mp_key{0}};
 };
 
 /**
@@ -85,6 +178,8 @@ class ModelPool : public Model
     template<typename, typename> friend struct BaseArray;
 
 public:
+    // Keep Model::resolve<T> overloads visible alongside the virtual resolve override.
+    using Model::resolve;
     /**
      * The pool consists of multiple ModelNode columns,
      * each for a different data type. Each column
@@ -154,12 +249,6 @@ public:
     ModelNode::Ptr newValue(std::string_view const& value);
     ModelNode::Ptr newValue(simfil::ByteArray const& value);
     ModelNode::Ptr newValue(StringId handle);
-
-    /** Node-type-specific resolve-functions */
-    [[nodiscard]]
-    model_ptr<Object> resolveObject(ModelNode::Ptr const& n) const;
-    [[nodiscard]]
-    model_ptr<Array> resolveArray(ModelNode::Ptr const& n) const;
 
     /** Access the field name storage */
     [[nodiscard]]

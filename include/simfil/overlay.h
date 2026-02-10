@@ -22,8 +22,8 @@ struct OverlayNodeStorage final : public Model
 class OverlayNode final : public MandatoryDerivedModelNodeBase<OverlayNodeStorage>
 {
 public:
-    explicit OverlayNode(Value const& val);
-    explicit OverlayNode(ModelNode const& n);
+    explicit OverlayNode(Value const& val, detail::mp_key key);
+    explicit OverlayNode(ModelNode const& n, detail::mp_key key);
     auto set(StringId const& key, Value const& child) -> void;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;

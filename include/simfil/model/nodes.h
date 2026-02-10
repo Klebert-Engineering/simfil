@@ -34,6 +34,9 @@ struct Diagnostics;
 class AST;
 class Expr;
 
+template<typename>
+struct model_ptr;
+
 using ModelConstPtr = std::shared_ptr<const Model>;
 using ModelPoolConstPtr = std::shared_ptr<const ModelPool>;
 using ModelPoolPtr = std::shared_ptr<ModelPool>;
@@ -65,6 +68,22 @@ using ScalarValueType = std::variant<
     std::string_view,
     ByteArray>;
 
+namespace detail
+{
+// Passkey for ModelNode construction: ModelNode types take this in their constructors so only
+// model_ptr (and ModelPool via a shared key instance) can default/in-place construct them.
+// This avoids per-node friendship and keeps IDEs happy across library boundaries.
+struct mp_key
+{
+    mp_key() = delete;
+private:
+    explicit mp_key(int) {}
+    template<typename> friend struct ::simfil::model_ptr;
+    friend class ::simfil::Model;
+    friend class ::simfil::ModelPool;
+};
+}
+
 /**
  * Why is model_ptr's value on the stack?
  *
@@ -79,11 +98,11 @@ struct model_ptr
 {
     template<typename> friend struct model_ptr;
 
-    model_ptr(std::nullptr_t) {}  // NOLINT
+    model_ptr(std::nullptr_t) : data_(detail::mp_key{0}) {}  // NOLINT
     model_ptr(T&& modelNode) : data_(std::move(modelNode)) {}  // NOLINT
     explicit model_ptr(T const& modelNode) : data_(modelNode) {}  // NOLINT
 
-    model_ptr() = default;
+    model_ptr() : data_(detail::mp_key{0}) {}
     model_ptr(const model_ptr&) = default;
     model_ptr(model_ptr&&) = default;
 
@@ -103,7 +122,9 @@ struct model_ptr
     model_ptr& operator= (model_ptr<OtherT>&& other) {data_ = std::move(other.data_); return *this;}
 
     template<typename... Args>
-    explicit model_ptr(std::in_place_t, Args&&... args) : data_(std::forward<Args>(args)...) {}
+    explicit model_ptr(std::in_place_t, Args&&... args)
+        // Append the passkey so only model_ptr can call node constructors.
+        : data_(std::forward<Args>(args)..., detail::mp_key{0}) {}
 
     static_assert(std::is_base_of_v<ModelNode, T>, "T must inherit from ModelNode.");
 
@@ -113,22 +134,22 @@ struct model_ptr
     }
 
     inline T& operator* () {
-        assert(data_.model_ && data_.addr_);
+        assert(data_.isResolved());
         return data_;
     }
 
     inline T* operator-> () {
-        assert(data_.model_ && data_.addr_);
+        assert(data_.isResolved());
         return &data_;
     }
 
     inline T const& operator* () const {
-        assert(data_.model_ && data_.addr_);
+        assert(data_.isResolved());
         return data_;
     }
 
     inline T const* operator-> () const {
-        assert(data_.model_ && data_.addr_);
+        assert(data_.isResolved());
         return &data_;
     }
 
@@ -188,6 +209,25 @@ struct ModelNodeAddress
     }
 };
 
+namespace detail
+{
+// Shared storage entry for object fields across all BaseObject instantiations.
+// Keeps the underlying ArrayArena type identical regardless of ModelType.
+struct ObjectField
+{
+    ObjectField() = default;
+    ObjectField(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
+    StringId name_ = StringPool::Empty;
+    ModelNodeAddress node_;
+
+    template<typename S>
+    void serialize(S& s) {
+        s.value2b(name_);
+        s.object(node_);
+    }
+};
+}
+
 /** Semantic view onto a particular node in a ModelPool. */
 struct ModelNode
 {
@@ -219,6 +259,9 @@ struct ModelNode
 
     /// Get the node's address
     [[nodiscard]] inline ModelNodeAddress addr() const {return addr_;}
+
+    /// True if the node points at a valid model and address.
+    [[nodiscard]] inline bool isResolved() const {return model_ && addr_;}
 
     /// Virtual destructor to allow polymorphism
     virtual ~ModelNode() = default;
@@ -325,12 +368,16 @@ struct ModelNode
     [[nodiscard]] virtual nlohmann::json toJson() const;
 #endif
 
+public:
+    // Passkey constructor: ModelNode instances are created through model_ptr.
+    explicit ModelNode(detail::mp_key) : data_(), model_(), addr_() {}
+    ModelNode(ModelConstPtr, ModelNodeAddress, detail::mp_key);
+    ModelNode(ModelConstPtr, ModelNodeAddress, ScalarValueType data, detail::mp_key);
+
 protected:
-    ModelNode() = default;
     ModelNode(ModelNode const&) = default;
     ModelNode(ModelNode&&) = default;
     ModelNode& operator= (ModelNode const&) = default;
-    ModelNode(ModelConstPtr, ModelNodeAddress, ScalarValueType data={});
 
     /// Extra data for the node
     ScalarValueType data_;
@@ -362,10 +409,14 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
 
+public:
+    explicit ModelNodeBase(detail::mp_key key) : ModelNode(key) {}
+    ModelNodeBase(ModelConstPtr, ModelNodeAddress, detail::mp_key key);
+    ModelNodeBase(ModelConstPtr, ModelNodeAddress, ScalarValueType data, detail::mp_key key);  // NOLINT
+    ModelNodeBase(ModelNode const&, detail::mp_key key);  // NOLINT
+
 protected:
-    ModelNodeBase(ModelConstPtr, ModelNodeAddress={}, ScalarValueType data={});  // NOLINT
-    ModelNodeBase(ModelNode const&);  // NOLINT
-    ModelNodeBase() = default;
+    ModelNodeBase() = delete;
 };
 
 /**
@@ -373,9 +424,9 @@ protected:
  */
 struct ValueNode final : public ModelNodeBase
 {
-    explicit ValueNode(ScalarValueType const& value);
-    explicit ValueNode(ScalarValueType const& value, ModelConstPtr const& p);
-    explicit ValueNode(ModelNode const&);
+    explicit ValueNode(ScalarValueType const& value, detail::mp_key key);
+    explicit ValueNode(ScalarValueType const& value, ModelConstPtr const& p, detail::mp_key key);
+    explicit ValueNode(ModelNode const&, detail::mp_key key);
     [[nodiscard]] ValueType type() const override;
 };
 
@@ -384,21 +435,26 @@ struct ValueNode final : public ModelNodeBase
  * a reference to a Model-derived pool type.
  * @tparam ModelType Model-derived type.
  */
-template<class ModelType>
+template<class ModelTypeT>
 struct MandatoryDerivedModelNodeBase : public ModelNodeBase
 {
-    inline ModelType& model() const {return *modelPtr<ModelType>();}  // NOLINT
+    using ModelType = ModelTypeT;
+
+    inline ModelTypeT& model() const {return *modelPtr<ModelTypeT>();}  // NOLINT
 
 protected:
-    template<class ModelType_ = ModelType>
+    template<class ModelType_ = ModelTypeT>
     inline ModelType_* modelPtr() const {
         return static_cast<ModelType_*>(const_cast<Model*>(model_.get()));
     }
 
-    MandatoryDerivedModelNodeBase() = default;
-    MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a={}, ScalarValueType data={})  // NOLINT
-        : ModelNodeBase(p, a, std::move(data)) {}
-    MandatoryDerivedModelNodeBase(ModelNode const& n) : ModelNodeBase(n) {}  // NOLINT
+    explicit MandatoryDerivedModelNodeBase(detail::mp_key key) : ModelNodeBase(key) {}
+    MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a, detail::mp_key key)  // NOLINT
+        : ModelNodeBase(std::move(p), a, key) {}
+    MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a, ScalarValueType data, detail::mp_key key)  // NOLINT
+        : ModelNodeBase(std::move(p), a, std::move(data), key) {}
+    MandatoryDerivedModelNodeBase(ModelNode const& n, detail::mp_key key) : ModelNodeBase(n, key) {}  // NOLINT
+    MandatoryDerivedModelNodeBase() = delete;
 };
 
 using MandatoryModelPoolNodeBase = MandatoryDerivedModelNodeBase<ModelPool>;
@@ -420,27 +476,30 @@ namespace detail
 template<typename T>
 struct SmallValueNode final : public ModelNodeBase
 {
-    template<typename> friend struct model_ptr;
     friend class Model;
     [[nodiscard]] ScalarValueType value() const override;
     [[nodiscard]] ValueType type() const override;
+
+public:
+    explicit SmallValueNode(detail::mp_key key) : ModelNodeBase(key) {}
+    SmallValueNode(ModelConstPtr, ModelNodeAddress, detail::mp_key key);
+
 protected:
-    SmallValueNode() = default;
-    SmallValueNode(ModelConstPtr, ModelNodeAddress);
+    SmallValueNode() = delete;
 };
 
 template<> [[nodiscard]] ScalarValueType SmallValueNode<int16_t>::value() const;
 template<> [[nodiscard]] ValueType SmallValueNode<int16_t>::type() const;
 template<>
-SmallValueNode<int16_t>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
+SmallValueNode<int16_t>::SmallValueNode(ModelConstPtr, ModelNodeAddress, detail::mp_key);
 template<> [[nodiscard]] ScalarValueType SmallValueNode<uint16_t>::value() const;
 template<> [[nodiscard]] ValueType SmallValueNode<uint16_t>::type() const;
 template<>
-SmallValueNode<uint16_t>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
+SmallValueNode<uint16_t>::SmallValueNode(ModelConstPtr, ModelNodeAddress, detail::mp_key);
 template<> [[nodiscard]] ScalarValueType SmallValueNode<bool>::value() const;
 template<> [[nodiscard]] ValueType SmallValueNode<bool>::type() const;
 template<>
-SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress);
+SmallValueNode<bool>::SmallValueNode(ModelConstPtr, ModelNodeAddress, detail::mp_key);
 
 /** Model Node for an array from which typed/untyped arrays may be derived. */
 
@@ -449,8 +508,11 @@ struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
 {
     using Storage = ArrayArena<ModelNodeAddress, detail::ColumnPageSize*2>;
 
-    template<typename> friend struct model_ptr;
     friend class ModelPool;
+
+public:
+    explicit BaseArray(detail::mp_key key) : MandatoryDerivedModelNodeBase<ModelType>(key) {}
+    BaseArray(ModelConstPtr pool, ModelNodeAddress, detail::mp_key key);
 
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
@@ -466,9 +528,8 @@ struct BaseArray : public MandatoryDerivedModelNodeBase<ModelType>
     bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
 
 protected:
-    BaseArray() = default;
-    BaseArray(ModelConstPtr pool, ModelNodeAddress);
     BaseArray& appendInternal(ModelNode::Ptr const& value={});
+    BaseArray() = delete;
 
     using ModelNode::model_;
     using MandatoryDerivedModelNodeBase<ModelType>::model;
@@ -481,7 +542,6 @@ protected:
 
 struct Array : public BaseArray<ModelPool, ModelNode>
 {
-    template<typename> friend struct model_ptr;
     friend class ModelPool;
 
     using BaseArray::append;
@@ -498,9 +558,11 @@ struct Array : public BaseArray<ModelPool, ModelNode>
      */
     tl::expected<void, Error> extend(model_ptr<Array> const& other);
 
-protected:
-    Array() = default;
+public:
+    explicit Array(detail::mp_key key) : BaseArray<ModelPool, ModelNode>(key) {}
     using BaseArray::BaseArray;
+
+protected:
 };
 
 /** Model Node for an object from which typed/untyped objects may be derived. */
@@ -508,9 +570,13 @@ protected:
 template <class ModelType, class ModelNodeType>
 struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
 {
-    template<typename> friend struct model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
+
+public:
+    explicit BaseObject(detail::mp_key key) : MandatoryDerivedModelNodeBase<ModelType>(key) {}
+    BaseObject(ModelConstPtr pool, ModelNodeAddress, detail::mp_key key);
+    BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress, detail::mp_key key);
 
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
@@ -528,30 +594,13 @@ struct BaseObject : public MandatoryDerivedModelNodeBase<ModelType>
 
 protected:
     /**
-     * Object field - a name and a tree node address.
-     * These are stored in the ModelPools Field array arena.
+     * Object fields are stored in the model's shared object-field arena.
      */
-    struct Field
-    {
-        Field() = default;
-        Field(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
-        StringId name_ = StringPool::Empty;
-        ModelNodeAddress node_;
-
-        template<typename S>
-        void serialize(S& s) {
-            s.value2b(name_);
-            s.object(node_);
-        }
-    };
-
-    using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
+    using Storage = ArrayArena<detail::ObjectField, detail::ColumnPageSize*2>;
     using ModelNode::model_;
     using MandatoryDerivedModelNodeBase<ModelType>::model;
 
-    BaseObject() = default;
-    BaseObject(ModelConstPtr pool, ModelNodeAddress);
-    BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress);
+    BaseObject() = delete;
 
     tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error>
     addFieldInternal(std::string_view const& name, ModelNode::Ptr const& value={});
@@ -564,7 +613,6 @@ protected:
 
 struct Object : public BaseObject<ModelPool, ModelNode>
 {
-    template<typename> friend struct model_ptr;
     friend class ModelPool;
     friend class bitsery::Access;
 
@@ -585,9 +633,11 @@ struct Object : public BaseObject<ModelPool, ModelNode>
      */
     tl::expected<void, Error> extend(model_ptr<Object> const& other);
 
-protected:
-    Object() = default;
+public:
+    explicit Object(detail::mp_key key) : BaseObject<ModelPool, ModelNode>(key) {}
     using BaseObject<ModelPool, ModelNode>::BaseObject;
+
+protected:
 };
 
 /** Object with extra procedural fields */
@@ -596,6 +646,8 @@ template<uint16_t MaxProceduralFields, class LambdaThisType=Object, class ModelP
 class ProceduralObject : public Object
 {
 public:
+    using ModelType = ModelPoolDerivedModel;
+
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].second(static_cast<LambdaThisType const&>(*this));
@@ -638,12 +690,15 @@ public:
 
     inline ModelPoolDerivedModel& model() const {return *modelPtr<ModelPoolDerivedModel>();}  // NOLINT
 
+public:
+    explicit ProceduralObject(detail::mp_key key) : Object(key) {}
+    ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a, detail::mp_key key)
+        : Object(i, std::move(pool), a, key) {}
+    ProceduralObject(ModelConstPtr pool, ModelNodeAddress a, detail::mp_key key)
+        : Object(InvalidArrayIndex, std::move(pool), a, key) {}
+
 protected:
-    ProceduralObject() = default;
-    ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a)
-        : Object(i, pool, a) {}
-    ProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
-        : Object(InvalidArrayIndex, pool, a) {}
+    ProceduralObject() = delete;
 
     sfl::small_vector<
         std::pair<StringId, std::function<ModelNode::Ptr(LambdaThisType const&)>>,

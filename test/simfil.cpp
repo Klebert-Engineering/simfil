@@ -564,17 +564,22 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
 
     // Recognize dangling object member pointer
     pool->clear();
-    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    pool->newObject()->addField(
+        "good",
+        ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
     REQUIRE(!pool->validate());
 
     // Recognize dangling array member pointer
     pool->clear();
-    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Arrays, 666}));
+    pool->newObject()->addField(
+        "good",
+        ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Arrays, 666}));
     REQUIRE(!pool->validate());
 
     // Recognize dangling root
     pool->clear();
-    pool->addRoot(ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    pool->addRoot(
+        ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
     REQUIRE(!pool->validate());
 
     // An empty model should be valid
@@ -591,8 +596,12 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
     pool->strings()->addStaticKey(StaticTestKey, "test");
 
     struct DerivedProceduralObject : public ProceduralObject<2, DerivedProceduralObject> {
-        DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
-            : ProceduralObject<2, DerivedProceduralObject>(static_cast<ArrayIndex>(a.index()), std::move(pool), a)
+        DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a, detail::mp_key key)
+            : ProceduralObject<2, DerivedProceduralObject>(
+                  static_cast<ArrayIndex>(a.index()),
+                  std::move(pool),
+                  a,
+                  key)
         {
             fields_.emplace_back(
                 StaticTestKey,

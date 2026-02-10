@@ -14,7 +14,11 @@ namespace simfil
 
 /// Create a ModelNode from a model pool which serves as its
 /// VFT, and a TreeNodeAddress.
-ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data)
+ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key key)
+    : ModelNode(std::move(pool), addr, ScalarValueType{}, key)
+{}
+
+ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data, detail::mp_key)
     : model_(std::move(pool)), addr_(addr), data_(std::move(data))
 {}
 
@@ -143,12 +147,17 @@ nlohmann::json ModelNode::toJson() const
 
 /** Model Node Base Impl. */
 
-ModelNodeBase::ModelNodeBase(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data)
-    : ModelNode(std::move(pool), addr, std::move(data))
+ModelNodeBase::ModelNodeBase(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key key)
+    : ModelNode(std::move(pool), addr, key)
 {
 }
 
-ModelNodeBase::ModelNodeBase(const ModelNode& n)
+ModelNodeBase::ModelNodeBase(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data, detail::mp_key key)
+    : ModelNode(std::move(pool), addr, std::move(data), key)
+{
+}
+
+ModelNodeBase::ModelNodeBase(const ModelNode& n, detail::mp_key /*key*/)
     : ModelNode(n)
 {
 }
@@ -185,15 +194,15 @@ uint32_t ModelNodeBase::size() const
 
 /** Model Node impls. for arbitrary self-contained value storage. */
 
-ValueNode::ValueNode(ScalarValueType const& value)
-    : ModelNodeBase(std::make_shared<Model>(), Model::Scalar, value)
+ValueNode::ValueNode(ScalarValueType const& value, detail::mp_key key)
+    : ModelNodeBase(std::make_shared<Model>(), Model::Scalar, value, key)
 {}
 
-ValueNode::ValueNode(const ScalarValueType& value, const ModelConstPtr& p)
-    : ModelNodeBase(p, Model::Scalar, value)
+ValueNode::ValueNode(const ScalarValueType& value, const ModelConstPtr& p, detail::mp_key key)
+    : ModelNodeBase(p, Model::Scalar, value, key)
 {}
 
-ValueNode::ValueNode(ModelNode const& n) : ModelNodeBase(n) {}
+ValueNode::ValueNode(ModelNode const& n, detail::mp_key key) : ModelNodeBase(n, key) {}
 
 ValueType ValueNode::type() const {
     ValueType result;
@@ -214,8 +223,8 @@ template<> ValueType SmallValueNode<int16_t>::type() const {
 }
 
 template<>
-SmallValueNode<int16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
-    : ModelNodeBase(std::move(p), a)
+SmallValueNode<int16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a, detail::mp_key key)
+    : ModelNodeBase(std::move(p), a, key)
 {}
 
 template<> ScalarValueType SmallValueNode<uint16_t>::value() const {
@@ -227,8 +236,8 @@ template<> ValueType SmallValueNode<uint16_t>::type() const {
 }
 
 template<>
-SmallValueNode<uint16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
-    : ModelNodeBase(std::move(p), a)
+SmallValueNode<uint16_t>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a, detail::mp_key key)
+    : ModelNodeBase(std::move(p), a, key)
 {}
 
 template<> ScalarValueType SmallValueNode<bool>::value() const {
@@ -240,8 +249,8 @@ template<> ValueType SmallValueNode<bool>::type() const {
 }
 
 template<>
-SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a)
-    : ModelNodeBase(std::move(p), a)
+SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a, detail::mp_key key)
+    : ModelNodeBase(std::move(p), a, key)
 {}
 
 /** Model Node impls for an array. */

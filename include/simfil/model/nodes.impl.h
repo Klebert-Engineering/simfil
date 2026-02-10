@@ -7,8 +7,8 @@ namespace simfil
 {
 
 template <class ModelType, class ModelNodeType>
-BaseArray<ModelType, ModelNodeType>::BaseArray(ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a),
+BaseArray<ModelType, ModelNodeType>::BaseArray(ModelConstPtr pool_, ModelNodeAddress a, detail::mp_key key)
+    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a, key),
       storage_(nullptr),
       members_((ArrayIndex)a.index())
 {
@@ -69,8 +69,8 @@ BaseArray<ModelType, ModelNodeType>::appendInternal(ModelNode::Ptr const& value)
 }
 
 template <class ModelType, class ModelNodeType>
-BaseObject<ModelType, ModelNodeType>::BaseObject(ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a),
+BaseObject<ModelType, ModelNodeType>::BaseObject(ModelConstPtr pool_, ModelNodeAddress a, detail::mp_key key)
+    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a, key),
       storage_(nullptr),
       members_((ArrayIndex)a.index())
 {
@@ -81,8 +81,9 @@ template <class ModelType, class ModelNodeType>
 BaseObject<ModelType, ModelNodeType>::BaseObject(
     ArrayIndex members,
     ModelConstPtr pool_,
-    ModelNodeAddress a)
-    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a),
+    ModelNodeAddress a,
+    detail::mp_key key)
+    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a, key),
       storage_(nullptr),
       members_(members)
 {

@@ -27,20 +27,30 @@ tl::expected<void, Error> Model::resolve(const ModelNode& n, const ResolveFn& cb
 {
     switch (n.addr_.column()) {
         case Null:
-            cb(ModelNodeBase(shared_from_this()));
+        {
+            cb(ModelNodeBase(shared_from_this(), ModelNodeAddress{}, mpKey_));
             break;
+        }
         case UInt16:
-            cb(SmallValueNode<uint16_t>(shared_from_this(), n.addr_));
+        {
+            cb(SmallValueNode<uint16_t>(shared_from_this(), n.addr_, mpKey_));
             break;
+        }
         case Int16:
-            cb(SmallValueNode<int16_t>(shared_from_this(), n.addr_));
+        {
+            cb(SmallValueNode<int16_t>(shared_from_this(), n.addr_, mpKey_));
             break;
+        }
         case Bool:
-            cb(SmallValueNode<bool>(shared_from_this(), n.addr_));
+        {
+            cb(SmallValueNode<bool>(shared_from_this(), n.addr_, mpKey_));
             break;
+        }
         case Scalar:
-            cb(ValueNode(n));
+        {
+            cb(ValueNode(n, mpKey_));
             break;
+        }
         default:
             return tl::unexpected<Error>(Error::RuntimeError,
                                          fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
@@ -195,11 +205,15 @@ std::vector<std::string> ModelPool::checkForErrors() const
 
     // Validate objects
     for (auto i = 0; i < impl_->columns_.objectMemberArrays_.size(); ++i)
-        validateModelNode(ModelNode::Ptr::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)i}));
+        validateModelNode(ModelNode::Ptr::make(
+            shared_from_this(),
+            ModelNodeAddress{Objects, (uint32_t)i}));
 
     // Validate arrays
     for (auto i = 0; i < impl_->columns_.arrayMemberArrays_.size(); ++i)
-        validateModelNode(ModelNode::Ptr::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)i}));
+        validateModelNode(ModelNode::Ptr::make(
+            shared_from_this(),
+            ModelNodeAddress{Arrays, (uint32_t)i}));
 
     // Validate roots
     for (auto i = 0; i < numRoots(); ++i)
@@ -248,11 +262,11 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
 
     switch (n.addr_.column()) {
     case Objects: {
-        cb(Object(shared_from_this(), n.addr_));
+        cb(Object(shared_from_this(), n.addr_, mpKey_));
         break;
     }
     case Arrays: {
-        cb(Array(shared_from_this(), n.addr_));
+        cb(Array(shared_from_this(), n.addr_, mpKey_));
         break;
     }
     case Int64: {
@@ -260,7 +274,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto idx = n.addr().index();
         auto& val = impl_->columns_.i64_[idx];
-        cb(ValueNode(val, shared_from_this()));
+        cb(ValueNode(val, shared_from_this(), mpKey_));
         break;
     }
     case Double: {
@@ -268,7 +282,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto idx = n.addr().index();
         auto& val = impl_->columns_.double_[idx];
-        cb(ValueNode(val, shared_from_this()));
+        cb(ValueNode(val, shared_from_this(), mpKey_));
         break;
     }
     case String: {
@@ -279,7 +293,8 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
         cb(ValueNode(
             // TODO: Make sure that the string view is not turned into a string here.
             std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
-            shared_from_this()));
+            shared_from_this(),
+            mpKey_));
         break;
     }
     case ByteArray: {
@@ -293,7 +308,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
     }
     case PooledString: {
         auto str = lookupStringId(static_cast<StringId>(n.addr().index()));
-        cb(ValueNode(str.value_or(std::string_view{}), shared_from_this()));
+        cb(ValueNode(str.value_or(std::string_view{}), shared_from_this(), mpKey_));
         break;
     }
     default:
@@ -309,7 +324,7 @@ size_t ModelPool::numRoots() const {
 tl::expected<ModelNode::Ptr, Error> ModelPool::root(size_t const& i) const {
     if ((i < 0) || (i >= impl_->columns_.roots_.size()))
         return tl::unexpected<Error>(Error::RuntimeError, "Root index does not exist.");
-    return ModelNode(shared_from_this(), impl_->columns_.roots_.at(i));
+    return ModelNode::Ptr::make(shared_from_this(), impl_->columns_.roots_.at(i));
 }
 
 void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
@@ -319,32 +334,34 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
 model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
 {
     auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
-    return Object(
-        shared_from_this(),
-        {Objects, (uint32_t)memberArrId});
+    return model_ptr<Object>::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)memberArrId});
 }
 
 model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
 {
     auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
-    return Array(
-        shared_from_this(),
-        {Arrays, (uint32_t)memberArrId});
+    return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
 }
 
 ModelNode::Ptr Model::newSmallValue(bool value)
 {
-    return ModelNode(shared_from_this(), {Bool, (uint32_t)value});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Bool, (uint32_t)value});
 }
 
 ModelNode::Ptr Model::newSmallValue(int16_t value)
 {
-    return ModelNode(shared_from_this(), {Int16, (uint32_t)value});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Int16, (uint32_t)value});
 }
 
 ModelNode::Ptr Model::newSmallValue(uint16_t value)
 {
-    return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{UInt16, (uint32_t)value});
 }
 
 std::optional<std::string_view> Model::lookupStringId(const simfil::StringId) const
@@ -359,13 +376,17 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
     else if (value >= 0 && value <= std::numeric_limits<uint16_t>::max())
         return newSmallValue((uint16_t)value);
     impl_->columns_.i64_.emplace_back(value);
-    return ModelNode(shared_from_this(), {Int64, (uint32_t)impl_->columns_.i64_.size()-1});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Int64, (uint32_t)impl_->columns_.i64_.size()-1});
 }
 
 ModelNode::Ptr ModelPool::newValue(double const& value)
 {
     impl_->columns_.double_.emplace_back(value);
-    return ModelNode(shared_from_this(), {Double, (uint32_t)impl_->columns_.double_.size()-1});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Double, (uint32_t)impl_->columns_.double_.size()-1});
 }
 
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
@@ -375,7 +396,9 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
         (uint32_t)value.size()
     });
     impl_->columns_.stringData_ += value;
-    return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
 ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
@@ -389,20 +412,26 @@ ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 }
 
 ModelNode::Ptr ModelPool::newValue(StringId handle) {
-    return ModelNode(shared_from_this(), {PooledString, static_cast<uint32_t>(handle)});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{PooledString, static_cast<uint32_t>(handle)});
 }
 
-model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
-    if (n->addr_.column() != Objects)
-        raise<std::runtime_error>("Cannot cast this node to an object.");
-    return Object(shared_from_this(), n->addr_);
-}
-
-model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
+// Core ADL resolve hooks for base Object/Array nodes.
+template<>
+model_ptr<Object> resolveInternal(res::tag<Object>, ModelPool const& model, ModelNode const& node)
 {
-    if (n->addr_.column() != Arrays)
+    if (node.addr().column() != ModelPool::Objects)
+        raise<std::runtime_error>("Cannot cast this node to an object.");
+    return model_ptr<Object>::make(model.shared_from_this(), node.addr());
+}
+
+template<>
+model_ptr<Array> resolveInternal(res::tag<Array>, ModelPool const& model, ModelNode const& node)
+{
+    if (node.addr().column() != ModelPool::Arrays)
         raise<std::runtime_error>("Cannot cast this node to an array.");
-    return Array(shared_from_this(), n->addr_);
+    return model_ptr<Array>::make(model.shared_from_this(), node.addr());
 }
 
 std::shared_ptr<StringPool> ModelPool::strings() const
