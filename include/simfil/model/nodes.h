@@ -67,18 +67,18 @@ using ScalarValueType = std::variant<
 
 namespace detail
 {
-    // Passkey for ModelNode construction: ModelNode types take this in their constructors so only
-    // model_ptr (and ModelPool via a shared key instance) can default/in-place construct them.
-    // This avoids per-node friendship and keeps IDEs happy across library boundaries.
-    struct mp_key
-    {
-        mp_key() = delete;
-    private:
-        explicit mp_key(int) {}
-        template<typename> friend struct ::simfil::model_ptr;
-        friend class ::simfil::Model;
-        friend class ::simfil::ModelPool;
-    };
+// Passkey for ModelNode construction: ModelNode types take this in their constructors so only
+// model_ptr (and ModelPool via a shared key instance) can default/in-place construct them.
+// This avoids per-node friendship and keeps IDEs happy across library boundaries.
+struct mp_key
+{
+    mp_key() = delete;
+private:
+    explicit mp_key(int) {}
+    template<typename> friend struct ::simfil::model_ptr;
+    friend class ::simfil::Model;
+    friend class ::simfil::ModelPool;
+};
 }
 
 /**
@@ -208,21 +208,21 @@ struct ModelNodeAddress
 
 namespace detail
 {
-    // Shared storage entry for object fields across all BaseObject instantiations.
-    // Keeps the underlying ArrayArena type identical regardless of ModelType.
-    struct ObjectField
-    {
-        ObjectField() = default;
-        ObjectField(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
-        StringId name_ = StringPool::Empty;
-        ModelNodeAddress node_;
+// Shared storage entry for object fields across all BaseObject instantiations.
+// Keeps the underlying ArrayArena type identical regardless of ModelType.
+struct ObjectField
+{
+    ObjectField() = default;
+    ObjectField(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
+    StringId name_ = StringPool::Empty;
+    ModelNodeAddress node_;
 
-        template<typename S>
-        void serialize(S& s) {
-            s.value2b(name_);
-            s.object(node_);
-        }
-    };
+    template<typename S>
+    void serialize(S& s) {
+        s.value2b(name_);
+        s.object(node_);
+    }
+};
 }
 
 /** Semantic view onto a particular node in a ModelPool. */

@@ -31,20 +31,11 @@ struct tag {};
 
 namespace detail
 {
-template<typename T, typename = void>
-struct node_model_type
-{
-    static_assert(sizeof(T) == 0, "Target must provide a ModelType alias.");
-};
+template<class T>
+concept HasModelType = requires { typename T::ModelType; };
 
-template<typename T>
-struct node_model_type<T, std::void_t<typename T::ModelType>>
-{
-    using type = typename T::ModelType;
-};
-
-template<typename T>
-using node_model_type_t = typename node_model_type<T>::type;
+template<HasModelType T>
+using ModelTypeOf = typename T::ModelType;
 }
 
 /**
@@ -137,16 +128,22 @@ public:
             return model_ptr<ModelNode>(node);
         }
         else {
-            using ModelType = detail::node_model_type_t<Target>;
+            if constexpr (!detail::HasModelType<Target>) {
+                static_assert(detail::HasModelType<Target>, "Target must provide a ModelType alias.");
+                return {};
+            }
+            else {
+                using ModelType = detail::ModelTypeOf<Target>;
 #if !defined(NDEBUG)
-            // In debug builds, validate the model type to catch misuse early.
-            auto typedModel = dynamic_cast<ModelType const*>(this);
-            assert(typedModel && "resolve<T> called on incompatible model type.");
-            return resolveInternal(res::tag<Target>{}, *typedModel, node);
+                // In debug builds, validate the model type to catch misuse early.
+                auto typedModel = dynamic_cast<ModelType const*>(this);
+                assert(typedModel && "resolve<T> called on incompatible model type.");
+                return resolveInternal(res::tag<Target>{}, *typedModel, node);
 #else
-            // In release builds, avoid RTTI overhead on this hot path.
-            return resolveInternal(res::tag<Target>{}, *static_cast<ModelType const*>(this), node);
+                // In release builds, avoid RTTI overhead on this hot path.
+                return resolveInternal(res::tag<Target>{}, *static_cast<ModelType const*>(this), node);
 #endif
+            }
         }
     }
 
