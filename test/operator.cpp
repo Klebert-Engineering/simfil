@@ -140,6 +140,19 @@ TEST_CASE("Type conversion operators", "[operator.conversion]") {
         OperatorAsBytes op;
         REQUIRE(op("A normal string"s).bytes == "A normal string");
         REQUIRE(op(ByteArray{"ff"}).bytes == "ff");
+        REQUIRE(op(true).bytes == std::string(1, char(1)));
+        REQUIRE(op(false).bytes == std::string(1, char(0)));
+
+        auto intBytes = op(int64_t(0xff));
+        REQUIRE(intBytes.bytes.size() == 8);
+        REQUIRE((unsigned char)intBytes.bytes.back() == 0xff);
+        REQUIRE(intBytes.decodeBigEndianI64().value_or(0) == int64_t(0xff));
+
+        auto negBytes = op(int64_t(-1));
+        REQUIRE(negBytes.bytes.size() == 8);
+        REQUIRE(negBytes.decodeBigEndianI64().value_or(0) == int64_t(-1));
+
+        REQUIRE_INVALID_OPERANDS(op(3.14));
     }
 }
 

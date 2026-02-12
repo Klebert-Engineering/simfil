@@ -168,6 +168,10 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("range(1,3) as string", "\"1..3\"");
     REQUIRE_AST("b\"89899\" as string", "\"89899\"");
     REQUIRE_AST("\"A normal string\" as bytes", "b\"A normal string\"");
+    REQUIRE_AST("0xff as bytes == 0xff", "true");
+    REQUIRE_AST("true as bytes == 1", "true");
+    REQUIRE_AST("false as bytes == 0", "true");
+    REQUIRE_ERROR("1.5 as bytes");
 
     /* Bool Cast */
     REQUIRE_AST("123?", "true");

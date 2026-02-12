@@ -317,10 +317,26 @@ struct OperatorAsString
 struct OperatorAsBytes
 {
     NAME("bytes")
+    DENY_OTHER()
 
     auto operator()(const ByteArray& v) const -> ByteArray
     {
         return v;
+    }
+
+    auto operator()(bool v) const -> ByteArray
+    {
+        return ByteArray{std::string(1, static_cast<char>(v ? 1 : 0))};
+    }
+
+    auto operator()(int64_t v) const -> ByteArray
+    {
+        auto raw = static_cast<uint64_t>(v);
+        auto bytes = std::string(8, '\0');
+        for (size_t i = 0; i < bytes.size(); ++i) {
+            bytes[bytes.size() - i - 1] = static_cast<char>((raw >> (i * 8)) & 0xFFu);
+        }
+        return ByteArray{std::move(bytes)};
     }
 
     auto operator()(const std::string& v) const -> ByteArray
@@ -337,12 +353,6 @@ struct OperatorAsBytes
     {
         // Handled by MetaType::unaryOp
         return ByteArray{};
-    }
-
-    template <class Type>
-    auto operator()(Type v) const -> ByteArray
-    {
-        return ByteArray{OperatorAsString()(v)};
     }
 
     NULL_AS(ByteArray{"null"});
