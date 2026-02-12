@@ -114,7 +114,9 @@ TEST_CASE("Tagged bytes JSON", "[bytes.serialization]") {
 
     auto roundTrip = json::parse(model->toJson().dump());
     REQUIRE(roundTrip);
-    REQUIRE(roundTrip.value()->toJson() == expected);
+    auto roundTripRoot = roundTrip.value()->root(0);
+    REQUIRE(roundTripRoot);
+    REQUIRE(roundTripRoot.value()->toJson() == expected[0]);
 
     auto invalidHex = json::parse(R"([{"raw":{"_bytes":true,"hex":"abc"}}])");
     REQUIRE_FALSE(invalidHex);

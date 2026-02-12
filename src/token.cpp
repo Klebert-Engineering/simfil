@@ -500,6 +500,8 @@ auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
         else if (auto t = scanSyntax(s))
             tokens.push_back(std::move(*t));
         else {
+            if (s.hasError())
+                return unexpected<Error>(std::move(s.error()));
             if (s.at(0) != '\0')
                 return unexpected<Error>(s.fail("Invalid input"));
         }
