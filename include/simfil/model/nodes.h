@@ -67,18 +67,18 @@ using ScalarValueType = std::variant<
 
 namespace detail
 {
-    // Passkey for ModelNode construction: ModelNode types take this in their constructors so only
-    // model_ptr (and ModelPool via a shared key instance) can default/in-place construct them.
-    // This avoids per-node friendship and keeps IDEs happy across library boundaries.
-    struct mp_key
-    {
-        mp_key() = delete;
-    private:
-        explicit mp_key(int) {}
-        template<typename> friend struct ::simfil::model_ptr;
-        friend class ::simfil::Model;
-        friend class ::simfil::ModelPool;
-    };
+// Passkey for ModelNode construction: ModelNode types take this in their constructors so only
+// model_ptr (and ModelPool via a shared key instance) can default/in-place construct them.
+// This avoids per-node friendship and keeps IDEs happy across library boundaries.
+struct mp_key
+{
+    mp_key() = delete;
+private:
+    explicit mp_key(int) {}
+    template<typename> friend struct ::simfil::model_ptr;
+    friend class ::simfil::Model;
+    friend class ::simfil::ModelPool;
+};
 }
 
 /**
@@ -205,6 +205,25 @@ struct ModelNodeAddress
         s.value4b(value_);
     }
 };
+
+namespace detail
+{
+// Shared storage entry for object fields across all BaseObject instantiations.
+// Keeps the underlying ArrayArena type identical regardless of ModelType.
+struct ObjectField
+{
+    ObjectField() = default;
+    ObjectField(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
+    StringId name_ = StringPool::Empty;
+    ModelNodeAddress node_;
+
+    template<typename S>
+    void serialize(S& s) {
+        s.value2b(name_);
+        s.object(node_);
+    }
+};
+}
 
 /** Semantic view onto a particular node in a ModelPool. */
 struct ModelNode
@@ -413,13 +432,15 @@ struct ValueNode final : public ModelNodeBase
  * a reference to a Model-derived pool type.
  * @tparam ModelType Model-derived type.
  */
-template<class ModelType>
+template<class ModelTypeT>
 struct MandatoryDerivedModelNodeBase : public ModelNodeBase
 {
-    inline ModelType& model() const {return *modelPtr<ModelType>();}  // NOLINT
+    using ModelType = ModelTypeT;
+
+    inline ModelTypeT& model() const {return *modelPtr<ModelTypeT>();}  // NOLINT
 
 protected:
-    template<class ModelType_ = ModelType>
+    template<class ModelType_ = ModelTypeT>
     inline ModelType_* modelPtr() const {
         return static_cast<ModelType_*>(const_cast<Model*>(model_.get()));
     }
@@ -570,24 +591,9 @@ public:
 
 protected:
     /**
-     * Object field - a name and a tree node address.
-     * These are stored in the ModelPools Field array arena.
+     * Object fields are stored in the model's shared object-field arena.
      */
-    struct Field
-    {
-        Field() = default;
-        Field(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
-        StringId name_ = StringPool::Empty;
-        ModelNodeAddress node_;
-
-        template<typename S>
-        void serialize(S& s) {
-            s.value2b(name_);
-            s.object(node_);
-        }
-    };
-
-    using Storage = ArrayArena<Field, detail::ColumnPageSize*2>;
+    using Storage = ArrayArena<detail::ObjectField, detail::ColumnPageSize*2>;
     using ModelNode::model_;
     using MandatoryDerivedModelNodeBase<ModelType>::model;
 
@@ -637,6 +643,8 @@ template<uint16_t MaxProceduralFields, class LambdaThisType=Object, class ModelP
 class ProceduralObject : public Object
 {
 public:
+    using ModelType = ModelPoolDerivedModel;
+
     [[nodiscard]] ModelNode::Ptr at(int64_t i) const override {
         if (i < fields_.size())
             return fields_[i].second(static_cast<LambdaThisType const&>(*this));
