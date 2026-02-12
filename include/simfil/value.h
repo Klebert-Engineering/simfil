@@ -61,7 +61,7 @@ struct ValueToString
 
     auto operator()(const ByteArray& v) const
     {
-        return "b\""s + v.toHex() + "\"";
+        return v.toLiteral();
     }
 
     auto operator()(const TransientObject&) const

@@ -109,12 +109,16 @@ TEST_CASE("Tagged bytes JSON", "[bytes.serialization]") {
     root->addField("raw", model->newValue(ByteArray{"A normal string"}));
 
     auto expected = nlohmann::json::parse(
-        R"([{"raw":{"_bytes":true,"number":null,"data":"QSBub3JtYWwgc3RyaW5n"}}])");
+        R"([{"raw":{"_bytes":true,"number":null,"hex":"41206e6f726d616c20737472696e67"}}])");
     REQUIRE(model->toJson() == expected);
 
     auto roundTrip = json::parse(model->toJson().dump());
     REQUIRE(roundTrip);
     REQUIRE(roundTrip.value()->toJson() == expected);
+
+    auto invalidHex = json::parse(R"([{"raw":{"_bytes":true,"hex":"abc"}}])");
+    REQUIRE_FALSE(invalidHex);
+    REQUIRE(invalidHex.error().message == "Invalid tagged bytes object: hex decode failed");
 }
 
 TEST_CASE("Serialization", "[complex.serialization]") {

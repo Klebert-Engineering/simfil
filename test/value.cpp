@@ -4,6 +4,7 @@
 
 #include "simfil/value.h"
 #include "simfil/model/model.h"
+#include "simfil/token.h"
 #include "simfil/transient.h"
 
 using namespace simfil;
@@ -319,7 +320,14 @@ TEST_CASE("Value toString() method", "[value.toString]") {
     REQUIRE(Value::make(int64_t(-123)).toString() == "-123");
     REQUIRE(Value::make(double(3.14)).toString().find("3.14") == 0);
     REQUIRE(Value::make("Ponder"s).toString() == "Ponder");
-    REQUIRE(Value::make(ByteArray{"A normal string"}).toString() == "b\"41206E6F726D616C20737472696E67\"");
+    REQUIRE(Value::make(ByteArray{"A normal string"}).toString() == "b\"A normal string\"");
+
+    auto bytes = ByteArray{std::string{"A\0\xFF\"\\", 5}};
+    auto repr = Value::make(bytes).toString();
+    auto tokens = tokenize(repr);
+    REQUIRE(tokens);
+    REQUIRE(tokens->at(0).type == Token::BYTES);
+    REQUIRE(std::get<ByteArray>(tokens->at(0).value) == bytes);
 }
 
 TEST_CASE("Value utility methods", "[value.utilities]") {

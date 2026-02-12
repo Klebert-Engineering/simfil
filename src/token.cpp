@@ -25,6 +25,17 @@ std::string downcase(std::string s)
     return s;
 }
 
+auto decodeHexNibble(char c) -> int
+{
+    if ('0' <= c && c <= '9')
+        return c - '0';
+    if ('a' <= c && c <= 'f')
+        return c - 'a' + 10;
+    if ('A' <= c && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
 }
 
 namespace simfil
@@ -42,7 +53,7 @@ auto Token::toString() const -> std::string
     case Token::STRING:
         return "'"s + std::get<std::string>(value) + "'"s;
     case Token::BYTES:
-        return "b\""s + std::get<ByteArray>(value).bytes + "\"";
+        return std::get<ByteArray>(value).toLiteral();
     case Token::REGEXP:
         return "re'"s + std::get<std::string>(value) + "'"s;
     case Token::WORD:
@@ -294,6 +305,19 @@ std::optional<Token> scanStringLiteral(Scanner& s)
                     else
                         text.push_back('\\');
                 } else {
+                    if (bytes && (s.at(0) == 'x' || s.at(0) == 'X')) {
+                        const auto upper = decodeHexNibble(s.at(1));
+                        const auto lower = decodeHexNibble(s.at(2));
+                        if (upper < 0 || lower < 0) {
+                            s.fail("Invalid hex escape sequence");
+                            return {};
+                        }
+
+                        text.push_back(static_cast<char>((upper << 4) | lower));
+                        s.skip(3);
+                        continue;
+                    }
+
                     switch (s.at(0)) {
                         case 'n': text.push_back('\n'); break;
                         case 'r': text.push_back('\r'); break;

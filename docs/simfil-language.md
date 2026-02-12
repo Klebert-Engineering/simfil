@@ -154,6 +154,8 @@ The following types can be target types for a cast:
 * `bytes` - Converts the value to bytes.
 
 Byte literals are written using the `b` prefix, e.g. `b"hello"` or `b'hello'`.
+Escape sequences `\n`, `\r`, `\t`, `\\`, `\"`, and `\'` are supported.
+Bytes can also be written explicitly using `\xNN` (hex), e.g. `b"\x41\x00"`.
 
 ## Operators
 

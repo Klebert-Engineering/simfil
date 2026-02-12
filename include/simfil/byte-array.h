@@ -3,10 +3,13 @@
 
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include <fmt/format.h>
 
 namespace simfil
 {
@@ -31,6 +34,24 @@ struct ByteArray
 
     auto operator==(const ByteArray&) const -> bool = default;
 
+    [[nodiscard]] static std::optional<ByteArray> fromHex(std::string_view hex)
+    {
+        if (hex.size() % 2 != 0)
+            return std::nullopt;
+
+        std::string decoded;
+        decoded.reserve(hex.size() / 2);
+        for (size_t i = 0; i < hex.size(); i += 2) {
+            const auto upper = decodeHexNibble(hex[i]);
+            const auto lower = decodeHexNibble(hex[i + 1]);
+            if (upper < 0 || lower < 0)
+                return std::nullopt;
+            decoded.push_back(static_cast<char>((upper << 4) | lower));
+        }
+
+        return ByteArray{std::move(decoded)};
+    }
+
     [[nodiscard]] std::optional<int64_t> decodeBigEndianI64() const
     {
         if (bytes.size() > 8) {
@@ -53,17 +74,56 @@ struct ByteArray
 
     [[nodiscard]] std::string toHex(bool uppercase = true) const
     {
-        static constexpr char kHexLower[] = "0123456789abcdef";
-        static constexpr char kHexUpper[] = "0123456789ABCDEF";
-        const char* kHex = uppercase ? kHexUpper : kHexLower;
-
         std::string out;
         out.reserve(bytes.size() * 2);
-        for (unsigned char byte : bytes) {
-            out.push_back(kHex[(byte >> 4) & 0x0f]);
-            out.push_back(kHex[byte & 0x0f]);
+
+        if (uppercase) {
+            for (unsigned char byte : bytes)
+                fmt::format_to(std::back_inserter(out), FMT_STRING("{:02X}"), byte);
+        } else {
+            for (unsigned char byte : bytes)
+                fmt::format_to(std::back_inserter(out), FMT_STRING("{:02x}"), byte);
         }
+
         return out;
+    }
+
+    [[nodiscard]] std::string toLiteral() const
+    {
+        std::string out;
+        out.reserve(bytes.size() + 3);
+        out += "b\"";
+
+        for (unsigned char byte : bytes) {
+            switch (byte) {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (byte < 0x20 || byte >= 0x7f)
+                    fmt::format_to(std::back_inserter(out), FMT_STRING("\\x{:02X}"), byte);
+                else
+                    out.push_back(static_cast<char>(byte));
+                break;
+            }
+        }
+
+        out.push_back('"');
+        return out;
+    }
+
+private:
+    [[nodiscard]] static auto decodeHexNibble(char c) -> int
+    {
+        if ('0' <= c && c <= '9')
+            return c - '0';
+        if ('a' <= c && c <= 'f')
+            return c - 'a' + 10;
+        if ('A' <= c && c <= 'F')
+            return c - 'A' + 10;
+        return -1;
     }
 };
 

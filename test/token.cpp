@@ -110,12 +110,18 @@ TEST_CASE("Tokenize strings", "[token.string]") {
     REQUIRE(asBytes("B''").bytes == "");
     REQUIRE(asBytes("b'abc'").bytes == "abc");
     REQUIRE(asBytes("b'\\'abc\\''").bytes == "'abc'");
+    REQUIRE(asBytes("b'\\x41'").bytes == "A");
 
     /* b"..." */
     REQUIRE(asBytes("b\"\"").bytes == "");
     REQUIRE(asBytes("B\"\"").bytes == "");
     REQUIRE(asBytes("b\"abc\"").bytes == "abc");
     REQUIRE(asBytes("b\"\\\"abc\\\"\"").bytes == "\"abc\"");
+    REQUIRE(asBytes("b\"\\x41\"").bytes == "A");
+    REQUIRE(asBytes("b\"A\\x00\\xFF\\\"\\\\\"").bytes == std::string{"A\0\xFF\"\\", 5});
+    REQUIRE(asError("b\"\\x\"").starts_with("Invalid hex escape sequence"));
+    REQUIRE(asError("b\"\\x0\"").starts_with("Invalid hex escape sequence"));
+    REQUIRE(asError("b\"\\xGG\"").starts_with("Invalid hex escape sequence"));
 
     /* Quote mismatch */
     REQUIRE(asError("'abc") == "Quote mismatch at 4");
@@ -202,4 +208,12 @@ TEST_CASE("Token to string", "[token.to-string]") {
     REQUIRE_STR("<="); REQUIRE_STR(">"); REQUIRE_STR(">=");
     REQUIRE_STR("?"); REQUIRE_STR("#"); REQUIRE_STR("typeof");
     REQUIRE_STR("as"); REQUIRE_STR("...");
+}
+
+TEST_CASE("Byte token roundtrip", "[token.bytes-roundtrip]") {
+    auto bytes = ByteArray{std::string{"A\0\xFF\"\\\n\t", 7}};
+    Token token(Token::BYTES, bytes, 0, 0);
+
+    auto roundTripped = asBytes(token.toString());
+    REQUIRE(roundTripped == bytes);
 }
