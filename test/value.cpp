@@ -4,6 +4,7 @@
 
 #include "simfil/value.h"
 #include "simfil/model/model.h"
+#include "simfil/token.h"
 #include "simfil/transient.h"
 
 using namespace simfil;
@@ -74,6 +75,12 @@ TEST_CASE("Value Constructors", "[value.value-constructor]") {
         auto val = Value::make(sv);
         REQUIRE(val.isa(ValueType::String));
         REQUIRE(val.as<ValueType::String>() == "world");
+    }
+
+    SECTION("Make ByteArray") {
+        auto val = Value::make(ByteArray{"bytes"});
+        REQUIRE(val.isa(ValueType::Bytes));
+        REQUIRE(val.as<ValueType::Bytes>().bytes == "bytes");
     }
 
     SECTION("Type constructor") {
@@ -183,6 +190,11 @@ TEST_CASE("Value As", "[value.as]") {
         auto val = Value::field(objNode);
         auto ptr = val.as<ValueType::Object>();
         REQUIRE(!!ptr);
+    }
+
+    SECTION("as<ValueType::Bytes>()") {
+        auto val = Value::make(ByteArray{"abc"});
+        REQUIRE(val.as<ValueType::Bytes>().bytes == "abc");
     }
     
     SECTION("as<ValueType::Array>()") {
@@ -308,6 +320,14 @@ TEST_CASE("Value toString() method", "[value.toString]") {
     REQUIRE(Value::make(int64_t(-123)).toString() == "-123");
     REQUIRE(Value::make(double(3.14)).toString().find("3.14") == 0);
     REQUIRE(Value::make("Ponder"s).toString() == "Ponder");
+    REQUIRE(Value::make(ByteArray{"A normal string"}).toString() == "b\"A normal string\"");
+
+    auto bytes = ByteArray{std::string{"A\0\xFF\"\\", 5}};
+    auto repr = Value::make(bytes).toString();
+    auto tokens = tokenize(repr);
+    REQUIRE(tokens);
+    REQUIRE(tokens->at(0).type == Token::BYTES);
+    REQUIRE(std::get<ByteArray>(tokens->at(0).value) == bytes);
 }
 
 TEST_CASE("Value utility methods", "[value.utilities]") {
@@ -360,6 +380,7 @@ TEST_CASE("valueType2String() function", "[value.type2string]") {
     REQUIRE(valueType2String(ValueType::Int) == "int"s);
     REQUIRE(valueType2String(ValueType::Float) == "float"s);
     REQUIRE(valueType2String(ValueType::String) == "string"s);
+    REQUIRE(valueType2String(ValueType::Bytes) == "bytes"s);
     REQUIRE(valueType2String(ValueType::TransientObject) == "transient"s);
     REQUIRE(valueType2String(ValueType::Object) == "object"s);
     REQUIRE(valueType2String(ValueType::Array) == "array"s);

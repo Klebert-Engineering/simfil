@@ -2,6 +2,7 @@
 #pragma once
 
 #include "simfil/model/string-pool.h"
+#include "simfil/byte-array.h"
 #include "tl/expected.hpp"
 #if defined(SIMFIL_WITH_MODEL_JSON)
 #  include "nlohmann/json.hpp"
@@ -191,6 +192,7 @@ public:
         Double,
         String,
         PooledString,
+        ByteArray,
 
         FirstCustomColumnId = 128,
     };
@@ -245,6 +247,7 @@ public:
     ModelNode::Ptr newValue(int64_t const& value);
     ModelNode::Ptr newValue(double const& value);
     ModelNode::Ptr newValue(std::string_view const& value);
+    ModelNode::Ptr newValue(simfil::ByteArray const& value);
     ModelNode::Ptr newValue(StringId handle);
 
     /** Access the field name storage */

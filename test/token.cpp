@@ -27,6 +27,7 @@ static auto getFirst(std::string_view input, Token::Type t) -> Type
 static auto asInt(const std::string_view input)   {return getFirst<int64_t>(input, Token::Type::INT);}
 static auto asFloat(const std::string_view input) {return getFirst<double>(input, Token::Type::FLOAT);}
 static auto asStr(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::STRING);}
+static auto asBytes(const std::string_view input) {return getFirst<ByteArray>(input, Token::Type::BYTES);}
 static auto asRegexp(const std::string_view input)   {return getFirst<std::string>(input, Token::Type::REGEXP);}
 static auto asWord(const std::string_view input)  {return getFirst<std::string>(input, Token::Type::WORD);}
 static auto asError(const std::string_view input) {
@@ -104,6 +105,24 @@ TEST_CASE("Tokenize strings", "[token.string]") {
     REQUIRE(asRegexp("RE''") == "");
     REQUIRE(asRegexp("re'\"'") == "\"");
 
+    /* b'...' */
+    REQUIRE(asBytes("b''").bytes == "");
+    REQUIRE(asBytes("B''").bytes == "");
+    REQUIRE(asBytes("b'abc'").bytes == "abc");
+    REQUIRE(asBytes("b'\\'abc\\''").bytes == "'abc'");
+    REQUIRE(asBytes("b'\\x41'").bytes == "A");
+
+    /* b"..." */
+    REQUIRE(asBytes("b\"\"").bytes == "");
+    REQUIRE(asBytes("B\"\"").bytes == "");
+    REQUIRE(asBytes("b\"abc\"").bytes == "abc");
+    REQUIRE(asBytes("b\"\\\"abc\\\"\"").bytes == "\"abc\"");
+    REQUIRE(asBytes("b\"\\x41\"").bytes == "A");
+    REQUIRE(asBytes("b\"A\\x00\\xFF\\\"\\\\\"").bytes == std::string{"A\0\xFF\"\\", 5});
+    REQUIRE(asError("b\"\\x\"").starts_with("Invalid hex escape sequence"));
+    REQUIRE(asError("b\"\\x0\"").starts_with("Invalid hex escape sequence"));
+    REQUIRE(asError("b\"\\xGG\"").starts_with("Invalid hex escape sequence"));
+
     /* Quote mismatch */
     REQUIRE(asError("'abc") == "Quote mismatch at 4");
     REQUIRE(asError("abc'") == "Quote mismatch at 4");
@@ -160,7 +179,7 @@ TEST_CASE("Token location", "[token.location]") {
 }
 
 TEST_CASE("Token to string", "[token.to-string]") {
-    auto tokens = tokenize("1 1.5 'Æthervial' re'.* Familiar' abc ()[]{},:._ * ** "
+    auto tokens = tokenize("1 1.5 'Æthervial' b'beef' re'.* Familiar' abc ()[]{},:._ * ** "
                            "null true false + - * / % << >> & | ^ ~ not and or "
                            "== != < <= > >= ? # typeof as ...");
     REQUIRE(tokens);
@@ -171,6 +190,7 @@ TEST_CASE("Token to string", "[token.to-string]") {
     REQUIRE_STR("1");
     REQUIRE_STR("1.500000");
     REQUIRE_STR("'Æthervial'");
+    REQUIRE_STR("b\"beef\"");
     REQUIRE_STR("re'.* Familiar'");
     REQUIRE_STR("abc");
     REQUIRE_STR("("); REQUIRE_STR(")");
@@ -188,4 +208,12 @@ TEST_CASE("Token to string", "[token.to-string]") {
     REQUIRE_STR("<="); REQUIRE_STR(">"); REQUIRE_STR(">=");
     REQUIRE_STR("?"); REQUIRE_STR("#"); REQUIRE_STR("typeof");
     REQUIRE_STR("as"); REQUIRE_STR("...");
+}
+
+TEST_CASE("Byte token roundtrip", "[token.bytes-roundtrip]") {
+    auto bytes = ByteArray{std::string{"A\0\xFF\"\\\n\t", 7}};
+    Token token(Token::BYTES, bytes, 0, 0);
+
+    auto roundTripped = asBytes(token.toString());
+    REQUIRE(roundTripped == bytes);
 }

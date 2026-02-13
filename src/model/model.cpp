@@ -2,6 +2,7 @@
 #include "simfil/model/arena.h"
 #include "simfil/model/bitsery-traits.h"
 #include "simfil/model/nodes.h"
+#include "simfil/byte-array.h"
 
 #include <memory>
 #include <type_traits>
@@ -86,6 +87,7 @@ struct ModelPool::Impl
 
         std::string stringData_;
         sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
+        sfl::segmented_vector<StringRange, detail::ColumnPageSize> byteArrays_;
 
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
@@ -101,6 +103,7 @@ struct ModelPool::Impl
         s.container(columns_.double_, maxColumnSize);
         s.text1b(columns_.stringData_, maxColumnSize);
         s.container(columns_.strings_, maxColumnSize);
+        s.container(columns_.byteArrays_, maxColumnSize);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
@@ -242,6 +245,7 @@ void ModelPool::clear()
     clear_and_shrink(columns.double_);
     clear_and_shrink(columns.strings_);
     clear_and_shrink(columns.stringData_);
+    clear_and_shrink(columns.byteArrays_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
 }
@@ -291,6 +295,15 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
             shared_from_this(),
             mpKey_));
+        break;
+    }
+    case ByteArray: {
+        auto idx = n.addr().index();
+        if (auto err = checkBounds(impl_->columns_.byteArrays_))
+            return tl::unexpected<Error>(*err);
+        auto& val = impl_->columns_.byteArrays_[idx];
+        auto view = std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_);
+        cb(ValueNode(simfil::ByteArray{view}, shared_from_this(), mpKey_));
         break;
     }
     case PooledString: {
@@ -388,6 +401,18 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
         ModelNodeAddress{String, (uint32_t)impl_->columns_.strings_.size()-1});
 }
 
+ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
+{
+    impl_->columns_.byteArrays_.emplace_back(Impl::StringRange{
+        (uint32_t)impl_->columns_.stringData_.size(),
+        (uint32_t)value.bytes.size()
+    });
+    impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{ByteArray, (uint32_t)impl_->columns_.byteArrays_.size()-1});
+}
+
 ModelNode::Ptr ModelPool::newValue(StringId handle) {
     return ModelNode::Ptr::make(
         shared_from_this(),
@@ -455,6 +480,8 @@ ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
         [&](auto& s) { s.text1b(impl_->columns_.stringData_, maxColumnSize); });
     stats.stringRangeBytes = measureBytes(
         [&](auto& s) { s.container(impl_->columns_.strings_, maxColumnSize); });
+    stats.stringRangeBytes += measureBytes(
+        [&](auto& s) { s.container(impl_->columns_.byteArrays_, maxColumnSize); });
     stats.objectMemberBytes = measureBytes(
         [&](auto& s) { s.ext(impl_->columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
     stats.arrayMemberBytes = measureBytes(

@@ -8,6 +8,7 @@
 
 #include "arena.h"
 #include "string-pool.h"
+#include "simfil/byte-array.h"
 #include "simfil/error.h"
 
 #include <sfl/small_vector.hpp>
@@ -51,6 +52,7 @@ enum class ValueType
     Int,
     Float,
     String,
+    Bytes,
     TransientObject,
     Object,
     Array
@@ -63,7 +65,8 @@ using ScalarValueType = std::variant<
     int64_t,
     double,
     std::string,
-    std::string_view>;
+    std::string_view,
+    ByteArray>;
 
 namespace detail
 {

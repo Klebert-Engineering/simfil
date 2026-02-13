@@ -26,7 +26,7 @@ struct ModelNode;
  * Param:
  *   any   If true, wrap expression with call to `any(...)`.
  * Param:
- *   autoWildcard  If true, expand constant expressions to `** = <const>`.
+ *   autoWildcard  If true, expand constant expressions to `** == <const>`.
  */
 auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> tl::expected<ASTPtr, Error>;
 

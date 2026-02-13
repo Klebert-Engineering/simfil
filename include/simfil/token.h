@@ -10,6 +10,7 @@
 #include <tl/expected.hpp>
 
 #include "simfil/error.h"
+#include "simfil/byte-array.h"
 
 namespace simfil
 {
@@ -32,6 +33,7 @@ struct Token
         INT,            //
         FLOAT,          //
         STRING,         // [r]"..." or [r]'...'
+        BYTES,          // [b]"..." or [b]'...'
         REGEXP,         // A string prefixed by re or RE
         WORD,           //
         SELF,           // _
@@ -73,6 +75,7 @@ struct Token
     std::variant<
         std::monostate,
         std::string,
+        ByteArray,
         int64_t,
         double
     > value;

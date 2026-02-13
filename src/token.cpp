@@ -41,6 +41,8 @@ auto Token::toString() const -> std::string
         return std::to_string(std::get<double>(value));
     case Token::STRING:
         return "'"s + std::get<std::string>(value) + "'"s;
+    case Token::BYTES:
+        return std::get<ByteArray>(value).toLiteral();
     case Token::REGEXP:
         return "re'"s + std::get<std::string>(value) + "'"s;
     case Token::WORD:
@@ -97,6 +99,7 @@ auto Token::toString(Type t) -> std::string
     case Token::INT:          return "<int>";
     case Token::FLOAT:        return "<float>";
     case Token::STRING:       return "<string>";
+    case Token::BYTES:        return "<bytes>";
     case Token::REGEXP:       return "<regexp>";
     case Token::WORD:         return "<word>";
     };
@@ -252,12 +255,19 @@ std::optional<Token> scanStringLiteral(Scanner& s)
         s.match("r'") || s.match("R'") ||
         s.match("r\"") || s.match("R\"");
 
+    // Test for byte strings
+    const auto bytes =
+        s.match("b'") || s.match("B'") ||
+        s.match("b\"") || s.match("B\"");
+
     // Test for regexp
     const auto regexp =
         s.match("re'") || s.match("RE'") ||
         s.match("re\"") || s.match("RE\"");
 
     if (raw)
+        s.skip(1);
+    else if (bytes)
         s.skip(1);
     else if (regexp)
         s.skip(2);
@@ -284,6 +294,19 @@ std::optional<Token> scanStringLiteral(Scanner& s)
                     else
                         text.push_back('\\');
                 } else {
+                    if (bytes && (s.at(0) == 'x' || s.at(0) == 'X')) {
+                        const auto upper = ByteArray::decodeHexNibble(s.at(1));
+                        const auto lower = ByteArray::decodeHexNibble(s.at(2));
+                        if (upper < 0 || lower < 0) {
+                            s.fail("Invalid hex escape sequence");
+                            return {};
+                        }
+
+                        text.push_back(static_cast<char>((upper << 4) | lower));
+                        s.skip(3);
+                        continue;
+                    }
+
                     switch (s.at(0)) {
                         case 'n': text.push_back('\n'); break;
                         case 'r': text.push_back('\r'); break;
@@ -309,6 +332,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
 
         if (regexp)
             return Token(Token::REGEXP, text, begin, s.pos());
+        if (bytes)
+            return Token(Token::BYTES, ByteArray{text}, begin, s.pos());
         return Token(Token::STRING, text, begin, s.pos());
     }
 
@@ -475,6 +500,8 @@ auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
         else if (auto t = scanSyntax(s))
             tokens.push_back(std::move(*t));
         else {
+            if (s.hasError() && s.error().message.rfind("Invalid hex escape sequence", 0) == 0)
+                return unexpected<Error>(std::move(s.error()));
             if (s.at(0) != '\0')
                 return unexpected<Error>(s.fail("Invalid input"));
         }

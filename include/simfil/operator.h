@@ -8,6 +8,7 @@
 #include "fmt/format.h"
 
 #include <tl/expected.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <string_view>
 #include <string>
@@ -129,6 +130,11 @@ struct OperatorLen
         return static_cast<int64_t>(s.size());
     }
 
+    auto operator()(const ByteArray& s) const
+    {
+        return static_cast<int64_t>(s.bytes.size());
+    }
+
     auto operator()(const ModelNode& n) const
     {
         return static_cast<int64_t>(n.size());
@@ -171,6 +177,12 @@ struct OperatorTypeof
         return n;
     }
 
+    auto operator()(const ByteArray&) const -> std::string_view
+    {
+        static auto n = "bytes"sv;
+        return n;
+    }
+
     auto operator()(const ModelNode&) const -> std::string_view
     {
         static auto n = "model"sv;
@@ -208,6 +220,13 @@ struct OperatorAsInt
     {
         if (long long out = 0; std::sscanf(v.c_str(), "%lld", &out) == 1)
             return (int64_t)out;
+        return (int64_t)0;
+    }
+
+    auto operator()(const ByteArray& v) const
+    {
+        if (auto decoded = v.decodeBigEndianI64())
+            return *decoded;
         return (int64_t)0;
     }
 
@@ -270,6 +289,11 @@ struct OperatorAsString
         return v;
     }
 
+    auto operator()(const ByteArray& v) const -> std::string
+    {
+        return v.bytes;
+    }
+
     auto operator()(const ModelNode& v) const
     {
         return ""s;
@@ -288,6 +312,50 @@ struct OperatorAsString
     }
 
     NULL_AS("null"s);
+};
+
+struct OperatorAsBytes
+{
+    NAME("bytes")
+    DENY_OTHER()
+
+    auto operator()(const ByteArray& v) const -> ByteArray
+    {
+        return v;
+    }
+
+    auto operator()(bool v) const -> ByteArray
+    {
+        return ByteArray{std::string(1, static_cast<char>(v ? 1 : 0))};
+    }
+
+    auto operator()(int64_t v) const -> ByteArray
+    {
+        auto raw = static_cast<uint64_t>(v);
+        auto bytes = std::string(8, '\0');
+        for (size_t i = 0; i < bytes.size(); ++i) {
+            bytes[bytes.size() - i - 1] = static_cast<char>((raw >> (i * 8)) & 0xFFu);
+        }
+        return ByteArray{std::move(bytes)};
+    }
+
+    auto operator()(const std::string& v) const -> ByteArray
+    {
+        return ByteArray{v};
+    }
+
+    auto operator()(const ModelNode&) const
+    {
+        return ByteArray{};
+    }
+
+    auto operator()(const TransientObject&) const
+    {
+        // Handled by MetaType::unaryOp
+        return ByteArray{};
+    }
+
+    NULL_AS(ByteArray{"null"});
 };
 
 #undef DENY_OTHER
@@ -475,6 +543,39 @@ struct OperatorEq
     DECL_OPERATION(double,             double,             ==)
     DECL_OPERATION(const std::string&, const std::string&, ==)
 
+    auto operator()(const ByteArray& l, const ByteArray& r) const
+    {
+        return l.bytes == r.bytes;
+    }
+
+    auto operator()(const ByteArray& l, int64_t r) const
+    {
+        if (auto decoded = l.decodeBigEndianI64())
+            return *decoded == r;
+        return false;
+    }
+
+    auto operator()(int64_t l, const ByteArray& r) const
+    {
+        if (auto decoded = r.decodeBigEndianI64())
+            return l == *decoded;
+        return false;
+    }
+
+    auto operator()(const ByteArray& l, double r) const
+    {
+        if (auto decoded = l.decodeBigEndianI64())
+            return static_cast<double>(*decoded) == r;
+        return false;
+    }
+
+    auto operator()(double l, const ByteArray& r) const
+    {
+        if (auto decoded = r.decodeBigEndianI64())
+            return l == static_cast<double>(*decoded);
+        return false;
+    }
+
     auto operator()(NullType, NullType) const
     {
         return true;
@@ -502,6 +603,42 @@ struct OperatorLt
     DECL_OPERATION(double,             double,             <)
     DECL_OPERATION(const std::string&, const std::string&, <)
 
+    auto operator()(const ByteArray& l, const ByteArray& r) const
+    {
+        return std::lexicographical_compare(
+            l.bytes.begin(), l.bytes.end(),
+            r.bytes.begin(), r.bytes.end(),
+            [](unsigned char a, unsigned char b) { return a < b; });
+    }
+
+    auto operator()(const ByteArray& l, int64_t r) const
+    {
+        if (auto decoded = l.decodeBigEndianI64())
+            return *decoded < r;
+        return false;
+    }
+
+    auto operator()(int64_t l, const ByteArray& r) const
+    {
+        if (auto decoded = r.decodeBigEndianI64())
+            return l < *decoded;
+        return false;
+    }
+
+    auto operator()(const ByteArray& l, double r) const
+    {
+        if (auto decoded = l.decodeBigEndianI64())
+            return static_cast<double>(*decoded) < r;
+        return false;
+    }
+
+    auto operator()(double l, const ByteArray& r) const
+    {
+        if (auto decoded = r.decodeBigEndianI64())
+            return l < static_cast<double>(*decoded);
+        return false;
+    }
+
     auto operator()(NullType, NullType) const
     {
         return false;
@@ -517,6 +654,31 @@ struct OperatorLtEq
     DECL_OPERATION(double,             int64_t,            <=)
     DECL_OPERATION(double,             double,             <=)
     DECL_OPERATION(const std::string&, const std::string&, <=)
+
+    auto operator()(const ByteArray& l, const ByteArray& r) const
+    {
+        return OperatorLt()(l, r) || OperatorEq()(l, r);
+    }
+
+    auto operator()(const ByteArray& l, int64_t r) const
+    {
+        return OperatorLt()(l, r) || OperatorEq()(l, r);
+    }
+
+    auto operator()(int64_t l, const ByteArray& r) const
+    {
+        return OperatorLt()(l, r) || OperatorEq()(l, r);
+    }
+
+    auto operator()(const ByteArray& l, double r) const
+    {
+        return OperatorLt()(l, r) || OperatorEq()(l, r);
+    }
+
+    auto operator()(double l, const ByteArray& r) const
+    {
+        return OperatorLt()(l, r) || OperatorEq()(l, r);
+    }
 
     auto operator()(NullType, NullType) const
     {

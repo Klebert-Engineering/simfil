@@ -124,7 +124,16 @@ nlohmann::json ModelNode::toJson() const
             [&j](auto&& v)
             {
                 using T = decltype(v);
-                if constexpr (!std::is_same_v<std::decay_t<T>, std::monostate>) {
+                if constexpr (std::is_same_v<std::decay_t<T>, ByteArray>) {
+                    auto bytes = nlohmann::json::object();
+                    bytes["_bytes"] = true;
+                    if (auto decoded = v.decodeBigEndianI64())
+                        bytes["number"] = *decoded;
+                    else
+                        bytes["number"] = nullptr;
+                    bytes["hex"] = v.toHex(false);
+                    j = std::move(bytes);
+                } else if constexpr (!std::is_same_v<std::decay_t<T>, std::monostate>) {
                     j = std::forward<T>(v);
                 } else {
                     j = nullptr;
