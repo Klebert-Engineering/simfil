@@ -15,7 +15,7 @@ CPMAddPackage("gh:fraillt/bitsery@5.2.4")
 
 # noserde
 CPMAddPackage(
-    URI "gh:Klebert-Engineering/noserde#main"
+    URI "gh:josephbirkner/noserde#main"
     OPTIONS
         "BUILD_TESTING OFF"
         "NOSERDE_BUILD_BENCHMARKS OFF")
