@@ -8,7 +8,7 @@
 #include <mutex>
 #include <cmath>
 #include <tl/expected.hpp>
-#include <sfl/segmented_vector.hpp>
+#include <noserde.hpp>
 
 #include "simfil/exception-handler.h"
 #include "simfil/error.h"
@@ -33,15 +33,14 @@ constexpr static ArrayIndex InvalidArrayIndex = -1;
 /**
  * ArrayArena - An arena allocator for append-only vectors.
  *
- * The ArrayArena is a wrapper around a segmented_vector. It keeps track of
+ * The ArrayArena is a wrapper around paged noserde buffers. It keeps track of
  * forward-linked array chunks. When an array grows beyond the current capacity c
  * of its current last chunk, a new chunk of size c*2 is allocated and becomes
  * the new last chunk. This is then set as linked to the previous last chunk.
  * Usually, appending will be lock-free, and only growth needs the lock.
  *
  * @tparam ElementType_ The type of elements stored in the arrays.
- * @tparam PageSize The number of elements that each segment in the
- *         segmented_vector can store.
+ * @tparam PageSize The number of elements that each storage page can store.
  */
 template <class ElementType_, size_t PageSize = 4096, size_t ChunkPageSize = 4096, typename SizeType_ =uint32_t>
 class ArrayArena
@@ -337,7 +336,7 @@ private:
     // Represents a chunk of an array in the arena.
     struct Chunk
     {
-        SizeType_ offset = 0;      // The starting offset of the chunk in the segmented_vector.
+        SizeType_ offset = 0;      // The starting offset of the chunk in the storage buffer.
         SizeType_ capacity = 0;    // The maximum number of elements the chunk can hold.
         SizeType_ size = 0;        // The current number of elements in the chunk,
                                   // or the total number of elements of the whole array if this is a head chunk.
@@ -346,9 +345,9 @@ private:
         ArrayIndex last = InvalidArrayIndex;  // The index of the last chunk in the sequence, or InvalidArrayIndex if none.
     };
 
-    sfl::segmented_vector<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
-    sfl::segmented_vector<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
-    sfl::segmented_vector<ElementType_, PageSize> data_;  // The underlying segmented_vector storing the array elements.
+    noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
+    noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
+    noserde::Buffer<ElementType_, PageSize> data_;  // Underlying element storage.
 
     #ifdef ARRAY_ARENA_THREAD_SAFE
     mutable std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.

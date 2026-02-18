@@ -15,7 +15,7 @@
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
-#include <sfl/segmented_vector.hpp>
+#include <noserde.hpp>
 #include <tl/expected.hpp>
 
 #include "../expected.h"
@@ -81,13 +81,13 @@ struct ModelPool::Impl
     std::shared_ptr<StringPool> strings_;
 
     struct {
-        sfl::segmented_vector<ModelNodeAddress, detail::ColumnPageSize> roots_;
-        sfl::segmented_vector<int64_t, detail::ColumnPageSize> i64_;
-        sfl::segmented_vector<double, detail::ColumnPageSize> double_;
+        noserde::Buffer<ModelNodeAddress, detail::ColumnPageSize> roots_;
+        noserde::Buffer<int64_t, detail::ColumnPageSize> i64_;
+        noserde::Buffer<double, detail::ColumnPageSize> double_;
 
         std::string stringData_;
-        sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
-        sfl::segmented_vector<StringRange, detail::ColumnPageSize> byteArrays_;
+        noserde::Buffer<StringRange, detail::ColumnPageSize> strings_;
+        noserde::Buffer<StringRange, detail::ColumnPageSize> byteArrays_;
 
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
@@ -96,14 +96,12 @@ struct ModelPool::Impl
     template<typename S>
     void readWrite(S& s) {
         constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
-
-        s.container(columns_.roots_, maxColumnSize);
-
-        s.container(columns_.i64_, maxColumnSize);
-        s.container(columns_.double_, maxColumnSize);
+        s.object(columns_.roots_);
+        s.object(columns_.i64_);
+        s.object(columns_.double_);
         s.text1b(columns_.stringData_, maxColumnSize);
-        s.container(columns_.strings_, maxColumnSize);
-        s.container(columns_.byteArrays_, maxColumnSize);
+        s.object(columns_.strings_);
+        s.object(columns_.byteArrays_);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
@@ -471,21 +469,21 @@ ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
     SerializationSizeStats stats;
 
     stats.rootsBytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.roots_, maxColumnSize); });
+        [&](auto& s) { s.object(const_cast<noserde::Buffer<ModelNodeAddress, detail::ColumnPageSize>&>(impl_->columns_.roots_)); });
     stats.int64Bytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.i64_, maxColumnSize); });
+        [&](auto& s) { s.object(const_cast<noserde::Buffer<int64_t, detail::ColumnPageSize>&>(impl_->columns_.i64_)); });
     stats.doubleBytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.double_, maxColumnSize); });
+        [&](auto& s) { s.object(const_cast<noserde::Buffer<double, detail::ColumnPageSize>&>(impl_->columns_.double_)); });
     stats.stringDataBytes = measureBytes(
-        [&](auto& s) { s.text1b(impl_->columns_.stringData_, maxColumnSize); });
+        [&](auto& s) { s.text1b(const_cast<std::string&>(impl_->columns_.stringData_), maxColumnSize); });
     stats.stringRangeBytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.strings_, maxColumnSize); });
+        [&](auto& s) { s.object(const_cast<noserde::Buffer<Impl::StringRange, detail::ColumnPageSize>&>(impl_->columns_.strings_)); });
     stats.stringRangeBytes += measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.byteArrays_, maxColumnSize); });
+        [&](auto& s) { s.object(const_cast<noserde::Buffer<Impl::StringRange, detail::ColumnPageSize>&>(impl_->columns_.byteArrays_)); });
     stats.objectMemberBytes = measureBytes(
-        [&](auto& s) { s.ext(impl_->columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
+        [&](auto& s) { s.ext(const_cast<Object::Storage&>(impl_->columns_.objectMemberArrays_), bitsery::ext::ArrayArenaExt{}); });
     stats.arrayMemberBytes = measureBytes(
-        [&](auto& s) { s.ext(impl_->columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
+        [&](auto& s) { s.ext(const_cast<Array::Storage&>(impl_->columns_.arrayMemberArrays_), bitsery::ext::ArrayArenaExt{}); });
 
     return stats;
 }

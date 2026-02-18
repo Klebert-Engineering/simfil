@@ -112,6 +112,7 @@ target_compile_features(simfil
 
 target_link_libraries(simfil
   PUBLIC
+    noserde::runtime
     sfl::sfl
     fmt::fmt
     tl::expected
