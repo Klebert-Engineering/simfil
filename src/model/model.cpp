@@ -69,12 +69,6 @@ struct ModelPool::Impl
     struct StringRange {
         uint32_t offset_;
         uint32_t length_;
-
-        template<typename S>
-        void serialize(S& s) {
-            s.value4b(offset_);
-            s.value4b(length_);
-        }
     };
 
     /// This model pool's field name store
