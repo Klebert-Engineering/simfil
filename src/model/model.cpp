@@ -13,8 +13,10 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <bitsery/bitsery.h>
+#include <bitsery/adapter/buffer.h>
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
+#include <bitsery/traits/vector.h>
 #include <noserde.hpp>
 #include <tl/expected.hpp>
 
@@ -501,8 +503,13 @@ tl::expected<void, Error> ModelPool::write(std::ostream& outputStream) {
     return {};
 }
 
-tl::expected<void, Error> ModelPool::read(std::istream& inputStream) {
-    bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
+tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, const size_t offset) {
+    if (offset > input.size()) {
+        return tl::unexpected<Error>(Error::EncodeDecodeError, "Failed to read ModelPool: invalid input offset.");
+    }
+
+    using Adapter = bitsery::InputBufferAdapter<std::vector<uint8_t>>;
+    bitsery::Deserializer<Adapter> s(Adapter(input.begin() + static_cast<std::ptrdiff_t>(offset), input.end()));
     impl_->readWrite(s);
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
         return tl::unexpected<Error>(Error::EncodeDecodeError, fmt::format(

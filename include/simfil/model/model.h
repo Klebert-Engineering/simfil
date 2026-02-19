@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <string_view>
+#include <vector>
 #include <type_traits>
 #include <vector>
 #include <utility>
@@ -265,7 +266,7 @@ public:
 
     /** Serialization */
     virtual tl::expected<void, Error> write(std::ostream& outputStream);
-    virtual tl::expected<void, Error> read(std::istream& inputStream);
+    virtual tl::expected<void, Error> read(const std::vector<uint8_t>& input, size_t offset = 0);
 
     struct SerializationSizeStats {
         size_t rootsBytes = 0;

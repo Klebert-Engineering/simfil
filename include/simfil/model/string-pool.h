@@ -8,8 +8,8 @@
 #include <optional>
 #include <string_view>
 #include <string>
-#include <istream>
 #include <ostream>
+#include <vector>
 #include <deque>
 #include <tl/expected.hpp>
 
@@ -75,7 +75,7 @@ struct StringPool
     /// Serialization - write to stream, starting from a specific
     ///  id offset if necessary (for partial serialisation).
     virtual auto write(std::ostream& outputStream, StringId offset = {}) const -> tl::expected<void, Error>;  // NOLINT
-    virtual auto read(std::istream& inputStream) -> tl::expected<void, Error>;
+    virtual auto read(const std::vector<uint8_t>& input, size_t offset = 0) -> tl::expected<void, Error>;
 
     /// Check if the content of the string pools is logically identical.
     bool operator== (StringPool const& other) const;
