@@ -68,6 +68,7 @@ public:
         heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0,
              InvalidArrayIndex,
              InvalidArrayIndex});
+        isCompact_ = false;
         return index;
     }
 
@@ -130,6 +131,7 @@ public:
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
+        isCompact_ = false;
         return elem;
     }
 
@@ -153,6 +155,7 @@ public:
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
+        isCompact_ = false;
         return elem;
     }
 
@@ -185,6 +188,14 @@ public:
         heads_.shrink_to_fit();
         continuations_.shrink_to_fit();
         data_.shrink_to_fit();
+    }
+
+    /**
+     * Check if continuations_ is empty, and the capacity of every head_ matches its size.
+     * This is currently only true if the arena was deserialized using the bitsery extension.
+     */
+    [[nodiscard]] bool isCompact() const {
+        return isCompact_;
     }
 
     // Iterator-related types and functions
@@ -348,6 +359,7 @@ private:
     noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
     noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
     noserde::Buffer<ElementType_, PageSize> data_;  // Underlying element storage.
+    bool isCompact_ = false;
 
     #ifdef ARRAY_ARENA_THREAD_SAFE
     mutable std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.

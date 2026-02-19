@@ -2,6 +2,7 @@
 
 #include <csignal>
 #include <cstdint>
+#include <type_traits>
 #include <bitsery/traits/core/std_defaults.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/ext/std_map.h>
@@ -55,32 +56,72 @@ struct ArrayArenaExt
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
     void serialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize> const& arena, Fnc&& fnc) const
     {
-        auto numArrays = static_cast<simfil::ArrayIndex>(arena.heads_.size());
-        s.value4b(numArrays);
-        for (simfil::ArrayIndex i = 0; i < numArrays; ++i) {
-            auto size = arena.size(i);
-            s.value4b(size);
-            for (size_t j = 0; j < size; ++j) {
-                if (auto value = arena.at(i, j))
-                    fnc(s, const_cast<ElementType&>(value->get()));
-                else
-                    raise<simfil::Error>(std::move(value.error())); // Bitsery does not support propagating errors
-            }
+        (void)fnc;
+
+        // If the arena is already compact, we can simply dump out heads and data
+        if (arena.isCompact()) {
+            s.object(arena.heads_);
+            s.object(arena.data_);
+            return;
         }
+
+        // Otherwise: Build compact temporary heads/data, then serialize those buffers.
+        using HeadsStorage = typename std::remove_cv_t<std::remove_reference_t<decltype(arena.heads_)>>;
+        using DataStorage = typename std::remove_cv_t<std::remove_reference_t<decltype(arena.data_)>>;
+        using Chunk = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::Chunk;
+        using SizeType = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::SizeType;
+
+        HeadsStorage compactHeads;
+        DataStorage compactData;
+        compactHeads.reserve(arena.heads_.size());
+
+        size_t totalElements = 0;
+        for (auto const& head : arena.heads_) {
+            totalElements += static_cast<size_t>(head.size);
+        }
+        compactData.resize(totalElements);
+
+        size_t writeIndex = 0;
+        size_t packedOffset = 0;
+        for (auto const& head : arena.heads_) {
+            compactHeads.push_back(Chunk{
+                static_cast<SizeType>(packedOffset),
+                head.size,
+                head.size,
+                simfil::InvalidArrayIndex,
+                simfil::InvalidArrayIndex
+            });
+
+            auto const* current = &head;
+            auto remaining = static_cast<size_t>(head.size);
+            while (current != nullptr && remaining > 0) {
+                size_t chunkUsed = 0;
+                if (current == &head) {
+                    chunkUsed = std::min(static_cast<size_t>(head.capacity), remaining);
+                } else {
+                    chunkUsed = std::min(static_cast<size_t>(current->size), remaining);
+                }
+
+                for (size_t i = 0; i < chunkUsed; ++i) {
+                    compactData[writeIndex++] = arena.data_[current->offset + i];
+                }
+                remaining -= chunkUsed;
+                current = (current->next != simfil::InvalidArrayIndex) ? &arena.continuations_[current->next] : nullptr;
+            }
+            packedOffset += static_cast<size_t>(head.size);
+        }
+
+        s.object(compactHeads);
+        s.object(compactData);
     }
 
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
     void deserialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>& arena, Fnc&& fnc) const
     {
-        simfil::ArrayIndex numArrays;
-        s.value4b(numArrays);
-        for (simfil::ArrayIndex i = 0; i < numArrays; ++i) {
-            typename std::decay_t<decltype(arena)>::SizeType size;
-            s.value4b(size);
-            auto arrayIndex = arena.new_array(size);
-            for (size_t j = 0; j < size; ++j)
-                fnc(s, arena.emplace_back(arrayIndex));
-        }
+        s.object(arena.heads_);
+        s.object(arena.data_);
+        arena.continuations_.clear();
+        arena.isCompact_ = true;
     }
 };
 
