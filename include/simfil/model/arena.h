@@ -2,8 +2,11 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <vector>
+#include <optional>
 #include <shared_mutex>
 #include <mutex>
 #include <cmath>
@@ -50,6 +53,18 @@ class ArrayArena
 public:
     using ElementType = ElementType_;
     using SizeType = SizeType_;
+    struct CompactArrayChunk
+    {
+        std::uint32_t offset = 0;
+        std::uint32_t size = 0;
+
+        template<typename S>
+        void serialize(S& s) {
+            s.value4b(offset);
+            s.value4b(size);
+        }
+    };
+    using CompactHeadStorage = noserde::Buffer<CompactArrayChunk, ChunkPageSize>;
 
     /**
      * Creates a new array with the specified initial capacity.
@@ -62,13 +77,14 @@ public:
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::unique_lock guard(lock_);
         #endif
+        ensure_runtime_heads_from_compact();
         size_t offset = data_.size();
         data_.resize(offset + initialCapacity);
         auto index = static_cast<ArrayIndex>(heads_.size());
         heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0,
              InvalidArrayIndex,
              InvalidArrayIndex});
-        isCompact_ = false;
+        compactHeads_.reset();
         return index;
     }
 
@@ -80,6 +96,8 @@ public:
     #ifdef ARRAY_ARENA_THREAD_SAFE
             std::shared_lock guard(lock_);
     #endif
+            if (heads_.empty() && compactHeads_)
+                return compactHeads_->size();
             return heads_.size();
     }
 
@@ -93,7 +111,23 @@ public:
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
         #endif
+        if (heads_.empty() && compactHeads_)
+            return static_cast<SizeType_>((*compactHeads_)[a].size);
         return heads_[a].size;
+    }
+
+    /**
+     * @return The current size, in bytes, of the array arena if serialized.
+     */
+    [[nodiscard]] size_t byte_size() const {
+        if (compactHeads_) {
+            return compactHeads_->byte_size() + data_.byte_size();
+        }
+        auto result = heads_.size() * sizeof(CompactArrayChunk);
+        for (auto const& head : heads_) {
+            result += head.size * sizeof(ElementType_);
+        }
+        return result;
     }
 
     /**
@@ -131,7 +165,7 @@ public:
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
-        isCompact_ = false;
+        compactHeads_.reset();
         return elem;
     }
 
@@ -155,7 +189,7 @@ public:
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
-        isCompact_ = false;
+        compactHeads_.reset();
         return elem;
     }
 
@@ -172,6 +206,7 @@ public:
         heads_.clear();
         continuations_.clear();
         data_.clear();
+        compactHeads_.reset();
     }
 
     /**
@@ -188,14 +223,16 @@ public:
         heads_.shrink_to_fit();
         continuations_.shrink_to_fit();
         data_.shrink_to_fit();
+        if (compactHeads_) {
+            compactHeads_->shrink_to_fit();
+        }
     }
 
     /**
-     * Check if continuations_ is empty, and the capacity of every head_ matches its size.
-     * This is currently only true if the arena was deserialized using the bitsery extension.
+     * Check if a compact chunk representation is available.
      */
     [[nodiscard]] bool isCompact() const {
-        return isCompact_;
+        return compactHeads_.has_value();
     }
 
     // Iterator-related types and functions
@@ -309,9 +346,9 @@ public:
     const_iterator end(ArrayIndex const& a) const { return const_iterator(*this, a, size(a)); }
 
     ArrayArenaIterator begin() { return ArrayArenaIterator(*this, 0); }
-    ArrayArenaIterator end() { return ArrayArenaIterator(*this, static_cast<ArrayIndex>(heads_.size())); }
+    ArrayArenaIterator end() { return ArrayArenaIterator(*this, static_cast<ArrayIndex>(size())); }
     ArrayArenaIterator begin() const { return ArrayArenaIterator(*this, 0); }
-    ArrayArenaIterator end() const { return ArrayArenaIterator(*this, static_cast<ArrayIndex>(heads_.size())); }
+    ArrayArenaIterator end() const { return ArrayArenaIterator(*this, static_cast<ArrayIndex>(size())); }
 
     ArrayRange range(ArrayIndex const& array) {return ArrayRange(begin(array), end(array));}
 
@@ -320,6 +357,24 @@ public:
     template <typename Func>
     void iterate(ArrayIndex const& a, Func&& lambda)
     {
+        if (heads_.empty() && compactHeads_) {
+            auto const& compact = (*compactHeads_)[a];
+            for (size_t i = 0; i < static_cast<size_t>(compact.size); ++i)
+            {
+                if constexpr (std::is_invocable_r_v<bool, Func, ElementType_&>) {
+                    if (!lambda(data_[static_cast<size_t>(compact.offset) + i]))
+                        return;
+                }
+                else if constexpr (std::is_invocable_v<Func, ElementType_&, size_t>) {
+                    lambda(data_[static_cast<size_t>(compact.offset) + i], i);
+                }
+                else {
+                    lambda(data_[static_cast<size_t>(compact.offset) + i]);
+                }
+            }
+            return;
+        }
+
         Chunk const* current = &heads_[a];
         size_t globalIndex = 0;
         while (current != nullptr)
@@ -359,11 +414,30 @@ private:
     noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
     noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
     noserde::Buffer<ElementType_, PageSize> data_;  // Underlying element storage.
-    bool isCompact_ = false;
+    std::optional<CompactHeadStorage> compactHeads_;
 
     #ifdef ARRAY_ARENA_THREAD_SAFE
     mutable std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.
     #endif
+
+    void ensure_runtime_heads_from_compact()
+    {
+        if (!heads_.empty() || !compactHeads_)
+            return;
+
+        heads_.clear();
+        heads_.reserve(compactHeads_->size());
+        continuations_.clear();
+        for (auto const& compactHead : *compactHeads_) {
+            heads_.push_back({
+                static_cast<SizeType_>(compactHead.offset),
+                static_cast<SizeType_>(compactHead.size),
+                static_cast<SizeType_>(compactHead.size),
+                InvalidArrayIndex,
+                InvalidArrayIndex
+            });
+        }
+    }
 
     /**
      * Ensures that the specified array has enough capacity to add one more element
@@ -377,8 +451,19 @@ private:
      */
     Chunk& ensure_capacity_and_get_last_chunk(ArrayIndex const& a)
     {
+        #ifndef ARRAY_ARENA_THREAD_SAFE
+        ensure_runtime_heads_from_compact();
+        #endif
+
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock read_guard(lock_);
+        if (heads_.empty() && compactHeads_) {
+            read_guard.unlock();
+            std::unique_lock write_guard(lock_);
+            ensure_runtime_heads_from_compact();
+            write_guard.unlock();
+            read_guard.lock();
+        }
         #endif
         Chunk& head = heads_[a];
         Chunk& last = (head.last == InvalidArrayIndex) ? head : continuations_[head.last];
@@ -410,6 +495,13 @@ private:
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(self.lock_);
         #endif
+        if (self.heads_.empty() && self.compactHeads_) {
+            auto const& compact = (*self.compactHeads_)[a];
+            if (i < static_cast<size_t>(compact.size))
+                return self.data_[static_cast<size_t>(compact.offset) + i];
+            return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
+        }
+
         typename Self::Chunk const* current = &self.heads_[a];
         size_t remaining = i;
         while (true) {

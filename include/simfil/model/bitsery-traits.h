@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <csignal>
 #include <cstdint>
 #include <type_traits>
@@ -60,18 +61,17 @@ struct ArrayArenaExt
 
         // If the arena is already compact, we can simply dump out heads and data
         if (arena.isCompact()) {
-            s.object(arena.heads_);
+            s.object(*arena.compactHeads_);
             s.object(arena.data_);
             return;
         }
 
         // Otherwise: Build compact temporary heads/data, then serialize those buffers.
-        using HeadsStorage = typename std::remove_cv_t<std::remove_reference_t<decltype(arena.heads_)>>;
+        using CompactHeadsStorage = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactHeadStorage;
         using DataStorage = typename std::remove_cv_t<std::remove_reference_t<decltype(arena.data_)>>;
-        using Chunk = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::Chunk;
-        using SizeType = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::SizeType;
+        using CompactChunk = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactArrayChunk;
 
-        HeadsStorage compactHeads;
+        CompactHeadsStorage compactHeads;
         DataStorage compactData;
         compactHeads.reserve(arena.heads_.size());
 
@@ -84,12 +84,9 @@ struct ArrayArenaExt
         size_t writeIndex = 0;
         size_t packedOffset = 0;
         for (auto const& head : arena.heads_) {
-            compactHeads.push_back(Chunk{
-                static_cast<SizeType>(packedOffset),
-                head.size,
-                head.size,
-                simfil::InvalidArrayIndex,
-                simfil::InvalidArrayIndex
+            compactHeads.push_back(CompactChunk{
+                static_cast<std::uint32_t>(packedOffset),
+                static_cast<std::uint32_t>(head.size)
             });
 
             auto const* current = &head;
@@ -118,10 +115,16 @@ struct ArrayArenaExt
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
     void deserialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>& arena, Fnc&& fnc) const
     {
-        s.object(arena.heads_);
+        (void)fnc;
+        using CompactHeadsStorage = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactHeadStorage;
+
+        CompactHeadsStorage compactHeads;
+        s.object(compactHeads);
         s.object(arena.data_);
+
+        arena.heads_.clear();
         arena.continuations_.clear();
-        arena.isCompact_ = true;
+        arena.compactHeads_ = std::move(compactHeads);
     }
 };
 
