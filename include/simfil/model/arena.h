@@ -11,7 +11,7 @@
 #include <mutex>
 #include <cmath>
 #include <tl/expected.hpp>
-#include <noserde.hpp>
+#include "simfil/model/column.h"
 
 #include "simfil/exception-handler.h"
 #include "simfil/error.h"
@@ -36,7 +36,7 @@ constexpr static ArrayIndex InvalidArrayIndex = -1;
 /**
  * ArrayArena - An arena allocator for append-only vectors.
  *
- * The ArrayArena is a wrapper around paged noserde buffers. It keeps track of
+ * The ArrayArena is a wrapper around paged model columns. It keeps track of
  * forward-linked array chunks. When an array grows beyond the current capacity c
  * of its current last chunk, a new chunk of size c*2 is allocated and becomes
  * the new last chunk. This is then set as linked to the previous last chunk.
@@ -55,6 +55,8 @@ public:
     using SizeType = SizeType_;
     struct CompactArrayChunk
     {
+        MODEL_COLUMN_TYPE(8);
+
         std::uint32_t offset = 0;
         std::uint32_t size = 0;
 
@@ -64,7 +66,7 @@ public:
             s.value4b(size);
         }
     };
-    using CompactHeadStorage = noserde::Buffer<CompactArrayChunk, ChunkPageSize>;
+    using CompactHeadStorage = ModelColumn<CompactArrayChunk, ChunkPageSize>;
 
     /**
      * Creates a new array with the specified initial capacity.
@@ -402,6 +404,8 @@ private:
     // Represents a chunk of an array in the arena.
     struct Chunk
     {
+        MODEL_COLUMN_TYPE((sizeof(SizeType_) * 3) + (sizeof(ArrayIndex) * 2));
+
         SizeType_ offset = 0;      // The starting offset of the chunk in the storage buffer.
         SizeType_ capacity = 0;    // The maximum number of elements the chunk can hold.
         SizeType_ size = 0;        // The current number of elements in the chunk,
@@ -411,9 +415,9 @@ private:
         ArrayIndex last = InvalidArrayIndex;  // The index of the last chunk in the sequence, or InvalidArrayIndex if none.
     };
 
-    noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
-    noserde::Buffer<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
-    noserde::Buffer<ElementType_, PageSize> data_;  // Underlying element storage.
+    ModelColumn<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
+    ModelColumn<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
+    ModelColumn<ElementType_, PageSize> data_;  // Underlying element storage.
     std::optional<CompactHeadStorage> compactHeads_;
 
     #ifdef ARRAY_ARENA_THREAD_SAFE

@@ -13,13 +13,6 @@ CPMAddPackage(
 # bitsery
 CPMAddPackage("gh:fraillt/bitsery@5.2.4")
 
-# noserde
-CPMAddPackage(
-    URI "gh:josephbirkner/noserde#main"
-    OPTIONS
-        "BUILD_TESTING OFF"
-        "NOSERDE_BUILD_BENCHMARKS OFF")
-
 # tl::expected
 CPMAddPackage(
     URI "gh:TartanLlama/expected@1.1.0"

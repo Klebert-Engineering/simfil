@@ -28,6 +28,7 @@ option(SIMFIL_WITH_REPL       "Build simfil repl" ${MAIN_PROJECT})
 option(SIMFIL_WITH_EXAMPLES   "Build examples" ${MAIN_PROJECT})
 option(SIMFIL_WITH_TESTS      "Build tests" ${MAIN_PROJECT})
 option(SIMFIL_WITH_MODEL_JSON "Include JSON model support" YES)
+option(SIMFIL_VALIDATE_MODEL_COLUMNS "Validate MODEL_COLUMN_TYPE structs" ${MAIN_PROJECT})
 
 find_program(GCOVR_BIN gcovr)
 if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
@@ -51,6 +52,20 @@ if (NOT CPM_INITIALIZED)
   add_subdirectory(cmake/CPM.cmake)
 endif ()
 include(cmake/deps.cmake)
+
+if (SIMFIL_VALIDATE_MODEL_COLUMNS)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(SIMFIL_COLUMN_VALIDATION_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/simfil/model/column.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/simfil/model/nodes.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/simfil/model/arena.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/model/model.cpp")
+  add_custom_target(simfil-column-type-validation
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/column_type_validator.py"
+            ${SIMFIL_COLUMN_VALIDATION_FILES}
+    VERBATIM)
+endif()
 
 #####################
 # Main simfil library
@@ -96,6 +111,7 @@ target_sources(simfil PUBLIC
       include/simfil/exception-handler.h
 
       include/simfil/model/arena.h
+      include/simfil/model/column.h
       include/simfil/model/string-pool.h
       include/simfil/model/model.h
       include/simfil/model/nodes.h
@@ -112,7 +128,6 @@ target_compile_features(simfil
 
 target_link_libraries(simfil
   PUBLIC
-    noserde::runtime
     sfl::sfl
     fmt::fmt
     tl::expected
@@ -155,6 +170,10 @@ if (SIMFIL_WITH_COVERAGE)
 endif()
 
 add_library(simfil::simfil ALIAS simfil)
+
+if (SIMFIL_VALIDATE_MODEL_COLUMNS)
+  add_dependencies(simfil simfil-column-type-validation)
+endif()
 
 #####################
 # Tests / Repl / Examples

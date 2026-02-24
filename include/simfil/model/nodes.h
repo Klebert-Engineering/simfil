@@ -171,6 +171,8 @@ private:
  */
 struct ModelNodeAddress
 {
+    MODEL_COLUMN_TYPE(4);
+
     ModelNodeAddress() = default;
 
     uint32_t value_ = 0;
@@ -215,6 +217,8 @@ namespace detail
 // Keeps the underlying ArrayArena type identical regardless of ModelType.
 struct ObjectField
 {
+    MODEL_COLUMN_TYPE(8);
+
     ObjectField() = default;
     ObjectField(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
     StringId name_ = StringPool::Empty;

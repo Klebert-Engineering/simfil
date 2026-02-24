@@ -17,7 +17,6 @@
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
 #include <bitsery/traits/vector.h>
-#include <noserde.hpp>
 #include <tl/expected.hpp>
 
 #include "../expected.h"
@@ -69,6 +68,8 @@ struct ModelPool::Impl
     }
 
     struct StringRange {
+        MODEL_COLUMN_TYPE(8);
+
         uint32_t offset_;
         uint32_t length_;
     };
@@ -77,13 +78,13 @@ struct ModelPool::Impl
     std::shared_ptr<StringPool> strings_;
 
     struct {
-        noserde::Buffer<ModelNodeAddress, detail::ColumnPageSize> roots_;
-        noserde::Buffer<int64_t, detail::ColumnPageSize> i64_;
-        noserde::Buffer<double, detail::ColumnPageSize> double_;
+        ModelColumn<ModelNodeAddress, detail::ColumnPageSize> roots_;
+        ModelColumn<int64_t, detail::ColumnPageSize> i64_;
+        ModelColumn<double, detail::ColumnPageSize> double_;
 
         std::string stringData_;
-        noserde::Buffer<StringRange, detail::ColumnPageSize> strings_;
-        noserde::Buffer<StringRange, detail::ColumnPageSize> byteArrays_;
+        ModelColumn<StringRange, detail::ColumnPageSize> strings_;
+        ModelColumn<StringRange, detail::ColumnPageSize> byteArrays_;
 
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
