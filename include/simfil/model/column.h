@@ -224,9 +224,6 @@ struct detail::is_vector_storage_policy<vector_column_storage> : std::true_type
 #if defined(SIMFIL_DEFAULT_VECTOR_COLUMN_STORAGE) && SIMFIL_DEFAULT_VECTOR_COLUMN_STORAGE
 template <typename TValue, std::size_t T_PageBytes>
 using default_column_storage = vector_column_storage<TValue, T_PageBytes>;
-#elif defined(NOSERDE_DEFAULT_VECTOR_STORAGE) && NOSERDE_DEFAULT_VECTOR_STORAGE
-template <typename TValue, std::size_t T_PageBytes>
-using default_column_storage = vector_column_storage<TValue, T_PageBytes>;
 #else
 template <typename TValue, std::size_t T_PageBytes>
 using default_column_storage = segmented_column_storage<TValue, T_PageBytes>;

@@ -52,20 +52,7 @@ if (NOT CPM_INITIALIZED)
   add_subdirectory(cmake/CPM.cmake)
 endif ()
 include(cmake/deps.cmake)
-
-if (SIMFIL_VALIDATE_MODEL_COLUMNS)
-  find_package(Python3 COMPONENTS Interpreter REQUIRED)
-  set(SIMFIL_COLUMN_VALIDATION_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/simfil/model/column.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/simfil/model/nodes.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/simfil/model/arena.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/model/model.cpp")
-  add_custom_target(simfil-column-type-validation
-    COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/column_type_validator.py"
-            ${SIMFIL_COLUMN_VALIDATION_FILES}
-    VERBATIM)
-endif()
+include(cmake/column_type_validator.cmake)
 
 #####################
 # Main simfil library
@@ -172,7 +159,9 @@ endif()
 add_library(simfil::simfil ALIAS simfil)
 
 if (SIMFIL_VALIDATE_MODEL_COLUMNS)
-  add_dependencies(simfil simfil-column-type-validation)
+  simfil_enable_column_type_validation(
+    simfil
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/column_type_validator.py")
 endif()
 
 #####################
