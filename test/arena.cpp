@@ -261,7 +261,16 @@ TEST_CASE("ArrayArena singleton-handle storage", "[ArrayArena]")
 {
     ArrayArena<int> arena;
 
-    auto emptySingleton = arena.new_array(1);
+    auto regularSingleCapacity = arena.new_array(1);
+    REQUIRE(!ArrayArena<int>::is_singleton_handle(regularSingleCapacity));
+    arena.push_back(regularSingleCapacity, 7);
+    REQUIRE(arena.size(regularSingleCapacity) == 1);
+    REQUIRE(arena.at(regularSingleCapacity, 0) == 7);
+    arena.push_back(regularSingleCapacity, 8);
+    REQUIRE(arena.size(regularSingleCapacity) == 2);
+    REQUIRE(arena.at(regularSingleCapacity, 1) == 8);
+
+    auto emptySingleton = arena.new_array(1, true);
     REQUIRE(ArrayArena<int>::is_singleton_handle(emptySingleton));
     REQUIRE(arena.size(emptySingleton) == 0);
 
@@ -290,8 +299,9 @@ TEST_CASE("ArrayArena singleton-handle storage", "[ArrayArena]")
             valuesByArray.push_back(value);
         }
 
-        REQUIRE(valuesByArray.size() == 2);
-        REQUIRE(valuesByArray[0] == 1);
-        REQUIRE(valuesByArray[1] == 42);
+        REQUIRE(valuesByArray.size() == 3);
+        REQUIRE(valuesByArray[0] == 7);
+        REQUIRE(valuesByArray[1] == 1);
+        REQUIRE(valuesByArray[2] == 42);
     }
 }

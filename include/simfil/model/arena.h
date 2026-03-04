@@ -104,16 +104,17 @@ public:
      * Creates a new array with the specified initial capacity.
      *
      * @param initialCapacity The initial capacity of the new array.
+     * @param fixedSize If true, allows singleton-handle encoding when initialCapacity is 1.
      * @return The index of the new array.
      */
-    ArrayIndex new_array(size_t initialCapacity)
+    ArrayIndex new_array(size_t initialCapacity, bool fixedSize = false)
     {
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::unique_lock guard(lock_);
         #endif
         ensure_runtime_heads_from_compact();
 
-        if (initialCapacity == 1U) {
+        if (initialCapacity == 1U && fixedSize) {
             auto singletonIndex = to_array_index(singletonValues_.size());
             if (singletonIndex > SingletonArrayHandlePayloadMask) {
                 raise<std::out_of_range>("ArrayArena singleton pool exhausted.");

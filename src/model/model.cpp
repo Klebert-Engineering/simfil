@@ -290,15 +290,15 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
     impl_->columns_.roots_.emplace_back(rootNode->addr_);
 }
 
-model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
+model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     return model_ptr<Object>::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)memberArrId});
 }
 
-model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
+model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
 }
 

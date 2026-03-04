@@ -235,13 +235,13 @@ public:
      * Adopt members from the given vector and obtain a new object
      * model index which has these members.
      */
-    model_ptr<Object> newObject(size_t initialFieldCapacity = 2);
+    model_ptr<Object> newObject(size_t initialFieldCapacity = 2, bool fixedSize = false);
 
     /**
      * Adopt members from the given vector and obtain a new array
      * model index which has these members.
      */
-    model_ptr<Array> newArray(size_t initialFieldCapacity = 2);
+    model_ptr<Array> newArray(size_t initialFieldCapacity = 2, bool fixedSize = false);
 
     /** Add a scalar value and get its new model node index. */
     ModelNode::Ptr newValue(int64_t const& value);
