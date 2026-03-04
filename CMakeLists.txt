@@ -28,7 +28,6 @@ option(SIMFIL_WITH_REPL       "Build simfil repl" ${MAIN_PROJECT})
 option(SIMFIL_WITH_EXAMPLES   "Build examples" ${MAIN_PROJECT})
 option(SIMFIL_WITH_TESTS      "Build tests" ${MAIN_PROJECT})
 option(SIMFIL_WITH_MODEL_JSON "Include JSON model support" YES)
-option(SIMFIL_VALIDATE_MODEL_COLUMNS "Validate MODEL_COLUMN_TYPE structs" ${MAIN_PROJECT})
 
 find_program(GCOVR_BIN gcovr)
 if (SIMFIL_WITH_COVERAGE AND NOT GCOVR_BIN)
@@ -52,7 +51,6 @@ if (NOT CPM_INITIALIZED)
   add_subdirectory(cmake/CPM.cmake)
 endif ()
 include(cmake/deps.cmake)
-include(cmake/column_type_validator.cmake)
 
 #####################
 # Main simfil library
@@ -157,12 +155,6 @@ if (SIMFIL_WITH_COVERAGE)
 endif()
 
 add_library(simfil::simfil ALIAS simfil)
-
-if (SIMFIL_VALIDATE_MODEL_COLUMNS)
-  simfil_enable_column_type_validation(
-    simfil
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/column_type_validator.py")
-endif()
 
 #####################
 # Tests / Repl / Examples
