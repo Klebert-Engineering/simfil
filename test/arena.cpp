@@ -16,8 +16,8 @@ TEST_CASE("ArrayArena basic functionality", "[ArrayArena]") {
         ArrayIndex array1 = arena.new_array(2);
         ArrayIndex array2 = arena.new_array(4);
 
-        REQUIRE(array1 == 0);
-        REQUIRE(array2 == 1);
+        REQUIRE(array1 == FirstRegularArrayIndex);
+        REQUIRE(array2 == FirstRegularArrayIndex + 1);
     }
 
     SECTION("size") {
@@ -74,7 +74,7 @@ TEST_CASE("ArrayArena clear and shrink_to_fit", "[ArrayArena]") {
     SECTION("clear") {
         arena.clear();
         ArrayIndex array2 = arena.new_array(2);
-        REQUIRE(array2 == 0);
+        REQUIRE(array2 == FirstRegularArrayIndex);
         REQUIRE(!arena.at(array1, 0));
         REQUIRE(arena.at(array1, 0).error().type == Error::IndexOutOfRange);
     }
@@ -98,31 +98,32 @@ TEST_CASE("ArrayArena multiple arrays", "[ArrayArena]") {
     };
 
     // Interleave pushing array elements for maximum fragmentation
+    std::vector<ArrayIndex> arrayIndices(expected.size(), InvalidArrayIndex);
     for (auto j = 0; j < expected[0].size(); j+=2) {
         for (auto i = 0; i < expected.size(); ++i) {
             if (j == 0)
-                arena.new_array(1);
-            arena.push_back(i, expected[i][j]);
-            arena.push_back(i, expected[i][j+1]);
+                arrayIndices[i] = arena.new_array(2);
+            arena.push_back(arrayIndices[i], expected[i][j]);
+            arena.push_back(arrayIndices[i], expected[i][j+1]);
         }
     }
 
     SECTION("accessing elements") {
-        REQUIRE(arena.at(0, 0) == 10);
-        REQUIRE(arena.at(0, 1) == 11);
-        REQUIRE(arena.at(0, 2) == 12);
-        REQUIRE(arena.at(1, 0) == 20);
-        REQUIRE(arena.at(1, 1) == 21);
-        REQUIRE(arena.at(1, 2) == 22);
-        REQUIRE(arena.at(1, 3) == 23);
+        REQUIRE(arena.at(arrayIndices[0], 0) == 10);
+        REQUIRE(arena.at(arrayIndices[0], 1) == 11);
+        REQUIRE(arena.at(arrayIndices[0], 2) == 12);
+        REQUIRE(arena.at(arrayIndices[1], 0) == 20);
+        REQUIRE(arena.at(arrayIndices[1], 1) == 21);
+        REQUIRE(arena.at(arrayIndices[1], 2) == 22);
+        REQUIRE(arena.at(arrayIndices[1], 3) == 23);
     }
 
     SECTION("range-based for loop for multiple arrays") {
         std::vector<std::vector<int>> result = {{}, {}};
-        for (auto value : arena.range(0)) {
+        for (auto value : arena.range(arrayIndices[0])) {
             result[0].push_back(value);
         }
-        for (auto value : arena.range(1)) {
+        for (auto value : arena.range(arrayIndices[1])) {
             result[1].push_back(value);
         }
         REQUIRE(result[0] == expected[0]);
@@ -144,7 +145,7 @@ TEST_CASE("ArrayArena multiple arrays", "[ArrayArena]") {
 
 TEST_CASE("ArrayArena::iterate") {
     ArrayArena<int> arena;
-    ArrayIndex a = arena.new_array(1);
+    ArrayIndex a = arena.new_array(2);
     for (size_t i = 0; i < 10; ++i) {
         arena.push_back(a, static_cast<int>(i*2));
     }
@@ -187,7 +188,7 @@ TEST_CASE("ArrayArena Concurrency", "[ArrayArena]") {
     auto thread_func = [&]() {
         // Random delay to increase the chances of concurrency issues
         std::this_thread::sleep_for(std::chrono::nanoseconds(rand() % 100));  // NOLINT (rand() is safe here)
-        auto array_index = arena.new_array(1);  // Minimal initial capacity for maximal fragmentation
+        auto array_index = arena.new_array(2);  // Minimal regular-array capacity for maximal fragmentation
         for (size_t i = 0; i < num_iterations; ++i) {
             arena.push_back(array_index, static_cast<int>(i));
             std::this_thread::sleep_for(std::chrono::nanoseconds(rand() % 100));  // NOLINT
@@ -253,5 +254,44 @@ TEST_CASE("ArrayArena serialization and deserialization") {
 
     for (size_t i = 0; i < arena.size(array2); ++i) {
         REQUIRE(arena.at(array2, i) == deserializedArena.at(array2, i));
+    }
+}
+
+TEST_CASE("ArrayArena singleton-handle storage", "[ArrayArena]")
+{
+    ArrayArena<int> arena;
+
+    auto emptySingleton = arena.new_array(1);
+    REQUIRE(ArrayArena<int>::is_singleton_handle(emptySingleton));
+    REQUIRE(arena.size(emptySingleton) == 0);
+
+    arena.push_back(emptySingleton, 42);
+    REQUIRE(arena.size(emptySingleton) == 1);
+    REQUIRE(arena.at(emptySingleton, 0) == 42);
+    REQUIRE(!arena.at(emptySingleton, 1));
+
+    REQUIRE_THROWS(arena.push_back(emptySingleton, 43));
+
+    auto regular = arena.new_array(4);
+    REQUIRE(!ArrayArena<int>::is_singleton_handle(regular));
+    arena.push_back(regular, 1);
+    arena.push_back(regular, 2);
+    REQUIRE(arena.size(regular) == 2);
+    REQUIRE(arena.at(regular, 1) == 2);
+
+    SECTION("iterating over all arrays includes singleton handles")
+    {
+        std::vector<int> valuesByArray;
+        for (auto const& arr : arena) {
+            int value = -1;
+            if (arr.size() > 0) {
+                value = arr[0].value();
+            }
+            valuesByArray.push_back(value);
+        }
+
+        REQUIRE(valuesByArray.size() == 2);
+        REQUIRE(valuesByArray[0] == 1);
+        REQUIRE(valuesByArray[1] == 42);
     }
 }

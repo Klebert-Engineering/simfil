@@ -121,7 +121,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
     std::vector<std::string> errors;
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
-        if ((i < 0) || (i >= arena.size())) {
+        if (!arena.valid(static_cast<ArrayIndex>(i))) {
             errors.emplace_back(fmt::format("Bad {} array index {}.", arrType, i));
             return false;
         }
@@ -447,7 +447,17 @@ Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
 
+Object::Storage const& ModelPool::objectMemberStorage() const
+{
+    return impl_->columns_.objectMemberArrays_;
+}
+
 Array::Storage& ModelPool::arrayMemberStorage() {
+    return impl_->columns_.arrayMemberArrays_;
+}
+
+Array::Storage const& ModelPool::arrayMemberStorage() const
+{
     return impl_->columns_.arrayMemberArrays_;
 }
 

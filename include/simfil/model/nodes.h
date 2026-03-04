@@ -539,7 +539,7 @@ protected:
     using MandatoryDerivedModelNodeBase<ModelType>::model;
 
     Storage* storage_ = nullptr;
-    ArrayIndex members_ = 0;
+    ArrayIndex members_ = InvalidArrayIndex;
 };
 
 /** Model Node for a mixed-type array. */
@@ -610,7 +610,7 @@ protected:
     addFieldInternal(std::string_view const& name, ModelNode::Ptr const& value={});
 
     Storage* storage_ = nullptr;
-    ArrayIndex members_ = 0;
+    ArrayIndex members_ = InvalidArrayIndex;
 };
 
 /** Model Node for an object. */

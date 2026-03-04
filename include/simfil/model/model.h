@@ -12,7 +12,6 @@
 #include <string_view>
 #include <vector>
 #include <type_traits>
-#include <vector>
 #include <utility>
 #include <cassert>
 #include <istream>
@@ -305,7 +304,9 @@ protected:
      * so derived ModelPools can create Object/Array-derived nodes.
      */
     Object::Storage& objectMemberStorage();
+    [[nodiscard]] Object::Storage const& objectMemberStorage() const;
     Array::Storage& arrayMemberStorage();
+    [[nodiscard]] Array::Storage const& arrayMemberStorage() const;
 };
 
 }
