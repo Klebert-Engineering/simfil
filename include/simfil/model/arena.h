@@ -12,6 +12,8 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <tl/expected.hpp>
 #include "simfil/model/column.h"
 
@@ -59,6 +61,12 @@ class ArrayArena
 public:
     using ElementType = ElementType_;
     using SizeType = SizeType_;
+    using DataStorage = ModelColumn<ElementType_, PageSize>;
+    using DataWriteRef = decltype(std::declval<DataStorage&>()[std::declval<size_t>()]);
+    using DataReadRef = decltype(std::declval<DataStorage const&>()[std::declval<size_t>()]);
+    using AtValue = detail::arena_access_result_t<DataWriteRef>;
+    using ConstAtValue = detail::arena_access_result_t<DataReadRef>;
+
     struct SingletonStats
     {
         size_t handleCount = 0;
@@ -175,7 +183,7 @@ public:
         const auto singletonStorageBytes =
             singletonValues_.byte_size() + singletonOccupied_.byte_size();
         const auto hypotheticalRegularBytes =
-            handleCount * sizeof(CompactArrayChunk) + occupiedCount * sizeof(ElementType_);
+            handleCount * sizeof(CompactArrayChunk) + occupiedCount * DataStorage::record_size;
 
         return SingletonStats{
             .handleCount = handleCount,
@@ -246,7 +254,7 @@ public:
         }
         auto result = heads_.size() * sizeof(CompactArrayChunk);
         for (auto const& head : heads_) {
-            result += head.size * sizeof(ElementType_);
+            result += head.size * DataStorage::record_size;
         }
         return result + singletonBytes;
     }
@@ -259,13 +267,13 @@ public:
      * @return A reference to the element at the specified index.
      * @throws std::out_of_range if the index is out of the array bounds.
      */
-    tl::expected<std::reference_wrapper<ElementType_>, Error>
+    tl::expected<AtValue, Error>
     at(ArrayIndex a, size_t i) {
-        return at_impl<ElementType_>(*this, a, i);
+        return at_impl<ArrayArena, AtValue>(*this, a, i);
     }
-    tl::expected<std::reference_wrapper<const ElementType_>, Error>
+    tl::expected<ConstAtValue, Error>
     at(ArrayIndex a, size_t i) const {
-        return at_impl<ElementType_ const>(*this, a, i);
+        return at_impl<ArrayArena const, ConstAtValue>(*this, a, i);
     }
 
     /**
@@ -275,7 +283,7 @@ public:
      * @param data The element to be appended.
      * @return A reference to the appended element.
      */
-    ElementType_& push_back(ArrayIndex a, ElementType_ const& data)
+    DataWriteRef push_back(ArrayIndex a, ElementType_ const& data)
     {
         if (is_singleton_handle(a)) {
             #ifdef ARRAY_ARENA_THREAD_SAFE
@@ -301,7 +309,7 @@ public:
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
         #endif
-        auto& elem = data_[updatedLast.offset + updatedLast.size];
+        auto&& elem = data_[updatedLast.offset + updatedLast.size];
         elem = data;
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
@@ -319,7 +327,7 @@ public:
      * @return A reference to the appended element.
      */
     template <typename... Args>
-    ElementType_& emplace_back(ArrayIndex a, Args&&... args)
+    DataWriteRef emplace_back(ArrayIndex a, Args&&... args)
     {
         if (is_singleton_handle(a)) {
             #ifdef ARRAY_ARENA_THREAD_SAFE
@@ -345,8 +353,8 @@ public:
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
         #endif
-        auto& elem = data_[updatedLast.offset + updatedLast.size];
-        new (&elem) ElementType_(std::forward<Args>(args)...);
+        auto&& elem = data_[updatedLast.offset + updatedLast.size];
+        elem = ElementType_(std::forward<Args>(args)...);
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
@@ -415,20 +423,21 @@ public:
     template<typename T, bool is_const>
     class ArrayIterator {
         using ArrayArenaRef = std::conditional_t<is_const, const ArrayArena&, ArrayArena&>;
-        using ElementRef = std::conditional_t<is_const, const T&, T&>;
+        using AtExpected = decltype(std::declval<ArrayArenaRef>().at(std::declval<ArrayIndex>(), std::declval<size_t>()));
+        using ElementAccess = std::remove_cvref_t<decltype(std::declval<AtExpected&>().value())>;
         friend class ArrayRange;
 
     public:
         using iterator_category = std::input_iterator_tag;
         using value_type = T;
         using difference_type = std::ptrdiff_t;
-        using pointer = value_type*;
-        using reference = ElementRef;
+        using pointer = void;
+        using reference = ElementAccess;
 
         ArrayIterator(ArrayArenaRef arena, ArrayIndex array_index, size_t elem_index)
             : arena_(arena), array_index_(array_index), elem_index_(elem_index) {}
 
-        ElementRef operator*() noexcept {
+        reference operator*() noexcept {
             auto res = arena_.at(array_index_, elem_index_);
             assert(res);
             // Unchecked access!
@@ -598,14 +607,9 @@ public:
             if (singletonOccupied_.at(singletonIndex) == 0) {
                 return;
             }
-            if constexpr (std::is_invocable_r_v<bool, Func, ElementType_&>) {
-                (void)lambda(singletonValues_.at(singletonIndex));
-            }
-            else if constexpr (std::is_invocable_v<Func, ElementType_&, size_t>) {
-                lambda(singletonValues_.at(singletonIndex), 0);
-            }
-            else {
-                lambda(singletonValues_.at(singletonIndex));
+            decltype(auto) value = singletonValues_.at(singletonIndex);
+            if (!invoke_iter_callback(lambda, value, 0)) {
+                return;
             }
             return;
         }
@@ -617,15 +621,9 @@ public:
             auto const& compact = (*compactHeads_)[a];
             for (size_t i = 0; i < static_cast<size_t>(compact.size); ++i)
             {
-                if constexpr (std::is_invocable_r_v<bool, Func, ElementType_&>) {
-                    if (!lambda(data_[static_cast<size_t>(compact.offset) + i]))
-                        return;
-                }
-                else if constexpr (std::is_invocable_v<Func, ElementType_&, size_t>) {
-                    lambda(data_[static_cast<size_t>(compact.offset) + i], i);
-                }
-                else {
-                    lambda(data_[static_cast<size_t>(compact.offset) + i]);
+                decltype(auto) value = data_[static_cast<size_t>(compact.offset) + i];
+                if (!invoke_iter_callback(lambda, value, i)) {
+                    return;
                 }
             }
             return;
@@ -640,17 +638,10 @@ public:
         {
             for (size_t i = 0; i < current->size && i < current->capacity; ++i)
             {
-                if constexpr (std::is_invocable_r_v<bool, Func, ElementType_&>) {
-                    // If lambda returns bool, break if it returns false
-                    if (!lambda(data_[current->offset + i]))
-                        return;
+                decltype(auto) value = data_[current->offset + i];
+                if (!invoke_iter_callback(lambda, value, globalIndex)) {
+                    return;
                 }
-                else if constexpr (std::is_invocable_v<Func, ElementType_&, size_t>) {
-                    // If lambda takes two arguments, pass the current index
-                    lambda(data_[current->offset + i], globalIndex);
-                }
-                else
-                    lambda(data_[current->offset + i]);
                 ++globalIndex;
             }
             current = (current->next != InvalidArrayIndex) ? &continuations_[current->next] : nullptr;
@@ -674,8 +665,8 @@ private:
 
     ModelColumn<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
     ModelColumn<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
-    ModelColumn<ElementType_, PageSize> data_;  // Underlying element storage.
-    ModelColumn<ElementType_, PageSize> singletonValues_;
+    DataStorage data_;  // Underlying element storage.
+    DataStorage singletonValues_;
     ModelColumn<uint8_t, PageSize> singletonOccupied_;
     std::optional<CompactHeadStorage> compactHeads_;
 
@@ -689,6 +680,26 @@ private:
             raise<std::out_of_range>("ArrayArena index exceeds address space.");
         }
         return static_cast<ArrayIndex>(value);
+    }
+
+    template <typename Func, typename Value>
+    static bool invoke_iter_callback(Func&& lambda, Value&& value, size_t index)
+    {
+        using Arg = decltype(value);
+        if constexpr (std::is_invocable_r_v<bool, Func, Arg>) {
+            return lambda(std::forward<Value>(value));
+        } else if constexpr (std::is_invocable_v<Func, Arg, size_t>) {
+            lambda(std::forward<Value>(value), index);
+            return true;
+        } else if constexpr (std::is_invocable_v<Func, Arg>) {
+            lambda(std::forward<Value>(value));
+            return true;
+        } else {
+            static_assert(
+                std::is_invocable_v<Func, Arg>,
+                "ArrayArena::iterate callback must accept (value) or (value, index), optionally returning bool");
+            return false;
+        }
     }
 
     void ensure_regular_head_pool()
@@ -789,8 +800,8 @@ private:
         return continuations_[newIndex];
     }
 
-    template <typename ElementTypeRef, typename Self>
-    static tl::expected<std::reference_wrapper<ElementTypeRef>, Error>
+    template <typename Self, typename AccessType>
+    static tl::expected<AccessType, Error>
     at_impl(Self& self, ArrayIndex a, size_t i)
     {
         #ifdef ARRAY_ARENA_THREAD_SAFE
@@ -805,7 +816,7 @@ private:
             if (self.singletonOccupied_.at(singletonIndex) == 0 || i > 0) {
                 return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
             }
-            return self.singletonValues_.at(singletonIndex);
+            return detail::arena_access_wrap(self.singletonValues_.at(singletonIndex));
         }
 
         if (self.heads_.empty() && self.compactHeads_) {
@@ -813,8 +824,9 @@ private:
                 return tl::unexpected<Error>(Error::IndexOutOfRange, "array index out of range");
             }
             auto const& compact = (*self.compactHeads_)[a];
-            if (i < static_cast<size_t>(compact.size))
-                return self.data_[static_cast<size_t>(compact.offset) + i];
+            if (i < static_cast<size_t>(compact.size)) {
+                return detail::arena_access_wrap(self.data_[static_cast<size_t>(compact.offset) + i]);
+            }
             return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
         }
 
@@ -825,8 +837,9 @@ private:
         typename Self::Chunk const* current = &self.heads_[a];
         size_t remaining = i;
         while (true) {
-            if (remaining < current->capacity && remaining < current->size)
-                return self.data_[current->offset + remaining];
+            if (remaining < current->capacity && remaining < current->size) {
+                return detail::arena_access_wrap(self.data_[current->offset + remaining]);
+            }
             if (current->next == InvalidArrayIndex)
                 return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
             remaining -= current->capacity;

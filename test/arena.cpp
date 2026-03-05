@@ -305,3 +305,79 @@ TEST_CASE("ArrayArena singleton-handle storage", "[ArrayArena]")
         REQUIRE(valuesByArray[2] == 42);
     }
 }
+
+TEST_CASE("ModelColumn supports split TwoPart storage", "[ModelColumn][TwoPart]")
+{
+    using Pair = TwoPart<uint16_t, uint32_t>;
+    ModelColumn<Pair, 8> column;
+
+    column.emplace_back(10u, 100u);
+    column.emplace_back(11u, 200u);
+    column.push_back(Pair{12u, 300u});
+
+    REQUIRE(column.size() == 3);
+    REQUIRE(column.byte_size() == 3 * (sizeof(uint16_t) + sizeof(uint32_t)));
+    REQUIRE(column.at(0).first() == 10u);
+    REQUIRE(column.at(0).second() == 100u);
+    REQUIRE(column.at(2).first() == 12u);
+    REQUIRE(column.at(2).second() == 300u);
+
+    using Buffer = std::vector<uint8_t>;
+    using OutputAdapter = bitsery::OutputBufferAdapter<Buffer>;
+    using InputAdapter = bitsery::InputBufferAdapter<Buffer>;
+    Buffer buffer;
+    auto writtenSize = bitsery::quickSerialization<OutputAdapter>(buffer, column);
+
+    ModelColumn<Pair, 8> restored;
+    auto state = bitsery::quickDeserialization<InputAdapter>(
+        {buffer.begin(), writtenSize},
+        restored);
+
+    REQUIRE(state.first == bitsery::ReaderError::NoError);
+    REQUIRE(state.second);
+    REQUIRE(restored.size() == column.size());
+    REQUIRE(restored.at(0).first() == 10u);
+    REQUIRE(restored.at(0).second() == 100u);
+    REQUIRE(restored.at(1).first() == 11u);
+    REQUIRE(restored.at(1).second() == 200u);
+    REQUIRE(restored.at(2).first() == 12u);
+    REQUIRE(restored.at(2).second() == 300u);
+}
+
+TEST_CASE("ArrayArena supports TwoPart element storage", "[ArrayArena][TwoPart]")
+{
+    using Pair = TwoPart<uint16_t, uint32_t>;
+    ArrayArena<Pair> arena;
+
+    auto regular = arena.new_array(2);
+    arena.emplace_back(regular, 1u, 10u);
+    arena.emplace_back(regular, 2u, 20u);
+    arena.emplace_back(regular, 3u, 30u);
+
+    REQUIRE(arena.size(regular) == 3);
+    auto first = arena.at(regular, 0);
+    REQUIRE(first);
+    REQUIRE(first->first() == 1u);
+    REQUIRE(first->second() == 10u);
+
+    auto third = arena.at(regular, 2);
+    REQUIRE(third);
+    REQUIRE(third->first() == 3u);
+    REQUIRE(third->second() == 30u);
+
+    auto singleton = arena.new_array(1, true);
+    arena.push_back(singleton, Pair{7u, 70u});
+    auto singletonValue = arena.at(singleton, 0);
+    REQUIRE(singletonValue);
+    REQUIRE(singletonValue->first() == 7u);
+    REQUIRE(singletonValue->second() == 70u);
+
+    size_t visited = 0;
+    arena.iterate(regular, [&](auto&& value, size_t index) {
+        REQUIRE(value.first() == static_cast<uint16_t>(index + 1));
+        REQUIRE(value.second() == static_cast<uint32_t>((index + 1) * 10));
+        ++visited;
+        return true;
+    });
+    REQUIRE(visited == 3);
+}

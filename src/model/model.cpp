@@ -412,11 +412,11 @@ auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::ex
 
     // Translate object field IDs to the new dictionary.
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
-        for (auto& member : memberArray) {
-            if (auto resolvedName = oldStrings->resolve(member.name_)) {
+        for (auto member : memberArray) {
+            if (auto resolvedName = oldStrings->resolve(detail::objectFieldName(member))) {
                 auto stringId = strings->emplace(*resolvedName);
                 TRY_EXPECTED(stringId);
-                member.name_ = *stringId;
+                detail::objectFieldName(member) = *stringId;
             }
         }
     }
