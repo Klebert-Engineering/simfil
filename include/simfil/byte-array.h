@@ -114,7 +114,6 @@ struct ByteArray
         return out;
     }
 
-private:
     [[nodiscard]] static auto decodeHexNibble(char c) -> int
     {
         if ('0' <= c && c <= '9')
