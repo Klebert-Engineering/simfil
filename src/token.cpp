@@ -25,17 +25,6 @@ std::string downcase(std::string s)
     return s;
 }
 
-auto decodeHexNibble(char c) -> int
-{
-    if ('0' <= c && c <= '9')
-        return c - '0';
-    if ('a' <= c && c <= 'f')
-        return c - 'a' + 10;
-    if ('A' <= c && c <= 'F')
-        return c - 'A' + 10;
-    return -1;
-}
-
 }
 
 namespace simfil
@@ -306,8 +295,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
                         text.push_back('\\');
                 } else {
                     if (bytes && (s.at(0) == 'x' || s.at(0) == 'X')) {
-                        const auto upper = decodeHexNibble(s.at(1));
-                        const auto lower = decodeHexNibble(s.at(2));
+                        const auto upper = ByteArray::decodeHexNibble(s.at(1));
+                        const auto lower = ByteArray::decodeHexNibble(s.at(2));
                         if (upper < 0 || lower < 0) {
                             s.fail("Invalid hex escape sequence");
                             return {};
@@ -511,6 +500,8 @@ auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
         else if (auto t = scanSyntax(s))
             tokens.push_back(std::move(*t));
         else {
+            if (s.hasError() && s.error().message.rfind("Invalid hex escape sequence", 0) == 0)
+                return unexpected<Error>(std::move(s.error()));
             if (s.at(0) != '\0')
                 return unexpected<Error>(s.fail("Invalid input"));
         }
