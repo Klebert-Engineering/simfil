@@ -110,16 +110,26 @@ struct model_ptr
     model_ptr& operator=(model_ptr&&) = default;
 
     template<typename OtherT>
-    model_ptr(model_ptr<OtherT> const& other) : data_(other.data_) {}  // NOLINT
+    requires std::derived_from<OtherT, T>
+    model_ptr(model_ptr<OtherT> const& other) : data_(static_cast<T const&>(other.data_)) {}  // NOLINT
 
     template<typename OtherT>
-    model_ptr(model_ptr<OtherT>&& other) : data_(std::move(other.data_)) {}  // NOLINT
+    requires std::derived_from<OtherT, T>
+    model_ptr(model_ptr<OtherT>&& other) : data_(static_cast<T const&>(other.data_)) {}  // NOLINT
 
     template<typename OtherT>
-    model_ptr& operator= (model_ptr<OtherT> const& other) {data_ = other.data_; return *this;}
+    requires std::derived_from<OtherT, T>
+    model_ptr& operator= (model_ptr<OtherT> const& other) {
+        data_ = static_cast<T const&>(other.data_);
+        return *this;
+    }
 
     template<typename OtherT>
-    model_ptr& operator= (model_ptr<OtherT>&& other) {data_ = std::move(other.data_); return *this;}
+    requires std::derived_from<OtherT, T>
+    model_ptr& operator= (model_ptr<OtherT>&& other) {
+        data_ = static_cast<T const&>(other.data_);
+        return *this;
+    }
 
     template<typename... Args>
     explicit model_ptr(std::in_place_t, Args&&... args)
