@@ -48,7 +48,8 @@ constexpr static ArrayIndex SingletonArrayHandlePayloadMask = 0x007fffffu;
  * forward-linked array chunks. When an array grows beyond the current capacity c
  * of its current last chunk, a new chunk of size c*2 is allocated and becomes
  * the new last chunk. This is then set as linked to the previous last chunk.
- * Usually, appending will be lock-free, and only growth needs the lock.
+ * Without ARRAY_ARENA_THREAD_SAFE, appending is lock-free. With it enabled,
+ * reads use shared locks while mutations take a write lock.
  *
  * @tparam ElementType_ The type of elements stored in the arrays.
  * @tparam PageSize The number of elements that each storage page can store.
@@ -305,11 +306,11 @@ public:
             return singletonValues_.at(singletonIndex);
         }
 
-        Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
         #ifdef ARRAY_ARENA_THREAD_SAFE
-        std::shared_lock guard(lock_);
+        std::unique_lock guard(lock_);
         #endif
-        auto&& elem = data_[updatedLast.offset + updatedLast.size];
+        Chunk& updatedLast = ensure_capacity_and_get_last_chunk_unlocked(a);
+        DataWriteRef elem = data_[updatedLast.offset + updatedLast.size];
         elem = data;
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
@@ -349,11 +350,11 @@ public:
             return singletonValues_.at(singletonIndex);
         }
 
-        Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
         #ifdef ARRAY_ARENA_THREAD_SAFE
-        std::shared_lock guard(lock_);
+        std::unique_lock guard(lock_);
         #endif
-        auto&& elem = data_[updatedLast.offset + updatedLast.size];
+        Chunk& updatedLast = ensure_capacity_and_get_last_chunk_unlocked(a);
+        DataWriteRef elem = data_[updatedLast.offset + updatedLast.size];
         elem = ElementType_(std::forward<Args>(args)...);
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
@@ -407,10 +408,6 @@ public:
      */
     [[nodiscard]] bool is_compact() const {
         return compactHeads_.has_value();
-    }
-
-    [[nodiscard]] bool isCompact() const {
-        return is_compact();
     }
 
     // Iterator-related types and functions
@@ -746,34 +743,15 @@ private:
      * @param a The index of the array.
      * @return A reference to the last chunk of the array, after ensuring there's capacity.
      */
-    Chunk& ensure_capacity_and_get_last_chunk(ArrayIndex a)
+    // Caller must hold the write lock when ARRAY_ARENA_THREAD_SAFE is enabled.
+    Chunk& ensure_capacity_and_get_last_chunk_unlocked(ArrayIndex a)
     {
         if (is_singleton_handle(a)) {
             raise<std::runtime_error>("Singleton handles do not use chunk growth.");
         }
 
-        #ifndef ARRAY_ARENA_THREAD_SAFE
         ensure_runtime_heads_from_compact();
         ensure_regular_head_pool();
-        #endif
-
-        #ifdef ARRAY_ARENA_THREAD_SAFE
-        std::shared_lock read_guard(lock_);
-        if (heads_.empty() && compactHeads_) {
-            read_guard.unlock();
-            std::unique_lock write_guard(lock_);
-            ensure_runtime_heads_from_compact();
-            write_guard.unlock();
-            read_guard.lock();
-        }
-        if (heads_.empty()) {
-            read_guard.unlock();
-            std::unique_lock write_guard(lock_);
-            ensure_regular_head_pool();
-            write_guard.unlock();
-            read_guard.lock();
-        }
-        #endif
         if (a >= heads_.size()) {
             raise<std::out_of_range>("ArrayArena head index out of range.");
         }
@@ -781,10 +759,6 @@ private:
         Chunk& last = (head.last == InvalidArrayIndex) ? head : continuations_[head.last];
         if (last.size < last.capacity)
             return last;
-        #ifdef ARRAY_ARENA_THREAD_SAFE
-        read_guard.unlock();
-        std::unique_lock guard(lock_);
-        #endif
         size_t offset = data_.size();
         size_t newCapacity = std::max((SizeType_)2, (SizeType_)last.capacity * 2);
         data_.resize(offset + newCapacity);

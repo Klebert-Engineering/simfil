@@ -60,7 +60,7 @@ struct ArrayArenaExt
         (void)fnc;
 
         // If the arena is already compact, we can simply dump out heads and data
-        if (arena.isCompact()) {
+        if (arena.is_compact()) {
             s.object(*arena.compactHeads_);
             s.object(arena.data_);
             s.object(arena.singletonValues_);

@@ -49,12 +49,12 @@ struct TwoPart
     second_type second_{};
 
     TwoPart() = default;
-    TwoPart(first_type const& first, second_type const& second)
-        : first_(first), second_(second)
-    {
-    }
-    TwoPart(first_type&& first, second_type&& second)
-        : first_(std::move(first)), second_(std::move(second))
+
+    template <class A, class B>
+        requires std::constructible_from<first_type, A&&> &&
+                 std::constructible_from<second_type, B&&>
+    TwoPart(A&& first, B&& second)
+        : first_(std::forward<A>(first)), second_(std::forward<B>(second))
     {
     }
 
