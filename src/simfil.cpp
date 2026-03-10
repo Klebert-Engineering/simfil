@@ -124,7 +124,7 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
         return nullptr;
 
     std::deque<Value> values;
-    auto stub = Context(env, Context::Phase::Compilation);
+    auto stub = Context(env, nullptr, Context::Phase::Compilation);
     auto res = (*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable {
         n += 1;
         if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.nodePtr())) {
@@ -888,7 +888,7 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
             showComparisonWildcardHint = true;
     }
 
-    Context ctx(&env);
+    Context ctx(&env, nullptr);
     if (options.timeoutMs > 0)
         ctx.timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeoutMs);
 
@@ -929,9 +929,14 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     if (!node.model_)
         return unexpected<Error>(Error::NullModel, "ModelNode must have a model!");
 
-    Context ctx(&env);
+    // For thread-safety we work on a local diagnostics object that gets merged
+    // into diag after query evaluation.
+    Diagnostics localDiag;
+    localDiag.prepareIndizes(ast.expr());
 
-    auto mutableAST = ast.expr().clone();
+    Context ctx(&env, &localDiag);
+
+    auto mutableAST = &ast.expr(); // TODO: make const again!
 
     std::vector<Value> values;
     auto res = mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&values](Context, Value&& value) {
@@ -940,9 +945,9 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     }));
     TRY_EXPECTED(res);
 
-    if (diag) {
-        diag->collect(*mutableAST);
-    }
+    // Merge diagnostics
+    if (diag)
+        diag->append(localDiag);
 
     return values;
 }

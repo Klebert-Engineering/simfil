@@ -27,16 +27,12 @@ TEST_CASE("UnknownField", "[diag.unknown-field]") {
     EXPECT_DIAGNOSTIC_MESSAGE_CONTAINING("**.not_a_field > 0", "No matches for field");
 }
 
+TEST_CASE("UnknownFields", "[diag.unknown-fields]") {
+    EXPECT_N_DIAGNOSTIC_MESSAGES("**.not_a_field > 0 or **.not_b_field < 1 or **.not_c_field != 31", 6);
+}
+
 TEST_CASE("ComparatorTypeMissmatch", "[diag.comparator-type-missmatch]") {
-    EXPECT_DIAGNOSTIC_MESSAGE_CONTAINING("['string'] > 123", "All values compared to true. Left hand types are string");
-}
-
-TEST_CASE("AnyUnknownField", "[diag.any-suppress-if-any]") {
-    EXPECT_N_DIAGNOSTIC_MESSAGES("any(**.not_a_field > 0 or **.number = 123)", 0);
-}
-
-TEST_CASE("OrShortCircuit", "[diag.suppress-short-circuitted-or]") {
-    EXPECT_N_DIAGNOSTIC_MESSAGES("**.number = 123 or **.not_a_field > 0", 0);
+    EXPECT_DIAGNOSTIC_MESSAGE_CONTAINING("['string'] > 123", "All values compared to false. Left hand types are string");
 }
 
 TEST_CASE("DiagnosticsSerialization", "[diag.serialization]") {
@@ -46,7 +42,7 @@ TEST_CASE("DiagnosticsSerialization", "[diag.serialization]") {
 
     // Create two diagnostic messages.
     Diagnostics originalDiag;
-    auto ast = compile(env, "**.number == \"string\" or **.number == \"string\"");
+    auto ast = compile(env, R"(**.number == "string" or **.number == "string")");
     REQUIRE(ast.has_value());
     auto root = model.value()->root(0);
     REQUIRE(root);

@@ -5,6 +5,7 @@
 #include "simfil/result.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
+#include "simfil/diagnostics.h"
 
 #include "fmt/core.h"
 #include "fmt/ranges.h"
@@ -198,18 +199,12 @@ auto AnyChildExpr::toString() const -> std::string
 FieldExpr::FieldExpr(ExprId id, std::string name)
     : Expr(id)
     , name_(std::move(name))
-{
-    if (name_ == "_")
-        hits_ = 1;
-}
+{}
 
 FieldExpr::FieldExpr(ExprId id, std::string name, const Token& token)
     : Expr(id, token)
     , name_(std::move(name))
-{
-    if (name_ == "_")
-        hits_ = 1;
-}
+{}
 
 auto FieldExpr::type() const -> Type
 {
@@ -223,15 +218,26 @@ auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl:
 
 auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
 {
-    if (ctx.phase != Context::Compilation)
-        evaluations_++;
+    Diagnostics::FieldExprData* diag = nullptr;
+    if (ctx.diag)
+        diag = &ctx.diag->get<Diagnostics::FieldExprData>(*this);
+
+    if (diag) {
+        diag->evaluations++;
+        diag->location = sourceLocation();
+        if (diag->name.empty())
+            diag->name = name_;
+    }
 
     if (val.isa(ValueType::Undef))
         return res(ctx, std::move(val));
 
     /* Special case: _ points to the current node */
-    if (name_ == "_")
+    if (name_ == "_") {
+        if (diag)
+            diag->hits++;
         return res(ctx, std::move(val));
+    }
 
     if (!val.node())
         return res(ctx, Value::null());
@@ -246,9 +252,8 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expe
 
     /* Enter sub-node */
     if (auto sub = val.node()->get(nameId_)) {
-        //if (ctx.diag)
-        //    ctx.diag->get<FieldExprDiagnostics>(id()).hits++;
-        hits_++;
+        if (diag)
+            diag->hits++;
         return res(ctx, Value::field(*sub));
     }
 
@@ -975,15 +980,12 @@ auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::ex
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
-        ++leftEvaluations_;
-
         auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
         TRY_EXPECTED(v);
         if (v->isa(ValueType::Bool))
             if (v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
-        ++rightEvaluations_;
         return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value&& rval) {
             return res(ctx, std::move(rval));
         }));
@@ -1004,174 +1006,6 @@ auto OrExpr::clone() const -> ExprPtr
 auto OrExpr::toString() const -> std::string
 {
     return fmt::format("(or {} {})", left_->toString(), right_->toString());
-}
-
-void ExprVisitor::visit(Expr& e)
-{
-    index_++;
-}
-
-void ExprVisitor::visit(WildcardExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(AnyChildExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(MultiConstExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(ConstExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(SubscriptExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.index_)
-        expr.index_->accept(*this);
-}
-
-void ExprVisitor::visit(SubExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.sub_)
-        expr.sub_->accept(*this);
-}
-
-void ExprVisitor::visit(AnyExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    for (const auto& arg : expr.args_)
-        if (arg)
-            arg->accept(*this);
-}
-
-void ExprVisitor::visit(EachExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    for (const auto& arg : expr.args_)
-        if (arg)
-            arg->accept(*this);
-}
-
-void ExprVisitor::visit(CallExpression& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    for (const auto& arg : expr.args_)
-        if (arg)
-            arg->accept(*this);
-}
-
-void ExprVisitor::visit(PathExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(FieldExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(UnpackExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.sub_)
-        expr.sub_->accept(*this);
-}
-
-void ExprVisitor::visit(UnaryWordOpExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-}
-
-void ExprVisitor::visit(BinaryWordOpExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(AndExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(OrExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorEq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorNeq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorLt>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorLtEq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorGt>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorGtEq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-auto ExprVisitor::index() const -> size_t
-{
-    return index_;
 }
 
 }

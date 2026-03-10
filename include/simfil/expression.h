@@ -5,7 +5,6 @@
 #include "simfil/token.h"
 #include "simfil/value.h"
 #include "simfil/environment.h"
-#include "simfil/diagnostics.h"
 #include "simfil/result.h"
 
 #include <memory>
@@ -110,7 +109,8 @@ private:
     virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> = 0;
     
     /* Move-optimized evaluation implementation */
-    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) -> tl::expected<Result, Error> {
+    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) -> tl::expected<Result, Error>
+    {
         return ieval(ctx, value, result);
     }
 

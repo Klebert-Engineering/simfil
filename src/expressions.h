@@ -3,72 +3,14 @@
 #include "simfil/expression.h"
 #include "simfil/model/nodes.h"
 #include "simfil/operator.h"
+#include "simfil/diagnostics.h"
+#include "simfil/expression-visitor.h"
 
 #include <cstdint>
 #include <string>
 
 namespace simfil
 {
-
-class WildcardExpr;
-class AnyChildExpr;
-class MultiConstExpr;
-class ConstExpr;
-class SubscriptExpr;
-class SubExpr;
-class AnyExpr;
-class EachExpr;
-class CallExpression;
-class UnpackExpr;
-class UnaryWordOpExpr;
-class BinaryWordOpExpr;
-class FieldExpr;
-class PathExpr;
-class AndExpr;
-class OrExpr;
-template <class> class UnaryExpr;
-template <class> class BinaryExpr;
-
-/**
- * Visitor base for visiting expressions recursively.
- */
-class ExprVisitor
-{
-public:
-    virtual ~ExprVisitor() = default;
-
-    virtual void visit(Expr& expr);
-    virtual void visit(WildcardExpr& expr);
-    virtual void visit(AnyChildExpr& expr);
-    virtual void visit(MultiConstExpr& expr);
-    virtual void visit(ConstExpr& expr);
-    virtual void visit(SubscriptExpr& expr);
-    virtual void visit(SubExpr& expr);
-    virtual void visit(AnyExpr& expr);
-    virtual void visit(EachExpr& expr);
-    virtual void visit(CallExpression& expr);
-    virtual void visit(PathExpr& expr);
-    virtual void visit(FieldExpr& expr);
-    virtual void visit(UnpackExpr& expr);
-    virtual void visit(UnaryWordOpExpr& expr);
-    virtual void visit(BinaryWordOpExpr& expr);
-    virtual void visit(AndExpr& expr);
-    virtual void visit(OrExpr& expr);
-    virtual void visit(BinaryExpr<OperatorEq>& expr);
-    virtual void visit(BinaryExpr<OperatorNeq>& expr);
-    virtual void visit(BinaryExpr<OperatorLt>& expr);
-    virtual void visit(BinaryExpr<OperatorLtEq>& expr);
-    virtual void visit(BinaryExpr<OperatorGt>& expr);
-    virtual void visit(BinaryExpr<OperatorGtEq>& expr);
-
-protected:
-    /* Returns the index of the current expression */
-    [[nodiscard]]
-    size_t index() const;
-
-private:
-    size_t index_ = 0;
-};
 
 class WildcardExpr : public Expr
 {
@@ -112,9 +54,6 @@ public:
 
     std::string name_;
     StringId nameId_ = {};
-
-    size_t hits_ = 0;
-    size_t evaluations_ = 0;
 };
 
 class MultiConstExpr : public Expr
@@ -389,6 +328,7 @@ public:
 class ComparisonExprBase : public Expr
 {
 public:
+
     ComparisonExprBase(ExprId id, ExprPtr left, ExprPtr right)
         : Expr(id)
         , left_(std::move(left))
@@ -406,21 +346,7 @@ public:
         return Type::VALUE;
     }
 
-    auto operandTypes() const -> std::tuple<TypeFlags, TypeFlags>
-    {
-        return {leftTypes_, rightTypes_};
-    }
-
-    auto resultCounts() const -> std::tuple<uint32_t, uint32_t>
-    {
-        return {falseResults_, trueResults_};
-    }
-
     ExprPtr left_, right_;
-    TypeFlags leftTypes_;
-    TypeFlags rightTypes_;
-    uint32_t falseResults_ = 0;
-    uint32_t trueResults_ = 0;
 };
 
 template <class Operator, class Child>
@@ -431,20 +357,30 @@ public:
 
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override
     {
-        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
-            leftTypes_.set(lv.type);
-            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) -> tl::expected<Result, Error> {
-                rightTypes_.set(rv.type);
+        Diagnostics::ComparisonExprData* diag = nullptr;
+        if (ctx.diag)
+            diag = &ctx.diag->get<Diagnostics::ComparisonExprData>(*this);
+        if (diag) {
+            diag->location = sourceLocation();
+        }
+
+        return left_->eval(ctx, val, LambdaResultFn([this, &res, &val, &diag](Context ctx, Value lv) {
+            if (diag)
+                diag->leftTypes.set(lv.type);
+
+            return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv, &diag](Context ctx, Value rv) -> tl::expected<Result, Error> {
+                if (diag)
+                    diag->rightTypes.set(rv.type);
 
                 auto operatorResult = BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv), std::move(rv));
                 if (!operatorResult)
                     return tl::unexpected<Error>(std::move(operatorResult.error()));
 
-                if (operatorResult->isa(ValueType::Bool)) {
+                if (diag && operatorResult->isa(ValueType::Bool)) {
                     if (operatorResult->template as<ValueType::Bool>())
-                        ++trueResults_;
+                        diag->trueResults++;
                     else
-                        ++falseResults_;
+                        diag->falseResults++;
                 }
 
                 return res(ctx, std::move(operatorResult.value()));
@@ -562,10 +498,6 @@ public:
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
-
-    /* Runtime Data */
-    uint32_t leftEvaluations_ = 0;
-    uint32_t rightEvaluations_ = 0;
 };
 
 }
