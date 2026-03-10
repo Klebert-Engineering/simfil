@@ -59,7 +59,7 @@ public:
     /* Debug */
     virtual auto toString() const -> std::string = 0;
 
-    auto eval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+    auto eval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
         if (ctx.canceled())
             return Result::Stop;
@@ -75,7 +75,7 @@ public:
         return ieval(ctx, val, res);
     }
 
-    auto eval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+    auto eval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
         if (ctx.canceled())
             return Result::Stop;
@@ -90,12 +90,8 @@ public:
         return ieval(ctx, std::move(val), res);
     }
 
-    /* Recursive clone */
-    [[nodiscard]]
-    virtual auto clone() const -> std::unique_ptr<Expr> = 0;
-
     /* Accept expression visitor */
-    virtual auto accept(ExprVisitor& v) -> void = 0;
+    virtual auto accept(ExprVisitor& v) const -> void = 0;
 
     /* Source location the expression got parsed from */
     [[nodiscard]]
@@ -106,10 +102,10 @@ public:
 
 private:
     /* Abstract evaluation implementation */
-    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> = 0;
+    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> = 0;
     
     /* Move-optimized evaluation implementation */
-    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) -> tl::expected<Result, Error>
+    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) const -> tl::expected<Result, Error>
     {
         return ieval(ctx, value, result);
     }
@@ -130,7 +126,7 @@ public:
 
     ~AST();
 
-    auto expr() const -> Expr&
+    auto expr() const -> const Expr&
     {
         return *expr_;
     }

@@ -108,7 +108,7 @@ auto Diagnostics::write(std::ostream& stream) const -> tl::expected<void, Error>
     using OutputAdapter = bitsery::OutputStreamAdapter;
     
     bitsery::Serializer<OutputAdapter> serializer{stream};
-    //auto lock = data->lock();
+    std::unique_lock lock(mtx_);
     serializer.object(*this);
     
     if (!stream.good()) {
@@ -123,7 +123,7 @@ auto Diagnostics::read(std::istream& stream) -> tl::expected<void, Error>
     using InputAdapter = bitsery::InputStreamAdapter;
     
     bitsery::Deserializer<InputAdapter> deserializer{stream};
-    //auto lock = data->lock();
+    std::unique_lock lock(mtx_);
     deserializer.object(*this);
     
     if (!stream.good()) {
@@ -165,7 +165,7 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
         }
 
         const auto intersection = leftTypes.flags & rightTypes.flags;
-        if (true || intersection.none()) {
+        if (intersection.none()) {
             const auto allTrue = data.trueResults > 0 && data.falseResults == 0;
             const auto allFalse = data.falseResults > 0 && data.trueResults == 0;
             const auto prefix =
@@ -182,7 +182,7 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
     return messages;
 }
 
-auto Diagnostics::prepareIndizes(Expr& ast) -> void
+auto Diagnostics::prepareIndices(const Expr& ast) -> void
 {
     struct Visitor : ExprVisitor
     {
@@ -197,7 +197,7 @@ auto Diagnostics::prepareIndizes(Expr& ast) -> void
 
         using ExprVisitor::visit;
 
-        auto visit(FieldExpr& e) -> void override {
+        auto visit(const FieldExpr& e) -> void override {
             ExprVisitor::visit(e);
             if (e.id() >= indices_.size())
                 indices_.resize(e.id() + 1);
@@ -211,32 +211,32 @@ auto Diagnostics::prepareIndizes(Expr& ast) -> void
             indices_[e.id()] = comparisonIndex_++;
         }
 
-        auto visit(BinaryExpr<OperatorEq>& e) -> void override {
+        auto visit(const BinaryExpr<OperatorEq>& e) -> void override {
             ExprVisitor::visit(e);
             visitComparisonOperator(e);
         }
 
-        auto visit(BinaryExpr<OperatorNeq>& e) -> void override {
+        auto visit(const BinaryExpr<OperatorNeq>& e) -> void override {
             ExprVisitor::visit(e);
             visitComparisonOperator(e);
         }
 
-        auto visit(BinaryExpr<OperatorLt>& e) -> void override {
+        auto visit(const BinaryExpr<OperatorLt>& e) -> void override {
             ExprVisitor::visit(e);
             visitComparisonOperator(e);
         }
 
-        auto visit(BinaryExpr<OperatorLtEq>& e) -> void override {
+        auto visit(const BinaryExpr<OperatorLtEq>& e) -> void override {
             ExprVisitor::visit(e);
             visitComparisonOperator(e);
         }
 
-        auto visit(BinaryExpr<OperatorGt>& e) -> void override {
+        auto visit(const BinaryExpr<OperatorGt>& e) -> void override {
             ExprVisitor::visit(e);
             visitComparisonOperator(e);
         }
 
-        auto visit(BinaryExpr<OperatorGtEq>& e) -> void override {
+        auto visit(const BinaryExpr<OperatorGtEq>& e) -> void override {
             ExprVisitor::visit(e);
             visitComparisonOperator(e);
         }

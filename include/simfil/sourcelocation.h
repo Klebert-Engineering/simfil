@@ -19,7 +19,6 @@ struct SourceLocation
     SourceLocation(const SourceLocation&) = default;
 
     auto operator==(const SourceLocation& o) const -> bool = default;
-    auto operator!=(const SourceLocation& o) const -> bool = default;
 };
 
 }

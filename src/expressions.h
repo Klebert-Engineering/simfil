@@ -18,9 +18,8 @@ public:
     explicit WildcardExpr(ExprId);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 };
 
@@ -33,9 +32,8 @@ public:
     explicit AnyChildExpr(ExprId);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 };
 
@@ -46,14 +44,13 @@ public:
     FieldExpr(ExprId id, std::string name, const Token& token);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     std::string name_;
-    StringId nameId_ = {};
+    mutable StringId nameId_ = {};
 };
 
 class MultiConstExpr : public Expr
@@ -67,9 +64,8 @@ public:
 
     auto type() const -> Type override;
     auto constant() const -> bool override;
-    auto ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     const std::vector<Value> values_;
@@ -88,9 +84,8 @@ public:
 
     auto type() const -> Type override;
     auto constant() const -> bool override;
-    auto ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     auto value() const -> const Value&;
@@ -105,9 +100,8 @@ public:
     SubscriptExpr(ExprId id, ExprPtr left, ExprPtr index);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     ExprPtr left_;
@@ -120,11 +114,10 @@ public:
     SubExpr(ExprId id, ExprPtr left, ExprPtr sub);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
-    auto ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
 
     ExprPtr left_, sub_;
 };
@@ -135,16 +128,11 @@ public:
     AnyExpr(ExprId id, std::vector<ExprPtr> args);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     std::vector<ExprPtr> args_;
-
-    /* Runtime Data */
-    std::uint32_t trueResults_ = 0;
-    std::uint32_t falseResults_ = 0;
 };
 
 class EachExpr : public Expr
@@ -153,16 +141,11 @@ public:
     EachExpr(ExprId id, std::vector<ExprPtr> args);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     std::vector<ExprPtr> args_;
-
-    /* Runtime Data */
-    std::uint32_t trueResults_ = 0;
-    std::uint32_t falseResults_ = 0;
 };
 
 class CallExpression : public Expr
@@ -171,15 +154,14 @@ public:
     CallExpression(ExprId id, std::string name, std::vector<ExprPtr> args);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     std::string name_;
     std::vector<ExprPtr> args_;
-    const Function* fn_ = nullptr;
+    mutable const Function* fn_ = nullptr;
 };
 
 class PathExpr : public Expr
@@ -188,16 +170,12 @@ public:
     PathExpr(ExprId id, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
-    auto ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
-
-    /* Evaluation data */
-    uint32_t hits_ = 0;
 };
 
 /** Calls `unpack` onto values of type Object. Forwards the value(s) otherwise.
@@ -211,9 +189,8 @@ public:
     UnpackExpr(ExprId id, ExprPtr sub);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    auto clone() const -> ExprPtr override;
-    void accept(ExprVisitor& v) override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     ExprPtr sub_;
@@ -236,7 +213,7 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override
     {
         return sub_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value vv) -> tl::expected<Result, Error> {
             auto v = UnaryOperatorDispatcher<Operator>::dispatch(std::move(vv));
@@ -246,15 +223,10 @@ public:
         }));
     }
 
-    void accept(ExprVisitor& v) override
+    void accept(ExprVisitor& v) const override
     {
         v.visit(*this);
         sub_->accept(v);
-    }
-
-    auto clone() const -> ExprPtr override
-    {
-        return std::make_unique<UnaryExpr>(id(), sub_->clone());
     }
 
     auto toString() const -> std::string override
@@ -289,13 +261,10 @@ public:
         return Type::VALUE;
     }
 
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override
     {
         return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](Context ctx, Value lv) {
-            leftTypes_.set(lv.type);
             return right_->eval(ctx, val, LambdaResultFn([this, &res, &lv](Context ctx, Value rv) -> tl::expected<Result, Error> {
-                rightTypes_.set(rv.type);
-
                 auto v = BinaryOperatorDispatcher<Operator>::dispatch(std::move(lv), std::move(rv));
                 if (!v)
                     return tl::unexpected<Error>(std::move(v.error()));
@@ -304,12 +273,7 @@ public:
         }));
     }
 
-    auto clone() const -> ExprPtr override
-    {
-        return std::make_unique<BinaryExpr>(id(), left_->clone(), right_->clone());
-    }
-
-    void accept(ExprVisitor& v) override
+    void accept(ExprVisitor& v) const override
     {
         v.visit(*this);
         left_->accept(v);
@@ -322,7 +286,6 @@ public:
     }
 
     ExprPtr left_, right_;
-    TypeFlags leftTypes_, rightTypes_;
 };
 
 class ComparisonExprBase : public Expr
@@ -355,7 +318,7 @@ class ComparisonExpr : public ComparisonExprBase
 public:
     using ComparisonExprBase::ComparisonExprBase;
 
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override
     {
         Diagnostics::ComparisonExprData* diag = nullptr;
         if (ctx.diag)
@@ -388,14 +351,9 @@ public:
         }));
     }
 
-    auto clone() const -> ExprPtr override
+    void accept(ExprVisitor& v) const override
     {
-        return std::make_unique<Child>(id(), left_->clone(), right_->clone());
-    }
-
-    void accept(ExprVisitor& v) override
-    {
-        v.visit(static_cast<Child&>(*this));
+        v.visit(static_cast<const Child&>(*this));
         left_->accept(v);
         right_->accept(v);
     }
@@ -448,9 +406,8 @@ public:
     UnaryWordOpExpr(ExprId id, std::string ident, ExprPtr left);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    void accept(ExprVisitor& v) override;
-    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     std::string ident_;
@@ -463,9 +420,8 @@ public:
     BinaryWordOpExpr(ExprId id, std::string ident, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    void accept(ExprVisitor& v) override;
-    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     std::string ident_;
@@ -478,9 +434,8 @@ public:
     AndExpr(ExprId id, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    void accept(ExprVisitor& v) override;
-    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
@@ -492,9 +447,8 @@ public:
     OrExpr(ExprId id, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    void accept(ExprVisitor& v) override;
-    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;

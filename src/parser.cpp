@@ -26,17 +26,12 @@ public:
         return Type::FIELD;
     }
 
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override
     {
         return Result::Stop;
     }
 
-    auto clone() const -> ExprPtr override
-    {
-        return std::make_unique<NOOPExpr>(id());
-    }
-
-    void accept(ExprVisitor& v) override
+    void accept(ExprVisitor& v) const override
     {
         v.visit(*this);
     }

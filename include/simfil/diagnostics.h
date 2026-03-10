@@ -9,10 +9,9 @@
 
 #include <tl/expected.hpp>
 #include <optional>
-#include <unistd.h>
 #include <vector>
 #include <string>
-#include <memory>
+#include <cstdlib>
 
 namespace simfil
 {
@@ -76,6 +75,11 @@ public:
     auto write(std::ostream& stream) const -> tl::expected<void, Error>;
     auto read(std::istream& stream) -> tl::expected<void, Error>;
 
+    /**
+     * Build the exprIndex_ map for the AST.
+     */
+    auto prepareIndices(const Expr& ast) -> void;
+
     /** ExprId to diagnostics data index mapping. */
     std::vector<size_t> exprIndex_;
 
@@ -86,18 +90,14 @@ public:
     std::vector<ComparisonExprData> comparisonData_;
 
 private:
-    friend auto eval(Environment&, const AST&, const ModelNode&, Diagnostics*) -> tl::expected<std::vector<Value>, Error>;
     friend auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> tl::expected<std::vector<Message>, Error>;
-
-    /**
-     * Build the exprIndex_ map for the AST.
-     */
-    auto prepareIndizes(Expr& ast) -> void;
 
     /**
      * Build messages from this objecst diagnostics data.
      */
     auto buildMessages(Environment& env, const AST& ast) const -> std::vector<Message>;
+
+    mutable std::mutex mtx_;
 };
 
 namespace detail

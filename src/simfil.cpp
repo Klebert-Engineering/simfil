@@ -932,14 +932,12 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     // For thread-safety we work on a local diagnostics object that gets merged
     // into diag after query evaluation.
     Diagnostics localDiag;
-    localDiag.prepareIndizes(ast.expr());
+    localDiag.prepareIndices(ast.expr());
 
     Context ctx(&env, &localDiag);
 
-    auto mutableAST = &ast.expr(); // TODO: make const again!
-
     std::vector<Value> values;
-    auto res = mutableAST->eval(ctx, Value::field(node), LambdaResultFn([&values](Context, Value&& value) {
+    auto res = ast.expr().eval(ctx, Value::field(node), LambdaResultFn([&values](const Context&, Value&& value) {
         values.push_back(std::move(value));
         return Result::Continue;
     }));

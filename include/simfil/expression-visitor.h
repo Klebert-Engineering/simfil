@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include <cstdint>
+#include <cstdlib>
 
 namespace simfil
 {
@@ -42,29 +42,29 @@ public:
     ExprVisitor();
     virtual ~ExprVisitor();
 
-    virtual void visit(Expr& expr);
-    virtual void visit(WildcardExpr& expr);
-    virtual void visit(AnyChildExpr& expr);
-    virtual void visit(MultiConstExpr& expr);
-    virtual void visit(ConstExpr& expr);
-    virtual void visit(SubscriptExpr& expr);
-    virtual void visit(SubExpr& expr);
-    virtual void visit(AnyExpr& expr);
-    virtual void visit(EachExpr& expr);
-    virtual void visit(CallExpression& expr);
-    virtual void visit(PathExpr& expr);
-    virtual void visit(FieldExpr& expr);
-    virtual void visit(UnpackExpr& expr);
-    virtual void visit(UnaryWordOpExpr& expr);
-    virtual void visit(BinaryWordOpExpr& expr);
-    virtual void visit(AndExpr& expr);
-    virtual void visit(OrExpr& expr);
-    virtual void visit(BinaryExpr<OperatorEq>& expr);
-    virtual void visit(BinaryExpr<OperatorNeq>& expr);
-    virtual void visit(BinaryExpr<OperatorLt>& expr);
-    virtual void visit(BinaryExpr<OperatorLtEq>& expr);
-    virtual void visit(BinaryExpr<OperatorGt>& expr);
-    virtual void visit(BinaryExpr<OperatorGtEq>& expr);
+    virtual void visit(const Expr& expr);
+    virtual void visit(const WildcardExpr& expr);
+    virtual void visit(const AnyChildExpr& expr);
+    virtual void visit(const MultiConstExpr& expr);
+    virtual void visit(const ConstExpr& expr);
+    virtual void visit(const SubscriptExpr& expr);
+    virtual void visit(const SubExpr& expr);
+    virtual void visit(const AnyExpr& expr);
+    virtual void visit(const EachExpr& expr);
+    virtual void visit(const CallExpression& expr);
+    virtual void visit(const PathExpr& expr);
+    virtual void visit(const FieldExpr& expr);
+    virtual void visit(const UnpackExpr& expr);
+    virtual void visit(const UnaryWordOpExpr& expr);
+    virtual void visit(const BinaryWordOpExpr& expr);
+    virtual void visit(const AndExpr& expr);
+    virtual void visit(const OrExpr& expr);
+    virtual void visit(const BinaryExpr<OperatorEq>& expr);
+    virtual void visit(const BinaryExpr<OperatorNeq>& expr);
+    virtual void visit(const BinaryExpr<OperatorLt>& expr);
+    virtual void visit(const BinaryExpr<OperatorLtEq>& expr);
+    virtual void visit(const BinaryExpr<OperatorGt>& expr);
+    virtual void visit(const BinaryExpr<OperatorGtEq>& expr);
 
 protected:
     /* Returns the index of the current expression */
