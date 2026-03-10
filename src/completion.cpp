@@ -125,8 +125,8 @@ auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::
 namespace simfil
 {
 
-CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath)
-    : Expr(token)
+CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token, bool inPath)
+    : Expr(id, token)
     , prefix_(std::move(prefix))
     , comp_(comp)
     , inPath_(inPath)
@@ -230,8 +230,9 @@ struct FindExpressionRange : ExprVisitor
 
 }
 
-CompletionAndExpr::CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp)
-    : left_(std::move(left))
+CompletionAndExpr::CompletionAndExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
@@ -290,8 +291,9 @@ auto CompletionAndExpr::toString() const -> std::string
     return "(and ? ?)";
 }
 
-CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp)
-    : left_(std::move(left))
+CompletionOrExpr::CompletionOrExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
@@ -350,8 +352,8 @@ auto CompletionOrExpr::toString() const -> std::string
     return "(or ? ?)";
 }
 
-CompletionWordExpr::CompletionWordExpr(std::string prefix, Completion* comp, const Token& token)
-    : Expr(token)
+CompletionWordExpr::CompletionWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token)
+    : Expr(id, token)
     , prefix_(std::move(prefix))
     , comp_(comp)
 {}
@@ -399,7 +401,7 @@ auto CompletionConstExpr::constant() const -> bool
 
 auto CompletionConstExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<CompletionConstExpr>(value_);
+    return std::make_unique<CompletionConstExpr>(id(), value_);
 }
 
 auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>

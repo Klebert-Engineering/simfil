@@ -76,7 +76,9 @@ auto boolify(const Value& v) -> bool
 
 }
 
-WildcardExpr::WildcardExpr() = default;
+WildcardExpr::WildcardExpr(ExprId id)
+    : Expr(id)
+{}
 
 auto WildcardExpr::type() const -> Type
 {
@@ -132,7 +134,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
 
 auto WildcardExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<WildcardExpr>();
+    return std::make_unique<WildcardExpr>(id());
 }
 
 void WildcardExpr::accept(ExprVisitor& v)
@@ -145,7 +147,9 @@ auto WildcardExpr::toString() const -> std::string
     return "**"s;
 }
 
-AnyChildExpr::AnyChildExpr() = default;
+AnyChildExpr::AnyChildExpr(ExprId id)
+    : Expr(id)
+{}
 
 auto AnyChildExpr::type() const -> Type
 {
@@ -178,7 +182,7 @@ auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> 
 
 auto AnyChildExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<AnyChildExpr>();
+    return std::make_unique<AnyChildExpr>(id());
 }
 
 void AnyChildExpr::accept(ExprVisitor& v)
@@ -191,15 +195,16 @@ auto AnyChildExpr::toString() const -> std::string
     return "*"s;
 }
 
-FieldExpr::FieldExpr(std::string name)
-    : name_(std::move(name))
+FieldExpr::FieldExpr(ExprId id, std::string name)
+    : Expr(id)
+    , name_(std::move(name))
 {
     if (name_ == "_")
         hits_ = 1;
 }
 
-FieldExpr::FieldExpr(std::string name, const Token& token)
-    : Expr(token)
+FieldExpr::FieldExpr(ExprId id, std::string name, const Token& token)
+    : Expr(id, token)
     , name_(std::move(name))
 {
     if (name_ == "_")
@@ -241,6 +246,8 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expe
 
     /* Enter sub-node */
     if (auto sub = val.node()->get(nameId_)) {
+        //if (ctx.diag)
+        //    ctx.diag->get<FieldExprDiagnostics>(id()).hits++;
         hits_++;
         return res(ctx, Value::field(*sub));
     }
@@ -252,7 +259,7 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expe
 
 auto FieldExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<FieldExpr>(name_);
+    return std::make_unique<FieldExpr>(id(), name_);
 }
 
 void FieldExpr::accept(ExprVisitor& v)
@@ -265,12 +272,14 @@ auto FieldExpr::toString() const -> std::string
     return name_;
 }
 
-MultiConstExpr::MultiConstExpr(const std::vector<Value>& vec)
-    : values_(vec)
+MultiConstExpr::MultiConstExpr(ExprId id, const std::vector<Value>& vec)
+    : Expr(id)
+    , values_(vec)
 {}
 
-MultiConstExpr::MultiConstExpr(std::vector<Value>&& vec)
-    : values_(std::move(vec))
+MultiConstExpr::MultiConstExpr(ExprId id, std::vector<Value>&& vec)
+    : Expr(id)
+    , values_(std::move(vec))
 {}
 
 auto MultiConstExpr::type() const -> Type
@@ -297,7 +306,7 @@ auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl
 
 auto MultiConstExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<MultiConstExpr>(values_);
+    return std::make_unique<MultiConstExpr>(id(), values_);
 }
 
 void MultiConstExpr::accept(ExprVisitor& v)
@@ -314,8 +323,9 @@ auto MultiConstExpr::toString() const -> std::string
     return fmt::format("{{{}}}", fmt::join(items, " "));
 }
 
-ConstExpr::ConstExpr(Value value)
-    : value_(std::move(value))
+ConstExpr::ConstExpr(ExprId id, Value value)
+    : Expr(id)
+    , value_(std::move(value))
 {}
 
 auto ConstExpr::type() const -> Type
@@ -335,7 +345,7 @@ auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::exp
 
 auto ConstExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<ConstExpr>(value_);
+    return std::make_unique<ConstExpr>(id(), value_);
 }
 
 void ConstExpr::accept(ExprVisitor& v)
@@ -355,8 +365,9 @@ auto ConstExpr::value() const -> const Value&
     return value_;
 }
 
-SubscriptExpr::SubscriptExpr(ExprPtr left, ExprPtr index)
-    : left_(std::move(left))
+SubscriptExpr::SubscriptExpr(ExprId id, ExprPtr left, ExprPtr index)
+    : Expr(id)
+    , left_(std::move(left))
     , index_(std::move(index))
 {}
 
@@ -406,7 +417,7 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -
 
 auto SubscriptExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<SubscriptExpr>(left_->clone(), index_->clone());
+    return std::make_unique<SubscriptExpr>(id(), left_->clone(), index_->clone());
 }
 
 void SubscriptExpr::accept(ExprVisitor& v)
@@ -419,13 +430,9 @@ auto SubscriptExpr::toString() const -> std::string
     return fmt::format("(index {} {})", left_->toString(), index_->toString());
 }
 
-SubExpr::SubExpr(ExprPtr sub)
-    : left_(std::make_unique<FieldExpr>("_"))
-    , sub_(std::move(sub))
-{}
-
-SubExpr::SubExpr(ExprPtr left, ExprPtr sub)
-    : left_(std::move(left))
+SubExpr::SubExpr(ExprId id, ExprPtr left, ExprPtr sub)
+    : Expr(id)
+    , left_(std::move(left))
     , sub_(std::move(sub))
 {}
 
@@ -468,7 +475,7 @@ auto SubExpr::toString() const -> std::string
 
 auto SubExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<SubExpr>(left_->clone(), sub_->clone());
+    return std::make_unique<SubExpr>(id(), left_->clone(), sub_->clone());
 }
 
 void SubExpr::accept(ExprVisitor& v)
@@ -476,8 +483,9 @@ void SubExpr::accept(ExprVisitor& v)
     v.visit(*this);
 }
 
-AnyExpr::AnyExpr(std::vector<ExprPtr> args)
-    : args_(std::move(args))
+AnyExpr::AnyExpr(ExprId id, std::vector<ExprPtr> args)
+    : Expr(id)
+    , args_(std::move(args))
 {}
 
 auto AnyExpr::type() const -> Type
@@ -526,7 +534,7 @@ auto AnyExpr::clone() const -> ExprPtr
         return exp->clone();
     });
 
-    return std::make_unique<AnyExpr>(std::move(clonedArgs));
+    return std::make_unique<AnyExpr>(id(), std::move(clonedArgs));
 }
 
 auto AnyExpr::accept(ExprVisitor& v) -> void
@@ -546,8 +554,9 @@ auto AnyExpr::toString() const -> std::string
     return fmt::format("(any {})", fmt::join(items, " "));
 }
 
-EachExpr::EachExpr(std::vector<ExprPtr> args)
-    : args_(std::move(args))
+EachExpr::EachExpr(ExprId id, std::vector<ExprPtr> args)
+    : Expr(id)
+    , args_(std::move(args))
 {}
 
 auto EachExpr::type() const -> Type
@@ -595,7 +604,7 @@ auto EachExpr::clone() const -> ExprPtr
         return exp->clone();
     });
 
-    return std::make_unique<EachExpr>(std::move(clonedArgs));
+    return std::make_unique<EachExpr>(id(), std::move(clonedArgs));
 }
 
 auto EachExpr::accept(ExprVisitor& v) -> void
@@ -615,8 +624,9 @@ auto EachExpr::toString() const -> std::string
     return fmt::format("(each {})", fmt::join(items, " "));
 }
 
-CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)
-    : name_(std::move(name))
+CallExpression::CallExpression(ExprId id, std::string name, std::vector<ExprPtr> args)
+    : Expr(id)
+    , name_(std::move(name))
     , args_(std::move(args))
 {}
 
@@ -659,7 +669,7 @@ auto CallExpression::clone() const -> ExprPtr
         return exp->clone();
     });
 
-    return std::make_unique<CallExpression>(name_, std::move(clonedArgs));
+    return std::make_unique<CallExpression>(id(), name_, std::move(clonedArgs));
 }
 
 void CallExpression::accept(ExprVisitor& v)
@@ -679,13 +689,9 @@ auto CallExpression::toString() const -> std::string
     return fmt::format("({} {})", name_, fmt::join(items, " "));
 }
 
-PathExpr::PathExpr(ExprPtr right)
-    : left_(std::make_unique<FieldExpr>("_"))
-    , right_(std::move(right))
-{}
-
-PathExpr::PathExpr(ExprPtr left, ExprPtr right)
-    : left_(std::move(left))
+PathExpr::PathExpr(ExprId id, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -731,7 +737,7 @@ auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expe
 
 auto PathExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<PathExpr>(left_->clone(), right_->clone());
+    return std::make_unique<PathExpr>(id(), left_->clone(), right_->clone());
 }
 
 void PathExpr::accept(ExprVisitor& v)
@@ -744,8 +750,9 @@ auto PathExpr::toString() const -> std::string
     return fmt::format("(. {} {})", left_->toString(), right_->toString());
 }
 
-UnpackExpr::UnpackExpr(ExprPtr sub)
-    : sub_(std::move(sub))
+UnpackExpr::UnpackExpr(ExprId id, ExprPtr sub)
+    : Expr(id)
+    , sub_(std::move(sub))
 {}
 
 auto UnpackExpr::type() const -> Type
@@ -785,7 +792,7 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl
 
 auto UnpackExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<UnpackExpr>(sub_->clone());
+    return std::make_unique<UnpackExpr>(id(), sub_->clone());
 }
 
 void UnpackExpr::accept(ExprVisitor& v)
@@ -798,8 +805,9 @@ auto UnpackExpr::toString() const -> std::string
     return fmt::format("(... {})", sub_->toString());
 }
 
-UnaryWordOpExpr::UnaryWordOpExpr(std::string ident, ExprPtr left)
-    : ident_(std::move(ident))
+UnaryWordOpExpr::UnaryWordOpExpr(ExprId id, std::string ident, ExprPtr left)
+    : Expr(id)
+    , ident_(std::move(ident))
     , left_(std::move(left))
 {}
 
@@ -833,7 +841,7 @@ void UnaryWordOpExpr::accept(ExprVisitor& v)
 
 auto UnaryWordOpExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<UnaryWordOpExpr>(ident_, left_->clone());
+    return std::make_unique<UnaryWordOpExpr>(id(), ident_, left_->clone());
 }
 
 auto UnaryWordOpExpr::toString() const -> std::string
@@ -841,8 +849,9 @@ auto UnaryWordOpExpr::toString() const -> std::string
     return fmt::format("({} {})", ident_, left_->toString());
 }
 
-BinaryWordOpExpr::BinaryWordOpExpr(std::string ident, ExprPtr left, ExprPtr right)
-    : ident_(std::move(ident))
+BinaryWordOpExpr::BinaryWordOpExpr(ExprId id, std::string ident, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , ident_(std::move(ident))
     , left_(std::move(left))
     , right_(std::move(right))
 {}
@@ -887,7 +896,7 @@ void BinaryWordOpExpr::accept(ExprVisitor& v)
 
 auto BinaryWordOpExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<BinaryWordOpExpr>(ident_, left_->clone(), right_->clone());
+    return std::make_unique<BinaryWordOpExpr>(id(), ident_, left_->clone(), right_->clone());
 }
 
 auto BinaryWordOpExpr::toString() const -> std::string
@@ -895,8 +904,9 @@ auto BinaryWordOpExpr::toString() const -> std::string
     return fmt::format("({} {} {})", ident_, left_->toString(), right_->toString());
 }
 
-AndExpr::AndExpr(ExprPtr left, ExprPtr right)
-    : left_(std::move(left))
+AndExpr::AndExpr(ExprId id, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -935,7 +945,7 @@ void AndExpr::accept(ExprVisitor& v)
 
 auto AndExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<AndExpr>(left_->clone(), right_->clone());
+    return std::make_unique<AndExpr>(id(), left_->clone(), right_->clone());
 }
 
 auto AndExpr::toString() const -> std::string
@@ -943,8 +953,9 @@ auto AndExpr::toString() const -> std::string
     return fmt::format("(and {} {})", left_->toString(), right_->toString());
 }
 
-OrExpr::OrExpr(ExprPtr left, ExprPtr right)
-    : left_(std::move(left))
+OrExpr::OrExpr(ExprId id, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -987,7 +998,7 @@ void OrExpr::accept(ExprVisitor& v)
 
 auto OrExpr::clone() const -> ExprPtr
 {
-    return std::make_unique<OrExpr>(left_->clone(), right_->clone());
+    return std::make_unique<OrExpr>(id(), left_->clone(), right_->clone());
 }
 
 auto OrExpr::toString() const -> std::string

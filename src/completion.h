@@ -45,7 +45,7 @@ struct Completion
 class CompletionFieldOrWordExpr : public Expr
 {
 public:
-    CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath);
+    CompletionFieldOrWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token, bool inPath);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> override;
@@ -61,7 +61,7 @@ public:
 class CompletionAndExpr : public Expr
 {
 public:
-    CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp);
+    CompletionAndExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -75,7 +75,7 @@ public:
 class CompletionOrExpr : public Expr
 {
 public:
-    CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp);
+    CompletionOrExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -89,7 +89,7 @@ public:
 class CompletionWordExpr : public Expr
 {
 public:
-    CompletionWordExpr(std::string prefix, Completion* comp, const Token& token);
+    CompletionWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token);
 
     auto type() const -> Type override;
     auto constant() const -> bool override;

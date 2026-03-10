@@ -73,7 +73,7 @@ private:
 class WildcardExpr : public Expr
 {
 public:
-    WildcardExpr();
+    explicit WildcardExpr(ExprId);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
@@ -88,7 +88,7 @@ public:
 class AnyChildExpr : public Expr
 {
 public:
-    AnyChildExpr();
+    explicit AnyChildExpr(ExprId);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -100,8 +100,8 @@ public:
 class FieldExpr : public Expr
 {
 public:
-    explicit FieldExpr(std::string name);
-    FieldExpr(std::string name, const Token& token);
+    FieldExpr(ExprId id, std::string name);
+    FieldExpr(ExprId id, std::string name, const Token& token);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -122,8 +122,9 @@ class MultiConstExpr : public Expr
 public:
     static constexpr size_t Limit = 10000;
 
-    explicit MultiConstExpr(const std::vector<Value>& vec);
-    explicit MultiConstExpr(std::vector<Value>&& vec);
+    MultiConstExpr() = delete;
+    MultiConstExpr(ExprId id, const std::vector<Value>& vec);
+    MultiConstExpr(ExprId id, std::vector<Value>&& vec);
 
     auto type() const -> Type override;
     auto constant() const -> bool override;
@@ -138,12 +139,13 @@ public:
 class ConstExpr : public Expr
 {
 public:
+    ConstExpr() = delete;
     template <class CType_>
-    explicit ConstExpr(CType_&& value)
-        : value_(Value::make(std::forward<CType_>(value)))
+    ConstExpr(ExprId id, CType_&& value)
+        : Expr(id)
+        , value_(Value::make(std::forward<CType_>(value)))
     {}
-
-    explicit ConstExpr(Value value);
+    ConstExpr(ExprId id, Value value);
 
     auto type() const -> Type override;
     auto constant() const -> bool override;
@@ -161,7 +163,7 @@ protected:
 class SubscriptExpr : public Expr
 {
 public:
-    SubscriptExpr(ExprPtr left, ExprPtr index);
+    SubscriptExpr(ExprId id, ExprPtr left, ExprPtr index);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
@@ -176,8 +178,7 @@ public:
 class SubExpr : public Expr
 {
 public:
-    explicit SubExpr(ExprPtr sub);
-    SubExpr(ExprPtr left, ExprPtr sub);
+    SubExpr(ExprId id, ExprPtr left, ExprPtr sub);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
@@ -192,7 +193,7 @@ public:
 class AnyExpr : public Expr
 {
 public:
-    explicit AnyExpr(std::vector<ExprPtr> args);
+    AnyExpr(ExprId id, std::vector<ExprPtr> args);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -210,7 +211,7 @@ public:
 class EachExpr : public Expr
 {
 public:
-    explicit EachExpr(std::vector<ExprPtr> args);
+    EachExpr(ExprId id, std::vector<ExprPtr> args);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -228,7 +229,7 @@ public:
 class CallExpression : public Expr
 {
 public:
-    CallExpression(std::string name, std::vector<ExprPtr> args);
+    CallExpression(ExprId id, std::string name, std::vector<ExprPtr> args);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -245,8 +246,7 @@ public:
 class PathExpr : public Expr
 {
 public:
-    explicit PathExpr(ExprPtr right);
-    PathExpr(ExprPtr left, ExprPtr right);
+    PathExpr(ExprId id, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override;
@@ -269,7 +269,7 @@ public:
 class UnpackExpr : public Expr
 {
 public:
-    explicit UnpackExpr(ExprPtr sub);
+    UnpackExpr(ExprId id, ExprPtr sub);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -287,8 +287,9 @@ template <class Operator>
 class UnaryExpr : public Expr
 {
 public:
-    explicit UnaryExpr(ExprPtr sub)
-        : sub_(std::move(sub))
+    UnaryExpr(ExprId id, ExprPtr sub)
+        : Expr(id)
+        , sub_(std::move(sub))
     {}
 
     auto type() const -> Type override
@@ -314,7 +315,7 @@ public:
 
     auto clone() const -> ExprPtr override
     {
-        return std::make_unique<UnaryExpr>(sub_->clone());
+        return std::make_unique<UnaryExpr>(id(), sub_->clone());
     }
 
     auto toString() const -> std::string override
@@ -332,13 +333,14 @@ template <class Operator>
 class BinaryExpr : public Expr
 {
 public:
-    BinaryExpr(ExprPtr left, ExprPtr right)
-        : left_(std::move(left))
+    BinaryExpr(ExprId id, ExprPtr left, ExprPtr right)
+        : Expr(id)
+        , left_(std::move(left))
         , right_(std::move(right))
     {}
 
-    BinaryExpr(const Token& token, ExprPtr left, ExprPtr right)
-        : Expr(token)
+    BinaryExpr(ExprId id, const Token& token, ExprPtr left, ExprPtr right)
+        : Expr(id, token)
         , left_(std::move(left))
         , right_(std::move(right))
     {}
@@ -365,7 +367,7 @@ public:
 
     auto clone() const -> ExprPtr override
     {
-        return std::make_unique<BinaryExpr>(left_->clone(), right_->clone());
+        return std::make_unique<BinaryExpr>(id(), left_->clone(), right_->clone());
     }
 
     void accept(ExprVisitor& v) override
@@ -387,13 +389,14 @@ public:
 class ComparisonExprBase : public Expr
 {
 public:
-    ComparisonExprBase(ExprPtr left, ExprPtr right)
-        : left_(std::move(left))
+    ComparisonExprBase(ExprId id, ExprPtr left, ExprPtr right)
+        : Expr(id)
+        , left_(std::move(left))
         , right_(std::move(right))
     {}
 
-    ComparisonExprBase(const Token& token, ExprPtr left, ExprPtr right)
-        : Expr(token)
+    ComparisonExprBase(ExprId id, const Token& token, ExprPtr left, ExprPtr right)
+        : Expr(id, token)
         , left_(std::move(left))
         , right_(std::move(right))
     {}
@@ -451,7 +454,7 @@ public:
 
     auto clone() const -> ExprPtr override
     {
-        return std::make_unique<Child>(left_->clone(), right_->clone());
+        return std::make_unique<Child>(id(), left_->clone(), right_->clone());
     }
 
     void accept(ExprVisitor& v) override
@@ -506,7 +509,7 @@ class BinaryExpr<OperatorGtEq> : public ComparisonExpr<OperatorGtEq, BinaryExpr<
 class UnaryWordOpExpr : public Expr
 {
 public:
-    UnaryWordOpExpr(std::string ident, ExprPtr left);
+    UnaryWordOpExpr(ExprId id, std::string ident, ExprPtr left);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -521,7 +524,7 @@ public:
 class BinaryWordOpExpr : public Expr
 {
 public:
-    BinaryWordOpExpr(std::string ident, ExprPtr left, ExprPtr right);
+    BinaryWordOpExpr(ExprId id, std::string ident, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -536,7 +539,7 @@ public:
 class AndExpr : public Expr
 {
 public:
-    AndExpr(ExprPtr left, ExprPtr right);
+    AndExpr(ExprId id, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
@@ -550,7 +553,7 @@ public:
 class OrExpr : public Expr
 {
 public:
-    OrExpr(ExprPtr left, ExprPtr right);
+    OrExpr(ExprId id, ExprPtr left, ExprPtr right);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;

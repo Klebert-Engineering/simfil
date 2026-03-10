@@ -19,6 +19,8 @@ class Expr
 {
     friend class AST;
 public:
+    using ExprId = std::uint32_t;
+
     /**
      * Type of an expression.
      */
@@ -30,8 +32,12 @@ public:
         VALUE,
     };
 
-    Expr() = default;
-    explicit Expr(const Token& token)
+    Expr() = delete;
+    explicit Expr(ExprId id)
+        : id_(id)
+    {}
+    explicit Expr(ExprId id, const Token& token)
+        : id_(id)
     {
         assert(token.end >= token.begin);
         sourceLocation_.offset = token.begin;
@@ -41,6 +47,10 @@ public:
     virtual ~Expr() = default;
 
     /* Category */
+    auto id() const -> ExprId
+    {
+        return id_;
+    }
     virtual auto type() const -> Type = 0;
     virtual auto constant() const -> bool
     {
@@ -104,6 +114,7 @@ private:
         return ieval(ctx, value, result);
     }
 
+    ExprId id_;
     SourceLocation sourceLocation_;
 };
 
