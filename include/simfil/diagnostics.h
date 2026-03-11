@@ -7,6 +7,7 @@
 #include "simfil/error.h"
 #include "simfil/expression.h"
 
+#include <limits>
 #include <tl/expected.hpp>
 #include <optional>
 #include <vector>
@@ -23,6 +24,7 @@ struct ModelNode;
 /** Query Diagnostics. */
 struct Diagnostics
 {
+    static constexpr std::size_t InvalidIndex = std::numeric_limits<std::size_t>::max();
 public:
     struct FieldExprData
     {
@@ -38,6 +40,7 @@ public:
         SourceLocation location;
         TypeFlags leftTypes;
         TypeFlags rightTypes;
+        std::uint32_t evaluations = 0u;
         std::uint32_t falseResults = 0u;
         std::uint32_t trueResults = 0u;
     };
@@ -136,11 +139,16 @@ auto Diagnostics::get(const Expr& expr) -> DiagnosticsDataType&
 
     const auto id = expr.id();
     if (exprIndex_.size() <= id) [[unlikely]] {
-        exprIndex_.resize(id + 1u);
+        exprIndex_.resize(id + 1u, Diagnostics::InvalidIndex);
         exprIndex_[id] = data->size();
     }
 
-    const auto index = exprIndex_[id];
+    auto index = exprIndex_[id];
+    if (index == Diagnostics::InvalidIndex) {
+        exprIndex_[id] = data->size();
+        index = exprIndex_[id];
+    }
+
     if (data->size() <= index) {
         data->resize(index + 1u);
     }

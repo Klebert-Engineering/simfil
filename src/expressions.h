@@ -325,6 +325,7 @@ public:
             diag = &ctx.diag->get<Diagnostics::ComparisonExprData>(*this);
         if (diag) {
             diag->location = sourceLocation();
+            diag->evaluations++;
         }
 
         return left_->eval(ctx, val, LambdaResultFn([this, &res, &val, &diag](Context ctx, Value lv) {

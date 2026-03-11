@@ -43,6 +43,7 @@ void serialize(S& s, Diagnostics& data)
         s2.value4b(data.location.size);
         s2.object(data.leftTypes);
         s2.object(data.rightTypes);
+        s2.value4b(data.evaluations);
         s2.value4b(data.trueResults);
         s2.value4b(data.falseResults);
     });
@@ -60,6 +61,9 @@ Diagnostics::~Diagnostics() = default;
 
 Diagnostics& Diagnostics::append(const Diagnostics& other)
 {
+    std::unique_lock lock1(mtx_);
+    std::unique_lock lock2(other.mtx_);
+
 #if !defined(NDEBUG)
     if (!exprIndex_.empty())
         assert(std::ranges::equal(exprIndex_, other.exprIndex_));
@@ -74,7 +78,10 @@ Diagnostics& Diagnostics::append(const Diagnostics& other)
         auto* theirs = i < other.fieldData_.size() ? &other.fieldData_[i] : nullptr;
 
         if (ours && theirs) {
-            assert(ours->name == theirs->name);
+            if (ours->name.empty())
+                ours->name = theirs->name;
+            if (ours->location == SourceLocation{0, 0})
+                ours->location = theirs->location;
             ours->hits += theirs->hits;
             ours->evaluations += theirs->evaluations;
         }
@@ -89,8 +96,11 @@ Diagnostics& Diagnostics::append(const Diagnostics& other)
         auto* theirs = i < other.comparisonData_.size() ? &other.comparisonData_[i] : nullptr;
 
         if (ours && theirs) {
+            if (ours->location == SourceLocation{0, 0})
+                ours->location = theirs->location;
             ours->leftTypes.set(theirs->leftTypes);
             ours->rightTypes.set(theirs->rightTypes);
+            ours->evaluations += theirs->evaluations;
             ours->trueResults += theirs->trueResults;
             ours->falseResults += theirs->falseResults;
         }
@@ -147,7 +157,7 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
     };
 
     for (const auto& data : fieldData_) {
-        if (data.hits == 0u)
+        if (data.hits == 0 && data.evaluations > 0)
             addMessage(data.location, fmt::format("No matches for field '{}'", data.name));
     }
 
@@ -165,7 +175,7 @@ auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::
         }
 
         const auto intersection = leftTypes.flags & rightTypes.flags;
-        if (intersection.none()) {
+        if (intersection.none() && data.evaluations > 0) {
             const auto allTrue = data.trueResults > 0 && data.falseResults == 0;
             const auto allFalse = data.falseResults > 0 && data.trueResults == 0;
             const auto prefix =
@@ -200,14 +210,14 @@ auto Diagnostics::prepareIndices(const Expr& ast) -> void
         auto visit(const FieldExpr& e) -> void override {
             ExprVisitor::visit(e);
             if (e.id() >= indices_.size())
-                indices_.resize(e.id() + 1);
+                indices_.resize(e.id() + 1, Diagnostics::InvalidIndex);
             indices_[e.id()] = fieldIndex_++;
         }
 
         auto visitComparisonOperator(const ComparisonExprBase& e) -> void
         {
             if (e.id() >= indices_.size())
-                indices_.resize(e.id() + 1);
+                indices_.resize(e.id() + 1, Diagnostics::InvalidIndex);
             indices_[e.id()] = comparisonIndex_++;
         }
 
