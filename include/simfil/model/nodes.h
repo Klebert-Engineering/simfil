@@ -31,7 +31,7 @@ class ModelPool;
 class Model;
 struct ModelNode;
 struct Environment;
-struct Diagnostics;
+class Diagnostics;
 class AST;
 class Expr;
 

@@ -22,9 +22,9 @@ struct Environment;
 struct ModelNode;
 
 /** Query Diagnostics. */
-struct Diagnostics
+class Diagnostics
 {
-    static constexpr std::size_t InvalidIndex = std::numeric_limits<std::size_t>::max();
+    static constexpr std::uint32_t InvalidIndex = std::numeric_limits<std::uint32_t>::max();
 public:
     struct FieldExprData
     {
@@ -84,7 +84,7 @@ public:
     auto prepareIndices(const Expr& ast) -> void;
 
     /** ExprId to diagnostics data index mapping. */
-    std::vector<size_t> exprIndex_;
+    std::vector<std::uint32_t> exprIndex_;
 
     /** FieldExpr diagnostics data. */
     std::vector<FieldExprData> fieldData_;
@@ -93,12 +93,12 @@ public:
     std::vector<ComparisonExprData> comparisonData_;
 
 private:
-    friend auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> tl::expected<std::vector<Message>, Error>;
+    friend auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Message>, Error>;
 
     /**
      * Build messages from this objecst diagnostics data.
      */
-    auto buildMessages(Environment& env, const AST& ast) const -> std::vector<Message>;
+    auto buildMessages() const -> std::vector<Message>;
 
     mutable std::mutex mtx_;
 };

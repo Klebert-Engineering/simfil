@@ -58,8 +58,8 @@ TEST_CASE("DiagnosticsSerialization", "[diag.serialization]") {
     REQUIRE(readResult.has_value());
     
     // Both diagnostics objects must generate the exact same messages.
-    auto originalMessages = diagnostics(env, **ast, originalDiag);
-    auto deserializedMessages = diagnostics(env, **ast, deserializedDiag);
+    auto originalMessages = diagnostics(originalDiag);
+    auto deserializedMessages = diagnostics(deserializedDiag);
     
     REQUIRE(originalMessages.has_value());
     REQUIRE(deserializedMessages.has_value());

@@ -28,8 +28,8 @@ void serialize(S& s, TypeFlags& flags)
 template<typename S>
 void serialize(S& s, Diagnostics& data)
 {
-    s.container(data.exprIndex_, std::numeric_limits<uint16_t>::max(), [](auto& s2, std::size_t& v) {
-        s2.value8b(v);
+    s.container(data.exprIndex_, std::numeric_limits<uint16_t>::max(), [](auto& s2, std::uint32_t& v) {
+        s2.value4b(v);
     });
     s.container(data.fieldData_, std::numeric_limits<uint16_t>::max(), [](auto& s2, Diagnostics::FieldExprData& data) {
         s2.value4b(data.location.offset);
@@ -143,7 +143,7 @@ auto Diagnostics::read(std::istream& stream) -> tl::expected<void, Error>
     return {};
 }
 
-auto Diagnostics::buildMessages(Environment& env, const AST& ast) const -> std::vector<Diagnostics::Message>
+auto Diagnostics::buildMessages() const -> std::vector<Diagnostics::Message>
 {
     std::vector<Diagnostics::Message> messages;
 
@@ -196,9 +196,9 @@ auto Diagnostics::prepareIndices(const Expr& ast) -> void
 {
     struct Visitor : ExprVisitor
     {
-        std::size_t fieldIndex_ = 0u;
-        std::size_t comparisonIndex_ = 0u;
-        std::vector<std::size_t> indices_;
+        std::uint32_t fieldIndex_ = 0u;
+        std::uint32_t comparisonIndex_ = 0u;
+        std::vector<std::uint32_t> indices_;
 
         Visitor()
         {

@@ -950,9 +950,9 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     return values;
 }
 
-auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> expected<std::vector<Diagnostics::Message>, Error>
+auto diagnostics(const Diagnostics& diag) -> expected<std::vector<Diagnostics::Message>, Error>
 {
-    return diag.buildMessages(env, ast);
+    return diag.buildMessages();
 }
 
 }
