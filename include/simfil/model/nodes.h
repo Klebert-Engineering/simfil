@@ -5,6 +5,7 @@
 #include <type_traits>
 #include <variant>
 #include <functional>
+#include <utility>
 
 #include "arena.h"
 #include "string-pool.h"
@@ -225,21 +226,27 @@ namespace detail
 {
 // Shared storage entry for object fields across all BaseObject instantiations.
 // Keeps the underlying ArrayArena type identical regardless of ModelType.
-struct ObjectField
+using ObjectField = TwoPart<StringId, ModelNodeAddress>;
+
+template <typename TField>
+decltype(auto) objectFieldName(TField&& field)
 {
-    MODEL_COLUMN_TYPE(8);
-
-    ObjectField() = default;
-    ObjectField(StringId name, ModelNodeAddress a) : name_(name), node_(a) {}
-    StringId name_ = StringPool::Empty;
-    ModelNodeAddress node_;
-
-    template<typename S>
-    void serialize(S& s) {
-        s.value2b(name_);
-        s.object(node_);
+    if constexpr (requires { std::forward<TField>(field).get(); }) {
+        return objectFieldName(std::forward<TField>(field).get());
+    } else {
+        return std::forward<TField>(field).first();
     }
-};
+}
+
+template <typename TField>
+decltype(auto) objectFieldNode(TField&& field)
+{
+    if constexpr (requires { std::forward<TField>(field).get(); }) {
+        return objectFieldNode(std::forward<TField>(field).get());
+    } else {
+        return std::forward<TField>(field).second();
+    }
+}
 }
 
 /** Semantic view onto a particular node in a ModelPool. */
@@ -549,7 +556,7 @@ protected:
     using MandatoryDerivedModelNodeBase<ModelType>::model;
 
     Storage* storage_ = nullptr;
-    ArrayIndex members_ = 0;
+    ArrayIndex members_ = InvalidArrayIndex;
 };
 
 /** Model Node for a mixed-type array. */
@@ -620,7 +627,7 @@ protected:
     addFieldInternal(std::string_view const& name, ModelNode::Ptr const& value={});
 
     Storage* storage_ = nullptr;
-    ArrayIndex members_ = 0;
+    ArrayIndex members_ = InvalidArrayIndex;
 };
 
 /** Model Node for an object. */

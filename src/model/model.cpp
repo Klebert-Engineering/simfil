@@ -121,7 +121,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
     std::vector<std::string> errors;
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
-        if ((i < 0) || (i >= arena.size())) {
+        if (!arena.valid(static_cast<ArrayIndex>(i))) {
             errors.emplace_back(fmt::format("Bad {} array index {}.", arrType, i));
             return false;
         }
@@ -290,15 +290,15 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
     impl_->columns_.roots_.emplace_back(rootNode->addr_);
 }
 
-model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
+model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     return model_ptr<Object>::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)memberArrId});
 }
 
-model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
+model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
 }
 
@@ -412,11 +412,11 @@ auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::ex
 
     // Translate object field IDs to the new dictionary.
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
-        for (auto& member : memberArray) {
-            if (auto resolvedName = oldStrings->resolve(member.name_)) {
+        for (auto member : memberArray) {
+            if (auto resolvedName = oldStrings->resolve(detail::objectFieldName(member))) {
                 auto stringId = strings->emplace(*resolvedName);
                 TRY_EXPECTED(stringId);
-                member.name_ = *stringId;
+                detail::objectFieldName(member) = *stringId;
             }
         }
     }
@@ -447,7 +447,17 @@ Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
 
+Object::Storage const& ModelPool::objectMemberStorage() const
+{
+    return impl_->columns_.objectMemberArrays_;
+}
+
 Array::Storage& ModelPool::arrayMemberStorage() {
+    return impl_->columns_.arrayMemberArrays_;
+}
+
+Array::Storage const& ModelPool::arrayMemberStorage() const
+{
     return impl_->columns_.arrayMemberArrays_;
 }
 

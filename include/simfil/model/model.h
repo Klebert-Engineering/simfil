@@ -12,7 +12,6 @@
 #include <string_view>
 #include <vector>
 #include <type_traits>
-#include <vector>
 #include <utility>
 #include <cassert>
 #include <istream>
@@ -236,13 +235,13 @@ public:
      * Adopt members from the given vector and obtain a new object
      * model index which has these members.
      */
-    model_ptr<Object> newObject(size_t initialFieldCapacity = 2);
+    model_ptr<Object> newObject(size_t initialFieldCapacity = 2, bool fixedSize = false);
 
     /**
      * Adopt members from the given vector and obtain a new array
      * model index which has these members.
      */
-    model_ptr<Array> newArray(size_t initialFieldCapacity = 2);
+    model_ptr<Array> newArray(size_t initialFieldCapacity = 2, bool fixedSize = false);
 
     /** Add a scalar value and get its new model node index. */
     ModelNode::Ptr newValue(int64_t const& value);
@@ -305,7 +304,9 @@ protected:
      * so derived ModelPools can create Object/Array-derived nodes.
      */
     Object::Storage& objectMemberStorage();
+    [[nodiscard]] Object::Storage const& objectMemberStorage() const;
     Array::Storage& arrayMemberStorage();
+    [[nodiscard]] Array::Storage const& arrayMemberStorage() const;
 };
 
 }

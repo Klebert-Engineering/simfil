@@ -10,6 +10,10 @@
 #include <shared_mutex>
 #include <mutex>
 #include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <tl/expected.hpp>
 #include "simfil/model/column.h"
 
@@ -27,11 +31,15 @@ namespace bitsery::ext {
 namespace simfil
 {
 
-/// Address of an array within an ArrayArena
-using ArrayIndex = int32_t;
+/// Address of an array within an ArrayArena. Note, that only the lowest 3B may be
+/// used. This is to allow passing ArrayIndex as the value of a ModelNodeAddress.
+using ArrayIndex = uint32_t;
 
 /// Array index which can be used to indicate a default/invalid value.
-constexpr static ArrayIndex InvalidArrayIndex = -1;
+constexpr static ArrayIndex InvalidArrayIndex = 0x00ffffffu;
+constexpr static ArrayIndex FirstRegularArrayIndex = 1u;
+constexpr static ArrayIndex SingletonArrayHandleMask = 0x00800000u;
+constexpr static ArrayIndex SingletonArrayHandlePayloadMask = 0x007fffffu;
 
 /**
  * ArrayArena - An arena allocator for append-only vectors.
@@ -40,7 +48,8 @@ constexpr static ArrayIndex InvalidArrayIndex = -1;
  * forward-linked array chunks. When an array grows beyond the current capacity c
  * of its current last chunk, a new chunk of size c*2 is allocated and becomes
  * the new last chunk. This is then set as linked to the previous last chunk.
- * Usually, appending will be lock-free, and only growth needs the lock.
+ * Without ARRAY_ARENA_THREAD_SAFE, appending is lock-free. With it enabled,
+ * reads use shared locks while mutations take a write lock.
  *
  * @tparam ElementType_ The type of elements stored in the arrays.
  * @tparam PageSize The number of elements that each storage page can store.
@@ -53,6 +62,22 @@ class ArrayArena
 public:
     using ElementType = ElementType_;
     using SizeType = SizeType_;
+    using DataStorage = ModelColumn<ElementType_, PageSize>;
+    using DataWriteRef = decltype(std::declval<DataStorage&>()[std::declval<size_t>()]);
+    using DataReadRef = decltype(std::declval<DataStorage const&>()[std::declval<size_t>()]);
+    using AtValue = detail::arena_access_result_t<DataWriteRef>;
+    using ConstAtValue = detail::arena_access_result_t<DataReadRef>;
+
+    struct SingletonStats
+    {
+        size_t handleCount = 0;
+        size_t occupiedCount = 0;
+        size_t emptyCount = 0;
+        size_t singletonStorageBytes = 0;
+        size_t hypotheticalRegularBytes = 0;
+        size_t estimatedSavedBytes = 0;
+    };
+
     struct CompactArrayChunk
     {
         MODEL_COLUMN_TYPE(8);
@@ -68,21 +93,54 @@ public:
     };
     using CompactHeadStorage = ModelColumn<CompactArrayChunk, ChunkPageSize>;
 
+    ArrayArena()
+    {
+        ensure_regular_head_pool();
+    }
+
+    static constexpr bool is_singleton_handle(ArrayIndex arrayIndex)
+    {
+        return arrayIndex != InvalidArrayIndex &&
+               (arrayIndex & SingletonArrayHandleMask) != 0;
+    }
+
+    static constexpr ArrayIndex singleton_payload(ArrayIndex handle)
+    {
+        return handle & SingletonArrayHandlePayloadMask;
+    }
+
     /**
      * Creates a new array with the specified initial capacity.
      *
      * @param initialCapacity The initial capacity of the new array.
+     * @param fixedSize If true, allows singleton-handle encoding when initialCapacity is 1.
      * @return The index of the new array.
      */
-    ArrayIndex new_array(size_t initialCapacity)
+    ArrayIndex new_array(size_t initialCapacity, bool fixedSize = false)
     {
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::unique_lock guard(lock_);
         #endif
         ensure_runtime_heads_from_compact();
+
+        if (initialCapacity == 1U && fixedSize) {
+            auto singletonIndex = to_array_index(singletonValues_.size());
+            if (singletonIndex > SingletonArrayHandlePayloadMask) {
+                raise<std::out_of_range>("ArrayArena singleton pool exhausted.");
+            }
+            singletonValues_.emplace_back(ElementType_{});
+            singletonOccupied_.emplace_back(static_cast<uint8_t>(0));
+            compactHeads_.reset();
+            return SingletonArrayHandleMask | singletonIndex;
+        }
+
+        ensure_regular_head_pool();
         size_t offset = data_.size();
         data_.resize(offset + initialCapacity);
-        auto index = static_cast<ArrayIndex>(heads_.size());
+        auto index = to_array_index(heads_.size());
+        if ((index & SingletonArrayHandleMask) != 0) {
+            raise<std::out_of_range>("ArrayArena regular head index exceeded handle bit range.");
+        }
         heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0,
              InvalidArrayIndex,
              InvalidArrayIndex});
@@ -103,18 +161,85 @@ public:
             return heads_.size();
     }
 
+    [[nodiscard]] size_t singleton_handle_count() const
+    {
+        return singletonValues_.size();
+    }
+
+    [[nodiscard]] size_t singleton_occupied_count() const
+    {
+        size_t occupiedCount = 0;
+        for (auto const occupied : singletonOccupied_) {
+            occupiedCount += occupied == 0 ? 0 : 1;
+        }
+        return occupiedCount;
+    }
+
+    [[nodiscard]] SingletonStats singleton_stats() const
+    {
+        const auto handleCount = singleton_handle_count();
+        const auto occupiedCount = singleton_occupied_count();
+        const auto emptyCount = handleCount >= occupiedCount ? handleCount - occupiedCount : 0;
+
+        const auto singletonStorageBytes =
+            singletonValues_.byte_size() + singletonOccupied_.byte_size();
+        const auto hypotheticalRegularBytes =
+            handleCount * sizeof(CompactArrayChunk) + occupiedCount * DataStorage::record_size;
+
+        return SingletonStats{
+            .handleCount = handleCount,
+            .occupiedCount = occupiedCount,
+            .emptyCount = emptyCount,
+            .singletonStorageBytes = singletonStorageBytes,
+            .hypotheticalRegularBytes = hypotheticalRegularBytes,
+            .estimatedSavedBytes = hypotheticalRegularBytes > singletonStorageBytes
+                ? hypotheticalRegularBytes - singletonStorageBytes
+                : 0};
+    }
+
+    [[nodiscard]] bool valid(ArrayIndex a) const
+    {
+        if (a == InvalidArrayIndex) {
+            return false;
+        }
+        if (is_singleton_handle(a)) {
+            auto singletonIndex = singleton_payload(a);
+            return singletonIndex < singletonValues_.size() &&
+                   singletonIndex < singletonOccupied_.size();
+        }
+        if (heads_.empty() && compactHeads_) {
+            return a < compactHeads_->size();
+        }
+        return a < heads_.size();
+    }
+
     /**
      * Returns the size of the specified array.
      *
      * @param a The index of the array.
      * @return The size of the array.
      */
-    [[nodiscard]] SizeType_ size(ArrayIndex const& a) const {
+    [[nodiscard]] SizeType_ size(ArrayIndex a) const {
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(lock_);
         #endif
-        if (heads_.empty() && compactHeads_)
+        if (is_singleton_handle(a)) {
+            auto singletonIndex = singleton_payload(a);
+            if (singletonIndex >= singletonOccupied_.size()) {
+                raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+            }
+            return singletonOccupied_.at(singletonIndex) == 0 ? 0 : 1;
+        }
+
+        if (heads_.empty() && compactHeads_) {
+            if (a >= compactHeads_->size()) {
+                raise<std::out_of_range>("ArrayArena head index out of range.");
+            }
             return static_cast<SizeType_>((*compactHeads_)[a].size);
+        }
+        if (a >= heads_.size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+        }
         return heads_[a].size;
     }
 
@@ -122,14 +247,17 @@ public:
      * @return The current size, in bytes, of the array arena if serialized.
      */
     [[nodiscard]] size_t byte_size() const {
+        auto singletonBytes =
+            singletonValues_.byte_size() +
+            singletonOccupied_.byte_size();
         if (compactHeads_) {
-            return compactHeads_->byte_size() + data_.byte_size();
+            return compactHeads_->byte_size() + data_.byte_size() + singletonBytes;
         }
         auto result = heads_.size() * sizeof(CompactArrayChunk);
         for (auto const& head : heads_) {
-            result += head.size * sizeof(ElementType_);
+            result += head.size * DataStorage::record_size;
         }
-        return result;
+        return result + singletonBytes;
     }
 
     /**
@@ -140,13 +268,13 @@ public:
      * @return A reference to the element at the specified index.
      * @throws std::out_of_range if the index is out of the array bounds.
      */
-    tl::expected<std::reference_wrapper<ElementType_>, Error>
-    at(ArrayIndex const& a, size_t const& i) {
-        return at_impl<ElementType_>(*this, a, i);
+    tl::expected<AtValue, Error>
+    at(ArrayIndex a, size_t i) {
+        return at_impl<ArrayArena, AtValue>(*this, a, i);
     }
-    tl::expected<std::reference_wrapper<const ElementType_>, Error>
-    at(ArrayIndex const& a, size_t const& i) const {
-        return at_impl<ElementType_ const>(*this, a, i);
+    tl::expected<ConstAtValue, Error>
+    at(ArrayIndex a, size_t i) const {
+        return at_impl<ArrayArena const, ConstAtValue>(*this, a, i);
     }
 
     /**
@@ -156,13 +284,33 @@ public:
      * @param data The element to be appended.
      * @return A reference to the appended element.
      */
-    ElementType_& push_back(ArrayIndex const& a, ElementType_ const& data)
+    DataWriteRef push_back(ArrayIndex a, ElementType_ const& data)
     {
-        Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
+        if (is_singleton_handle(a)) {
+            #ifdef ARRAY_ARENA_THREAD_SAFE
+            std::unique_lock guard(lock_);
+            #endif
+            auto singletonIndex = singleton_payload(a);
+            if (singletonIndex >= singletonValues_.size() ||
+                singletonIndex >= singletonOccupied_.size()) {
+                raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+            }
+            auto& occupied = singletonOccupied_.at(singletonIndex);
+            if (occupied != 0) {
+                raise<std::runtime_error>(
+                    "Cannot append more than one element to a singleton array handle.");
+            }
+            singletonValues_.at(singletonIndex) = data;
+            occupied = 1;
+            compactHeads_.reset();
+            return singletonValues_.at(singletonIndex);
+        }
+
         #ifdef ARRAY_ARENA_THREAD_SAFE
-        std::shared_lock guard(lock_);
+        std::unique_lock guard(lock_);
         #endif
-        auto& elem = data_[updatedLast.offset + updatedLast.size];
+        Chunk& updatedLast = ensure_capacity_and_get_last_chunk_unlocked(a);
+        DataWriteRef elem = data_[updatedLast.offset + updatedLast.size];
         elem = data;
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
@@ -180,14 +328,34 @@ public:
      * @return A reference to the appended element.
      */
     template <typename... Args>
-    ElementType_& emplace_back(ArrayIndex const& a, Args&&... args)
+    DataWriteRef emplace_back(ArrayIndex a, Args&&... args)
     {
-        Chunk& updatedLast = ensure_capacity_and_get_last_chunk(a);
+        if (is_singleton_handle(a)) {
+            #ifdef ARRAY_ARENA_THREAD_SAFE
+            std::unique_lock guard(lock_);
+            #endif
+            auto singletonIndex = singleton_payload(a);
+            if (singletonIndex >= singletonValues_.size() ||
+                singletonIndex >= singletonOccupied_.size()) {
+                raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+            }
+            auto& occupied = singletonOccupied_.at(singletonIndex);
+            if (occupied != 0) {
+                raise<std::runtime_error>(
+                    "Cannot append more than one element to a singleton array handle.");
+            }
+            singletonValues_.at(singletonIndex) = ElementType_(std::forward<Args>(args)...);
+            occupied = 1;
+            compactHeads_.reset();
+            return singletonValues_.at(singletonIndex);
+        }
+
         #ifdef ARRAY_ARENA_THREAD_SAFE
-        std::shared_lock guard(lock_);
+        std::unique_lock guard(lock_);
         #endif
-        auto& elem = data_[updatedLast.offset + updatedLast.size];
-        new (&elem) ElementType_(std::forward<Args>(args)...);
+        Chunk& updatedLast = ensure_capacity_and_get_last_chunk_unlocked(a);
+        DataWriteRef elem = data_[updatedLast.offset + updatedLast.size];
+        elem = ElementType_(std::forward<Args>(args)...);
         ++heads_[a].size;
         if (&heads_[a] != &updatedLast)
             ++updatedLast.size;
@@ -208,7 +376,10 @@ public:
         heads_.clear();
         continuations_.clear();
         data_.clear();
+        singletonValues_.clear();
+        singletonOccupied_.clear();
         compactHeads_.reset();
+        ensure_regular_head_pool();
     }
 
     /**
@@ -225,6 +396,8 @@ public:
         heads_.shrink_to_fit();
         continuations_.shrink_to_fit();
         data_.shrink_to_fit();
+        singletonValues_.shrink_to_fit();
+        singletonOccupied_.shrink_to_fit();
         if (compactHeads_) {
             compactHeads_->shrink_to_fit();
         }
@@ -233,7 +406,7 @@ public:
     /**
      * Check if a compact chunk representation is available.
      */
-    [[nodiscard]] bool isCompact() const {
+    [[nodiscard]] bool is_compact() const {
         return compactHeads_.has_value();
     }
 
@@ -247,20 +420,21 @@ public:
     template<typename T, bool is_const>
     class ArrayIterator {
         using ArrayArenaRef = std::conditional_t<is_const, const ArrayArena&, ArrayArena&>;
-        using ElementRef = std::conditional_t<is_const, const T&, T&>;
+        using AtExpected = decltype(std::declval<ArrayArenaRef>().at(std::declval<ArrayIndex>(), std::declval<size_t>()));
+        using ElementAccess = std::remove_cvref_t<decltype(std::declval<AtExpected&>().value())>;
         friend class ArrayRange;
 
     public:
         using iterator_category = std::input_iterator_tag;
         using value_type = T;
         using difference_type = std::ptrdiff_t;
-        using pointer = value_type*;
-        using reference = ElementRef;
+        using pointer = void;
+        using reference = ElementAccess;
 
         ArrayIterator(ArrayArenaRef arena, ArrayIndex array_index, size_t elem_index)
             : arena_(arena), array_index_(array_index), elem_index_(elem_index) {}
 
-        ElementRef operator*() noexcept {
+        reference operator*() noexcept {
             auto res = arena_.at(array_index_, elem_index_);
             assert(res);
             // Unchecked access!
@@ -296,7 +470,7 @@ public:
         iterator begin() const { return begin_; }
         iterator end() const { return end_; }
         [[nodiscard]] size_t size() const { return begin_.arena_.size(begin_.array_index_); }
-        decltype(auto) operator[] (size_t const& i) const { return begin_.arena_.at(begin_.array_index_, i); }
+        decltype(auto) operator[] (size_t i) const { return begin_.arena_.at(begin_.array_index_, i); }
 
     private:
         iterator begin_;
@@ -306,8 +480,12 @@ public:
     class ArrayArenaIterator
     {
     public:
-        ArrayArenaIterator(ArrayArena& arena, ArrayIndex index)
-            : arena_(arena), index_(index) {}
+        ArrayArenaIterator(ArrayArena& arena, size_t ordinal)
+            : arena_(arena),
+              ordinal_(ordinal)
+        {
+            update_array_index();
+        }
 
         iterator begin() { return arena_.begin(index_); }
         iterator end() { return arena_.end(index_); }
@@ -319,12 +497,13 @@ public:
         }
 
         ArrayArenaIterator& operator++() {
-            ++index_;
+            ++ordinal_;
+            update_array_index();
             return *this;
         }
 
         bool operator==(const ArrayArenaIterator& other) const {
-            return &arena_ == &other.arena_ && index_ == other.index_;
+            return &arena_ == &other.arena_ && ordinal_ == other.ordinal_;
         }
 
         bool operator!=(const ArrayArenaIterator& other) const {
@@ -338,62 +517,128 @@ public:
         using reference = value_type&;
 
     private:
+        [[nodiscard]] size_t regular_array_count() const
+        {
+            if (arena_.heads_.empty() && arena_.compactHeads_) {
+                return arena_.compactHeads_->size();
+            }
+            return arena_.heads_.size();
+        }
+
+        [[nodiscard]] size_t visible_regular_array_count() const
+        {
+            const auto count = regular_array_count();
+            return count > FirstRegularArrayIndex ? count - FirstRegularArrayIndex : 0;
+        }
+
+        [[nodiscard]] size_t total_visible_array_count() const
+        {
+            return visible_regular_array_count() + arena_.singleton_handle_count();
+        }
+
+        void update_array_index()
+        {
+            const auto regularCount = visible_regular_array_count();
+            if (ordinal_ < regularCount) {
+                index_ = to_array_index(FirstRegularArrayIndex + ordinal_);
+                return;
+            }
+
+            const auto singletonOrdinal = ordinal_ - regularCount;
+            if (ordinal_ < total_visible_array_count() &&
+                singletonOrdinal <= SingletonArrayHandlePayloadMask) {
+                index_ = SingletonArrayHandleMask | to_array_index(singletonOrdinal);
+                return;
+            }
+
+            index_ = InvalidArrayIndex;
+        }
+
         ArrayArena& arena_;
+        size_t ordinal_ = 0;
         ArrayIndex index_;
     };
 
-    iterator begin(ArrayIndex const& a) { return iterator(*this, a, 0); }
-    iterator end(ArrayIndex const& a) { return iterator(*this, a, size(a)); }
-    const_iterator begin(ArrayIndex const& a) const { return const_iterator(*this, a, 0); }
-    const_iterator end(ArrayIndex const& a) const { return const_iterator(*this, a, size(a)); }
+    iterator begin(ArrayIndex a) { return iterator(*this, a, 0); }
+    iterator end(ArrayIndex a) { return iterator(*this, a, size(a)); }
+    const_iterator begin(ArrayIndex a) const { return const_iterator(*this, a, 0); }
+    const_iterator end(ArrayIndex a) const { return const_iterator(*this, a, size(a)); }
 
     ArrayArenaIterator begin() { return ArrayArenaIterator(*this, 0); }
-    ArrayArenaIterator end() { return ArrayArenaIterator(*this, static_cast<ArrayIndex>(size())); }
-    ArrayArenaIterator begin() const { return ArrayArenaIterator(*this, 0); }
-    ArrayArenaIterator end() const { return ArrayArenaIterator(*this, static_cast<ArrayIndex>(size())); }
+    ArrayArenaIterator end()
+    {
+        const auto regularCount = size();
+        const auto visibleRegularCount = regularCount > FirstRegularArrayIndex
+            ? regularCount - FirstRegularArrayIndex
+            : 0;
+        return ArrayArenaIterator(*this, visibleRegularCount + singleton_handle_count());
+    }
+    ArrayArenaIterator begin() const
+    {
+        return ArrayArenaIterator(const_cast<ArrayArena&>(*this), 0);
+    }
+    ArrayArenaIterator end() const
+    {
+        const auto regularCount = size();
+        const auto visibleRegularCount = regularCount > FirstRegularArrayIndex
+            ? regularCount - FirstRegularArrayIndex
+            : 0;
+        return ArrayArenaIterator(
+            const_cast<ArrayArena&>(*this),
+            visibleRegularCount + singleton_handle_count());
+    }
 
-    ArrayRange range(ArrayIndex const& array) {return ArrayRange(begin(array), end(array));}
+    ArrayRange range(ArrayIndex array) {return ArrayRange(begin(array), end(array));}
 
     /// Support fast iteration via callback. The passed lambda needs to return true,
     /// as long as the iteration is supposed to continue.
     template <typename Func>
-    void iterate(ArrayIndex const& a, Func&& lambda)
+    void iterate(ArrayIndex a, Func&& lambda)
     {
+        if (is_singleton_handle(a)) {
+            auto singletonIndex = singleton_payload(a);
+            if (singletonIndex >= singletonValues_.size() ||
+                singletonIndex >= singletonOccupied_.size()) {
+                raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+            }
+            if (singletonOccupied_.at(singletonIndex) == 0) {
+                return;
+            }
+            decltype(auto) value = singletonValues_.at(singletonIndex);
+            if (!invoke_iter_callback(lambda, value, 0)) {
+                return;
+            }
+            return;
+        }
+
         if (heads_.empty() && compactHeads_) {
+            if (a >= compactHeads_->size()) {
+                raise<std::out_of_range>("ArrayArena head index out of range.");
+            }
             auto const& compact = (*compactHeads_)[a];
             for (size_t i = 0; i < static_cast<size_t>(compact.size); ++i)
             {
-                if constexpr (std::is_invocable_r_v<bool, Func, ElementType_&>) {
-                    if (!lambda(data_[static_cast<size_t>(compact.offset) + i]))
-                        return;
-                }
-                else if constexpr (std::is_invocable_v<Func, ElementType_&, size_t>) {
-                    lambda(data_[static_cast<size_t>(compact.offset) + i], i);
-                }
-                else {
-                    lambda(data_[static_cast<size_t>(compact.offset) + i]);
+                decltype(auto) value = data_[static_cast<size_t>(compact.offset) + i];
+                if (!invoke_iter_callback(lambda, value, i)) {
+                    return;
                 }
             }
             return;
         }
 
+        if (a >= heads_.size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+        }
         Chunk const* current = &heads_[a];
         size_t globalIndex = 0;
         while (current != nullptr)
         {
             for (size_t i = 0; i < current->size && i < current->capacity; ++i)
             {
-                if constexpr (std::is_invocable_r_v<bool, Func, ElementType_&>) {
-                    // If lambda returns bool, break if it returns false
-                    if (!lambda(data_[current->offset + i]))
-                        return;
+                decltype(auto) value = data_[current->offset + i];
+                if (!invoke_iter_callback(lambda, value, globalIndex)) {
+                    return;
                 }
-                else if constexpr (std::is_invocable_v<Func, ElementType_&, size_t>) {
-                    // If lambda takes two arguments, pass the current index
-                    lambda(data_[current->offset + i], globalIndex);
-                }
-                else
-                    lambda(data_[current->offset + i]);
                 ++globalIndex;
             }
             current = (current->next != InvalidArrayIndex) ? &continuations_[current->next] : nullptr;
@@ -417,12 +662,56 @@ private:
 
     ModelColumn<ArrayArena::Chunk, ChunkPageSize> heads_;         // Head chunks of all arrays.
     ModelColumn<ArrayArena::Chunk, ChunkPageSize> continuations_; // Continuation chunks of all arrays.
-    ModelColumn<ElementType_, PageSize> data_;  // Underlying element storage.
+    DataStorage data_;  // Underlying element storage.
+    DataStorage singletonValues_;
+    ModelColumn<uint8_t, PageSize> singletonOccupied_;
     std::optional<CompactHeadStorage> compactHeads_;
 
     #ifdef ARRAY_ARENA_THREAD_SAFE
     mutable std::shared_mutex lock_; // Mutex for synchronizing access to the data structure during growth.
     #endif
+
+    static ArrayIndex to_array_index(size_t value)
+    {
+        if (value > std::numeric_limits<ArrayIndex>::max()) {
+            raise<std::out_of_range>("ArrayArena index exceeds address space.");
+        }
+        return static_cast<ArrayIndex>(value);
+    }
+
+    template <typename Func, typename Value>
+    static bool invoke_iter_callback(Func&& lambda, Value&& value, size_t index)
+    {
+        using Arg = decltype(value);
+        if constexpr (std::is_invocable_r_v<bool, Func, Arg>) {
+            return lambda(std::forward<Value>(value));
+        } else if constexpr (std::is_invocable_v<Func, Arg, size_t>) {
+            lambda(std::forward<Value>(value), index);
+            return true;
+        } else if constexpr (std::is_invocable_v<Func, Arg>) {
+            lambda(std::forward<Value>(value));
+            return true;
+        } else {
+            static_assert(
+                std::is_invocable_v<Func, Arg>,
+                "ArrayArena::iterate callback must accept (value) or (value, index), optionally returning bool");
+            return false;
+        }
+    }
+
+    void ensure_regular_head_pool()
+    {
+        if (!heads_.empty()) {
+            return;
+        }
+        heads_.push_back({
+            0,
+            0,
+            0,
+            InvalidArrayIndex,
+            InvalidArrayIndex
+        });
+    }
 
     void ensure_runtime_heads_from_compact()
     {
@@ -441,6 +730,7 @@ private:
                 InvalidArrayIndex
             });
         }
+        ensure_regular_head_pool();
     }
 
     /**
@@ -453,30 +743,22 @@ private:
      * @param a The index of the array.
      * @return A reference to the last chunk of the array, after ensuring there's capacity.
      */
-    Chunk& ensure_capacity_and_get_last_chunk(ArrayIndex const& a)
+    // Caller must hold the write lock when ARRAY_ARENA_THREAD_SAFE is enabled.
+    Chunk& ensure_capacity_and_get_last_chunk_unlocked(ArrayIndex a)
     {
-        #ifndef ARRAY_ARENA_THREAD_SAFE
-        ensure_runtime_heads_from_compact();
-        #endif
-
-        #ifdef ARRAY_ARENA_THREAD_SAFE
-        std::shared_lock read_guard(lock_);
-        if (heads_.empty() && compactHeads_) {
-            read_guard.unlock();
-            std::unique_lock write_guard(lock_);
-            ensure_runtime_heads_from_compact();
-            write_guard.unlock();
-            read_guard.lock();
+        if (is_singleton_handle(a)) {
+            raise<std::runtime_error>("Singleton handles do not use chunk growth.");
         }
-        #endif
+
+        ensure_runtime_heads_from_compact();
+        ensure_regular_head_pool();
+        if (a >= heads_.size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+        }
         Chunk& head = heads_[a];
         Chunk& last = (head.last == InvalidArrayIndex) ? head : continuations_[head.last];
         if (last.size < last.capacity)
             return last;
-        #ifdef ARRAY_ARENA_THREAD_SAFE
-        read_guard.unlock();
-        std::unique_lock guard(lock_);
-        #endif
         size_t offset = data_.size();
         size_t newCapacity = std::max((SizeType_)2, (SizeType_)last.capacity * 2);
         data_.resize(offset + newCapacity);
@@ -485,32 +767,53 @@ private:
             head.capacity = static_cast<SizeType_>(newCapacity);
             return head;
         }
-        auto newIndex = static_cast<ArrayIndex>(continuations_.size());
+        auto newIndex = to_array_index(continuations_.size());
         continuations_.push_back({(SizeType_)offset, (SizeType_)newCapacity, 0, InvalidArrayIndex, InvalidArrayIndex});
         last.next = newIndex;
         head.last = newIndex;
         return continuations_[newIndex];
     }
 
-    template <typename ElementTypeRef, typename Self>
-    static tl::expected<std::reference_wrapper<ElementTypeRef>, Error>
-    at_impl(Self& self, ArrayIndex const& a, size_t const& i)
+    template <typename Self, typename AccessType>
+    static tl::expected<AccessType, Error>
+    at_impl(Self& self, ArrayIndex a, size_t i)
     {
         #ifdef ARRAY_ARENA_THREAD_SAFE
         std::shared_lock guard(self.lock_);
         #endif
+        if (is_singleton_handle(a)) {
+            auto singletonIndex = singleton_payload(a);
+            if (singletonIndex >= self.singletonValues_.size() ||
+                singletonIndex >= self.singletonOccupied_.size()) {
+                return tl::unexpected<Error>(Error::IndexOutOfRange, "singleton handle index out of range");
+            }
+            if (self.singletonOccupied_.at(singletonIndex) == 0 || i > 0) {
+                return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
+            }
+            return detail::arena_access_wrap(self.singletonValues_.at(singletonIndex));
+        }
+
         if (self.heads_.empty() && self.compactHeads_) {
+            if (a >= self.compactHeads_->size()) {
+                return tl::unexpected<Error>(Error::IndexOutOfRange, "array index out of range");
+            }
             auto const& compact = (*self.compactHeads_)[a];
-            if (i < static_cast<size_t>(compact.size))
-                return self.data_[static_cast<size_t>(compact.offset) + i];
+            if (i < static_cast<size_t>(compact.size)) {
+                return detail::arena_access_wrap(self.data_[static_cast<size_t>(compact.offset) + i]);
+            }
             return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
+        }
+
+        if (a >= self.heads_.size()) {
+            return tl::unexpected<Error>(Error::IndexOutOfRange, "array index out of range");
         }
 
         typename Self::Chunk const* current = &self.heads_[a];
         size_t remaining = i;
         while (true) {
-            if (remaining < current->capacity && remaining < current->size)
-                return self.data_[current->offset + remaining];
+            if (remaining < current->capacity && remaining < current->size) {
+                return detail::arena_access_wrap(self.data_[current->offset + remaining]);
+            }
             if (current->next == InvalidArrayIndex)
                 return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
             remaining -= current->capacity;

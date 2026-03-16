@@ -60,9 +60,11 @@ struct ArrayArenaExt
         (void)fnc;
 
         // If the arena is already compact, we can simply dump out heads and data
-        if (arena.isCompact()) {
+        if (arena.is_compact()) {
             s.object(*arena.compactHeads_);
             s.object(arena.data_);
+            s.object(arena.singletonValues_);
+            s.object(arena.singletonOccupied_);
             return;
         }
 
@@ -77,7 +79,7 @@ struct ArrayArenaExt
 
         size_t totalElements = 0;
         for (auto const& head : arena.heads_) {
-            totalElements += static_cast<size_t>(head.size);
+            totalElements += head.size;
         }
         compactData.resize(totalElements);
 
@@ -90,26 +92,30 @@ struct ArrayArenaExt
             });
 
             auto const* current = &head;
-            auto remaining = static_cast<size_t>(head.size);
+            size_t remaining = head.size;
             while (current != nullptr && remaining > 0) {
                 size_t chunkUsed = 0;
                 if (current == &head) {
-                    chunkUsed = std::min(static_cast<size_t>(head.capacity), remaining);
+                    chunkUsed = std::min<size_t>(head.capacity, remaining);
                 } else {
-                    chunkUsed = std::min(static_cast<size_t>(current->size), remaining);
+                    chunkUsed = std::min<size_t>(current->size, remaining);
                 }
 
                 for (size_t i = 0; i < chunkUsed; ++i) {
                     compactData[writeIndex++] = arena.data_[current->offset + i];
                 }
                 remaining -= chunkUsed;
-                current = (current->next != simfil::InvalidArrayIndex) ? &arena.continuations_[current->next] : nullptr;
+                current = (current->next != simfil::InvalidArrayIndex)
+                    ? &arena.continuations_[static_cast<size_t>(current->next)]
+                    : nullptr;
             }
-            packedOffset += static_cast<size_t>(head.size);
+            packedOffset += head.size;
         }
 
         s.object(compactHeads);
         s.object(compactData);
+        s.object(arena.singletonValues_);
+        s.object(arena.singletonOccupied_);
     }
 
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
@@ -121,10 +127,18 @@ struct ArrayArenaExt
         CompactHeadsStorage compactHeads;
         s.object(compactHeads);
         s.object(arena.data_);
+        s.object(arena.singletonValues_);
+        s.object(arena.singletonOccupied_);
 
         arena.heads_.clear();
         arena.continuations_.clear();
         arena.compactHeads_ = std::move(compactHeads);
+        if (arena.singletonOccupied_.size() < arena.singletonValues_.size()) {
+            auto const missing = arena.singletonValues_.size() - arena.singletonOccupied_.size();
+            for (size_t i = 0; i < missing; ++i) {
+                arena.singletonOccupied_.emplace_back(static_cast<uint8_t>(1));
+            }
+        }
     }
 };
 
@@ -134,7 +148,7 @@ namespace traits {
 template<typename T>
 struct ExtensionTraits<ext::ArrayArenaExt, T>
 {
-    using TValue = typename T::ElementType;
+    using TValue = void;
     static constexpr bool SupportValueOverload = true;
     static constexpr bool SupportObjectOverload = true;
     static constexpr bool SupportLambdaOverload = true;
