@@ -45,16 +45,20 @@ constexpr static ArrayIndex SingletonArrayHandlePayloadMask = 0x007fffffu;
  * ArrayArena - An arena allocator for append-only vectors.
  *
  * The ArrayArena is a wrapper around paged model columns. It keeps track of
- * forward-linked array chunks. When an array grows beyond the current capacity c
- * of its current last chunk, a new chunk of size c*2 is allocated and becomes
- * the new last chunk. This is then set as linked to the previous last chunk.
- * Without ARRAY_ARENA_THREAD_SAFE, appending is lock-free. With it enabled,
- * reads use shared locks while mutations take a write lock.
+ * forward-linked array chunks for regular growable arrays, optional singleton
+ * handles for fixed-size 0-or-1 arrays, and an optional compact head
+ * representation used during serialization. Without ARRAY_ARENA_THREAD_SAFE,
+ * appending is lock-free. With it enabled, reads use shared locks while
+ * mutations take a write lock.
  *
  * @tparam ElementType_ The type of elements stored in the arrays.
  * @tparam PageSize The number of elements that each storage page can store.
  */
-template <class ElementType_, size_t PageSize = 4096, size_t ChunkPageSize = 4096, typename SizeType_ =uint32_t>
+template <
+    class ElementType_,
+    size_t PageSize = 4096,
+    size_t ChunkPageSize = 4096,
+    typename SizeType_ = uint32_t>
 class ArrayArena
 {
     friend struct bitsery::ext::ArrayArenaExt;
@@ -113,7 +117,8 @@ public:
      * Creates a new array with the specified initial capacity.
      *
      * @param initialCapacity The initial capacity of the new array.
-     * @param fixedSize If true, allows singleton-handle encoding when initialCapacity is 1.
+     * @param fixedSize If true, `initialCapacity == 1` creates a singleton handle
+     *                  instead of a growable chunk-backed array.
      * @return The index of the new array.
      */
     ArrayIndex new_array(size_t initialCapacity, bool fixedSize = false)
@@ -250,7 +255,7 @@ public:
         auto singletonBytes =
             singletonValues_.byte_size() +
             singletonOccupied_.byte_size();
-        if (compactHeads_) {
+        if (heads_.empty() && compactHeads_) {
             return compactHeads_->byte_size() + data_.byte_size() + singletonBytes;
         }
         auto result = heads_.size() * sizeof(CompactArrayChunk);
@@ -404,25 +409,31 @@ public:
     }
 
     /**
-     * Check if a compact chunk representation is available.
+     * Check if the arena is currently represented by compact heads only.
      */
     [[nodiscard]] bool is_compact() const {
-        return compactHeads_.has_value();
+        return heads_.empty() && compactHeads_.has_value();
     }
 
     // Iterator-related types and functions
     template<typename T, bool is_const>
     class ArrayIterator;
-    class ArrayRange;
     using iterator = ArrayIterator<ElementType_, false>;
     using const_iterator = ArrayIterator<ElementType_, true>;
+    template <bool T_IsConst>
+    class BasicArrayRange;
+    template <bool T_IsConst>
+    class BasicArrayArenaIterator;
+    using arena_iterator = BasicArrayArenaIterator<false>;
+    using const_arena_iterator = BasicArrayArenaIterator<true>;
 
     template<typename T, bool is_const>
     class ArrayIterator {
         using ArrayArenaRef = std::conditional_t<is_const, const ArrayArena&, ArrayArena&>;
         using AtExpected = decltype(std::declval<ArrayArenaRef>().at(std::declval<ArrayIndex>(), std::declval<size_t>()));
         using ElementAccess = std::remove_cvref_t<decltype(std::declval<AtExpected&>().value())>;
-        friend class ArrayRange;
+        template <bool>
+        friend class BasicArrayRange;
 
     public:
         using iterator_category = std::input_iterator_tag;
@@ -462,59 +473,67 @@ public:
         size_t elem_index_;
     };
 
-    class ArrayRange
+    template <bool T_IsConst>
+    class BasicArrayRange
     {
     public:
-        ArrayRange(iterator begin, iterator end) : begin_(begin), end_(end) {}
+        using element_iterator = std::conditional_t<T_IsConst, const_iterator, iterator>;
 
-        iterator begin() const { return begin_; }
-        iterator end() const { return end_; }
+        BasicArrayRange(element_iterator begin, element_iterator end)
+            : begin_(begin), end_(end)
+        {
+        }
+
+        element_iterator begin() const { return begin_; }
+        element_iterator end() const { return end_; }
         [[nodiscard]] size_t size() const { return begin_.arena_.size(begin_.array_index_); }
-        decltype(auto) operator[] (size_t i) const { return begin_.arena_.at(begin_.array_index_, i); }
+        decltype(auto) operator[](size_t i) const { return begin_.arena_.at(begin_.array_index_, i); }
 
     private:
-        iterator begin_;
-        iterator end_;
+        element_iterator begin_;
+        element_iterator end_;
     };
 
-    class ArrayArenaIterator
+    template <bool T_IsConst>
+    class BasicArrayArenaIterator
     {
     public:
-        ArrayArenaIterator(ArrayArena& arena, size_t ordinal)
+        using ArrayArenaRef = std::conditional_t<T_IsConst, const ArrayArena&, ArrayArena&>;
+        using element_iterator = std::conditional_t<T_IsConst, const_iterator, iterator>;
+        using value_type = BasicArrayRange<T_IsConst>;
+        using difference_type = std::ptrdiff_t;
+        using pointer = void;
+        using reference = value_type;
+        using iterator_category = std::input_iterator_tag;
+
+        BasicArrayArenaIterator(ArrayArenaRef arena, size_t ordinal)
             : arena_(arena),
               ordinal_(ordinal)
         {
             update_array_index();
         }
 
-        iterator begin() { return arena_.begin(index_); }
-        iterator end() { return arena_.end(index_); }
-        const_iterator begin() const { return arena_.begin(index_); }
-        const_iterator end() const { return arena_.end(index_); }
+        element_iterator begin() const { return arena_.begin(index_); }
+        element_iterator end() const { return arena_.end(index_); }
 
-        ArrayRange operator*() {
-            return ArrayRange(arena_.begin(index_), arena_.end(index_));
+        value_type operator*() const
+        {
+            return value_type(begin(), end());
         }
 
-        ArrayArenaIterator& operator++() {
+        BasicArrayArenaIterator& operator++() {
             ++ordinal_;
             update_array_index();
             return *this;
         }
 
-        bool operator==(const ArrayArenaIterator& other) const {
+        bool operator==(const BasicArrayArenaIterator& other) const {
             return &arena_ == &other.arena_ && ordinal_ == other.ordinal_;
         }
 
-        bool operator!=(const ArrayArenaIterator& other) const {
+        bool operator!=(const BasicArrayArenaIterator& other) const {
             return !(*this == other);  // NOLINT
         }
-
-        using iterator_category = std::input_iterator_tag;
-        using value_type = ArrayRange;
-        using difference_type = std::ptrdiff_t;
-        using pointer = value_type*;
-        using reference = value_type&;
 
     private:
         [[nodiscard]] size_t regular_array_count() const
@@ -544,8 +563,8 @@ public:
                 return;
             }
 
-            const auto singletonOrdinal = ordinal_ - regularCount;
-            if (ordinal_ < total_visible_array_count() &&
+            if (auto const singletonOrdinal = ordinal_ - regularCount;
+                ordinal_ < total_visible_array_count() &&
                 singletonOrdinal <= SingletonArrayHandlePayloadMask) {
                 index_ = SingletonArrayHandleMask | to_array_index(singletonOrdinal);
                 return;
@@ -554,7 +573,7 @@ public:
             index_ = InvalidArrayIndex;
         }
 
-        ArrayArena& arena_;
+        ArrayArenaRef arena_;
         size_t ordinal_ = 0;
         ArrayIndex index_;
     };
@@ -564,31 +583,32 @@ public:
     const_iterator begin(ArrayIndex a) const { return const_iterator(*this, a, 0); }
     const_iterator end(ArrayIndex a) const { return const_iterator(*this, a, size(a)); }
 
-    ArrayArenaIterator begin() { return ArrayArenaIterator(*this, 0); }
-    ArrayArenaIterator end()
+    arena_iterator begin() { return arena_iterator(*this, 0); }
+    arena_iterator end()
     {
         const auto regularCount = size();
         const auto visibleRegularCount = regularCount > FirstRegularArrayIndex
             ? regularCount - FirstRegularArrayIndex
             : 0;
-        return ArrayArenaIterator(*this, visibleRegularCount + singleton_handle_count());
+        return arena_iterator(*this, visibleRegularCount + singleton_handle_count());
     }
-    ArrayArenaIterator begin() const
+    const_arena_iterator begin() const
     {
-        return ArrayArenaIterator(const_cast<ArrayArena&>(*this), 0);
+        return const_arena_iterator(*this, 0);
     }
-    ArrayArenaIterator end() const
+    const_arena_iterator end() const
     {
         const auto regularCount = size();
         const auto visibleRegularCount = regularCount > FirstRegularArrayIndex
             ? regularCount - FirstRegularArrayIndex
             : 0;
-        return ArrayArenaIterator(
-            const_cast<ArrayArena&>(*this),
+        return const_arena_iterator(
+            *this,
             visibleRegularCount + singleton_handle_count());
     }
 
-    ArrayRange range(ArrayIndex array) {return ArrayRange(begin(array), end(array));}
+    BasicArrayRange<false> range(ArrayIndex array) { return BasicArrayRange<false>(begin(array), end(array)); }
+    BasicArrayRange<true> range(ArrayIndex array) const { return BasicArrayRange<true>(begin(array), end(array)); }
 
     /// Support fast iteration via callback. The passed lambda needs to return true,
     /// as long as the iteration is supposed to continue.
@@ -596,53 +616,16 @@ public:
     void iterate(ArrayIndex a, Func&& lambda)
     {
         if (is_singleton_handle(a)) {
-            auto singletonIndex = singleton_payload(a);
-            if (singletonIndex >= singletonValues_.size() ||
-                singletonIndex >= singletonOccupied_.size()) {
-                raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
-            }
-            if (singletonOccupied_.at(singletonIndex) == 0) {
-                return;
-            }
-            decltype(auto) value = singletonValues_.at(singletonIndex);
-            if (!invoke_iter_callback(lambda, value, 0)) {
-                return;
-            }
+            iterate_singleton(a, std::forward<Func>(lambda));
             return;
         }
 
         if (heads_.empty() && compactHeads_) {
-            if (a >= compactHeads_->size()) {
-                raise<std::out_of_range>("ArrayArena head index out of range.");
-            }
-            auto const& compact = (*compactHeads_)[a];
-            for (size_t i = 0; i < static_cast<size_t>(compact.size); ++i)
-            {
-                decltype(auto) value = data_[static_cast<size_t>(compact.offset) + i];
-                if (!invoke_iter_callback(lambda, value, i)) {
-                    return;
-                }
-            }
+            iterate_compact(a, std::forward<Func>(lambda));
             return;
         }
 
-        if (a >= heads_.size()) {
-            raise<std::out_of_range>("ArrayArena head index out of range.");
-        }
-        Chunk const* current = &heads_[a];
-        size_t globalIndex = 0;
-        while (current != nullptr)
-        {
-            for (size_t i = 0; i < current->size && i < current->capacity; ++i)
-            {
-                decltype(auto) value = data_[current->offset + i];
-                if (!invoke_iter_callback(lambda, value, globalIndex)) {
-                    return;
-                }
-                ++globalIndex;
-            }
-            current = (current->next != InvalidArrayIndex) ? &continuations_[current->next] : nullptr;
-        }
+        iterate_chunked(a, std::forward<Func>(lambda));
     }
 
 private:
@@ -696,6 +679,64 @@ private:
                 std::is_invocable_v<Func, Arg>,
                 "ArrayArena::iterate callback must accept (value) or (value, index), optionally returning bool");
             return false;
+        }
+    }
+
+    template <typename Func>
+    void iterate_singleton(ArrayIndex a, Func&& lambda)
+    {
+        auto singletonIndex = singleton_payload(a);
+        if (singletonIndex >= singletonValues_.size() ||
+            singletonIndex >= singletonOccupied_.size()) {
+            raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+        }
+        if (singletonOccupied_.at(singletonIndex) == 0) {
+            return;
+        }
+
+        decltype(auto) value = singletonValues_.at(singletonIndex);
+        invoke_iter_callback(lambda, value, 0);
+    }
+
+    template <typename Func>
+    void iterate_compact(ArrayIndex a, Func&& lambda)
+    {
+        if (a >= compactHeads_->size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+        }
+
+        auto const& compact = (*compactHeads_)[a];
+        for (size_t i = 0; i < static_cast<size_t>(compact.size); ++i)
+        {
+            decltype(auto) value = data_[static_cast<size_t>(compact.offset) + i];
+            if (!invoke_iter_callback(lambda, value, i)) {
+                return;
+            }
+        }
+    }
+
+    template <typename Func>
+    void iterate_chunked(ArrayIndex a, Func&& lambda)
+    {
+        if (a >= heads_.size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+        }
+
+        Chunk const* current = &heads_[a];
+        size_t globalIndex = 0;
+        while (current != nullptr)
+        {
+            for (size_t i = 0; i < current->size && i < current->capacity; ++i)
+            {
+                decltype(auto) value = data_[current->offset + i];
+                if (!invoke_iter_callback(lambda, value, globalIndex)) {
+                    return;
+                }
+                ++globalIndex;
+            }
+            current = (current->next != InvalidArrayIndex)
+                ? &continuations_[current->next]
+                : nullptr;
         }
     }
 

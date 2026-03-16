@@ -39,6 +39,14 @@ enum class model_column_io_error
     static constexpr std::size_t model_column_expected_size = expected_size
 #endif
 
+/**
+ * Logical pair type for split column storage.
+ *
+ * `TwoPart<A, B>` behaves like a plain aggregate pair, but
+ * `ModelColumn<TwoPart<A, B>>` stores both halves in separate child columns.
+ * This keeps the wire layout dense and avoids struct-padding overhead for
+ * common compound records such as `{StringId, ModelNodeAddress}`.
+ */
 template <typename TFirst, typename TSecond>
 struct TwoPart
 {
@@ -68,6 +76,26 @@ struct TwoPart
 
 namespace detail
 {
+
+template <typename TValue>
+std::span<std::uint8_t> as_u8_span(std::span<TValue> values)
+{
+    auto const bytes = std::as_writable_bytes(values);
+    return {
+        std::bit_cast<std::uint8_t*>(bytes.data()),
+        bytes.size()
+    };
+}
+
+template <typename TValue>
+std::span<const std::uint8_t> as_u8_span(std::span<const TValue> values)
+{
+    auto const bytes = std::as_bytes(values);
+    return {
+        std::bit_cast<const std::uint8_t*>(bytes.data()),
+        bytes.size()
+    };
+}
 
 template <typename T>
 struct is_two_part : std::false_type
@@ -224,6 +252,15 @@ template <
 class ModelColumn
 {
 public:
+    /**
+     * Fixed-width paged storage for `ModelPool` columns and `ArrayArena` payloads.
+     *
+     * Supported element types must have a stable little-endian wire layout:
+     * scalars with fixed width, explicitly tagged external types, or other
+     * approved trivially copyable standard-layout records. The generic column
+     * stores one record stream; the `TwoPart<A, B>` specialization stores two
+     * synchronized record streams while exposing pair-like access.
+     */
     using value_type = std::remove_cv_t<T>;
     using ref = value_type&;
     using const_ref = value_type const&;
@@ -374,6 +411,14 @@ public:
     }
 
     template <typename T_BitseryInputAdapter>
+    /**
+     * Read a raw payload after the caller already consumed the size prefix.
+     *
+     * The surrounding bitsery serializer validates the payload length. This
+     * helper only transfers payload bytes into the underlying storage and
+     * clears the column on adapter errors. The `readBuffer<1>` unit remains one
+     * byte although the helper may read the entire payload in one call.
+     */
     bool read_payload_from_bitsery(
         T_BitseryInputAdapter& adapter,
         std::size_t payload_size)
@@ -390,9 +435,8 @@ public:
         }
 
         if constexpr (detail::vector_storage_policy<T_StoragePolicy>) {
-            adapter.template readBuffer<1>(
-                reinterpret_cast<std::uint8_t*>(values_.data()),
-                payload_size);
+            auto const payload = detail::as_u8_span(std::span{values_});
+            adapter.template readBuffer<1>(payload.data(), payload.size());
             if (adapter.error() != bitsery::ReaderError::NoError) {
                 values_.clear();
                 return false;
@@ -403,10 +447,9 @@ public:
             while (offset_records < record_count) {
                 const std::size_t chunk_records =
                     std::min(records_per_page, record_count - offset_records);
-                const std::size_t chunk_bytes = chunk_records * sizeof(value_type);
-                adapter.template readBuffer<1>(
-                    reinterpret_cast<std::uint8_t*>(value_ptr(offset_records)),
-                    chunk_bytes);
+                auto const chunk =
+                    detail::as_u8_span(std::span{value_ptr(offset_records), chunk_records});
+                adapter.template readBuffer<1>(chunk.data(), chunk.size());
                 if (adapter.error() != bitsery::ReaderError::NoError) {
                     values_.clear();
                     return false;
@@ -516,28 +559,28 @@ public:
 
         [[nodiscard]] first_ref first() const noexcept { return first_; }
         [[nodiscard]] second_ref second() const noexcept { return second_; }
-        [[nodiscard]] operator value_type() const { return value_type{first_, second_}; }
+        [[nodiscard]] value_type to_value() const { return value_type{first_, second_}; }
+        [[nodiscard]] explicit operator value_type() const { return to_value(); }
 
         [[nodiscard]] bool operator==(value_type const& other) const
         {
             return first_ == other.first_ && second_ == other.second_;
         }
 
-        template <bool T_Enable = T_IsConst>
-        std::enable_if_t<!T_Enable, basic_ref&>
-        operator=(value_type const& value)
+        basic_ref& operator=(value_type const& value)
+            requires (!T_IsConst)
         {
             first_ = value.first_;
             second_ = value.second_;
             return *this;
         }
 
-        template <bool T_Enable = T_IsConst>
-        std::enable_if_t<!T_Enable, basic_ref&>
-        operator=(basic_ref const& other)
+        template <bool T_OtherIsConst>
+        basic_ref& operator=(basic_ref<T_OtherIsConst> const& other)
+            requires (!T_IsConst)
         {
-            first_ = other.first_;
-            second_ = other.second_;
+            first_ = other.first();
+            second_ = other.second();
             return *this;
         }
 
@@ -571,9 +614,8 @@ public:
         {
         }
 
-        template <bool T_Enable = T_IsConst>
-        basic_iterator(basic_iterator<false> const& other)
-            requires(T_Enable)
+        explicit basic_iterator(basic_iterator<false> const& other)
+            requires(T_IsConst)
             : owner_(other.owner_), index_(other.index_)
         {
         }
@@ -593,15 +635,7 @@ public:
             return copy;
         }
 
-        bool operator==(basic_iterator const& other) const
-        {
-            return owner_ == other.owner_ && index_ == other.index_;
-        }
-
-        bool operator!=(basic_iterator const& other) const
-        {
-            return !(*this == other);
-        }
+        bool operator==(basic_iterator const& other) const = default;
 
     private:
         owner_type* owner_ = nullptr;
@@ -722,7 +756,7 @@ public:
         std::vector<first_type> first_parts;
         std::vector<second_type> second_parts;
         for (auto it = first; it != last; ++it) {
-            value_type value = *it;
+            value_type value(*it);
             first_parts.push_back(value.first_);
             second_parts.push_back(value.second_);
         }
@@ -804,11 +838,10 @@ private:
         const auto first_payload_size = record_count * sizeof(first_type);
         const auto second_payload_size = record_count * sizeof(second_type);
 
-        auto const* payload_ptr = reinterpret_cast<std::byte const*>(payload.data());
-        auto const first_payload = std::span<const std::byte>(payload_ptr, first_payload_size);
-        auto const second_payload = std::span<const std::byte>(
-            payload_ptr + first_payload_size,
-            second_payload_size);
+        auto const payload_bytes = std::as_bytes(payload);
+        auto const first_payload = payload_bytes.first(first_payload_size);
+        auto const second_payload =
+            payload_bytes.subspan(first_payload_size, second_payload_size);
 
         auto first_assign = first_values_.assign_bytes(first_payload);
         if (!first_assign) {
@@ -859,22 +892,21 @@ void serialize(S& s, simfil::ModelColumn<T, T_RecordsPerPage, T_StoragePolicy>& 
             return;
         }
 
-        const std::size_t payload_size = static_cast<std::size_t>(payload_size_wire);
+        auto const payload_size = payload_size_wire;
         if (!buffer.read_payload_from_bitsery(s.adapter(), payload_size)) {
             buffer.clear();
             return;
         }
     } else {
-        std::vector<std::byte> payload = buffer.bytes();
+        auto payload = buffer.bytes();
         assert(payload.size() <= simfil::bitsery_max_column_payload_bytes);
 
         std::uint64_t payload_size_wire = payload.size();
         s.value8b(payload_size_wire);
 
         if (!payload.empty()) {
-            s.adapter().template writeBuffer<1>(
-                reinterpret_cast<const std::uint8_t*>(payload.data()),
-                payload.size());
+            auto const payload_bytes = simfil::detail::as_u8_span(std::span{payload});
+            s.adapter().template writeBuffer<1>(payload_bytes.data(), payload_bytes.size());
         }
     }
 }

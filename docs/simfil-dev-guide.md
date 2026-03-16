@@ -62,6 +62,24 @@ Objects and arrays do not embed child nodes directly. Instead, they maintain `Mo
 
 `StringPool` maintains the mapping between strings and the `StringId` integers stored in object fields. The base `Model` interface exposes `lookupStringId` so that serialization code such as `ModelNode::toJson` can recover human-readable field names. `ModelPool::setStrings` allows a pool to adopt a different `StringPool`, populating any missing field names along the way. This operation is used by higher-level components that need to merge data from several pools into a unified string namespace.
 
+### ModelColumn
+
+The primitive storage building block below `ModelPool` and `ArrayArena` is `ModelColumn<T, RecordsPerPage, StoragePolicy>`. A model column stores a single fixed-width record stream and exposes bulk byte operations for serialization and deserialization. The generic implementation accepts three families of types:
+
+- fixed-width scalar types (`bool`, fixed-width integers, fixed-width enums, `float`, `double`)
+- explicitly tagged external record types via `MODEL_COLUMN_TYPE(expected_size)`
+- other approved native POD records that are trivially copyable and standard-layout
+
+The column implementation assumes little-endian hosts and treats the in-memory representation as the wire representation. `bytes()` returns the canonical payload bytes for the current record stream; `assign_bytes()` and `read_payload_from_bitsery()` perform the inverse operation. For vector-backed columns this is one contiguous bulk copy; for segmented storage the same payload is copied chunk-by-chunk while preserving the same wire layout.
+
+`RecordsPerPage` defines the number of records stored per page, not the page size in bytes. The effective page size is `RecordsPerPage * sizeof(T)`, and segmented storage requires that value to be a multiple of the record size. This keeps page boundaries aligned with record boundaries and lets callers reason about capacity in record counts instead of byte counts.
+
+### Split pair columns with `TwoPart`
+
+`TwoPart<A, B>` is a logical pair type used when a compound record should behave like `{A, B}` in C++ but should not pay struct-padding costs on the wire. `ModelColumn<TwoPart<A, B>>` specializes the generic column by storing the `first()` and `second()` members in two synchronized child columns. Reads and writes still happen through a pair-like ref proxy, but serialization concatenates the dense payload of the first column and the dense payload of the second column.
+
+The main current use is object member storage. `detail::ObjectField` is defined as `TwoPart<StringId, ModelNodeAddress>`, so object fields still behave like `(name, value)` pairs while the wire payload remains dense and deterministic regardless of host padding rules.
+
 ### Value representation
 
 `Value` is the runtime carrier for scalar and structured results:
@@ -127,7 +145,7 @@ classDiagram
 
 `BaseArray<ModelType, ModelNodeType>` provides the generic implementation of array behaviour for model pools. It owns a pointer to an `ArrayArena<ModelNodeAddress, …>` and an `ArrayIndex` into that arena. The base class implements `type()` (always `Array`), `at()`, `size()`, and `iterate()` in terms of the arena. `Array` itself is a thin wrapper over `BaseArray<ModelPool, ModelNode>` that adds convenience overloads for appending scalars, which internally delegate to `ModelPool::newSmallValue` or `ModelPool::newValue` and then record the resulting address in the arena.
 
-`BaseObject<ModelType, ModelNodeType>` plays the same role for object nodes. It stores key–value pairs as `{StringId, ModelNodeAddress}` elements inside an `ArrayArena`. The base class implements `type()` (always `Object`), `get(StringId)`, `keyAt()`, `at()` (interpreting the array as an ordered sequence of fields), and `iterate()`. The concrete `Object` subclass adds convenience `addField` overloads for common scalar types and an `extend` method that copies all fields from another `Object`.
+`BaseObject<ModelType, ModelNodeType>` plays the same role for object nodes. It stores key–value pairs as `detail::ObjectField` elements inside an `ArrayArena`; that type is currently `TwoPart<StringId, ModelNodeAddress>`, so names and child addresses are physically stored in split columns while the API still behaves like a logical pair sequence. The base class implements `type()` (always `Object`), `get(StringId)`, `keyAt()`, `at()` (interpreting the array as an ordered sequence of fields), and `iterate()`. The concrete `Object` subclass adds convenience `addField` overloads for common scalar types and an `extend` method that copies all fields from another `Object`.
 
 `ProceduralObject` extends `Object` with a bounded number of synthetic fields. These fields are represented as `std::function<ModelNode::Ptr(LambdaThisType const&)>` callbacks in a `small_vector`. Accessors such as `get`, `at`, `keyAt`, and `iterate` first consult the procedural fields and then fall back to the underlying `Object` storage. This pattern makes it possible to expose computed members alongside stored ones without materialising them permanently in the arena.
 
@@ -135,17 +153,24 @@ classDiagram
 
 ### Array arena details
 
-The `ArrayArena` template implements the append-only sequences used by arrays and objects. Conceptually, it manages a collection of logical arrays, each of which may consist of one or more “chunks” backed by a single `segmented_vector<ElementType, PageSize>`. A logical array is identified by an `ArrayIndex`. For each index, the arena stores a head `Chunk` in `heads_` and, if the array grows beyond the head’s capacity, additional continuation chunks in `continuations_`.
+The `ArrayArena` template implements the append-only sequences used by arrays and objects. Conceptually, it manages a collection of logical arrays, each of which may use one of two physical representations:
 
-Each `Chunk` records an `offset` into the `data_` vector, a `capacity`, and a `size`. For a head chunk, `size` also tracks the total logical length of the array; for continuation chunks, `size` expresses the number of valid elements in that chunk only. The `next` and `last` indices form a singly-linked list from the head to the tail chunk. `new_array(initialCapacity)` reserves a contiguous region in `data_`, initialises the head chunk with the offset and capacity, and returns a fresh `ArrayIndex`.
+- a regular growable chunk chain backed by `heads_`, `continuations_`, and `data_`
+- a singleton handle backed by `singletonValues_` and `singletonOccupied_`
 
-When a caller appends an element via `push_back` or `emplace_back`, the arena calls `ensure_capacity_and_get_last_chunk`. This function locates the current tail chunk (either the head or a continuation). If the tail still has spare capacity, it is returned directly; otherwise, the function allocates a new continuation chunk with capacity doubled relative to the previous tail, extends `data_` accordingly, links the new chunk into `continuations_`, and updates the head’s `last` pointer. This growth strategy guarantees amortised constant time for appends while avoiding large reallocations.
+Regular arrays behave like the historical arena implementation. Each logical array is identified by an `ArrayIndex` and starts with a head `Chunk` in `heads_`. If the array grows beyond the head’s capacity, the arena allocates continuation chunks in `continuations_`. Each chunk records an `offset` into `data_`, a `capacity`, and a `size`. For a head chunk, `size` also tracks the total logical length of the array; for continuation chunks, `size` is local to that chunk. The `next` and `last` indices form a singly-linked list from the head to the tail chunk.
 
-Element access via `at(ArrayIndex, i)` walks the chunk list for the target array. It subtracts full chunk capacities from the requested index until the index falls within the current chunk’s capacity and size, and then returns a reference to `data_[offset + localIndex]`. This guarantees O(number_of_chunks) access in the worst case, but in practice the number of chunks per array remains small because capacities grow geometrically.
+`new_array(initialCapacity, fixedSize)` controls which representation is chosen. If `fixedSize` is `false`, even `initialCapacity == 1` creates a regular growable array. If `fixedSize` is `true` and `initialCapacity == 1`, the arena instead returns a singleton handle. That handle represents a 0-or-1 element logical array with no head chunk allocation. This is useful for storage patterns where one-element arrays are common and known not to grow later.
 
-The arena also provides higher-level iteration facilities. The `begin(array)`/`end(array)` pair yields an iterator over the elements of a specific logical array. The `iterate(ArrayIndex, lambda)` helper executes a callback on every element and supports two signatures: a unary callback receiving a reference to the element, and a binary callback receiving both the element and its global index. This is used by `BaseArray::iterate` to implement `ModelNode::iterate` efficiently without allocating intermediate containers.
+When a caller appends an element to a regular array via `push_back` or `emplace_back`, the arena calls `ensure_capacity_and_get_last_chunk_unlocked`. This function locates the current tail chunk (either the head or a continuation). If the tail still has spare capacity, it is returned directly; otherwise, the function allocates a new continuation chunk with capacity doubled relative to the previous tail, extends `data_`, links the new chunk into `continuations_`, and updates the head’s `last` pointer. Singleton handles do not use this growth path; they allow at most one element and reject further appends.
 
-Thread-safety is conditional. If `ARRAY_ARENA_THREAD_SAFE` is defined, the arena uses a shared mutex to protect growth and element access. Appends and `new_array` take an exclusive lock only when allocating new chunks; reads can proceed with shared locks. Simfil itself does not require the arena to be thread-safe as long as model construction happens before concurrent evaluation, but the hooks are present for embedders that need concurrent writers.
+Element access via `at(ArrayIndex, i)` dispatches by representation. Singleton handles resolve directly against `singletonValues_`. Compact arenas resolve against the compact head metadata. Regular arrays walk the chunk list, subtracting full chunk capacities from the requested index until the index falls within the current chunk’s capacity and size. This keeps the public API uniform while allowing denser storage for the common singleton case.
+
+The arena also supports a compact serialization mode. In that mode, `compactHeads_` stores only `{offset, size}` metadata for each regular array, while `data_` already contains a dense payload without chunk gaps. Runtime head chunks are materialized lazily from `compactHeads_` when a later mutation requires growable chunk state again. This allows serialized arenas to stay compact without forcing the mutable runtime representation onto the wire.
+
+The higher-level iteration facilities follow the same dispatch rules. `begin(array)`/`end(array)` iterate one logical array, while the top-level arena iterator skips the sentinel head entry and also yields singleton handles. `iterate(ArrayIndex, lambda)` supports unary callbacks receiving a value and binary callbacks receiving both a value and its logical index. This is used by `BaseArray::iterate` and `BaseObject::iterate` to expose child traversal without materializing temporary containers.
+
+Thread-safety is conditional. If `ARRAY_ARENA_THREAD_SAFE` is defined, the arena uses a shared mutex to protect growth and element access. Reads use shared locks, while mutations and compact-to-runtime materialization take an exclusive lock. Simfil itself does not require the arena to be thread-safe as long as model construction happens before concurrent evaluation, but the hooks are present for embedders that need concurrent writers.
 
 ## Parser, tokens, and AST
 

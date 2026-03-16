@@ -225,7 +225,8 @@ struct ModelNodeAddress
 namespace detail
 {
 // Shared storage entry for object fields across all BaseObject instantiations.
-// Keeps the underlying ArrayArena type identical regardless of ModelType.
+// Keeps the underlying ArrayArena type identical regardless of ModelType while
+// storing names and node addresses in split columns without padding bytes.
 using ObjectField = TwoPart<StringId, ModelNodeAddress>;
 
 template <typename TField>

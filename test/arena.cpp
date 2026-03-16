@@ -373,7 +373,7 @@ TEST_CASE("ArrayArena supports TwoPart element storage", "[ArrayArena][TwoPart]"
     REQUIRE(singletonValue->second() == 70u);
 
     size_t visited = 0;
-    arena.iterate(regular, [&](auto&& value, size_t index) {
+    arena.iterate(regular, [&visited](auto value, size_t index) {
         REQUIRE(value.first() == static_cast<uint16_t>(index + 1));
         REQUIRE(value.second() == static_cast<uint32_t>((index + 1) * 10));
         ++visited;

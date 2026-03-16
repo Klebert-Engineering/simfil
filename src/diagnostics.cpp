@@ -7,6 +7,7 @@
 #include "simfil/sourcelocation.h"
 
 #include <algorithm>
+#include <mutex>
 #include <ranges>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -18,6 +19,85 @@
 
 namespace simfil
 {
+
+namespace
+{
+
+void mergeFieldData(
+    Diagnostics::FieldExprData& ours,
+    Diagnostics::FieldExprData const& theirs)
+{
+    if (ours.name.empty()) {
+        ours.name = theirs.name;
+    }
+    if (ours.location == SourceLocation{0, 0}) {
+        ours.location = theirs.location;
+    }
+    ours.hits += theirs.hits;
+    ours.evaluations += theirs.evaluations;
+}
+
+void mergeComparisonData(
+    Diagnostics::ComparisonExprData& ours,
+    Diagnostics::ComparisonExprData const& theirs)
+{
+    if (ours.location == SourceLocation{0, 0}) {
+        ours.location = theirs.location;
+    }
+    ours.leftTypes.set(theirs.leftTypes);
+    ours.rightTypes.set(theirs.rightTypes);
+    ours.evaluations += theirs.evaluations;
+    ours.trueResults += theirs.trueResults;
+    ours.falseResults += theirs.falseResults;
+}
+
+template <typename Entry, typename MergeFn>
+void mergeIndexedData(
+    std::vector<Entry>& ours,
+    std::vector<Entry> const& theirs,
+    MergeFn&& mergeEntry)
+{
+    auto const count = std::max(ours.size(), theirs.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        auto* ourEntry = i < ours.size() ? &ours[i] : nullptr;
+        auto const* theirEntry = i < theirs.size() ? &theirs[i] : nullptr;
+
+        if (!theirEntry) {
+            continue;
+        }
+        if (!ourEntry) {
+            ours.emplace_back(*theirEntry);
+            continue;
+        }
+
+        mergeEntry(*ourEntry, *theirEntry);
+    }
+}
+
+void normalizeNumericTypes(TypeFlags& flags)
+{
+    if (flags.test(ValueType::Int) || flags.test(ValueType::Float)) {
+        flags.set(ValueType::Int);
+        flags.set(ValueType::Float);
+    }
+}
+
+std::string comparisonPrefix(Diagnostics::ComparisonExprData const& data)
+{
+    auto const allTrue = data.trueResults > 0 && data.falseResults == 0;
+    if (allTrue) {
+        return "All values compared to true. ";
+    }
+
+    auto const allFalse = data.falseResults > 0 && data.trueResults == 0;
+    if (allFalse) {
+        return "All values compared to false. ";
+    }
+
+    return {};
+}
+
+}  // namespace
 
 template<typename S>
 void serialize(S& s, TypeFlags& flags)
@@ -61,8 +141,11 @@ Diagnostics::~Diagnostics() = default;
 
 Diagnostics& Diagnostics::append(const Diagnostics& other)
 {
-    std::unique_lock lock1(mtx_);
-    std::unique_lock lock2(other.mtx_);
+    if (this == &other) {
+        return *this;
+    }
+
+    std::scoped_lock lock(mtx_, other.mtx_);
 
 #if !defined(NDEBUG)
     if (!exprIndex_.empty())
@@ -73,42 +156,8 @@ Diagnostics& Diagnostics::append(const Diagnostics& other)
     // we can just copy them every time.
     exprIndex_ = other.exprIndex_;
 
-    for (auto i = 0u; i < std::max<std::size_t>(fieldData_.size(), other.fieldData_.size()); ++i) {
-        auto* ours = i < fieldData_.size() ? &fieldData_[i] : nullptr;
-        auto* theirs = i < other.fieldData_.size() ? &other.fieldData_[i] : nullptr;
-
-        if (ours && theirs) {
-            if (ours->name.empty())
-                ours->name = theirs->name;
-            if (ours->location == SourceLocation{0, 0})
-                ours->location = theirs->location;
-            ours->hits += theirs->hits;
-            ours->evaluations += theirs->evaluations;
-        }
-
-        if (!ours && theirs) {
-            fieldData_.emplace_back(*theirs);
-        }
-    }
-
-    for (auto i = 0u; i < std::max<std::size_t>(comparisonData_.size(), other.comparisonData_.size()); ++i) {
-        auto* ours = i < comparisonData_.size() ? &comparisonData_[i] : nullptr;
-        auto* theirs = i < other.comparisonData_.size() ? &other.comparisonData_[i] : nullptr;
-
-        if (ours && theirs) {
-            if (ours->location == SourceLocation{0, 0})
-                ours->location = theirs->location;
-            ours->leftTypes.set(theirs->leftTypes);
-            ours->rightTypes.set(theirs->rightTypes);
-            ours->evaluations += theirs->evaluations;
-            ours->trueResults += theirs->trueResults;
-            ours->falseResults += theirs->falseResults;
-        }
-
-        if (!ours && theirs) {
-            comparisonData_.emplace_back(*theirs);
-        }
-    }
+    mergeIndexedData(fieldData_, other.fieldData_, mergeFieldData);
+    mergeIndexedData(comparisonData_, other.comparisonData_, mergeComparisonData);
 
     return *this;
 }
@@ -150,7 +199,6 @@ auto Diagnostics::buildMessages() const -> std::vector<Diagnostics::Message>
     auto addMessage = [&](SourceLocation loc, std::string text) {
         Diagnostics::Message msg;
         msg.message = std::move(text);
-        //msg.fix = std::move(fix);
         msg.location = loc;
 
         messages.push_back(std::move(msg));
@@ -163,29 +211,20 @@ auto Diagnostics::buildMessages() const -> std::vector<Diagnostics::Message>
 
     for (const auto& data : comparisonData_) {
         auto leftTypes = data.leftTypes;
-        if (leftTypes.test(ValueType::Int) || leftTypes.test(ValueType::Float)) {
-            leftTypes.set(ValueType::Int);
-            leftTypes.set(ValueType::Float);
-        }
+        normalizeNumericTypes(leftTypes);
 
         auto rightTypes = data.rightTypes;
-        if (rightTypes.test(ValueType::Int) || rightTypes.test(ValueType::Float)) {
-            rightTypes.set(ValueType::Int);
-            rightTypes.set(ValueType::Float);
-        }
+        normalizeNumericTypes(rightTypes);
 
         const auto intersection = leftTypes.flags & rightTypes.flags;
         if (intersection.none() && data.evaluations > 0) {
-            const auto allTrue = data.trueResults > 0 && data.falseResults == 0;
-            const auto allFalse = data.falseResults > 0 && data.trueResults == 0;
-            const auto prefix =
-                allTrue ? "All values compared to true. " :
-                allFalse ? "All values compared to false. " : "";
-
-            addMessage(data.location, fmt::format("{}Left hand types are {}, right hand types are {}.",
-                                                  prefix,
-                                                  fmt::join(leftTypes.typeNames(), "|"),
-                                                  fmt::join(rightTypes.typeNames(), "|")));
+            addMessage(
+                data.location,
+                fmt::format(
+                    "{}Left hand types are {}, right hand types are {}.",
+                    comparisonPrefix(data),
+                    fmt::join(leftTypes.typeNames(), "|"),
+                    fmt::join(rightTypes.typeNames(), "|")));
         }
     }
 
