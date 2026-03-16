@@ -21,6 +21,7 @@ namespace simfil
 
 class Expr;
 class Function;
+class Diagnostics;
 struct ResultFn;
 struct Debug;
 
@@ -138,6 +139,7 @@ public:
 struct Context
 {
     Environment* const env;
+    Diagnostics* const diag;
 
     /* Current phase under which the evaluation
      * takes place. */
@@ -151,7 +153,8 @@ struct Context
     /* Timeout after which the evaluation should be canceled. */
     std::optional<std::chrono::time_point<std::chrono::steady_clock>> timeout;
 
-    Context(Environment* env, Phase = Phase::Evaluation);
+    Context() = delete;
+    Context(Environment* env, Diagnostics* diag, Phase = Phase::Evaluation);
 
     auto canceled() const -> bool
     {

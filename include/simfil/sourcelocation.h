@@ -1,20 +1,18 @@
 #pragma once
 
-#include <cstddef>
+#include <cstdint>
 
 namespace simfil
 {
 
 struct SourceLocation
 {
-    size_t offset = 0;
-    size_t size = 0;
+    std::uint32_t offset = 0u;
+    std::uint32_t size = 0u;
 
-    SourceLocation()
-        : offset(0), size(0)
-    {}
+    SourceLocation() = default;
 
-    SourceLocation(size_t offset, size_t size)
+    SourceLocation(std::uint32_t offset, std::uint32_t size)
         : offset(offset), size(size)
     {}
 

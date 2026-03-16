@@ -1,6 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/environment.h"
 #include "simfil/exception-handler.h"
+#include "simfil/expression-visitor.h"
 #include "simfil/model/json.h"
 #include "simfil/value.h"
 #include "src/expressions.h"
@@ -745,7 +746,9 @@ TEST_CASE("Visit AST", "[visit.ast]")
     {
         std::optional<std::string> visitedFieldName;
 
-        auto visit(FieldExpr& expr) -> void override
+        using ExprVisitor::visit;
+
+        auto visit(const FieldExpr& expr) -> void override
         {
             ExprVisitor::visit(expr);
 

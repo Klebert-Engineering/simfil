@@ -19,22 +19,19 @@ namespace
 class NOOPExpr : public Expr
 {
 public:
+    using Expr::Expr;
+
     auto type() const -> Type override
     {
         return Type::FIELD;
     }
 
-    auto ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error> override
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override
     {
         return Result::Stop;
     }
 
-    auto clone() const -> ExprPtr override
-    {
-        return std::make_unique<NOOPExpr>();
-    }
-
-    void accept(ExprVisitor& v) override
+    void accept(ExprVisitor& v) const override
     {
         v.visit(*this);
     }
@@ -116,6 +113,11 @@ auto Parser::relaxed() const -> bool
     return mode_ == Mode::Relaxed;
 }
 
+auto Parser::nextId() -> Expr::ExprId
+{
+    return ctx.id++;
+}
+
 auto Parser::parseInfix(expected<ExprPtr, Error> left, int prec) -> expected<ExprPtr, Error>
 {
     TRY_EXPECTED(left);
@@ -125,7 +127,7 @@ auto Parser::parseInfix(expected<ExprPtr, Error> left, int prec) -> expected<Exp
         auto parser = findInfixParser(token);
         if (!parser) {
             if (relaxed())
-                return std::make_unique<NOOPExpr>();
+                return std::make_unique<NOOPExpr>(nextId());
 
             return unexpected<Error>(
                 Error::ParserError,
@@ -174,7 +176,7 @@ auto Parser::parseTo(Token::Type type) -> expected<ExprPtr, Error>
 
     if (!*expr) {
         if (relaxed())
-            return std::make_unique<NOOPExpr>();
+            return std::make_unique<NOOPExpr>(nextId());
 
         return unexpected<Error>(
             Error::ParserError,
