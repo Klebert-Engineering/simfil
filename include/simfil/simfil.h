@@ -52,7 +52,7 @@ auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* 
  * Param:
  *   diag   Diagnostics data filled by eval.
  */
-auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> tl::expected<std::vector<Diagnostics::Message>, Error>;
+auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Diagnostics::Message>, Error>;
 
 /**
  * Find completion candidates for an expression.

@@ -5,7 +5,6 @@
 #include "simfil/token.h"
 #include "simfil/value.h"
 #include "simfil/environment.h"
-#include "simfil/diagnostics.h"
 #include "simfil/result.h"
 
 #include <memory>
@@ -19,6 +18,8 @@ class Expr
 {
     friend class AST;
 public:
+    using ExprId = std::uint32_t;
+
     /**
      * Type of an expression.
      */
@@ -30,8 +31,12 @@ public:
         VALUE,
     };
 
-    Expr() = default;
-    explicit Expr(const Token& token)
+    Expr() = delete;
+    explicit Expr(ExprId id)
+        : id_(id)
+    {}
+    explicit Expr(ExprId id, const Token& token)
+        : id_(id)
     {
         assert(token.end >= token.begin);
         sourceLocation_.offset = token.begin;
@@ -41,6 +46,10 @@ public:
     virtual ~Expr() = default;
 
     /* Category */
+    auto id() const -> ExprId
+    {
+        return id_;
+    }
     virtual auto type() const -> Type = 0;
     virtual auto constant() const -> bool
     {
@@ -50,7 +59,7 @@ public:
     /* Debug */
     virtual auto toString() const -> std::string = 0;
 
-    auto eval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+    auto eval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
         if (ctx.canceled())
             return Result::Stop;
@@ -66,7 +75,7 @@ public:
         return ieval(ctx, val, res);
     }
 
-    auto eval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+    auto eval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
         if (ctx.canceled())
             return Result::Stop;
@@ -81,12 +90,8 @@ public:
         return ieval(ctx, std::move(val), res);
     }
 
-    /* Recursive clone */
-    [[nodiscard]]
-    virtual auto clone() const -> std::unique_ptr<Expr> = 0;
-
     /* Accept expression visitor */
-    virtual auto accept(ExprVisitor& v) -> void = 0;
+    virtual auto accept(ExprVisitor& v) const -> void = 0;
 
     /* Source location the expression got parsed from */
     [[nodiscard]]
@@ -97,13 +102,15 @@ public:
 
 private:
     /* Abstract evaluation implementation */
-    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> = 0;
+    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> = 0;
     
     /* Move-optimized evaluation implementation */
-    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) -> tl::expected<Result, Error> {
+    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) const -> tl::expected<Result, Error>
+    {
         return ieval(ctx, value, result);
     }
 
+    ExprId id_;
     SourceLocation sourceLocation_;
 };
 
@@ -119,7 +126,7 @@ public:
 
     ~AST();
 
-    auto expr() const -> Expr&
+    auto expr() const -> const Expr&
     {
         return *expr_;
     }

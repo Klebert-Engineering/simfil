@@ -2,9 +2,11 @@
 #include "simfil/exception-handler.h"
 #include "simfil/error.h"
 
+#include <bitsery/adapter/buffer.h>
 #include <bitsery/adapter/stream.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/traits/string.h>
+#include <bitsery/traits/vector.h>
 #include <fmt/core.h>
 #include <algorithm>
 #include <cmath>
@@ -206,10 +208,15 @@ auto StringPool::write(std::ostream& outputStream, const StringId offset) const 
     return {};
 }
 
-auto StringPool::read(std::istream& inputStream) -> tl::expected<void, Error>
+auto StringPool::read(const std::vector<uint8_t>& input, size_t offset) -> tl::expected<void, Error>
 {
+    if (offset > input.size()) {
+        return tl::unexpected<Error>(Error::EncodeDecodeError, "Failed to read StringPool: invalid input offset.");
+    }
+
     std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
-    bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
+    using Adapter = bitsery::InputBufferAdapter<std::vector<uint8_t>>;
+    bitsery::Deserializer<Adapter> s(Adapter(input.begin() + static_cast<std::ptrdiff_t>(offset), input.end()));
 
     // Determine how many strings are to be received
     StringId rcvStringCount{};

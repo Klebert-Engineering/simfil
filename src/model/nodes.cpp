@@ -330,7 +330,7 @@ tl::expected<void, Error> Object::extend(model_ptr<Object> const& other)
     for (auto i = 0u; i < otherSize; ++i) {
         auto value = storage_->at(other->members_, i);
         TRY_EXPECTED(value);
-        storage_->push_back(members_, *value);
+        storage_->push_back(members_, value->to_value());
     }
     return {};
 }

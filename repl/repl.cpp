@@ -323,7 +323,7 @@ int main(int argc, char *argv[])
             std::cout << "  " << v.toString() << "\n";
         }
 
-        auto messages = simfil::diagnostics(env, **ast, diag);
+        auto messages = simfil::diagnostics(diag);
         if (!messages) {
             std::cerr << "Error: " << messages.error().message << "\n";
             continue;

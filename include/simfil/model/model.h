@@ -10,8 +10,8 @@
 
 #include <memory>
 #include <string_view>
-#include <type_traits>
 #include <vector>
+#include <type_traits>
 #include <utility>
 #include <cassert>
 #include <istream>
@@ -235,13 +235,13 @@ public:
      * Adopt members from the given vector and obtain a new object
      * model index which has these members.
      */
-    model_ptr<Object> newObject(size_t initialFieldCapacity = 2);
+    model_ptr<Object> newObject(size_t initialFieldCapacity = 2, bool fixedSize = false);
 
     /**
      * Adopt members from the given vector and obtain a new array
      * model index which has these members.
      */
-    model_ptr<Array> newArray(size_t initialFieldCapacity = 2);
+    model_ptr<Array> newArray(size_t initialFieldCapacity = 2, bool fixedSize = false);
 
     /** Add a scalar value and get its new model node index. */
     ModelNode::Ptr newValue(int64_t const& value);
@@ -265,7 +265,7 @@ public:
 
     /** Serialization */
     virtual tl::expected<void, Error> write(std::ostream& outputStream);
-    virtual tl::expected<void, Error> read(std::istream& inputStream);
+    virtual tl::expected<void, Error> read(const std::vector<uint8_t>& input, size_t offset = 0);
 
     struct SerializationSizeStats {
         size_t rootsBytes = 0;
@@ -304,7 +304,9 @@ protected:
      * so derived ModelPools can create Object/Array-derived nodes.
      */
     Object::Storage& objectMemberStorage();
+    [[nodiscard]] Object::Storage const& objectMemberStorage() const;
     Array::Storage& arrayMemberStorage();
+    [[nodiscard]] Array::Storage const& arrayMemberStorage() const;
 };
 
 }

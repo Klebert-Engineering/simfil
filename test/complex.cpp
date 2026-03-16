@@ -130,10 +130,12 @@ TEST_CASE("Serialization", "[complex.serialization]") {
     SECTION("Test Model write/read")
     {
         std::stringstream stream;
-        model.value()->write(stream);
+        REQUIRE(model.value()->write(stream));
+        auto serialized = stream.str();
+        std::vector<uint8_t> input(serialized.begin(), serialized.end());
 
         auto recoveredModel = std::make_shared<ModelPool>();
-        recoveredModel->read(stream);
+        REQUIRE(recoveredModel->read(input));
         REQUIRE(!recoveredModel->validate());
         recoveredModel->setStrings(model.value()->strings());
         REQUIRE(recoveredModel->validate());
@@ -166,9 +168,11 @@ TEST_CASE("Serialization", "[complex.serialization]") {
     {
         std::stringstream stream;
         REQUIRE(model.value()->strings()->write(stream));
+        auto serialized = stream.str();
+        std::vector<uint8_t> input(serialized.begin(), serialized.end());
 
         const auto recoveredFields = std::make_shared<StringPool>();
-        REQUIRE(recoveredFields->read(stream));
+        REQUIRE(recoveredFields->read(input));
 
         REQUIRE(model.value()->strings()->size() == recoveredFields->size());
         REQUIRE(model.value()->strings()->highest() == recoveredFields->highest());

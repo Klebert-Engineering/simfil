@@ -45,12 +45,11 @@ struct Completion
 class CompletionFieldOrWordExpr : public Expr
 {
 public:
-    CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath);
+    CompletionFieldOrWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token, bool inPath);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> override;
-    auto clone() const -> std::unique_ptr<Expr> override;
-    auto accept(ExprVisitor& v) -> void override;
+    auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> override;
+    auto accept(ExprVisitor& v) const -> void override;
     auto toString() const -> std::string override;
 
     std::string prefix_;
@@ -61,12 +60,11 @@ public:
 class CompletionAndExpr : public Expr
 {
 public:
-    CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp);
+    CompletionAndExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    void accept(ExprVisitor& v) override;
-    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
@@ -75,12 +73,11 @@ public:
 class CompletionOrExpr : public Expr
 {
 public:
-    CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp);
+    CompletionOrExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error> override;
-    void accept(ExprVisitor& v) override;
-    auto clone() const -> ExprPtr override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
@@ -89,13 +86,12 @@ public:
 class CompletionWordExpr : public Expr
 {
 public:
-    CompletionWordExpr(std::string prefix, Completion* comp, const Token& token);
+    CompletionWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token);
 
     auto type() const -> Type override;
     auto constant() const -> bool override;
-    auto ieval(Context ctx, const Value& value, const ResultFn& result) -> tl::expected<Result, Error> override;
-    auto clone() const -> std::unique_ptr<Expr> override;
-    auto accept(ExprVisitor& v) -> void override;
+    auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> override;
+    auto accept(ExprVisitor& v) const -> void override;
     auto toString() const -> std::string override;
 
     std::string prefix_;
@@ -112,8 +108,7 @@ public:
     using ConstExpr::ConstExpr;
 
     auto constant() const -> bool override;
-    auto clone() const -> ExprPtr override;
-    auto ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error> override;
 };
 
 }

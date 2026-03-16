@@ -13,9 +13,10 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <bitsery/bitsery.h>
+#include <bitsery/adapter/buffer.h>
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
-#include <sfl/segmented_vector.hpp>
+#include <bitsery/traits/vector.h>
 #include <tl/expected.hpp>
 
 #include "../expected.h"
@@ -67,27 +68,23 @@ struct ModelPool::Impl
     }
 
     struct StringRange {
+        MODEL_COLUMN_TYPE(8);
+
         uint32_t offset_;
         uint32_t length_;
-
-        template<typename S>
-        void serialize(S& s) {
-            s.value4b(offset_);
-            s.value4b(length_);
-        }
     };
 
     /// This model pool's field name store
     std::shared_ptr<StringPool> strings_;
 
     struct {
-        sfl::segmented_vector<ModelNodeAddress, detail::ColumnPageSize> roots_;
-        sfl::segmented_vector<int64_t, detail::ColumnPageSize> i64_;
-        sfl::segmented_vector<double, detail::ColumnPageSize> double_;
+        ModelColumn<ModelNodeAddress, detail::ColumnPageSize> roots_;
+        ModelColumn<int64_t, detail::ColumnPageSize> i64_;
+        ModelColumn<double, detail::ColumnPageSize> double_;
 
         std::string stringData_;
-        sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
-        sfl::segmented_vector<StringRange, detail::ColumnPageSize> byteArrays_;
+        ModelColumn<StringRange, detail::ColumnPageSize> strings_;
+        ModelColumn<StringRange, detail::ColumnPageSize> byteArrays_;
 
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
@@ -96,55 +93,17 @@ struct ModelPool::Impl
     template<typename S>
     void readWrite(S& s) {
         constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
-
-        s.container(columns_.roots_, maxColumnSize);
-
-        s.container(columns_.i64_, maxColumnSize);
-        s.container(columns_.double_, maxColumnSize);
+        s.object(columns_.roots_);
+        s.object(columns_.i64_);
+        s.object(columns_.double_);
         s.text1b(columns_.stringData_, maxColumnSize);
-        s.container(columns_.strings_, maxColumnSize);
-        s.container(columns_.byteArrays_, maxColumnSize);
+        s.object(columns_.strings_);
+        s.object(columns_.byteArrays_);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
     }
 };
-
-namespace
-{
-class CountingStreambuf : public std::streambuf
-{
-public:
-    size_t size() const { return size_; }
-
-protected:
-    std::streamsize xsputn(const char* /*s*/, std::streamsize count) override
-    {
-        size_ += static_cast<size_t>(count);
-        return count;
-    }
-
-    int overflow(int ch) override
-    {
-        if (ch != EOF)
-            ++size_;
-        return ch;
-    }
-
-private:
-    size_t size_ = 0;
-};
-
-template <class Fn>
-size_t measureBytes(Fn&& fn)
-{
-    CountingStreambuf buf;
-    std::ostream os(&buf);
-    bitsery::Serializer<bitsery::OutputStreamAdapter> s(os);
-    fn(s);
-    return buf.size();
-}
-}
 
 ModelPool::ModelPool()
     : impl_(std::make_unique<ModelPool::Impl>(std::make_shared<StringPool>()))
@@ -162,7 +121,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
     std::vector<std::string> errors;
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
-        if ((i < 0) || (i >= arena.size())) {
+        if (!arena.valid(static_cast<ArrayIndex>(i))) {
             errors.emplace_back(fmt::format("Bad {} array index {}.", arrType, i));
             return false;
         }
@@ -331,15 +290,15 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
     impl_->columns_.roots_.emplace_back(rootNode->addr_);
 }
 
-model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
+model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     return model_ptr<Object>::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)memberArrId});
 }
 
-model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
+model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
+    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
 }
 
@@ -453,11 +412,11 @@ auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::ex
 
     // Translate object field IDs to the new dictionary.
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
-        for (auto& member : memberArray) {
-            if (auto resolvedName = oldStrings->resolve(member.name_)) {
+        for (auto member : memberArray) {
+            if (auto resolvedName = oldStrings->resolve(detail::objectFieldName(member))) {
                 auto stringId = strings->emplace(*resolvedName);
                 TRY_EXPECTED(stringId);
-                member.name_ = *stringId;
+                detail::objectFieldName(member) = *stringId;
             }
         }
     }
@@ -467,26 +426,15 @@ auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::ex
 
 ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
 {
-    constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
     SerializationSizeStats stats;
-
-    stats.rootsBytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.roots_, maxColumnSize); });
-    stats.int64Bytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.i64_, maxColumnSize); });
-    stats.doubleBytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.double_, maxColumnSize); });
-    stats.stringDataBytes = measureBytes(
-        [&](auto& s) { s.text1b(impl_->columns_.stringData_, maxColumnSize); });
-    stats.stringRangeBytes = measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.strings_, maxColumnSize); });
-    stats.stringRangeBytes += measureBytes(
-        [&](auto& s) { s.container(impl_->columns_.byteArrays_, maxColumnSize); });
-    stats.objectMemberBytes = measureBytes(
-        [&](auto& s) { s.ext(impl_->columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
-    stats.arrayMemberBytes = measureBytes(
-        [&](auto& s) { s.ext(impl_->columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{}); });
-
+    stats.rootsBytes = impl_->columns_.roots_.byte_size();
+    stats.int64Bytes = impl_->columns_.i64_.byte_size();
+    stats.doubleBytes = impl_->columns_.double_.byte_size();
+    stats.stringDataBytes = impl_->columns_.stringData_.size();
+    stats.stringRangeBytes = impl_->columns_.strings_.byte_size();
+    stats.stringRangeBytes += impl_->columns_.byteArrays_.byte_size();
+    stats.objectMemberBytes = impl_->columns_.objectMemberArrays_.byte_size();
+    stats.arrayMemberBytes = impl_->columns_.arrayMemberArrays_.byte_size();
     return stats;
 }
 
@@ -499,7 +447,17 @@ Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
 
+Object::Storage const& ModelPool::objectMemberStorage() const
+{
+    return impl_->columns_.objectMemberArrays_;
+}
+
 Array::Storage& ModelPool::arrayMemberStorage() {
+    return impl_->columns_.arrayMemberArrays_;
+}
+
+Array::Storage const& ModelPool::arrayMemberStorage() const
+{
     return impl_->columns_.arrayMemberArrays_;
 }
 
@@ -509,8 +467,13 @@ tl::expected<void, Error> ModelPool::write(std::ostream& outputStream) {
     return {};
 }
 
-tl::expected<void, Error> ModelPool::read(std::istream& inputStream) {
-    bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
+tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, const size_t offset) {
+    if (offset > input.size()) {
+        return tl::unexpected<Error>(Error::EncodeDecodeError, "Failed to read ModelPool: invalid input offset.");
+    }
+
+    using Adapter = bitsery::InputBufferAdapter<std::vector<uint8_t>>;
+    bitsery::Deserializer<Adapter> s(Adapter(input.begin() + static_cast<std::ptrdiff_t>(offset), input.end()));
     impl_->readWrite(s);
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
         return tl::unexpected<Error>(Error::EncodeDecodeError, fmt::format(

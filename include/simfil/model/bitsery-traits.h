@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <csignal>
 #include <cstdint>
+#include <type_traits>
 #include <bitsery/traits/core/std_defaults.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/ext/std_map.h>
@@ -55,31 +57,87 @@ struct ArrayArenaExt
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
     void serialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize> const& arena, Fnc&& fnc) const
     {
-        auto numArrays = static_cast<simfil::ArrayIndex>(arena.heads_.size());
-        s.value4b(numArrays);
-        for (simfil::ArrayIndex i = 0; i < numArrays; ++i) {
-            auto size = arena.size(i);
-            s.value4b(size);
-            for (size_t j = 0; j < size; ++j) {
-                if (auto value = arena.at(i, j))
-                    fnc(s, const_cast<ElementType&>(value->get()));
-                else
-                    raise<simfil::Error>(std::move(value.error())); // Bitsery does not support propagating errors
-            }
+        (void)fnc;
+
+        // If the arena is already compact, we can simply dump out heads and data
+        if (arena.is_compact()) {
+            s.object(*arena.compactHeads_);
+            s.object(arena.data_);
+            s.object(arena.singletonValues_);
+            s.object(arena.singletonOccupied_);
+            return;
         }
+
+        // Otherwise: Build compact temporary heads/data, then serialize those buffers.
+        using CompactHeadsStorage = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactHeadStorage;
+        using DataStorage = typename std::remove_cv_t<std::remove_reference_t<decltype(arena.data_)>>;
+        using CompactChunk = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactArrayChunk;
+
+        CompactHeadsStorage compactHeads;
+        DataStorage compactData;
+        compactHeads.reserve(arena.heads_.size());
+
+        size_t totalElements = 0;
+        for (auto const& head : arena.heads_) {
+            totalElements += head.size;
+        }
+        compactData.resize(totalElements);
+
+        size_t writeIndex = 0;
+        size_t packedOffset = 0;
+        for (auto const& head : arena.heads_) {
+            compactHeads.push_back(CompactChunk{
+                static_cast<std::uint32_t>(packedOffset),
+                static_cast<std::uint32_t>(head.size)
+            });
+
+            auto const* current = &head;
+            size_t remaining = head.size;
+            while (current != nullptr && remaining > 0) {
+                size_t chunkUsed = 0;
+                if (current == &head) {
+                    chunkUsed = std::min<size_t>(head.capacity, remaining);
+                } else {
+                    chunkUsed = std::min<size_t>(current->size, remaining);
+                }
+
+                for (size_t i = 0; i < chunkUsed; ++i) {
+                    compactData[writeIndex++] = arena.data_[current->offset + i];
+                }
+                remaining -= chunkUsed;
+                current = (current->next != simfil::InvalidArrayIndex)
+                    ? &arena.continuations_[static_cast<size_t>(current->next)]
+                    : nullptr;
+            }
+            packedOffset += head.size;
+        }
+
+        s.object(compactHeads);
+        s.object(compactData);
+        s.object(arena.singletonValues_);
+        s.object(arena.singletonOccupied_);
     }
 
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>
     void deserialize(S& s, simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>& arena, Fnc&& fnc) const
     {
-        simfil::ArrayIndex numArrays;
-        s.value4b(numArrays);
-        for (simfil::ArrayIndex i = 0; i < numArrays; ++i) {
-            typename std::decay_t<decltype(arena)>::SizeType size;
-            s.value4b(size);
-            auto arrayIndex = arena.new_array(size);
-            for (size_t j = 0; j < size; ++j)
-                fnc(s, arena.emplace_back(arrayIndex));
+        (void)fnc;
+        using CompactHeadsStorage = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactHeadStorage;
+
+        CompactHeadsStorage compactHeads;
+        s.object(compactHeads);
+        s.object(arena.data_);
+        s.object(arena.singletonValues_);
+        s.object(arena.singletonOccupied_);
+
+        arena.heads_.clear();
+        arena.continuations_.clear();
+        arena.compactHeads_ = std::move(compactHeads);
+        if (arena.singletonOccupied_.size() < arena.singletonValues_.size()) {
+            auto const missing = arena.singletonValues_.size() - arena.singletonOccupied_.size();
+            for (size_t i = 0; i < missing; ++i) {
+                arena.singletonOccupied_.emplace_back(static_cast<uint8_t>(1));
+            }
         }
     }
 };
@@ -90,7 +148,7 @@ namespace traits {
 template<typename T>
 struct ExtensionTraits<ext::ArrayArenaExt, T>
 {
-    using TValue = typename T::ElementType;
+    using TValue = void;
     static constexpr bool SupportValueOverload = true;
     static constexpr bool SupportObjectOverload = true;
     static constexpr bool SupportLambdaOverload = true;
