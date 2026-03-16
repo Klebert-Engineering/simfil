@@ -5,6 +5,7 @@
 #include "simfil/result.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
+#include "simfil/diagnostics.h"
 
 #include "fmt/core.h"
 #include "fmt/ranges.h"
@@ -76,14 +77,16 @@ auto boolify(const Value& v) -> bool
 
 }
 
-WildcardExpr::WildcardExpr() = default;
+WildcardExpr::WildcardExpr(ExprId id)
+    : Expr(id)
+{}
 
 auto WildcardExpr::type() const -> Type
 {
     return Type::PATH;
 }
 
-auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
+auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return ores(ctx, Value::undef());
@@ -130,12 +133,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) ->
     return r;
 }
 
-auto WildcardExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<WildcardExpr>();
-}
-
-void WildcardExpr::accept(ExprVisitor& v)
+void WildcardExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -145,14 +143,16 @@ auto WildcardExpr::toString() const -> std::string
     return "**"s;
 }
 
-AnyChildExpr::AnyChildExpr() = default;
+AnyChildExpr::AnyChildExpr(ExprId id)
+    : Expr(id)
+{}
 
 auto AnyChildExpr::type() const -> Type
 {
     return Type::PATH;
 }
 
-auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -176,12 +176,7 @@ auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> 
     return Result::Continue;
 }
 
-auto AnyChildExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<AnyChildExpr>();
-}
-
-void AnyChildExpr::accept(ExprVisitor& v)
+void AnyChildExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -191,42 +186,48 @@ auto AnyChildExpr::toString() const -> std::string
     return "*"s;
 }
 
-FieldExpr::FieldExpr(std::string name)
-    : name_(std::move(name))
-{
-    if (name_ == "_")
-        hits_ = 1;
-}
-
-FieldExpr::FieldExpr(std::string name, const Token& token)
-    : Expr(token)
+FieldExpr::FieldExpr(ExprId id, std::string name)
+    : Expr(id)
     , name_(std::move(name))
-{
-    if (name_ == "_")
-        hits_ = 1;
-}
+{}
+
+FieldExpr::FieldExpr(ExprId id, std::string name, const Token& token)
+    : Expr(id, token)
+    , name_(std::move(name))
+{}
 
 auto FieldExpr::type() const -> Type
 {
     return Type::FIELD;
 }
 
-auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto FieldExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     return ieval(ctx, Value{val}, res);
 }
 
-auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
-    if (ctx.phase != Context::Compilation)
-        evaluations_++;
+    Diagnostics::FieldExprData* diag = nullptr;
+    if (ctx.diag)
+        diag = &ctx.diag->get<Diagnostics::FieldExprData>(*this);
+
+    if (diag) {
+        diag->evaluations++;
+        diag->location = sourceLocation();
+        if (diag->name.empty())
+            diag->name = name_;
+    }
 
     if (val.isa(ValueType::Undef))
         return res(ctx, std::move(val));
 
     /* Special case: _ points to the current node */
-    if (name_ == "_")
+    if (name_ == "_") {
+        if (diag)
+            diag->hits++;
         return res(ctx, std::move(val));
+    }
 
     if (!val.node())
         return res(ctx, Value::null());
@@ -241,7 +242,8 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expe
 
     /* Enter sub-node */
     if (auto sub = val.node()->get(nameId_)) {
-        hits_++;
+        if (diag)
+            diag->hits++;
         return res(ctx, Value::field(*sub));
     }
 
@@ -250,12 +252,7 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expe
     return res(ctx, Value::null());
 }
 
-auto FieldExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<FieldExpr>(name_);
-}
-
-void FieldExpr::accept(ExprVisitor& v)
+void FieldExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -265,12 +262,14 @@ auto FieldExpr::toString() const -> std::string
     return name_;
 }
 
-MultiConstExpr::MultiConstExpr(const std::vector<Value>& vec)
-    : values_(vec)
+MultiConstExpr::MultiConstExpr(ExprId id, const std::vector<Value>& vec)
+    : Expr(id)
+    , values_(vec)
 {}
 
-MultiConstExpr::MultiConstExpr(std::vector<Value>&& vec)
-    : values_(std::move(vec))
+MultiConstExpr::MultiConstExpr(ExprId id, std::vector<Value>&& vec)
+    : Expr(id)
+    , values_(std::move(vec))
 {}
 
 auto MultiConstExpr::type() const -> Type
@@ -283,7 +282,7 @@ auto MultiConstExpr::constant() const -> bool
     return true;
 }
 
-auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
+auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     for (const auto& v : values_) {
         auto r = res(ctx, v);
@@ -295,12 +294,7 @@ auto MultiConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl
     return Result::Continue;
 }
 
-auto MultiConstExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<MultiConstExpr>(values_);
-}
-
-void MultiConstExpr::accept(ExprVisitor& v)
+void MultiConstExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -314,8 +308,9 @@ auto MultiConstExpr::toString() const -> std::string
     return fmt::format("{{{}}}", fmt::join(items, " "));
 }
 
-ConstExpr::ConstExpr(Value value)
-    : value_(std::move(value))
+ConstExpr::ConstExpr(ExprId id, Value value)
+    : Expr(id)
+    , value_(std::move(value))
 {}
 
 auto ConstExpr::type() const -> Type
@@ -328,17 +323,12 @@ auto ConstExpr::constant() const -> bool
     return true;
 }
 
-auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
+auto ConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     return res(ctx, value_);
 }
 
-auto ConstExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<ConstExpr>(value_);
-}
-
-void ConstExpr::accept(ExprVisitor& v)
+void ConstExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -355,8 +345,9 @@ auto ConstExpr::value() const -> const Value&
     return value_;
 }
 
-SubscriptExpr::SubscriptExpr(ExprPtr left, ExprPtr index)
-    : left_(std::move(left))
+SubscriptExpr::SubscriptExpr(ExprId id, ExprPtr left, ExprPtr index)
+    : Expr(id)
+    , left_(std::move(left))
     , index_(std::move(index))
 {}
 
@@ -365,7 +356,7 @@ auto SubscriptExpr::type() const -> Type
     return Type::SUBSCRIPT;
 }
 
-auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
+auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
     auto r = left_->eval(ctx, val, LambdaResultFn([this, &val, &res](Context ctx, const Value& lval) {
@@ -404,12 +395,7 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -
     return r;
 }
 
-auto SubscriptExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<SubscriptExpr>(left_->clone(), index_->clone());
-}
-
-void SubscriptExpr::accept(ExprVisitor& v)
+void SubscriptExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -419,13 +405,9 @@ auto SubscriptExpr::toString() const -> std::string
     return fmt::format("(index {} {})", left_->toString(), index_->toString());
 }
 
-SubExpr::SubExpr(ExprPtr sub)
-    : left_(std::make_unique<FieldExpr>("_"))
-    , sub_(std::move(sub))
-{}
-
-SubExpr::SubExpr(ExprPtr left, ExprPtr sub)
-    : left_(std::move(left))
+SubExpr::SubExpr(ExprId id, ExprPtr left, ExprPtr sub)
+    : Expr(id)
+    , left_(std::move(left))
     , sub_(std::move(sub))
 {}
 
@@ -434,12 +416,12 @@ auto SubExpr::type() const -> Type
     return Type::SUBEXPR;
 }
 
-auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
+auto SubExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
     return ieval(ctx, Value{val}, ores);
 }
 
-auto SubExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error>
+auto SubExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
     /* Do not return null unless we have _no_ matching value. */
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
@@ -466,18 +448,14 @@ auto SubExpr::toString() const -> std::string
     return fmt::format("(sub {} {})", left_->toString(), sub_->toString());
 }
 
-auto SubExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<SubExpr>(left_->clone(), sub_->clone());
-}
-
-void SubExpr::accept(ExprVisitor& v)
+void SubExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
 
-AnyExpr::AnyExpr(std::vector<ExprPtr> args)
-    : args_(std::move(args))
+AnyExpr::AnyExpr(ExprId id, std::vector<ExprPtr> args)
+    : Expr(id)
+    , args_(std::move(args))
 {}
 
 auto AnyExpr::type() const -> Type
@@ -485,7 +463,7 @@ auto AnyExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     auto subctx = ctx;
     auto result = false; /* At least one value is true  */
@@ -511,25 +489,10 @@ auto AnyExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::e
     if (undef)
         return res(subctx, Value::undef());
 
-    if (result)
-        ++trueResults_;
-    else
-        ++falseResults_;
     return res(subctx, Value::make(result));
 }
 
-auto AnyExpr::clone() const -> ExprPtr
-{
-    std::vector<ExprPtr> clonedArgs;
-    clonedArgs.resize(args_.size());
-    std::transform(args_.cbegin(), args_.cend(), std::make_move_iterator(clonedArgs.begin()), [](const auto& exp) {
-        return exp->clone();
-    });
-
-    return std::make_unique<AnyExpr>(std::move(clonedArgs));
-}
-
-auto AnyExpr::accept(ExprVisitor& v) -> void
+auto AnyExpr::accept(ExprVisitor& v) const -> void
 {
     v.visit(*this);
 }
@@ -546,8 +509,9 @@ auto AnyExpr::toString() const -> std::string
     return fmt::format("(any {})", fmt::join(items, " "));
 }
 
-EachExpr::EachExpr(std::vector<ExprPtr> args)
-    : args_(std::move(args))
+EachExpr::EachExpr(ExprId id, std::vector<ExprPtr> args)
+    : Expr(id)
+    , args_(std::move(args))
 {}
 
 auto EachExpr::type() const -> Type
@@ -555,7 +519,7 @@ auto EachExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     auto subctx = ctx;
     auto result = true; /* All values are true  */
@@ -580,25 +544,10 @@ auto EachExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::
     if (undef)
         return res(subctx, Value::undef());
 
-    if (result)
-        ++trueResults_;
-    else
-        ++falseResults_;
     return res(subctx, Value::make(result));
 }
 
-auto EachExpr::clone() const -> ExprPtr
-{
-    std::vector<ExprPtr> clonedArgs;
-    clonedArgs.resize(args_.size());
-    std::transform(args_.cbegin(), args_.cend(), std::make_move_iterator(clonedArgs.begin()), [](const auto& exp) {
-        return exp->clone();
-    });
-
-    return std::make_unique<EachExpr>(std::move(clonedArgs));
-}
-
-auto EachExpr::accept(ExprVisitor& v) -> void
+auto EachExpr::accept(ExprVisitor& v) const -> void
 {
     v.visit(*this);
 }
@@ -615,8 +564,9 @@ auto EachExpr::toString() const -> std::string
     return fmt::format("(each {})", fmt::join(items, " "));
 }
 
-CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)
-    : name_(std::move(name))
+CallExpression::CallExpression(ExprId id, std::string name, std::vector<ExprPtr> args)
+    : Expr(id)
+    , name_(std::move(name))
     , args_(std::move(args))
 {}
 
@@ -625,12 +575,12 @@ auto CallExpression::type() const -> Type
     return Type::VALUE;
 }
 
-auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     return ieval(ctx, Value{val}, res);
 }
 
-auto CallExpression::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto CallExpression::ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (!fn_) [[unlikely]] {
         fn_ = ctx.env->findFunction(name_);
@@ -651,18 +601,7 @@ auto CallExpression::ieval(Context ctx, Value&& val, const ResultFn& res) -> tl:
     return result;
 }
 
-auto CallExpression::clone() const -> ExprPtr
-{
-    std::vector<ExprPtr> clonedArgs;
-    clonedArgs.resize(args_.size());
-    std::transform(args_.cbegin(), args_.cend(), std::make_move_iterator(clonedArgs.begin()), [](const auto& exp) {
-        return exp->clone();
-    });
-
-    return std::make_unique<CallExpression>(name_, std::move(clonedArgs));
-}
-
-void CallExpression::accept(ExprVisitor& v)
+void CallExpression::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -679,13 +618,9 @@ auto CallExpression::toString() const -> std::string
     return fmt::format("({} {})", name_, fmt::join(items, " "));
 }
 
-PathExpr::PathExpr(ExprPtr right)
-    : left_(std::make_unique<FieldExpr>("_"))
-    , right_(std::move(right))
-{}
-
-PathExpr::PathExpr(ExprPtr left, ExprPtr right)
-    : left_(std::move(left))
+PathExpr::PathExpr(ExprId id, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -697,12 +632,12 @@ auto PathExpr::type() const -> Type
     return Type::PATH;
 }
 
-auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) -> tl::expected<Result, Error>
+auto PathExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
     return ieval(ctx, Value{val}, ores);
 }
 
-auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expected<Result, Error>
+auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
     auto res = CountedResultFn<const ResultFn&>(ores, ctx);
 
@@ -712,8 +647,6 @@ auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expe
 
         if (v.isa(ValueType::Null) && !v.node())
             return Result::Continue;
-
-        ++hits_;
 
         return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value&& vv) -> tl::expected<Result, Error> {
             if (vv.isa(ValueType::Undef))
@@ -729,12 +662,7 @@ auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) -> tl::expe
     return r;
 };
 
-auto PathExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<PathExpr>(left_->clone(), right_->clone());
-}
-
-void PathExpr::accept(ExprVisitor& v)
+void PathExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -744,8 +672,9 @@ auto PathExpr::toString() const -> std::string
     return fmt::format("(. {} {})", left_->toString(), right_->toString());
 }
 
-UnpackExpr::UnpackExpr(ExprPtr sub)
-    : sub_(std::move(sub))
+UnpackExpr::UnpackExpr(ExprId id, ExprPtr sub)
+    : Expr(id)
+    , sub_(std::move(sub))
 {}
 
 auto UnpackExpr::type() const -> Type
@@ -753,7 +682,7 @@ auto UnpackExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     auto anyval = false;
     auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value&& v) -> tl::expected<Result, Error> {
@@ -783,12 +712,7 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl
     return r;
 }
 
-auto UnpackExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<UnpackExpr>(sub_->clone());
-}
-
-void UnpackExpr::accept(ExprVisitor& v)
+void UnpackExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
 }
@@ -798,8 +722,9 @@ auto UnpackExpr::toString() const -> std::string
     return fmt::format("(... {})", sub_->toString());
 }
 
-UnaryWordOpExpr::UnaryWordOpExpr(std::string ident, ExprPtr left)
-    : ident_(std::move(ident))
+UnaryWordOpExpr::UnaryWordOpExpr(ExprId id, std::string ident, ExprPtr left)
+    : Expr(id)
+    , ident_(std::move(ident))
     , left_(std::move(left))
 {}
 
@@ -808,7 +733,7 @@ auto UnaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     return left_->eval(ctx, val, LambdaResultFn([this, &res](const Context& ctx, Value&& val) -> tl::expected<Result, Error> {
         if (val.isa(ValueType::Undef))
@@ -826,14 +751,9 @@ auto UnaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) 
     }));
 }
 
-void UnaryWordOpExpr::accept(ExprVisitor& v)
+void UnaryWordOpExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
-}
-
-auto UnaryWordOpExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<UnaryWordOpExpr>(ident_, left_->clone());
 }
 
 auto UnaryWordOpExpr::toString() const -> std::string
@@ -841,8 +761,9 @@ auto UnaryWordOpExpr::toString() const -> std::string
     return fmt::format("({} {})", ident_, left_->toString());
 }
 
-BinaryWordOpExpr::BinaryWordOpExpr(std::string ident, ExprPtr left, ExprPtr right)
-    : ident_(std::move(ident))
+BinaryWordOpExpr::BinaryWordOpExpr(ExprId id, std::string ident, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , ident_(std::move(ident))
     , left_(std::move(left))
     , right_(std::move(right))
 {}
@@ -852,7 +773,7 @@ auto BinaryWordOpExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     return left_->eval(ctx, val, LambdaResultFn([this, &res, &val](const Context& ctx, const Value& lval) {
         return right_->eval(ctx, val, LambdaResultFn([this, &res, &lval](const Context& ctx, const Value& rval) -> tl::expected<Result, Error> {
@@ -880,14 +801,9 @@ auto BinaryWordOpExpr::ieval(Context ctx, const Value& val, const ResultFn& res)
     }));
 }
 
-void BinaryWordOpExpr::accept(ExprVisitor& v)
+void BinaryWordOpExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
-}
-
-auto BinaryWordOpExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<BinaryWordOpExpr>(ident_, left_->clone(), right_->clone());
 }
 
 auto BinaryWordOpExpr::toString() const -> std::string
@@ -895,8 +811,9 @@ auto BinaryWordOpExpr::toString() const -> std::string
     return fmt::format("({} {} {})", ident_, left_->toString(), right_->toString());
 }
 
-AndExpr::AndExpr(ExprPtr left, ExprPtr right)
-    : left_(std::move(left))
+AndExpr::AndExpr(ExprId id, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -908,7 +825,7 @@ auto AndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     /* Operator and behaves like in lua:
      * 'a and b' returns a if 'not a?' else b is returned */
@@ -928,14 +845,9 @@ auto AndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::e
     }));
 }
 
-void AndExpr::accept(ExprVisitor& v)
+void AndExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
-}
-
-auto AndExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<AndExpr>(left_->clone(), right_->clone());
 }
 
 auto AndExpr::toString() const -> std::string
@@ -943,8 +855,9 @@ auto AndExpr::toString() const -> std::string
     return fmt::format("(and {} {})", left_->toString(), right_->toString());
 }
 
-OrExpr::OrExpr(ExprPtr left, ExprPtr right)
-    : left_(std::move(left))
+OrExpr::OrExpr(ExprId id, ExprPtr left, ExprPtr right)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -956,7 +869,7 @@ auto OrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     /* Operator or behaves like in lua:
      * 'a or b' returns a if 'a?' else b is returned */
@@ -964,15 +877,12 @@ auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::ex
         if (lval.isa(ValueType::Undef))
             return res(ctx, lval);
 
-        ++leftEvaluations_;
-
         auto v = UnaryOperatorDispatcher<OperatorBool>::dispatch(lval);
         TRY_EXPECTED(v);
         if (v->isa(ValueType::Bool))
             if (v->template as<ValueType::Bool>())
                 return res(ctx, std::move(lval));
 
-        ++rightEvaluations_;
         return right_->eval(ctx, val, LambdaResultFn([&](Context ctx, Value&& rval) {
             return res(ctx, std::move(rval));
         }));
@@ -980,187 +890,14 @@ auto OrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::ex
 
 }
 
-void OrExpr::accept(ExprVisitor& v)
+void OrExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
-}
-
-auto OrExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<OrExpr>(left_->clone(), right_->clone());
 }
 
 auto OrExpr::toString() const -> std::string
 {
     return fmt::format("(or {} {})", left_->toString(), right_->toString());
-}
-
-void ExprVisitor::visit(Expr& e)
-{
-    index_++;
-}
-
-void ExprVisitor::visit(WildcardExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(AnyChildExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(MultiConstExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(ConstExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(SubscriptExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.index_)
-        expr.index_->accept(*this);
-}
-
-void ExprVisitor::visit(SubExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.sub_)
-        expr.sub_->accept(*this);
-}
-
-void ExprVisitor::visit(AnyExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    for (const auto& arg : expr.args_)
-        if (arg)
-            arg->accept(*this);
-}
-
-void ExprVisitor::visit(EachExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    for (const auto& arg : expr.args_)
-        if (arg)
-            arg->accept(*this);
-}
-
-void ExprVisitor::visit(CallExpression& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    for (const auto& arg : expr.args_)
-        if (arg)
-            arg->accept(*this);
-}
-
-void ExprVisitor::visit(PathExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(FieldExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-}
-
-void ExprVisitor::visit(UnpackExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.sub_)
-        expr.sub_->accept(*this);
-}
-
-void ExprVisitor::visit(UnaryWordOpExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-}
-
-void ExprVisitor::visit(BinaryWordOpExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(AndExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(OrExpr& expr)
-{
-    visit(static_cast<Expr&>(expr));
-
-    if (expr.left_)
-        expr.left_->accept(*this);
-    if (expr.right_)
-        expr.right_->accept(*this);
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorEq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorNeq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorLt>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorLtEq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorGt>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-void ExprVisitor::visit(BinaryExpr<OperatorGtEq>& e)
-{
-    visit(static_cast<Expr&>(e));
-}
-
-auto ExprVisitor::index() const -> size_t
-{
-    return index_;
 }
 
 }

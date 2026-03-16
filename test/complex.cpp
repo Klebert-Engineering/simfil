@@ -102,6 +102,27 @@ TEST_CASE("Multimap JSON", "[multimap.serialization]") {
     REQUIRE(model->toJson() == nlohmann::json::parse(R"([{"a":[1],"b":[1,2,3],"c":[[1],2],"_multimap":true}])"));
 }
 
+TEST_CASE("Tagged bytes JSON", "[bytes.serialization]") {
+    auto model = std::make_shared<simfil::ModelPool>();
+    auto root = model->newObject(1);
+    model->addRoot(root);
+    root->addField("raw", model->newValue(ByteArray{"A normal string"}));
+
+    auto expected = nlohmann::json::parse(
+        R"([{"raw":{"_bytes":true,"number":null,"hex":"41206e6f726d616c20737472696e67"}}])");
+    REQUIRE(model->toJson() == expected);
+
+    auto roundTrip = json::parse(model->toJson().dump());
+    REQUIRE(roundTrip);
+    auto roundTripRoot = roundTrip.value()->root(0);
+    REQUIRE(roundTripRoot);
+    REQUIRE(roundTripRoot.value()->toJson() == expected);
+
+    auto invalidHex = json::parse(R"([{"raw":{"_bytes":true,"hex":"abc"}}])");
+    REQUIRE_FALSE(invalidHex);
+    REQUIRE(invalidHex.error().message == "Invalid tagged bytes object: hex decode failed");
+}
+
 TEST_CASE("Serialization", "[complex.serialization]") {
     auto model = json::parse(invoice);
     REQUIRE(model);
@@ -109,10 +130,12 @@ TEST_CASE("Serialization", "[complex.serialization]") {
     SECTION("Test Model write/read")
     {
         std::stringstream stream;
-        model.value()->write(stream);
+        REQUIRE(model.value()->write(stream));
+        auto serialized = stream.str();
+        std::vector<uint8_t> input(serialized.begin(), serialized.end());
 
         auto recoveredModel = std::make_shared<ModelPool>();
-        recoveredModel->read(stream);
+        REQUIRE(recoveredModel->read(input));
         REQUIRE(!recoveredModel->validate());
         recoveredModel->setStrings(model.value()->strings());
         REQUIRE(recoveredModel->validate());
@@ -145,9 +168,11 @@ TEST_CASE("Serialization", "[complex.serialization]") {
     {
         std::stringstream stream;
         REQUIRE(model.value()->strings()->write(stream));
+        auto serialized = stream.str();
+        std::vector<uint8_t> input(serialized.begin(), serialized.end());
 
         const auto recoveredFields = std::make_shared<StringPool>();
-        REQUIRE(recoveredFields->read(stream));
+        REQUIRE(recoveredFields->read(input));
 
         REQUIRE(model.value()->strings()->size() == recoveredFields->size());
         REQUIRE(model.value()->strings()->highest() == recoveredFields->highest());

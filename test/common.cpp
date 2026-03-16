@@ -104,5 +104,5 @@ auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::M
         INFO(res.error().message);
     REQUIRE(res);
 
-    return diagnostics(env, **ast, diag).value_or(std::vector<Diagnostics::Message>());
+    return diagnostics(diag).value_or(std::vector<Diagnostics::Message>());
 }

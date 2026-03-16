@@ -1,6 +1,7 @@
 #include "simfil/simfil.h"
 #include "simfil/environment.h"
 #include "simfil/exception-handler.h"
+#include "simfil/expression-visitor.h"
 #include "simfil/model/json.h"
 #include "simfil/value.h"
 #include "src/expressions.h"
@@ -116,6 +117,8 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("'a'<='b'", "true");
     REQUIRE_AST("'b'>'a'", "true");
     REQUIRE_AST("'b'>='b'", "true");
+    REQUIRE_AST("b\"89899\" > 5", "true");
+    REQUIRE_AST("b\"89899\" > \"normal-string\"", "false");
 
     /* Null behaviour */
     REQUIRE_AST("1<null", "false");
@@ -142,6 +145,7 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("typeof 123.1", "\"float\"");
     REQUIRE_AST("typeof true",  "\"bool\"");
     REQUIRE_AST("typeof null",  "\"null\"");
+    REQUIRE_AST("typeof b\"ff\"", "\"bytes\"");
 
     /* Precedence */
     REQUIRE_AST("1+1*2",   "3");
@@ -163,6 +167,12 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("false as string", "\"false\"");
     REQUIRE_AST("null as string",  "\"null\"");
     REQUIRE_AST("range(1,3) as string", "\"1..3\"");
+    REQUIRE_AST("b\"89899\" as string", "\"89899\"");
+    REQUIRE_AST("\"A normal string\" as bytes", "b\"A normal string\"");
+    REQUIRE_AST("0xff as bytes == 0xff", "true");
+    REQUIRE_AST("true as bytes == 1", "true");
+    REQUIRE_AST("false as bytes == 0", "true");
+    REQUIRE_ERROR("1.5 as bytes");
 
     /* Bool Cast */
     REQUIRE_AST("123?", "true");
@@ -559,17 +569,22 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
 
     // Recognize dangling object member pointer
     pool->clear();
-    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    pool->newObject()->addField(
+        "good",
+        ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
     REQUIRE(!pool->validate());
 
     // Recognize dangling array member pointer
     pool->clear();
-    pool->newObject()->addField("good", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Arrays, 666}));
+    pool->newObject()->addField(
+        "good",
+        ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Arrays, 666}));
     REQUIRE(!pool->validate());
 
     // Recognize dangling root
     pool->clear();
-    pool->addRoot(ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    pool->addRoot(
+        ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
     REQUIRE(!pool->validate());
 
     // An empty model should be valid
@@ -586,8 +601,12 @@ TEST_CASE("Procedural Object Node", "[model.procedural]") {
     pool->strings()->addStaticKey(StaticTestKey, "test");
 
     struct DerivedProceduralObject : public ProceduralObject<2, DerivedProceduralObject> {
-        DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a)
-            : ProceduralObject<2, DerivedProceduralObject>(static_cast<ArrayIndex>(a.index()), std::move(pool), a)
+        DerivedProceduralObject(ModelConstPtr pool, ModelNodeAddress a, detail::mp_key key)
+            : ProceduralObject<2, DerivedProceduralObject>(
+                  static_cast<ArrayIndex>(a.index()),
+                  std::move(pool),
+                  a,
+                  key)
         {
             fields_.emplace_back(
                 StaticTestKey,
@@ -727,7 +746,9 @@ TEST_CASE("Visit AST", "[visit.ast]")
     {
         std::optional<std::string> visitedFieldName;
 
-        auto visit(FieldExpr& expr) -> void override
+        using ExprVisitor::visit;
+
+        auto visit(const FieldExpr& expr) -> void override
         {
             ExprVisitor::visit(expr);
 

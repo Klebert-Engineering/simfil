@@ -26,7 +26,7 @@ struct ModelNode;
  * Param:
  *   any   If true, wrap expression with call to `any(...)`.
  * Param:
- *   autoWildcard  If true, expand constant expressions to `** = <const>`.
+ *   autoWildcard  If true, expand constant expressions to `** == <const>`.
  */
 auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> tl::expected<ASTPtr, Error>;
 
@@ -52,7 +52,7 @@ auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* 
  * Param:
  *   diag   Diagnostics data filled by eval.
  */
-auto diagnostics(Environment& env, const AST& ast, const Diagnostics& diag) -> tl::expected<std::vector<Diagnostics::Message>, Error>;
+auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Diagnostics::Message>, Error>;
 
 /**
  * Find completion candidates for an expression.

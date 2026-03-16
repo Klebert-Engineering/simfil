@@ -7,8 +7,8 @@ namespace simfil
 {
 
 template <class ModelType, class ModelNodeType>
-BaseArray<ModelType, ModelNodeType>::BaseArray(ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a),
+BaseArray<ModelType, ModelNodeType>::BaseArray(ModelConstPtr pool_, ModelNodeAddress a, detail::mp_key key)
+    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a, key),
       storage_(nullptr),
       members_((ArrayIndex)a.index())
 {
@@ -69,8 +69,8 @@ BaseArray<ModelType, ModelNodeType>::appendInternal(ModelNode::Ptr const& value)
 }
 
 template <class ModelType, class ModelNodeType>
-BaseObject<ModelType, ModelNodeType>::BaseObject(ModelConstPtr pool_, ModelNodeAddress a)
-    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a),
+BaseObject<ModelType, ModelNodeType>::BaseObject(ModelConstPtr pool_, ModelNodeAddress a, detail::mp_key key)
+    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a, key),
       storage_(nullptr),
       members_((ArrayIndex)a.index())
 {
@@ -81,8 +81,9 @@ template <class ModelType, class ModelNodeType>
 BaseObject<ModelType, ModelNodeType>::BaseObject(
     ArrayIndex members,
     ModelConstPtr pool_,
-    ModelNodeAddress a)
-    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a),
+    ModelNodeAddress a,
+    detail::mp_key key)
+    : MandatoryDerivedModelNodeBase<ModelType>(std::move(pool_), a, key),
       storage_(nullptr),
       members_(members)
 {
@@ -101,7 +102,7 @@ ModelNode::Ptr BaseObject<ModelType, ModelNodeType>::at(int64_t i) const
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
     if (auto value = storage_->at(members_, i); value)
-        return ModelNode::Ptr::make(model_, value->get().node_);
+        return ModelNode::Ptr::make(model_, detail::objectFieldNode(value.value()));
     return {};
 }
 
@@ -111,7 +112,7 @@ StringId BaseObject<ModelType, ModelNodeType>::keyAt(int64_t i) const
     if (i < 0 || i >= (int64_t)storage_->size(members_))
         return {};
     if (auto value = storage_->at(members_, i); value)
-        return value->get().name_;
+        return detail::objectFieldName(value.value());
     return {};
 }
 
@@ -129,8 +130,8 @@ ModelNode::Ptr BaseObject<ModelType, ModelNodeType>::get(const StringId& field) 
         members_,
         [&field, &result, this](auto&& member)
         {
-            if (member.name_ == field) {
-                result = ModelNode::Ptr::make(model_, member.node_);
+            if (detail::objectFieldName(member) == field) {
+                result = ModelNode::Ptr::make(model_, detail::objectFieldNode(member));
                 return false;
             }
             return true;
@@ -147,7 +148,7 @@ bool BaseObject<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback
         members_,
         [&, this](auto&& member)
         {
-            (*model_).resolve(*ModelNode::Ptr::make(model_, member.node_), resolveAndCb);
+            (*model_).resolve(*ModelNode::Ptr::make(model_, detail::objectFieldNode(member)), resolveAndCb);
             return cont;
         });
     return cont;

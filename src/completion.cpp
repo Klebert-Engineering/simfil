@@ -125,8 +125,8 @@ auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::
 namespace simfil
 {
 
-CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath)
-    : Expr(token)
+CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token, bool inPath)
+    : Expr(id, token)
     , prefix_(std::move(prefix))
     , comp_(comp)
     , inPath_(inPath)
@@ -137,7 +137,7 @@ auto CompletionFieldOrWordExpr::type() const -> Type
     return Type::FIELD;
 }
 
-auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -191,12 +191,7 @@ auto CompletionFieldOrWordExpr::toString() const -> std::string
     return prefix_;
 }
 
-auto CompletionFieldOrWordExpr::clone() const -> std::unique_ptr<Expr>
-{
-    throw std::runtime_error("Cannot clone CompletionFieldOrWordExpr");
-}
-
-auto CompletionFieldOrWordExpr::accept(ExprVisitor& v) -> void
+auto CompletionFieldOrWordExpr::accept(ExprVisitor& v) const -> void
 {
     v.visit(*this);
 }
@@ -216,7 +211,7 @@ struct FindExpressionRange : ExprVisitor
 
     using ExprVisitor::visit;
 
-    void visit(Expr& expr) override
+    void visit(const Expr& expr) override
     {
         ExprVisitor::visit(expr);
 
@@ -230,8 +225,9 @@ struct FindExpressionRange : ExprVisitor
 
 }
 
-CompletionAndExpr::CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp)
-    : left_(std::move(left))
+CompletionAndExpr::CompletionAndExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
@@ -254,7 +250,7 @@ auto CompletionAndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (left_)
         (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
@@ -269,14 +265,9 @@ auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res
     return Result::Continue;
 }
 
-void CompletionAndExpr::accept(ExprVisitor& v)
+void CompletionAndExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
-}
-
-auto CompletionAndExpr::clone() const -> ExprPtr
-{
-    throw std::runtime_error("Cannot clone CompletionAndExpr");
 }
 
 auto CompletionAndExpr::toString() const -> std::string
@@ -290,8 +281,9 @@ auto CompletionAndExpr::toString() const -> std::string
     return "(and ? ?)";
 }
 
-CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp)
-    : left_(std::move(left))
+CompletionOrExpr::CompletionOrExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp)
+    : Expr(id)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
@@ -314,7 +306,7 @@ auto CompletionOrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (left_)
         (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
@@ -329,14 +321,9 @@ auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res)
     return Result::Continue;
 }
 
-void CompletionOrExpr::accept(ExprVisitor& v)
+void CompletionOrExpr::accept(ExprVisitor& v) const
 {
     v.visit(*this);
-}
-
-auto CompletionOrExpr::clone() const -> ExprPtr
-{
-    throw std::runtime_error("Cannot clone CompletionOrExpr");
 }
 
 auto CompletionOrExpr::toString() const -> std::string
@@ -350,8 +337,8 @@ auto CompletionOrExpr::toString() const -> std::string
     return "(or ? ?)";
 }
 
-CompletionWordExpr::CompletionWordExpr(std::string prefix, Completion* comp, const Token& token)
-    : Expr(token)
+CompletionWordExpr::CompletionWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token)
+    : Expr(id, token)
     , prefix_(std::move(prefix))
     , comp_(comp)
 {}
@@ -366,7 +353,7 @@ auto CompletionWordExpr::constant() const -> bool
     return true;
 }
 
-auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) -> tl::expected<Result, Error>
+auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
@@ -382,12 +369,7 @@ auto CompletionWordExpr::toString() const -> std::string
     return prefix_;
 }
 
-auto CompletionWordExpr::clone() const -> std::unique_ptr<Expr>
-{
-    throw std::runtime_error("Cannot clone CompletionWordExpr");
-}
-
-auto CompletionWordExpr::accept(ExprVisitor& v) -> void
+auto CompletionWordExpr::accept(ExprVisitor& v) const -> void
 {
     v.visit(*this);
 }
@@ -397,12 +379,7 @@ auto CompletionConstExpr::constant() const -> bool
     return false;
 }
 
-auto CompletionConstExpr::clone() const -> ExprPtr
-{
-    return std::make_unique<CompletionConstExpr>(value_);
-}
-
-auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) -> tl::expected<Result, Error>
+auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Compilation)
         return res(ctx, Value::undef());

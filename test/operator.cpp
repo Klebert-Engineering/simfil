@@ -95,6 +95,7 @@ TEST_CASE("Unary operators", "[operator.unary]") {
         REQUIRE(op(int64_t(42)) == "int");
         REQUIRE(op(3.14) == "float");
         REQUIRE(op("hello"s) == "string");
+        REQUIRE(op(ByteArray{"ff"}) == "bytes");
     }
 }
 
@@ -128,6 +129,30 @@ TEST_CASE("Type conversion operators", "[operator.conversion]") {
         REQUIRE(op("not a number"s) == 0.0);
         REQUIRE(op(""s) == 0.0);
         REQUIRE(op(NullType{}) == 0.0);
+    }
+
+    SECTION("OperatorAsString") {
+        OperatorAsString op;
+        REQUIRE(op(ByteArray{"89899"}) == "89899");
+    }
+
+    SECTION("OperatorAsBytes") {
+        OperatorAsBytes op;
+        REQUIRE(op("A normal string"s).bytes == "A normal string");
+        REQUIRE(op(ByteArray{"ff"}).bytes == "ff");
+        REQUIRE(op(true).bytes == std::string(1, char(1)));
+        REQUIRE(op(false).bytes == std::string(1, char(0)));
+
+        auto intBytes = op(int64_t(0xff));
+        REQUIRE(intBytes.bytes.size() == 8);
+        REQUIRE((unsigned char)intBytes.bytes.back() == 0xff);
+        REQUIRE(intBytes.decodeBigEndianI64().value_or(0) == int64_t(0xff));
+
+        auto negBytes = op(int64_t(-1));
+        REQUIRE(negBytes.bytes.size() == 8);
+        REQUIRE(negBytes.decodeBigEndianI64().value_or(0) == int64_t(-1));
+
+        REQUIRE_INVALID_OPERANDS(op(3.14));
     }
 }
 
@@ -220,5 +245,12 @@ TEST_CASE("Binary comparison operators", "[operator.binary.comparison]") {
         REQUIRE(op(int64_t(5), 5.0) == true);
         REQUIRE(op(5.0, int64_t(5)) == true);
         REQUIRE(op(int64_t(5), 5.1) == false);
+        REQUIRE(op(ByteArray{"89899"}, "normal-string"s) == false);
+    }
+
+    SECTION("OperatorGt") {
+        OperatorGt op;
+        REQUIRE(op(ByteArray{"89899"}, int64_t(5)) == true);
+        REQUIRE(op(ByteArray{"89899"}, "normal-string"s) == false);
     }
 }

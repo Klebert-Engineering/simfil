@@ -1,4 +1,5 @@
 #include "simfil/environment.h"
+#include "simfil/diagnostics.h"
 #include "simfil/function.h"
 
 namespace simfil
@@ -58,8 +59,9 @@ auto Environment::strings() const -> std::shared_ptr<StringPool> {
     return stringPool;
 }
 
-Context::Context(Environment* env, Context::Phase phase)
+Context::Context(Environment* env, Diagnostics* diag, Context::Phase phase)
     : env(env)
+    , diag(diag)
     , phase(phase)
 {}
 

@@ -34,7 +34,19 @@ static auto build(const json& j, ModelPool & model) -> tl::expected<ModelNode::P
     }
 
     if (j.is_object()) {
-        auto object = model.newObject(j.size());
+        if (auto it = j.find("_bytes"); it != j.end() && it->is_boolean() && it->get<bool>()) {
+            auto hex = j.find("hex");
+            if (hex == j.end() || !hex->is_string())
+                return tl::unexpected<Error>(Error::ParserError, "Invalid tagged bytes object: expected string field 'hex'");
+
+            auto decoded = ByteArray::fromHex(hex->get<std::string>());
+            if (!decoded)
+                return tl::unexpected<Error>(Error::ParserError, "Invalid tagged bytes object: hex decode failed");
+
+            return model.newValue(std::move(*decoded));
+        }
+
+        auto object = model.newObject(j.size(), true);
         for (auto&& [key, value] : j.items()) {
             auto child = build(value, model);
             TRY_EXPECTED(child);
@@ -44,7 +56,7 @@ static auto build(const json& j, ModelPool & model) -> tl::expected<ModelNode::P
     }
 
     if (j.is_array()) {
-        auto array = model.newArray(j.size());
+        auto array = model.newArray(j.size(), true);
         for (const auto& value : j) {
             auto child = build(value, model);
             TRY_EXPECTED(child);

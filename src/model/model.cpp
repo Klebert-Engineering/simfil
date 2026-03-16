@@ -2,18 +2,21 @@
 #include "simfil/model/arena.h"
 #include "simfil/model/bitsery-traits.h"
 #include "simfil/model/nodes.h"
+#include "simfil/byte-array.h"
 
 #include <memory>
 #include <type_traits>
 #include <variant>
 #include <vector>
+#include <streambuf>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <bitsery/bitsery.h>
+#include <bitsery/adapter/buffer.h>
 #include <bitsery/adapter/stream.h>
 #include <bitsery/traits/string.h>
-#include <sfl/segmented_vector.hpp>
+#include <bitsery/traits/vector.h>
 #include <tl/expected.hpp>
 
 #include "../expected.h"
@@ -25,20 +28,30 @@ tl::expected<void, Error> Model::resolve(const ModelNode& n, const ResolveFn& cb
 {
     switch (n.addr_.column()) {
         case Null:
-            cb(ModelNodeBase(shared_from_this()));
+        {
+            cb(ModelNodeBase(shared_from_this(), ModelNodeAddress{}, mpKey_));
             break;
+        }
         case UInt16:
-            cb(SmallValueNode<uint16_t>(shared_from_this(), n.addr_));
+        {
+            cb(SmallValueNode<uint16_t>(shared_from_this(), n.addr_, mpKey_));
             break;
+        }
         case Int16:
-            cb(SmallValueNode<int16_t>(shared_from_this(), n.addr_));
+        {
+            cb(SmallValueNode<int16_t>(shared_from_this(), n.addr_, mpKey_));
             break;
+        }
         case Bool:
-            cb(SmallValueNode<bool>(shared_from_this(), n.addr_));
+        {
+            cb(SmallValueNode<bool>(shared_from_this(), n.addr_, mpKey_));
             break;
+        }
         case Scalar:
-            cb(ValueNode(n));
+        {
+            cb(ValueNode(n, mpKey_));
             break;
+        }
         default:
             return tl::unexpected<Error>(Error::RuntimeError,
                                          fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
@@ -55,26 +68,23 @@ struct ModelPool::Impl
     }
 
     struct StringRange {
+        MODEL_COLUMN_TYPE(8);
+
         uint32_t offset_;
         uint32_t length_;
-
-        template<typename S>
-        void serialize(S& s) {
-            s.value4b(offset_);
-            s.value4b(length_);
-        }
     };
 
     /// This model pool's field name store
     std::shared_ptr<StringPool> strings_;
 
     struct {
-        sfl::segmented_vector<ModelNodeAddress, detail::ColumnPageSize> roots_;
-        sfl::segmented_vector<int64_t, detail::ColumnPageSize> i64_;
-        sfl::segmented_vector<double, detail::ColumnPageSize> double_;
+        ModelColumn<ModelNodeAddress, detail::ColumnPageSize> roots_;
+        ModelColumn<int64_t, detail::ColumnPageSize> i64_;
+        ModelColumn<double, detail::ColumnPageSize> double_;
 
         std::string stringData_;
-        sfl::segmented_vector<StringRange, detail::ColumnPageSize> strings_;
+        ModelColumn<StringRange, detail::ColumnPageSize> strings_;
+        ModelColumn<StringRange, detail::ColumnPageSize> byteArrays_;
 
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
@@ -83,13 +93,12 @@ struct ModelPool::Impl
     template<typename S>
     void readWrite(S& s) {
         constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
-
-        s.container(columns_.roots_, maxColumnSize);
-
-        s.container(columns_.i64_, maxColumnSize);
-        s.container(columns_.double_, maxColumnSize);
+        s.object(columns_.roots_);
+        s.object(columns_.i64_);
+        s.object(columns_.double_);
         s.text1b(columns_.stringData_, maxColumnSize);
-        s.container(columns_.strings_, maxColumnSize);
+        s.object(columns_.strings_);
+        s.object(columns_.byteArrays_);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
@@ -112,7 +121,7 @@ std::vector<std::string> ModelPool::checkForErrors() const
     std::vector<std::string> errors;
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
-        if ((i < 0) || (i >= arena.size())) {
+        if (!arena.valid(static_cast<ArrayIndex>(i))) {
             errors.emplace_back(fmt::format("Bad {} array index {}.", arrType, i));
             return false;
         }
@@ -155,11 +164,15 @@ std::vector<std::string> ModelPool::checkForErrors() const
 
     // Validate objects
     for (auto i = 0; i < impl_->columns_.objectMemberArrays_.size(); ++i)
-        validateModelNode(ModelNode::Ptr::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)i}));
+        validateModelNode(ModelNode::Ptr::make(
+            shared_from_this(),
+            ModelNodeAddress{Objects, (uint32_t)i}));
 
     // Validate arrays
     for (auto i = 0; i < impl_->columns_.arrayMemberArrays_.size(); ++i)
-        validateModelNode(ModelNode::Ptr::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)i}));
+        validateModelNode(ModelNode::Ptr::make(
+            shared_from_this(),
+            ModelNodeAddress{Arrays, (uint32_t)i}));
 
     // Validate roots
     for (auto i = 0; i < numRoots(); ++i)
@@ -191,6 +204,7 @@ void ModelPool::clear()
     clear_and_shrink(columns.double_);
     clear_and_shrink(columns.strings_);
     clear_and_shrink(columns.stringData_);
+    clear_and_shrink(columns.byteArrays_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
 }
@@ -207,11 +221,11 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
 
     switch (n.addr_.column()) {
     case Objects: {
-        cb(Object(shared_from_this(), n.addr_));
+        cb(Object(shared_from_this(), n.addr_, mpKey_));
         break;
     }
     case Arrays: {
-        cb(Array(shared_from_this(), n.addr_));
+        cb(Array(shared_from_this(), n.addr_, mpKey_));
         break;
     }
     case Int64: {
@@ -219,7 +233,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto idx = n.addr().index();
         auto& val = impl_->columns_.i64_[idx];
-        cb(ValueNode(val, shared_from_this()));
+        cb(ValueNode(val, shared_from_this(), mpKey_));
         break;
     }
     case Double: {
@@ -227,7 +241,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto idx = n.addr().index();
         auto& val = impl_->columns_.double_[idx];
-        cb(ValueNode(val, shared_from_this()));
+        cb(ValueNode(val, shared_from_this(), mpKey_));
         break;
     }
     case String: {
@@ -238,12 +252,22 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
         cb(ValueNode(
             // TODO: Make sure that the string view is not turned into a string here.
             std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
-            shared_from_this()));
+            shared_from_this(),
+            mpKey_));
+        break;
+    }
+    case ByteArray: {
+        auto idx = n.addr().index();
+        if (auto err = checkBounds(impl_->columns_.byteArrays_))
+            return tl::unexpected<Error>(*err);
+        auto& val = impl_->columns_.byteArrays_[idx];
+        auto view = std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_);
+        cb(ValueNode(simfil::ByteArray{view}, shared_from_this(), mpKey_));
         break;
     }
     case PooledString: {
         auto str = lookupStringId(static_cast<StringId>(n.addr().index()));
-        cb(ValueNode(str.value_or(std::string_view{}), shared_from_this()));
+        cb(ValueNode(str.value_or(std::string_view{}), shared_from_this(), mpKey_));
         break;
     }
     default:
@@ -259,42 +283,44 @@ size_t ModelPool::numRoots() const {
 tl::expected<ModelNode::Ptr, Error> ModelPool::root(size_t const& i) const {
     if ((i < 0) || (i >= impl_->columns_.roots_.size()))
         return tl::unexpected<Error>(Error::RuntimeError, "Root index does not exist.");
-    return ModelNode(shared_from_this(), impl_->columns_.roots_.at(i));
+    return ModelNode::Ptr::make(shared_from_this(), impl_->columns_.roots_.at(i));
 }
 
 void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
     impl_->columns_.roots_.emplace_back(rootNode->addr_);
 }
 
-model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity)
+model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity);
-    return Object(
-        shared_from_this(),
-        {Objects, (uint32_t)memberArrId});
+    auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity, fixedSize);
+    return model_ptr<Object>::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)memberArrId});
 }
 
-model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity)
+model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize)
 {
-    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity);
-    return Array(
-        shared_from_this(),
-        {Arrays, (uint32_t)memberArrId});
+    auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity, fixedSize);
+    return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
 }
 
 ModelNode::Ptr Model::newSmallValue(bool value)
 {
-    return ModelNode(shared_from_this(), {Bool, (uint32_t)value});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Bool, (uint32_t)value});
 }
 
 ModelNode::Ptr Model::newSmallValue(int16_t value)
 {
-    return ModelNode(shared_from_this(), {Int16, (uint32_t)value});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Int16, (uint32_t)value});
 }
 
 ModelNode::Ptr Model::newSmallValue(uint16_t value)
 {
-    return ModelNode(shared_from_this(), {UInt16, (uint32_t)value});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{UInt16, (uint32_t)value});
 }
 
 std::optional<std::string_view> Model::lookupStringId(const simfil::StringId) const
@@ -309,13 +335,17 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
     else if (value >= 0 && value <= std::numeric_limits<uint16_t>::max())
         return newSmallValue((uint16_t)value);
     impl_->columns_.i64_.emplace_back(value);
-    return ModelNode(shared_from_this(), {Int64, (uint32_t)impl_->columns_.i64_.size()-1});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Int64, (uint32_t)impl_->columns_.i64_.size()-1});
 }
 
 ModelNode::Ptr ModelPool::newValue(double const& value)
 {
     impl_->columns_.double_.emplace_back(value);
-    return ModelNode(shared_from_this(), {Double, (uint32_t)impl_->columns_.double_.size()-1});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{Double, (uint32_t)impl_->columns_.double_.size()-1});
 }
 
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
@@ -325,24 +355,44 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
         (uint32_t)value.size()
     });
     impl_->columns_.stringData_ += value;
-    return ModelNode(shared_from_this(), {String, (uint32_t)impl_->columns_.strings_.size()-1});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{String, (uint32_t)impl_->columns_.strings_.size()-1});
+}
+
+ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
+{
+    impl_->columns_.byteArrays_.emplace_back(Impl::StringRange{
+        (uint32_t)impl_->columns_.stringData_.size(),
+        (uint32_t)value.bytes.size()
+    });
+    impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{ByteArray, (uint32_t)impl_->columns_.byteArrays_.size()-1});
 }
 
 ModelNode::Ptr ModelPool::newValue(StringId handle) {
-    return ModelNode(shared_from_this(), {PooledString, static_cast<uint32_t>(handle)});
+    return ModelNode::Ptr::make(
+        shared_from_this(),
+        ModelNodeAddress{PooledString, static_cast<uint32_t>(handle)});
 }
 
-model_ptr<Object> ModelPool::resolveObject(const ModelNode::Ptr& n) const {
-    if (n->addr_.column() != Objects)
-        raise<std::runtime_error>("Cannot cast this node to an object.");
-    return Object(shared_from_this(), n->addr_);
-}
-
-model_ptr<Array> ModelPool::resolveArray(ModelNode::Ptr const& n) const
+// Core ADL resolve hooks for base Object/Array nodes.
+template<>
+model_ptr<Object> resolveInternal(res::tag<Object>, ModelPool const& model, ModelNode const& node)
 {
-    if (n->addr_.column() != Arrays)
+    if (node.addr().column() != ModelPool::Objects)
+        raise<std::runtime_error>("Cannot cast this node to an object.");
+    return model_ptr<Object>::make(model.shared_from_this(), node.addr());
+}
+
+template<>
+model_ptr<Array> resolveInternal(res::tag<Array>, ModelPool const& model, ModelNode const& node)
+{
+    if (node.addr().column() != ModelPool::Arrays)
         raise<std::runtime_error>("Cannot cast this node to an array.");
-    return Array(shared_from_this(), n->addr_);
+    return model_ptr<Array>::make(model.shared_from_this(), node.addr());
 }
 
 std::shared_ptr<StringPool> ModelPool::strings() const
@@ -362,16 +412,30 @@ auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::ex
 
     // Translate object field IDs to the new dictionary.
     for (auto memberArray : impl_->columns_.objectMemberArrays_) {
-        for (auto& member : memberArray) {
-            if (auto resolvedName = oldStrings->resolve(member.name_)) {
+        for (auto member : memberArray) {
+            if (auto resolvedName = oldStrings->resolve(detail::objectFieldName(member))) {
                 auto stringId = strings->emplace(*resolvedName);
                 TRY_EXPECTED(stringId);
-                member.name_ = *stringId;
+                detail::objectFieldName(member) = *stringId;
             }
         }
     }
 
     return {};
+}
+
+ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
+{
+    SerializationSizeStats stats;
+    stats.rootsBytes = impl_->columns_.roots_.byte_size();
+    stats.int64Bytes = impl_->columns_.i64_.byte_size();
+    stats.doubleBytes = impl_->columns_.double_.byte_size();
+    stats.stringDataBytes = impl_->columns_.stringData_.size();
+    stats.stringRangeBytes = impl_->columns_.strings_.byte_size();
+    stats.stringRangeBytes += impl_->columns_.byteArrays_.byte_size();
+    stats.objectMemberBytes = impl_->columns_.objectMemberArrays_.byte_size();
+    stats.arrayMemberBytes = impl_->columns_.arrayMemberArrays_.byte_size();
+    return stats;
 }
 
 std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId id) const
@@ -383,7 +447,17 @@ Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
 
+Object::Storage const& ModelPool::objectMemberStorage() const
+{
+    return impl_->columns_.objectMemberArrays_;
+}
+
 Array::Storage& ModelPool::arrayMemberStorage() {
+    return impl_->columns_.arrayMemberArrays_;
+}
+
+Array::Storage const& ModelPool::arrayMemberStorage() const
+{
     return impl_->columns_.arrayMemberArrays_;
 }
 
@@ -393,8 +467,13 @@ tl::expected<void, Error> ModelPool::write(std::ostream& outputStream) {
     return {};
 }
 
-tl::expected<void, Error> ModelPool::read(std::istream& inputStream) {
-    bitsery::Deserializer<bitsery::InputStreamAdapter> s(inputStream);
+tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, const size_t offset) {
+    if (offset > input.size()) {
+        return tl::unexpected<Error>(Error::EncodeDecodeError, "Failed to read ModelPool: invalid input offset.");
+    }
+
+    using Adapter = bitsery::InputBufferAdapter<std::vector<uint8_t>>;
+    bitsery::Deserializer<Adapter> s(Adapter(input.begin() + static_cast<std::ptrdiff_t>(offset), input.end()));
     impl_->readWrite(s);
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
         return tl::unexpected<Error>(Error::EncodeDecodeError, fmt::format(
