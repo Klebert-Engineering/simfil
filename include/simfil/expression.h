@@ -7,7 +7,12 @@
 #include "simfil/environment.h"
 #include "simfil/result.h"
 
+#include "asyncpp/generator.h"
+
+#include <coroutine>
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace simfil
 {
@@ -58,6 +63,26 @@ public:
 
     /* Debug */
     virtual auto toString() const -> std::string = 0;
+
+    auto eval(Context ctx, Value val) const -> asyncpp::generator<tl::expected<Value, Error>>
+    {
+        if (ctx.canceled())
+            co_return;
+
+        std::vector<Value> results;
+        auto result = eval(ctx, val, LambdaResultFn([&results](Context, const Value& value) -> tl::expected<Result, Error> {
+            results.push_back(value);
+            return Result::Continue;
+        }));
+
+        if (!result) {
+            co_yield tl::unexpected<Error>(std::move(result.error()));
+            co_return;
+        }
+
+        for (auto value : results)
+            co_yield value;
+    }
 
     auto eval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {

@@ -937,11 +937,11 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     Context ctx(&env, &localDiag);
 
     std::vector<Value> values;
-    auto res = ast.expr().eval(ctx, Value::field(node), LambdaResultFn([&values](const Context&, Value&& value) {
-        values.push_back(std::move(value));
-        return Result::Continue;
-    }));
-    TRY_EXPECTED(res);
+    auto stream = ast.expr().eval(ctx, Value::field(node));
+    for (auto&& value : stream) {
+        TRY_EXPECTED(value);
+        values.push_back(*value);
+    }
 
     // Merge diagnostics
     if (diag)

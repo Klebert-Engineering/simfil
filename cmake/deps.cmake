@@ -20,6 +20,10 @@ CPMAddPackage(
         "EXPECTED_BUILD_TESTS OFF"
         "EXPECTED_BUILD_PACKAGE_DEB OFF")
 
+# asyncpp
+CPMAddPackage(
+    URI "gh:asyncpp/asyncpp@0.0.1#c1d3831")
+
 # nlohmann/json
 if (SIMFIL_WITH_MODEL_JSON)
     CPMAddPackage("gh:nlohmann/json@3.11.3")

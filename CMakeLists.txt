@@ -118,7 +118,8 @@ target_link_libraries(simfil
     sfl::sfl
     fmt::fmt
     tl::expected
-    Bitsery::bitsery)
+    Bitsery::bitsery
+    asyncpp)
 
 if (SIMFIL_FPIC OR NOT SIMFIL_SHARED)
   set_property(TARGET simfil PROPERTY
