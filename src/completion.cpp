@@ -137,24 +137,30 @@ auto CompletionFieldOrWordExpr::type() const -> Type
     return Type::FIELD;
 }
 
-auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
+auto CompletionFieldOrWordExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
-    if (ctx.phase == Context::Phase::Compilation)
-        return res(ctx, Value::undef());
+    if (ctx.phase == Context::Phase::Compilation) {
+        co_yield Value::undef();
+        co_return;
+    }
 
-    if (val.isa(ValueType::Undef))
-        return res(ctx, val);
+    if (val.isa(ValueType::Undef)) {
+        co_yield val;
+        co_return;
+    }
 
     const auto node = val.node();
-    if (!node)
-        return res(ctx, val);
+    if (!node) {
+        co_yield val;
+        co_return;
+    }
 
     const auto caseSensitive = comp_->options.smartCase && containsUppercaseCharacter(prefix_);
 
     // First we try to complete fields
     for (StringId id : node->fieldNames()) {
         if (comp_->size() >= comp_->limit) {
-            return Result::Stop;
+            co_return;
         }
 
         if (id == StringPool::Empty)
@@ -163,8 +169,8 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
         auto keyPtr = ctx.env->strings()->resolve(id);
         if (!keyPtr || keyPtr->empty())
             continue;
-        const auto& key = *keyPtr;
 
+        const auto& key = *keyPtr;
         if (startsWith(key, prefix_, caseSensitive)) {
             if (needsEscaping(key)) {
                 comp_->add(escapeKey(key), sourceLocation(), CompletionCandidate::Type::FIELD);
@@ -177,13 +183,13 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
     // If not in a path, we try to complete words and functions
     if (!inPath_) {
         if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
-            return r;
+            co_return;
 
         if (auto r = completeFunctions(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
-            return r;
+            co_return;
     }
 
-    return res(ctx, Value::null());
+    co_yield Value::undef();
 }
 
 auto CompletionFieldOrWordExpr::toString() const -> std::string
@@ -250,19 +256,17 @@ auto CompletionAndExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionAndExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
+auto CompletionAndExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     if (left_)
-        (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
-            return Result::Continue;
-        }));
+        for (auto left : left_->eval(ctx, val)) {
+            CO_TRY_EXPECTED(left);
+        }
 
     if (right_)
-        (void)right_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
-            return Result::Continue;
-        }));
-
-    return Result::Continue;
+        for (auto right : right_->eval(ctx, val)) {
+            CO_TRY_EXPECTED(right);
+        }
 }
 
 void CompletionAndExpr::accept(ExprVisitor& v) const
@@ -306,19 +310,17 @@ auto CompletionOrExpr::type() const -> Type
     return Type::VALUE;
 }
 
-auto CompletionOrExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
+auto CompletionOrExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     if (left_)
-        (void)left_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
-            return Result::Continue;
-        }));
+        for (auto left : left_->eval(ctx, val)) {
+            CO_TRY_EXPECTED(left);
+        }
 
     if (right_)
-        (void)right_->eval(ctx, val, LambdaResultFn([](const Context&, const Value&) {
-            return Result::Continue;
-        }));
-
-    return Result::Continue;
+        for (auto right : right_->eval(ctx, val)) {
+            CO_TRY_EXPECTED(right);
+        }
 }
 
 void CompletionOrExpr::accept(ExprVisitor& v) const
@@ -353,15 +355,19 @@ auto CompletionWordExpr::constant() const -> bool
     return true;
 }
 
-auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
+auto CompletionWordExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
-    if (ctx.phase == Context::Phase::Compilation)
-        return res(ctx, Value::undef());
+    if (ctx.phase == Context::Phase::Compilation) {
+        co_yield Value::undef();
+        co_return;
+    }
 
-    if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
-        return r;
-
-    return res(ctx, Value::undef());
+    else if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue) {
+        co_yield val;
+    }
+    else {
+        co_yield Value::undef();
+    }
 }
 
 auto CompletionWordExpr::toString() const -> std::string
@@ -379,11 +385,14 @@ auto CompletionConstExpr::constant() const -> bool
     return false;
 }
 
-auto CompletionConstExpr::ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error>
+auto CompletionConstExpr::ieval(Context ctx, Value) const -> EvalStream
 {
-    if (ctx.phase == Context::Compilation)
-        return res(ctx, Value::undef());
-    return res(ctx, value_);
+    if (ctx.phase == Context::Compilation) {
+        co_yield Value::undef();
+    }
+    else {
+        co_yield value_;
+    }
 }
 
 }

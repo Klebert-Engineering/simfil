@@ -1,5 +1,6 @@
 #pragma once
 
+#include <asyncpp/generator.h>
 #include <tl/expected.hpp>
 #include <memory>
 #include <type_traits>
@@ -303,6 +304,8 @@ struct ModelNode
     };
     virtual bool iterate(IterCallback const& cb) const; // NOLINT (allow discard)
 
+    virtual auto iterate() const -> asyncpp::generator<ModelNode::Ptr>;
+
     /// Iterator Support
     /// * `fieldNames()`: Returns range object which supports `for(StringId const& f: node.fieldNames())`
     /// * `fields()`: Returns range object which supports `for(auto const& [fieldId, value] : node.fields())`
@@ -430,6 +433,7 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] StringId keyAt(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
+    auto iterate() const -> asyncpp::generator<ModelNode::Ptr> override {co_return;}
 
 public:
     explicit ModelNodeBase(detail::mp_key key) : ModelNode(key) {}
@@ -548,6 +552,7 @@ public:
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
+    auto iterate() const -> asyncpp::generator<ModelNode::Ptr> override;
 
 protected:
     BaseArray& appendInternal(ModelNode::Ptr const& value={});
@@ -612,7 +617,8 @@ public:
     [[nodiscard]] uint32_t size() const override;
     [[nodiscard]] ModelNode::Ptr get(const StringId &) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
-    bool iterate(ModelNode::IterCallback const& cb) const override;  // NOLINT (allow discard)
+    bool iterate(ModelNode::IterCallback const& cb) const override; // NOLINT (allow discard)
+    auto iterate() const -> asyncpp::generator<ModelNode::Ptr> override;
 
 protected:
     /**
@@ -708,6 +714,18 @@ public:
         if (members_ != InvalidArrayIndex)
             return Object::iterate(cb);
         return true;
+    }
+
+    auto iterate() const -> asyncpp::generator<ModelNode::Ptr> override
+    {
+        for (auto const& [k, v] : fields_) {
+            auto vv = v(static_cast<LambdaThisType const&>(*this));
+            co_yield vv;
+        }
+
+        if (members_ != InvalidArrayIndex)
+            for (auto member : Object::iterate())
+                co_yield member;
     }
 
     inline ModelPoolDerivedModel& model() const {return *modelPtr<ModelPoolDerivedModel>();}  // NOLINT

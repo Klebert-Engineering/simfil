@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "simfil/expression.h"
 #include "value.h"
 #include "typed-meta-type.h"
 
@@ -40,7 +41,7 @@ public:
     auto binaryOp(std::string_view op, const IRange& l, const Value& r) const -> tl::expected<Value, Error> override;
     auto binaryOp(std::string_view op, const Value& l, const IRange& r) const -> tl::expected<Value, Error> override;
 
-    auto unpack(const IRange& , std::function<bool(Value)> res) const -> tl::expected<void, Error> override;
+    auto unpack(const IRange&) const -> EvalStream override;
 };
 
 struct Re

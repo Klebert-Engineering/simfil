@@ -33,7 +33,7 @@ public:
     virtual ~Function() = default;
 
     virtual auto ident() const -> const FnInfo& = 0;
-    virtual auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> = 0;
+    virtual auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream = 0;
 };
 
 class CountFn : public Function
@@ -44,7 +44,7 @@ public:
     CountFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class TraceFn : public Function
@@ -55,7 +55,7 @@ public:
     TraceFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class RangeFn : public Function
@@ -66,7 +66,7 @@ public:
     RangeFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class ReFn : public Function
@@ -77,7 +77,7 @@ public:
     ReFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class ArrFn : public Function
@@ -88,7 +88,7 @@ public:
     ArrFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class SplitFn : public Function
@@ -99,7 +99,7 @@ public:
     SplitFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class SelectFn : public Function
@@ -110,7 +110,7 @@ public:
     SelectFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class SumFn : public Function
@@ -121,7 +121,7 @@ public:
     SumFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 class KeysFn : public Function
@@ -132,7 +132,7 @@ public:
     KeysFn();
 
     auto ident() const -> const FnInfo& override;
-    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    auto eval(Context, Value, const std::vector<ExprPtr>&) const -> EvalStream override;
 };
 
 /** Utility functions for working with arguments*/
@@ -143,15 +143,15 @@ inline auto evalArg1Any(Context ctx, const Value& val, const ExprPtr& expr) -> s
 {
     if (!expr)
         return {false, Value::undef()};
-    auto n = 0;
-    auto out = Value::undef();
-    (void)expr->eval(ctx, val, LambdaResultFn([&n, &out](auto, Value v) {
-        ++n;
-        out = std::move(v);
-        return Result::Continue;
-    }));
 
-    return {n == 1, std::move(out)};
+    auto n = 0u;
+    std::optional<Value> out ;
+    for (auto value : expr->eval(ctx, val)) {
+        n++;
+        out.emplace(*value);
+    }
+
+    return {n == 1, std::move(out).value_or(Value::undef())};
 }
 
 template <class CType>

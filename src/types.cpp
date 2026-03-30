@@ -73,7 +73,7 @@ auto IRangeType::binaryOp(std::string_view op, const Value& l, const IRange& r) 
     return tl::unexpected<Error>(Error::InvalidOperands, fmt::format("Invalid operands for operator '{}'", op));
 }
 
-auto IRangeType::unpack(const IRange& self, std::function<bool(Value)> res) const -> tl::expected<void, Error>
+auto IRangeType::unpack(const IRange& self) const -> EvalStream
 {
     auto begin = self.begin;
     auto end = self.end;
@@ -84,10 +84,8 @@ auto IRangeType::unpack(const IRange& self, std::function<bool(Value)> res) cons
     auto i = begin - step;
     do {
         i += step;
-        if (!res(Value(ValueType::Int, static_cast<int64_t>(i))))
-            return {};
+        co_yield Value::make(i);
     } while (i != end);
-    return {};
 }
 
 ReType ReType::Type;

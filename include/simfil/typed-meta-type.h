@@ -2,10 +2,10 @@
 
 #pragma once
 
+#include "src/expected.h"
 #include "value.h"
-#include "operator.h"
-#include "exception-handler.h"
 #include "transient.h"
+#include "expression.h"
 
 namespace simfil
 {
@@ -68,16 +68,22 @@ struct TypedMetaType : MetaType
 
     auto unpack(const TransientObject& obj, std::function<bool(Value)> fn) const -> tl::expected<void, Error> override
     {
-        return unpack(*(const Type*)obj.data, fn);
+        for (auto value : unpack(*(const Type*)obj.data)) {
+            TRY_EXPECTED(value);
+            if (!fn(std::move(*value)))
+                return {};
+        }
+
+        return {};
     }
 
     virtual auto unaryOp(std::string_view op, const Type&) const -> tl::expected<Value, Error> = 0;
     virtual auto binaryOp(std::string_view op, const Type&, const Value&) const -> tl::expected<Value, Error> = 0;
     virtual auto binaryOp(std::string_view op, const Value&, const Type&) const -> tl::expected<Value, Error> = 0;
 
-    virtual auto unpack(const Type&, std::function<bool(Value)> fn) const -> tl::expected<void, Error>
+    virtual auto unpack(const Type&) const -> EvalStream
     {
-        return tl::unexpected<Error>(Error::Unimplemented, "Type has no unpack operator");
+        co_yield tl::unexpected<Error>(Error::Unimplemented, "Type has no unpack operator");
     }
 };
 
