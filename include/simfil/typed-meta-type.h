@@ -68,7 +68,7 @@ struct TypedMetaType : MetaType
 
     auto unpack(const TransientObject& obj, std::function<bool(Value)> fn) const -> tl::expected<void, Error> override
     {
-        for (auto value : unpack(*(const Type*)obj.data)) {
+        for (auto&& value : unpack(*(const Type*)obj.data)) {
             TRY_EXPECTED(value);
             if (!fn(std::move(*value)))
                 return {};

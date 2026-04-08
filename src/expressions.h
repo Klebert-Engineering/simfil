@@ -217,7 +217,7 @@ public:
 
     auto ieval(Context ctx, Value val) const -> EvalStream override
     {
-        for (auto value : sub_->eval(ctx, val)) {
+        for (auto&& value : sub_->eval(ctx, val)) {
             CO_TRY_EXPECTED(value);
 
             auto resolved = UnaryOperatorDispatcher<Operator>::dispatch(*value);
@@ -267,10 +267,10 @@ public:
 
     auto ieval(Context ctx, Value val) const -> EvalStream override
     {
-        for (auto left : left_->eval(ctx, val)) {
+        for (auto&& left : left_->eval(ctx, val)) {
             CO_TRY_EXPECTED(left);
 
-            for (auto right : right_->eval(ctx, val)) {
+            for (auto&& right : right_->eval(ctx, val)) {
                 CO_TRY_EXPECTED(right);
 
                 auto resolved = BinaryOperatorDispatcher<Operator>::dispatch(*left, *right);
@@ -336,13 +336,13 @@ public:
             diag->evaluations++;
         }
 
-        for (auto left : left_->eval(ctx, val)) {
+        for (auto&& left : left_->eval(ctx, val)) {
             CO_TRY_EXPECTED(left);
 
             if (diag)
                 diag->leftTypes.set(left->type);
 
-            for (auto right : right_->eval(ctx, val)) {
+            for (auto&& right : right_->eval(ctx, val)) {
                 CO_TRY_EXPECTED(right);
 
                 if (diag)

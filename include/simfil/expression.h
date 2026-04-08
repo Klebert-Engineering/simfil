@@ -67,10 +67,9 @@ public:
     auto eval(Context ctx, Value val) const -> EvalStream
     {
         if (ctx.canceled())
-            co_return;
+            return {};
 
-        for (auto value : ieval(ctx, val))
-            co_yield value;
+        return ieval(ctx, std::move(val));
     }
 
     /*

@@ -631,18 +631,11 @@ public:
 
     auto iterate(ArrayIndex idx) -> asyncpp::generator<ElementType>
     {
-        if (is_singleton_handle(idx)) {
-            for (auto value : iterate_singleton(idx))
-                co_yield value;
-        }
-        else if (heads_.empty() && compactHeads_) {
-            for (auto value : iterate_compact(idx))
-                co_yield value;
-        }
-        else {
-            for (auto value : iterate_chunked(idx))
-                co_yield value;
-        }
+        if (is_singleton_handle(idx))
+            return iterate_singleton(idx);
+        if (heads_.empty() && compactHeads_)
+            return iterate_compact(idx);
+        return iterate_chunked(idx);
     }
 
 private:

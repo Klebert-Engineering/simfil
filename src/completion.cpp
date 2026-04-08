@@ -259,12 +259,12 @@ auto CompletionAndExpr::type() const -> Type
 auto CompletionAndExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     if (left_)
-        for (auto left : left_->eval(ctx, val)) {
+        for (auto&& left : left_->eval(ctx, val)) {
             CO_TRY_EXPECTED(left);
         }
 
     if (right_)
-        for (auto right : right_->eval(ctx, val)) {
+        for (auto&& right : right_->eval(ctx, val)) {
             CO_TRY_EXPECTED(right);
         }
 }
@@ -313,12 +313,12 @@ auto CompletionOrExpr::type() const -> Type
 auto CompletionOrExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     if (left_)
-        for (auto left : left_->eval(ctx, val)) {
+        for (auto&& left : left_->eval(ctx, val)) {
             CO_TRY_EXPECTED(left);
         }
 
     if (right_)
-        for (auto right : right_->eval(ctx, val)) {
+        for (auto&& right : right_->eval(ctx, val)) {
             CO_TRY_EXPECTED(right);
         }
 }

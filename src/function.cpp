@@ -51,7 +51,7 @@ struct ArgParser
 
         auto subctx = ctx;
         auto n = 0u;
-        for (auto value : args[idx]->eval(subctx, value)) {
+        for (auto&& value : args[idx]->eval(subctx, value)) {
             if (!value) {
                 error.emplace(std::move(value.error()));
                 outValue = std::move(*value);
@@ -90,7 +90,7 @@ struct ArgParser
 
         auto n = 0u;
         auto subctx = ctx;
-        for (auto value : args[idx]->eval(subctx, value)) {
+        for (auto&& value : args[idx]->eval(subctx, value)) {
             if (++n > 1) {
                 error.emplace(Error::ExpectedSingleValue,
                               fmt::format("{}: argument {} must return a single value", functionName, name));
@@ -211,7 +211,7 @@ auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) con
 
     auto n = 0;
     auto start = std::chrono::steady_clock::now();
-    for (auto value : args[0]->eval(ctx, val)) {
+    for (auto&& value : args[0]->eval(ctx, val)) {
         CO_TRY_EXPECTED(value);
 
         n++;
@@ -303,7 +303,7 @@ auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const 
         co_return;
     }
 
-    for (auto value : args[0]->eval(ctx, val)) {
+    for (auto&& value : args[0]->eval(ctx, val)) {
         CO_TRY_EXPECTED(value);
 
         if (value->isa(ValueType::Undef)) {
@@ -356,7 +356,7 @@ auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const
 
     auto empty = true;
     for (const auto& arg : args) {
-        for (auto value : arg->eval(ctx, val)) {
+        for (auto&& value : arg->eval(ctx, val)) {
             CO_TRY_EXPECTED(value);
             empty = false;
             co_yield std::move(*value);
@@ -490,7 +490,7 @@ auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) co
 
     auto empty = true;
     auto n = -1;
-    for (auto value : args[0]->eval(ctx, val)) {
+    for (auto&& value : args[0]->eval(ctx, val)) {
         CO_TRY_EXPECTED(value);
 
         n++;
@@ -540,7 +540,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const
     Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
     Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
     if (initval) {
-        for (auto value : initval->eval(ctx, val)) {
+        for (auto&& value : initval->eval(ctx, val)) {
             CO_TRY_EXPECTED(value);
             sum = std::move(*value);
         }
@@ -552,7 +552,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const
     }
 
     auto n = 0;
-    for (auto value : args[0]->eval(ctx, val)) {
+    for (auto&& value : args[0]->eval(ctx, val)) {
         if (subexpr) {
             auto ov = model_ptr<OverlayNode>::make(*value);
             ov->set(StringPool::OverlaySum, sum);
@@ -560,7 +560,7 @@ auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const
             ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n)));
 
             n++;
-            for (auto subValue : subexpr->eval(ctx, Value::field(ov))) {
+            for (auto&& subValue : subexpr->eval(ctx, Value::field(ov))) {
                 CO_TRY_EXPECTED(subValue);
 
                 ov->set(StringPool::OverlaySum, *subValue);
@@ -603,7 +603,7 @@ auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) cons
         co_return;
     }
 
-    for (auto value : args[0]->eval(ctx, val)) {
+    for (auto&& value : args[0]->eval(ctx, val)) {
         CO_TRY_EXPECTED(value);
 
         if (ctx.compiling() && value->isa(ValueType::Undef)) {

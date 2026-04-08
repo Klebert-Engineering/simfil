@@ -56,7 +56,7 @@ bool BaseArray<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback&
 template <class ModelType, class ModelNodeType>
 auto BaseArray<ModelType, ModelNodeType>::iterate() const -> asyncpp::generator<ModelNode::Ptr>
 {
-    for (auto member : storage_->iterate(members_))
+    for (auto&& member : storage_->iterate(members_))
         co_yield ModelNode::Ptr::make(model_, member);
 }
 
@@ -165,7 +165,7 @@ bool BaseObject<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback
 template <class ModelType, class ModelNodeType>
 auto BaseObject<ModelType, ModelNodeType>::iterate() const -> asyncpp::generator<ModelNode::Ptr>
 {
-    for (auto member : storage_->iterate(members_))
+    for (auto&& member : storage_->iterate(members_))
         co_yield ModelNode::Ptr::make(model_, detail::objectFieldNode(member));
 }
 

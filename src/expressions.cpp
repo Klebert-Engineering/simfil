@@ -55,7 +55,7 @@ auto WildcardExpr::ieval(Context ctx, Value val) const -> EvalStream
                 co_yield Value::field(node);
 
             for (const auto& ptr : node->iterate())
-                for (auto sub : (*this)(ptr))
+                for (auto&& sub : (*this)(ptr))
                     co_yield sub;
         }
     };
@@ -65,7 +65,7 @@ auto WildcardExpr::ieval(Context ctx, Value val) const -> EvalStream
 
         for (const auto& field : val.node()->iterate()) {
             Iterator iter;
-            for (auto value : iter(field))
+            for (auto&& value : iter(field))
                 co_yield value;
         }
     } else {
@@ -217,7 +217,7 @@ auto MultiConstExpr::constant() const -> bool
 
 auto MultiConstExpr::ieval(Context ctx, Value) const -> EvalStream
 {
-    for (auto value : values_)
+    for (auto&& value : values_)
         co_yield value;
 }
 
@@ -286,13 +286,13 @@ auto SubscriptExpr::type() const -> Type
 auto SubscriptExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     auto empty = true;
-    for (auto left : left_->eval(ctx, val)) {
+    for (auto&& left : left_->eval(ctx, val)) {
         if (!left) {
             co_yield tl::unexpected(std::move(left.error()));
             co_return;
         }
 
-        for (auto index : index_->eval(ctx, val)) {
+        for (auto&& index : index_->eval(ctx, val)) {
             if (!index) {
                 co_yield tl::unexpected(std::move(index.error()));
                 co_return;
@@ -361,7 +361,7 @@ auto SubExpr::type() const -> Type
 auto SubExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     auto empty = true;
-    for (auto left : left_->eval(ctx, val)) {
+    for (auto&& left : left_->eval(ctx, val)) {
         CO_TRY_EXPECTED(left);
 
         if (left->isa(ValueType::Undef)) {
@@ -369,7 +369,7 @@ auto SubExpr::ieval(Context ctx, Value val) const -> EvalStream
             co_return;
         }
 
-        for (auto sub : sub_->eval(ctx, *left)) {
+        for (auto&& sub : sub_->eval(ctx, *left)) {
             CO_TRY_EXPECTED(sub);
 
             if (sub->isa(ValueType::Undef)) {
@@ -416,7 +416,7 @@ auto AnyExpr::ieval(Context ctx, Value val) const -> EvalStream
     auto any = false; /* At least one value is true  */
 
     for (const auto& arg : args_) {
-        for (auto result : arg->eval(ctx, val)) {
+        for (auto&& result : arg->eval(ctx, val)) {
             if (!result) {
                 co_yield tl::unexpected(std::move(result.error()));
                 co_return;
@@ -472,7 +472,7 @@ auto EachExpr::ieval(Context ctx, Value val) const -> EvalStream
     auto undef = false; /* At least one value is undef */
 
     for (const auto& arg : args_) {
-        for (auto result : arg->eval(ctx, val)) {
+        for (auto&& result : arg->eval(ctx, val)) {
             if (!result) {
                 co_yield tl::unexpected(std::move(result.error()));
                 co_return;
@@ -539,7 +539,7 @@ auto CallExpression::ieval(Context ctx, Value val) const -> EvalStream
     }
 
     auto anyval = false;
-    for (auto result : fn_->eval(ctx, val, args_)) {
+    for (auto&& result : fn_->eval(ctx, val, args_)) {
         CO_TRY_EXPECTED(result);
 
         if (!result) {
@@ -591,7 +591,7 @@ auto PathExpr::type() const -> Type
 auto PathExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     auto empty = true;
-    for (auto left : left_->eval(ctx, std::move(val))) {
+    for (auto&& left : left_->eval(ctx, std::move(val))) {
         if (!left) {
             co_yield tl::unexpected(std::move(left.error()));
             co_return;
@@ -605,7 +605,7 @@ auto PathExpr::ieval(Context ctx, Value val) const -> EvalStream
         if (left->isa(ValueType::Null) && !left->node())
             continue;
 
-        for (auto right : right_->eval(ctx, std::move(*left))) {
+        for (auto&& right : right_->eval(ctx, std::move(*left))) {
             if (!right) {
                 co_yield tl::unexpected(std::move(right.error()));
                 co_return;
@@ -649,7 +649,7 @@ auto UnpackExpr::type() const -> Type
 auto UnpackExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     auto empty = true;
-    for (auto result : sub_->eval(ctx, std::move(val))) {
+    for (auto&& result : sub_->eval(ctx, std::move(val))) {
         CO_TRY_EXPECTED(result);
 
         if (result->isa(ValueType::TransientObject)) {
@@ -664,7 +664,7 @@ auto UnpackExpr::ieval(Context ctx, Value val) const -> EvalStream
             });
             CO_TRY_EXPECTED(unpackResult);
 
-            for (auto value : values) {
+            for (auto&& value : values) {
                 empty = false;
                 co_yield value;
             }
@@ -703,7 +703,7 @@ auto UnaryWordOpExpr::type() const -> Type
 auto UnaryWordOpExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     auto empty = true;
-    for (auto left : left_->eval(ctx, val)) {
+    for (auto&& left : left_->eval(ctx, val)) {
         CO_TRY_EXPECTED(left);
 
         if (left->isa(ValueType::Undef)) {
@@ -754,10 +754,10 @@ auto BinaryWordOpExpr::type() const -> Type
 auto BinaryWordOpExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     auto empty = false;
-    for (auto left : left_->eval(ctx, val)) {
+    for (auto&& left : left_->eval(ctx, val)) {
         CO_TRY_EXPECTED(left);
 
-        for (auto right : right_->eval(ctx, val)) {
+        for (auto&& right : right_->eval(ctx, val)) {
             CO_TRY_EXPECTED(right);
 
             if (left->isa(ValueType::Undef) || right->isa(ValueType::Undef)) {
@@ -819,7 +819,7 @@ auto AndExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     /* Operator and behaves like in lua:
      * 'a and b' returns a if 'not a?' else b is returned */
-    for (auto left : left_->eval(ctx, val)) {
+    for (auto&& left : left_->eval(ctx, val)) {
         CO_TRY_EXPECTED(left);
 
         if (left->isa(ValueType::Undef)) {
@@ -836,7 +836,7 @@ auto AndExpr::ieval(Context ctx, Value val) const -> EvalStream
                 }
             }
 
-            for (auto right : right_->eval(ctx, val)) {
+            for (auto&& right : right_->eval(ctx, val)) {
                 CO_TRY_EXPECTED(right);
                 co_yield *right;
             }
@@ -872,7 +872,7 @@ auto OrExpr::ieval(Context ctx, Value val) const -> EvalStream
 {
     /* Operator or behaves like in lua:
      * 'a or b' returns a if 'a?' else b is returned */
-    for (auto left : left_->eval(ctx, val)) {
+    for (auto&& left : left_->eval(ctx, val)) {
         CO_TRY_EXPECTED(left);
 
         if (left->isa(ValueType::Undef)) {
@@ -889,7 +889,7 @@ auto OrExpr::ieval(Context ctx, Value val) const -> EvalStream
                 }
             }
 
-            for (auto right : right_->eval(ctx, val)) {
+            for (auto&& right : right_->eval(ctx, val)) {
                 CO_TRY_EXPECTED(right);
                 co_yield *right;
             }

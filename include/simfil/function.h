@@ -146,7 +146,7 @@ inline auto evalArg1Any(Context ctx, const Value& val, const ExprPtr& expr) -> s
 
     auto n = 0u;
     std::optional<Value> out ;
-    for (auto value : expr->eval(ctx, val)) {
+    for (auto&& value : expr->eval(ctx, val)) {
         n++;
         out.emplace(*value);
     }

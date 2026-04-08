@@ -127,7 +127,7 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
     auto stub = Context(env, nullptr, Context::Phase::Compilation);
 
     auto n = 0u;
-    for (auto value : (*expr)->eval(stub, Value::undef())) {
+    for (auto&& value : (*expr)->eval(stub, Value::undef())) {
         TRY_EXPECTED(value);
 
         n++;
