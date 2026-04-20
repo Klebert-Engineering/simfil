@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "arena.h"
+#include "schema.h"
 #include "string-pool.h"
 #include "simfil/byte-array.h"
 #include "simfil/error.h"
@@ -56,8 +57,9 @@ enum class ValueType
     Bytes,
     TransientObject,
     Object,
-    Array
-    // If you add types, update TypeFlags::flags bit size!
+    Array,
+    // End
+    LAST_
 };
 
 using ScalarValueType = std::variant<
@@ -276,6 +278,9 @@ struct ModelNode
     /// Get an Object model's field names
     [[nodiscard]] virtual StringId keyAt(int64_t i) const;
 
+    /// Get the schema id for schema-aware container nodes, or NoSchemaId otherwise.
+    [[nodiscard]] virtual SchemaId schema() const;
+
     /// Get the number of children
     [[nodiscard]] virtual uint32_t size() const;
 
@@ -428,6 +433,7 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] ModelNode::Ptr get(const StringId&) const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
+    [[nodiscard]] SchemaId schema() const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
 
@@ -544,6 +550,9 @@ public:
 
     bool forEach(std::function<bool(ModelNodeType const&)> const& callback) const;
 
+    [[nodiscard]] SchemaId schema() const override;
+    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
+
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] uint32_t size() const override;
@@ -606,6 +615,9 @@ public:
     addField(std::string_view const& name, model_ptr<OtherModelNodeType> const& value) {
         return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
     }
+
+    [[nodiscard]] SchemaId schema() const override;
+    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;

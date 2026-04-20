@@ -2,6 +2,8 @@
 
 #include "fmt/format.h"
 #include "simfil/environment.h"
+#include "simfil/expression.h"
+#include "simfil/model/string-pool.h"
 #include "simfil/result.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
@@ -77,9 +79,7 @@ auto boolify(const Value& v) -> bool
 
 }
 
-WildcardExpr::WildcardExpr(ExprId id)
-    : Expr(id)
-{}
+WildcardExpr::WildcardExpr() = default;
 
 auto WildcardExpr::type() const -> Type
 {
@@ -143,9 +143,7 @@ auto WildcardExpr::toString() const -> std::string
     return "**"s;
 }
 
-AnyChildExpr::AnyChildExpr(ExprId id)
-    : Expr(id)
-{}
+AnyChildExpr::AnyChildExpr() = default;
 
 auto AnyChildExpr::type() const -> Type
 {
@@ -186,14 +184,12 @@ auto AnyChildExpr::toString() const -> std::string
     return "*"s;
 }
 
-FieldExpr::FieldExpr(ExprId id, std::string name)
-    : Expr(id)
-    , name_(std::move(name))
+FieldExpr::FieldExpr(std::string name)
+    : name_(std::move(name))
 {}
 
-FieldExpr::FieldExpr(ExprId id, std::string name, const Token& token)
-    : Expr(id, token)
-    , name_(std::move(name))
+FieldExpr::FieldExpr(std::string name, const Token& token)
+    : name_(std::move(name))
 {}
 
 auto FieldExpr::type() const -> Type
@@ -262,14 +258,12 @@ auto FieldExpr::toString() const -> std::string
     return name_;
 }
 
-MultiConstExpr::MultiConstExpr(ExprId id, const std::vector<Value>& vec)
-    : Expr(id)
-    , values_(vec)
+MultiConstExpr::MultiConstExpr(const std::vector<Value>& vec)
+    : values_(vec)
 {}
 
-MultiConstExpr::MultiConstExpr(ExprId id, std::vector<Value>&& vec)
-    : Expr(id)
-    , values_(std::move(vec))
+MultiConstExpr::MultiConstExpr(std::vector<Value>&& vec)
+    : values_(std::move(vec))
 {}
 
 auto MultiConstExpr::type() const -> Type
@@ -308,9 +302,8 @@ auto MultiConstExpr::toString() const -> std::string
     return fmt::format("{{{}}}", fmt::join(items, " "));
 }
 
-ConstExpr::ConstExpr(ExprId id, Value value)
-    : Expr(id)
-    , value_(std::move(value))
+ConstExpr::ConstExpr(Value value)
+    : value_(std::move(value))
 {}
 
 auto ConstExpr::type() const -> Type
@@ -345,9 +338,8 @@ auto ConstExpr::value() const -> const Value&
     return value_;
 }
 
-SubscriptExpr::SubscriptExpr(ExprId id, ExprPtr left, ExprPtr index)
-    : Expr(id)
-    , left_(std::move(left))
+SubscriptExpr::SubscriptExpr(ExprPtr left, ExprPtr index)
+    : left_(std::move(left))
     , index_(std::move(index))
 {}
 
@@ -400,14 +392,30 @@ void SubscriptExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto SubscriptExpr::numChildren() const -> std::size_t
+{
+    return 2;
+}
+
+auto SubscriptExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    switch (index) {
+    case 0:
+        return left_;
+    case 1:
+        return index_;
+    default:
+        return Expr::childAt(index);
+    }
+}
+
 auto SubscriptExpr::toString() const -> std::string
 {
     return fmt::format("(index {} {})", left_->toString(), index_->toString());
 }
 
-SubExpr::SubExpr(ExprId id, ExprPtr left, ExprPtr sub)
-    : Expr(id)
-    , left_(std::move(left))
+SubExpr::SubExpr(ExprPtr left, ExprPtr sub)
+    : left_(std::move(left))
     , sub_(std::move(sub))
 {}
 
@@ -453,9 +461,25 @@ void SubExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
-AnyExpr::AnyExpr(ExprId id, std::vector<ExprPtr> args)
-    : Expr(id)
-    , args_(std::move(args))
+auto SubExpr::numChildren() const -> std::size_t
+{
+    return 2;
+}
+
+auto SubExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    switch (index) {
+    case 0:
+        return left_;
+    case 1:
+        return sub_;
+    default:
+        return Expr::childAt(index);
+    }
+}
+
+AnyExpr::AnyExpr(std::vector<ExprPtr> args)
+    : args_(std::move(args))
 {}
 
 auto AnyExpr::type() const -> Type
@@ -497,6 +521,16 @@ auto AnyExpr::accept(ExprVisitor& v) const -> void
     v.visit(*this);
 }
 
+auto AnyExpr::numChildren() const -> std::size_t
+{
+    return args_.size();
+}
+
+auto AnyExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    return args_[index];
+}
+
 auto AnyExpr::toString() const -> std::string
 {
     if (args_.empty())
@@ -509,9 +543,8 @@ auto AnyExpr::toString() const -> std::string
     return fmt::format("(any {})", fmt::join(items, " "));
 }
 
-EachExpr::EachExpr(ExprId id, std::vector<ExprPtr> args)
-    : Expr(id)
-    , args_(std::move(args))
+EachExpr::EachExpr(std::vector<ExprPtr> args)
+    : args_(std::move(args))
 {}
 
 auto EachExpr::type() const -> Type
@@ -552,6 +585,16 @@ auto EachExpr::accept(ExprVisitor& v) const -> void
     v.visit(*this);
 }
 
+auto EachExpr::numChildren() const -> std::size_t
+{
+    return args_.size();
+}
+
+auto EachExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    return args_[index];
+}
+
 auto EachExpr::toString() const -> std::string
 {
     if (args_.empty())
@@ -564,9 +607,8 @@ auto EachExpr::toString() const -> std::string
     return fmt::format("(each {})", fmt::join(items, " "));
 }
 
-CallExpression::CallExpression(ExprId id, std::string name, std::vector<ExprPtr> args)
-    : Expr(id)
-    , name_(std::move(name))
+CallExpression::CallExpression(std::string name, std::vector<ExprPtr> args)
+    : name_(std::move(name))
     , args_(std::move(args))
 {}
 
@@ -606,6 +648,16 @@ void CallExpression::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto CallExpression::numChildren() const -> std::size_t
+{
+    return args_.size();
+}
+
+auto CallExpression::childAt(std::size_t index) -> ExprPtr&
+{
+    return args_[index];
+}
+
 auto CallExpression::toString() const -> std::string
 {
     if (args_.empty())
@@ -618,9 +670,8 @@ auto CallExpression::toString() const -> std::string
     return fmt::format("({} {})", name_, fmt::join(items, " "));
 }
 
-PathExpr::PathExpr(ExprId id, ExprPtr left, ExprPtr right)
-    : Expr(id)
-    , left_(std::move(left))
+PathExpr::PathExpr(ExprPtr left, ExprPtr right)
+    : left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -667,14 +718,30 @@ void PathExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto PathExpr::numChildren() const -> std::size_t
+{
+    return 2;
+}
+
+auto PathExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    switch (index) {
+    case 0:
+        return left_;
+    case 1:
+        return right_;
+    default:
+        return Expr::childAt(index);
+    }
+}
+
 auto PathExpr::toString() const -> std::string
 {
     return fmt::format("(. {} {})", left_->toString(), right_->toString());
 }
 
-UnpackExpr::UnpackExpr(ExprId id, ExprPtr sub)
-    : Expr(id)
-    , sub_(std::move(sub))
+UnpackExpr::UnpackExpr(ExprPtr sub)
+    : sub_(std::move(sub))
 {}
 
 auto UnpackExpr::type() const -> Type
@@ -717,14 +784,25 @@ void UnpackExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto UnpackExpr::numChildren() const -> std::size_t
+{
+    return 1;
+}
+
+auto UnpackExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    if (index == 0)
+        return sub_;
+    return Expr::childAt(index);
+}
+
 auto UnpackExpr::toString() const -> std::string
 {
     return fmt::format("(... {})", sub_->toString());
 }
 
-UnaryWordOpExpr::UnaryWordOpExpr(ExprId id, std::string ident, ExprPtr left)
-    : Expr(id)
-    , ident_(std::move(ident))
+UnaryWordOpExpr::UnaryWordOpExpr(std::string ident, ExprPtr left)
+    : ident_(std::move(ident))
     , left_(std::move(left))
 {}
 
@@ -756,14 +834,25 @@ void UnaryWordOpExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto UnaryWordOpExpr::numChildren() const -> std::size_t
+{
+    return 1;
+}
+
+auto UnaryWordOpExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    if (index == 0)
+        return left_;
+    return Expr::childAt(index);
+}
+
 auto UnaryWordOpExpr::toString() const -> std::string
 {
     return fmt::format("({} {})", ident_, left_->toString());
 }
 
-BinaryWordOpExpr::BinaryWordOpExpr(ExprId id, std::string ident, ExprPtr left, ExprPtr right)
-    : Expr(id)
-    , ident_(std::move(ident))
+BinaryWordOpExpr::BinaryWordOpExpr(std::string ident, ExprPtr left, ExprPtr right)
+    : ident_(std::move(ident))
     , left_(std::move(left))
     , right_(std::move(right))
 {}
@@ -806,14 +895,30 @@ void BinaryWordOpExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto BinaryWordOpExpr::numChildren() const -> std::size_t
+{
+    return 2;
+}
+
+auto BinaryWordOpExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    switch (index) {
+    case 0:
+        return left_;
+    case 1:
+        return right_;
+    default:
+        return Expr::childAt(index);
+    }
+}
+
 auto BinaryWordOpExpr::toString() const -> std::string
 {
     return fmt::format("({} {} {})", ident_, left_->toString(), right_->toString());
 }
 
-AndExpr::AndExpr(ExprId id, ExprPtr left, ExprPtr right)
-    : Expr(id)
-    , left_(std::move(left))
+AndExpr::AndExpr(ExprPtr left, ExprPtr right)
+    : left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -850,14 +955,30 @@ void AndExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto AndExpr::numChildren() const -> std::size_t
+{
+    return 2;
+}
+
+auto AndExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    switch (index) {
+    case 0:
+        return left_;
+    case 1:
+        return right_;
+    default:
+        return Expr::childAt(index);
+    }
+}
+
 auto AndExpr::toString() const -> std::string
 {
     return fmt::format("(and {} {})", left_->toString(), right_->toString());
 }
 
-OrExpr::OrExpr(ExprId id, ExprPtr left, ExprPtr right)
-    : Expr(id)
-    , left_(std::move(left))
+OrExpr::OrExpr(ExprPtr left, ExprPtr right)
+    : left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());
@@ -895,9 +1016,135 @@ void OrExpr::accept(ExprVisitor& v) const
     v.visit(*this);
 }
 
+auto OrExpr::numChildren() const -> std::size_t
+{
+    return 2;
+}
+
+auto OrExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    switch (index) {
+    case 0:
+        return left_;
+    case 1:
+        return right_;
+    default:
+        return Expr::childAt(index);
+    }
+}
+
 auto OrExpr::toString() const -> std::string
 {
     return fmt::format("(or {} {})", left_->toString(), right_->toString());
+}
+
+WildcardFieldExpr::WildcardFieldExpr(std::string name, SourceLocation location)
+    : Expr(location)
+    , name_(std::move(name))
+{}
+
+auto WildcardFieldExpr::type() const -> Type
+{
+    return Type::PATH;
+}
+
+auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
+{
+    if (ctx.phase == Context::Phase::Compilation)
+        return ores(ctx, Value::undef());
+
+    CountedResultFn<const ResultFn&> res(ores, ctx);
+
+    Diagnostics::FieldExprData* diag = nullptr;
+    if (ctx.diag)
+        diag = &ctx.diag->get<Diagnostics::FieldExprData>(*this);
+
+    if (diag) {
+        diag->location = sourceLocation();
+        if (diag->name.empty())
+            diag->name = name_;
+    }
+
+    // Querying a field not in the string-pool
+    // is a no-op here (not true for FieldExpr).
+    if (!nameId_) {
+        nameId_ = ctx.env->strings()->get(name_);
+        if (!nameId_) {
+            if (diag)
+                diag->evaluations++;
+            res.ensureCall();
+            return {Result::Continue};
+        }
+    }
+
+    struct Iterate
+    {
+        Context& ctx;
+        ResultFn& res;
+        StringId field;
+        Diagnostics::FieldExprData* diag;
+
+        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> tl::expected<Result, Error>
+        {
+            if (field == StringPool::StaticStringIds::Empty)
+                return Result::Continue;
+
+            if (val.type() == ValueType::Null) [[unlikely]]
+                return Result::Continue;
+
+            if (auto* schema = ctx.env->querySchema(val.schema())) {
+                if (!schema->canHaveField(field))
+                    return Result::Continue;
+            }
+
+            if (diag)
+                diag->evaluations++;
+
+            if (auto sub = val.get(field)) {
+                if (diag)
+                    diag->hits++;
+
+                auto result = res(ctx, Value::field(*sub));
+                TRY_EXPECTED(result);
+                if (*result == Result::Stop) [[unlikely]]
+                    return *result;
+            }
+
+            tl::expected<Result, Error> finalResult = Result::Continue;
+            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
+                auto subResult = iterate(subNode);
+                if (!subResult) {
+                    finalResult = std::move(subResult);
+                    return false;
+                }
+
+                if (*subResult == Result::Stop) {
+                    finalResult = Result::Stop;
+                    return false;
+                }
+
+                return true;
+            }));
+
+            return finalResult;
+        }
+    };
+
+    auto r = val.nodePtr()
+        ? Iterate{ctx, res, nameId_, diag}.iterate(**val.nodePtr())
+        : tl::expected<Result, Error>(Result::Continue);
+    res.ensureCall();
+    return r;
+}
+
+void WildcardFieldExpr::accept(ExprVisitor& v) const
+{
+    v.visit(*this);
+}
+
+auto WildcardFieldExpr::toString() const -> std::string
+{
+    return fmt::format("**.{}", name_);
 }
 
 }

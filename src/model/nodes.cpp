@@ -63,6 +63,13 @@ StringId ModelNode::keyAt(int64_t i) const {
     return result;
 }
 
+SchemaId ModelNode::schema() const {
+    SchemaId result = NoSchemaId;
+    if (model_)
+        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.schema(); }));
+    return result;
+}
+
 /// Get the number of children
 uint32_t ModelNode::size() const {
     uint32_t result = 0;
@@ -184,6 +191,11 @@ ModelNode::Ptr ModelNodeBase::at(int64_t) const
 StringId ModelNodeBase::keyAt(int64_t) const
 {
     return 0;
+}
+
+SchemaId ModelNodeBase::schema() const
+{
+    return NoSchemaId;
 }
 
 uint32_t ModelNodeBase::size() const

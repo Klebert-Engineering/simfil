@@ -253,6 +253,13 @@ auto Diagnostics::prepareIndices(const Expr& ast) -> void
             indices_[e.id()] = fieldIndex_++;
         }
 
+        auto visit(const WildcardFieldExpr& e) -> void override {
+            ExprVisitor::visit(e);
+            if (e.id() >= indices_.size())
+                indices_.resize(e.id() + 1, Diagnostics::InvalidIndex);
+            indices_[e.id()] = fieldIndex_++;
+        }
+
         auto visitComparisonOperator(const ComparisonExprBase& e) -> void
         {
             if (e.id() >= indices_.size())
