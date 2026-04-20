@@ -15,9 +15,10 @@
 #include "fmt/core.h"
 
 #include "expressions.h"
-#include "expression-patterns.h"
 #include "completion.h"
 #include "expected.h"
+#include "expression-patterns.h"
+#include "rewrite-rules.h"
 
 #include <algorithm>
 #include <cctype>
@@ -46,6 +47,15 @@ static constexpr std::string_view TypenameFloat("float");
 static constexpr std::string_view TypenameString("string");
 static constexpr std::string_view TypenameBytes("bytes");
 }
+
+static RewriteRule bottomUpRewriteRules[] = {
+    rewriteWildcardThis,
+    rewriteWildcardField,
+};
+
+static RewriteRule topDownRewriteRules[] = {
+    rewriteAnyWildcardField,
+};
 
 /**
  * Parser precedence groups.
@@ -116,7 +126,7 @@ static auto scopedNotInPath(Parser& p) {
  * Tries to evaluate the input expression on a stub context.
  * Returns the evaluated result on success, otherwise the original expression is returned.
  */
-static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -> expected<ExprPtr, Error>
+static auto simplifyOrForward(const RewriteRule* currentRule, Environment* env, expected<ExprPtr, Error> expr) -> expected<ExprPtr, Error>
 {
     if (!expr)
         return expr;
@@ -149,15 +159,51 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
         env->warn("Expression is always "s + values[0].toString(), (*expr)->toString());
 
     if (values.size() == 1)
-        return std::make_unique<ConstExpr>((*expr)->id(), std::move(values[0]));
+        return std::make_unique<ConstExpr>(std::move(values[0]));
     if (values.size() > 1)
-        return std::make_unique<MultiConstExpr>((*expr)->id(), std::vector<Value>(std::make_move_iterator(values.begin()),
-                                                                               std::make_move_iterator(values.end())));
+        return std::make_unique<MultiConstExpr>(std::vector<Value>(std::make_move_iterator(values.begin()),
+                                                                   std::make_move_iterator(values.end())));
+
+    /* Apply bottom-up rewrite rules */
+    for (const auto& rule : bottomUpRewriteRules) {
+        /* Prevent rule self-recursion */
+        if (&rule == currentRule)
+            continue;
+
+        if (auto rewrite = rule(*expr)) {
+            /* If a rewrite rule matched we try to simplify and re-write its output again */
+            return simplifyOrForward(&rule, env, std::move(rewrite));
+        }
+    }
 
     return expr;
 }
 
+static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -> expected<ExprPtr, Error>
+{
+    return simplifyOrForward(nullptr, env, std::move(expr));
+}
+
+
 AST::~AST() = default;
+
+auto AST::reenumerate() -> void
+{
+    if (!expr_)
+        return;
+
+    auto nextId = Expr::ExprId{0};
+    reenumerate(*expr_, nextId);
+}
+
+auto AST::reenumerate(Expr& expr, Expr::ExprId& nextId) -> void
+{
+    expr.id_ = nextId++;
+
+    const auto count = expr.numChildren();
+    for (auto i = 0u; i < count; ++i)
+        reenumerate(*expr.childAt(i), nextId);
+}
 
 /**
  * Parser wrapper for parsing and & or operators.
@@ -174,12 +220,10 @@ public:
             return right;
 
         if (t.type == Token::OP_AND)
-            return simplifyOrForward(p.env, std::make_unique<AndExpr>(p.nextId(),
-                                                                      std::move(left),
+            return simplifyOrForward(p.env, std::make_unique<AndExpr>(std::move(left),
                                                                       std::move(*right)));
         else if (t.type == Token::OP_OR)
-            return simplifyOrForward(p.env, std::make_unique<OrExpr>(p.nextId(),
-                                                                     std::move(left),
+            return simplifyOrForward(p.env, std::make_unique<OrExpr>(std::move(left),
                                                                      std::move(*right)));
         assert(0);
         return nullptr;
@@ -205,12 +249,10 @@ public:
             return right;
 
         if (t.type == Token::OP_AND)
-            return simplifyOrForward(p.env, std::make_unique<CompletionAndExpr>(p.nextId(),
-                                                                                std::move(left),
+            return simplifyOrForward(p.env, std::make_unique<CompletionAndExpr>(std::move(left),
                                                                                 std::move(*right), comp_));
         else if (t.type == Token::OP_OR)
-            return simplifyOrForward(p.env, std::make_unique<CompletionOrExpr>(p.nextId(),
-                                                                               std::move(left),
+            return simplifyOrForward(p.env, std::make_unique<CompletionOrExpr>(std::move(left),
                                                                                std::move(*right), comp_));
         assert(0);
         return nullptr;
@@ -231,7 +273,7 @@ public:
     {
         auto type = p.consume();
         if (type.type == Token::C_NULL)
-            return std::make_unique<ConstExpr>(p.nextId(), Value::null());
+            return std::make_unique<ConstExpr>(Value::null());
 
         if (type.type != Token::Type::WORD)
             return unexpected<Error>(Error::InvalidType, fmt::format("'as' expected typename got {}", type.toString()));
@@ -239,17 +281,17 @@ public:
         auto name = std::get<std::string>(type.value);
         return simplifyOrForward(p.env, [&]() -> expected<ExprPtr, Error> {
             if (name == strings::TypenameNull)
-                return std::make_unique<ConstExpr>(p.nextId(), Value::null());
+                return std::make_unique<ConstExpr>(Value::null());
             if (name == strings::TypenameBool)
-                return std::make_unique<UnaryExpr<OperatorBool>>(p.nextId(), std::move(left));
+                return std::make_unique<UnaryExpr<OperatorBool>>(std::move(left));
             if (name == strings::TypenameInt)
-                return std::make_unique<UnaryExpr<OperatorAsInt>>(p.nextId(), std::move(left));
+                return std::make_unique<UnaryExpr<OperatorAsInt>>(std::move(left));
             if (name == strings::TypenameFloat)
-                return std::make_unique<UnaryExpr<OperatorAsFloat>>(p.nextId(), std::move(left));
+                return std::make_unique<UnaryExpr<OperatorAsFloat>>(std::move(left));
             if (name == strings::TypenameString)
-                return std::make_unique<UnaryExpr<OperatorAsString>>(p.nextId(), std::move(left));
+                return std::make_unique<UnaryExpr<OperatorAsString>>(std::move(left));
             if (name == strings::TypenameBytes)
-                return std::make_unique<UnaryExpr<OperatorAsBytes>>(p.nextId(), std::move(left));
+                return std::make_unique<UnaryExpr<OperatorAsBytes>>(std::move(left));
 
             return unexpected<Error>(Error::InvalidType, fmt::format("Invalid type name for cast '{}'", name));
         }());
@@ -277,8 +319,7 @@ public:
         if (!right)
             return right;
 
-        return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(p.nextId(),
-                                                                               t,
+        return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(t,
                                                                                std::move(left),
                                                                                std::move(*right)));
     }
@@ -303,7 +344,7 @@ class UnaryOpParser : public PrefixParselet
         if (!sub)
             return sub;
 
-        return simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(p.nextId(), std::move(*sub)));
+        return simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(*sub)));
     }
 };
 
@@ -315,7 +356,7 @@ class UnaryPostOpParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(p.nextId(), std::move(left))), 0);
+        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(left))), 0);
     }
 
     auto precedence() const -> int override
@@ -331,7 +372,7 @@ class UnpackOpParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnpackExpr>(p.nextId(), std::move(left))), 0);
+        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnpackExpr>(std::move(left))), 0);
     }
 
     auto precedence() const -> int override
@@ -353,14 +394,12 @@ class WordOpParser : public InfixParselet
             return right;
 
         if (*right)
-            return simplifyOrForward(p.env, std::make_unique<BinaryWordOpExpr>(p.nextId(),
-                                                                               std::get<std::string>(t.value),
+            return simplifyOrForward(p.env, std::make_unique<BinaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                std::move(left),
                                                                                std::move(*right)));
 
         /* Parse as unary operator */
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryWordOpExpr>(p.nextId(),
-                                                                                       std::get<std::string>(t.value),
+        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                        std::move(left))), 0);
     }
 
@@ -380,7 +419,7 @@ class ScalarParser : public PrefixParselet
 {
     auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
-        return std::make_unique<ConstExpr>(p.nextId(), std::get<Type>(t.value));
+        return std::make_unique<ConstExpr>(std::get<Type>(t.value));
     }
 };
 
@@ -394,7 +433,7 @@ class RegExpParser : public PrefixParselet
     auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         auto value = ReType::Type.make(std::get<std::string>(t.value));
-        return std::make_unique<ConstExpr>(p.nextId(), std::move(value));
+        return std::make_unique<ConstExpr>(std::move(value));
     }
 };
 
@@ -415,7 +454,7 @@ public:
 
     auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
-        return std::make_unique<ConstExpr>(p.nextId(), value_);
+        return std::make_unique<ConstExpr>(value_);
     }
 
     Value value_;
@@ -450,10 +489,7 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
         if (!body)
             return body;
 
-        auto outerId = p.nextId();
-        auto innerId = p.nextId();
-        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(outerId,
-                                                                        std::make_unique<FieldExpr>(innerId, "_"),
+        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::make_unique<FieldExpr>("_"),
                                                                         std::move(*body)));
     }
 
@@ -464,8 +500,7 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
         if (!body)
             return body;
 
-        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(p.nextId(),
-                                                                        std::move(left),
+        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::move(left),
                                                                         std::move(*body)));
     }
 
@@ -491,10 +526,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
         auto body = p.parseTo(Token::RBRACE);
         TRY_EXPECTED(body);
 
-        auto outerId = p.nextId();
-        auto innerId = p.nextId();
-        return simplifyOrForward(p.env, std::make_unique<SubExpr>(outerId,
-                                                                  std::make_unique<FieldExpr>(innerId, "_"),
+        return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
                                                                   std::move(*body)));
     }
 
@@ -503,8 +535,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
         auto _ = scopedNotInPath(p);
         auto body = p.parseTo(Token::RBRACE);
         TRY_EXPECTED(body);
-        return simplifyOrForward(p.env, std::make_unique<SubExpr>(p.nextId(),
-                                                                  std::move(left),
+        return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::move(left),
                                                                   std::move(*body)));
     }
 
@@ -526,15 +557,15 @@ public:
     {
         /* Self */
         if (t.type == Token::SELF)
-            return std::make_unique<FieldExpr>(p.nextId(), "_", t);
+            return std::make_unique<FieldExpr>("_", t);
 
         /* Any Child */
         if (t.type == Token::OP_TIMES)
-            return std::make_unique<AnyChildExpr>(p.nextId());
+            return std::make_unique<AnyChildExpr>();
 
         /* Wildcard */
         if (t.type == Token::WILDCARD)
-            return std::make_unique<WildcardExpr>(p.nextId());
+            return std::make_unique<WildcardExpr>();
 
         auto word = std::get<std::string>(t.value);
 
@@ -547,25 +578,25 @@ public:
             TRY_EXPECTED(arguments);
 
             if (word == "any") {
-                return simplifyOrForward(p.env, std::make_unique<AnyExpr>(p.nextId(), std::move(*arguments)));
+                return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(*arguments)));
             } else if (word == "each" || word == "all") {
-                return simplifyOrForward(p.env, std::make_unique<EachExpr>(p.nextId(), std::move(*arguments)));
+                return simplifyOrForward(p.env, std::make_unique<EachExpr>(std::move(*arguments)));
             } else {
-                return simplifyOrForward(p.env, std::make_unique<CallExpression>(p.nextId(), word, std::move(*arguments)));
+                return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
             }
         } else if (!p.ctx.inPath) {
             /* Parse Symbols (words in upper-case) */
             if (isSymbolWord(word)) {
-                return std::make_unique<ConstExpr>(p.nextId(), Value::make<std::string>(std::move(word)));
+                return std::make_unique<ConstExpr>(Value::make<std::string>(std::move(word)));
             }
             /* Constant */
             else if (auto constant = p.env->findConstant(word)) {
-                return std::make_unique<ConstExpr>(p.nextId(), *constant);
+                return std::make_unique<ConstExpr>(*constant);
             }
         }
 
         /* Single field name */
-        return std::make_unique<FieldExpr>(p.nextId(), std::move(word), t);
+        return simplifyOrForward(p.env, std::make_unique<FieldExpr>(std::move(word), t));
     }
 };
 
@@ -583,15 +614,15 @@ public:
     {
         /* Self */
         if (t.type == Token::SELF)
-            return std::make_unique<FieldExpr>(p.nextId(), "_");
+            return std::make_unique<FieldExpr>("_");
 
         /* Any Child */
         if (t.type == Token::OP_TIMES)
-            return std::make_unique<AnyChildExpr>(p.nextId());
+            return std::make_unique<AnyChildExpr>();
 
         /* Wildcard */
         if (t.type == Token::WILDCARD)
-            return std::make_unique<WildcardExpr>(p.nextId());
+            return std::make_unique<WildcardExpr>();
 
         auto word = std::get<std::string>(t.value);
 
@@ -607,26 +638,26 @@ public:
             auto arguments = p.parseList(Token::RPAREN);
             TRY_EXPECTED(arguments);
 
-            return simplifyOrForward(p.env, std::make_unique<CallExpression>(p.nextId(), word, std::move(*arguments)));
+            return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
         } else if (!p.ctx.inPath) {
             /* Parse Symbols (words in upper-case) */
             if (isSymbolWord(word)) {
                 if (t.containsPoint(comp_->point)) {
-                    return std::make_unique<CompletionWordExpr>(p.nextId(), word.substr(0, comp_->point - t.begin), comp_, t);
+                    return std::make_unique<CompletionWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
                 }
-                return std::make_unique<CompletionConstExpr>(p.nextId(), Value::make<std::string>(std::move(word)));
+                return std::make_unique<CompletionConstExpr>(Value::make<std::string>(std::move(word)));
             }
             /* Constant */
             else if (auto constant = p.env->findConstant(word)) {
-                return std::make_unique<ConstExpr>(p.nextId(), *constant);
+                return std::make_unique<ConstExpr>(*constant);
             }
         }
 
         /* Single field name */
         if (t.containsPoint(comp_->point)) {
-            return std::make_unique<CompletionFieldOrWordExpr>(p.nextId(), word.substr(0, comp_->point - t.begin), comp_, t, p.ctx.inPath);
+            return std::make_unique<CompletionFieldOrWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t, p.ctx.inPath);
         }
-        return std::make_unique<FieldExpr>(p.nextId(), std::move(word));
+        return simplifyOrForward(p.env, std::make_unique<FieldExpr>(std::move(word)));
     }
 
     Completion* comp_;
@@ -653,7 +684,7 @@ public:
         auto right = p.parsePrecedence(precedence());
         TRY_EXPECTED(right);
 
-        return std::make_unique<PathExpr>(p.nextId(), std::move(left), std::move(*right));
+        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right)));
     }
 
     auto precedence() const -> int override
@@ -684,10 +715,10 @@ public:
 
         if (!*right) {
             Token expectedWord(Token::WORD, "", t.end, t.end);
-            right = std::make_unique<CompletionFieldOrWordExpr>(p.nextId(), "", comp_, expectedWord, p.ctx.inPath);
+            right = std::make_unique<CompletionFieldOrWordExpr>("", comp_, expectedWord, p.ctx.inPath);
         }
 
-        return std::make_unique<PathExpr>(p.nextId(), std::move(left), std::move(*right));
+        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right)));
     }
 
     Completion* comp_;
@@ -819,10 +850,8 @@ auto compile(Environment& env, std::string_view query, bool any, bool autoWildca
 
         /* Expand a single value to `** == <value>` */
         if (autoWildcard && *root && (*root)->constant()) {
-            auto outerId = p.nextId();
-            auto innerId = p.nextId();
-            root = std::make_unique<BinaryExpr<OperatorEq>>(
-                outerId, std::make_unique<WildcardExpr>(innerId), std::move(*root));
+            root = simplifyOrForward(p.env, std::make_unique<BinaryExpr<OperatorEq>>(
+                std::make_unique<WildcardExpr>(), std::move(*root)));
         }
 
         if (!*root)
@@ -831,17 +860,22 @@ auto compile(Environment& env, std::string_view query, bool any, bool autoWildca
         if (any) {
             std::vector<ExprPtr> args;
             args.emplace_back(std::move(*root));
-            return simplifyOrForward(p.env, std::make_unique<AnyExpr>(p.nextId(), std::move(args)));
+            return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(args)));
         } else {
             return root;
         }
     }();
     TRY_EXPECTED(expr);
 
+    /* Apply AST rewrite rules */
+    expr = rewriteTopDown(std::move(*expr), topDownRewriteRules);
+
     if (!p.match(Token::Type::NIL))
         return unexpected<Error>(Error::ExpectedEOF, "Expected end-of-input; got "s + p.current().toString());
 
-    return std::make_unique<AST>(std::string(query), std::move(*expr));
+    auto ast = std::make_unique<AST>(std::string(query), std::move(*expr));
+    ast->reenumerate();
+    return ast;
 }
 
 auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node, const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>

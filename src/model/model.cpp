@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <variant>
 #include <vector>
+#include <deque>
 #include <streambuf>
 
 #include <fmt/format.h>
@@ -15,11 +16,13 @@
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/buffer.h>
 #include <bitsery/adapter/stream.h>
+#include <bitsery/traits/deque.h>
 #include <bitsery/traits/string.h>
 #include <bitsery/traits/vector.h>
 #include <tl/expected.hpp>
 
 #include "../expected.h"
+#include "simfil/model/schema.h"
 
 namespace simfil
 {
@@ -86,6 +89,10 @@ struct ModelPool::Impl
         ModelColumn<StringRange, detail::ColumnPageSize> strings_;
         ModelColumn<StringRange, detail::ColumnPageSize> byteArrays_;
 
+        ModelColumn<SchemaId, detail::ColumnPageSize> objectSchemas_;
+        ModelColumn<SchemaId, detail::ColumnPageSize> objectSingletonSchemas_;
+        ModelColumn<SchemaId, detail::ColumnPageSize> arraySchemas_;
+        ModelColumn<SchemaId, detail::ColumnPageSize> arraySingletonSchemas_;
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
     } columns_;
@@ -99,6 +106,10 @@ struct ModelPool::Impl
         s.text1b(columns_.stringData_, maxColumnSize);
         s.object(columns_.strings_);
         s.object(columns_.byteArrays_);
+        s.object(columns_.objectSchemas_);
+        s.object(columns_.objectSingletonSchemas_);
+        s.object(columns_.arraySchemas_);
+        s.object(columns_.arraySingletonSchemas_);
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
@@ -119,6 +130,20 @@ ModelPool::~ModelPool()  // NOLINT
 std::vector<std::string> ModelPool::checkForErrors() const
 {
     std::vector<std::string> errors;
+    auto objectHasSchema = [&](ArrayIndex members) {
+        if (Object::Storage::is_singleton_handle(members)) {
+            return Object::Storage::singleton_payload(members)
+                < impl_->columns_.objectSingletonSchemas_.size();
+        }
+        return members < impl_->columns_.objectSchemas_.size();
+    };
+    auto arrayHasSchema = [&](ArrayIndex members) {
+        if (Array::Storage::is_singleton_handle(members)) {
+            return Array::Storage::singleton_payload(members)
+                < impl_->columns_.arraySingletonSchemas_.size();
+        }
+        return members < impl_->columns_.arraySchemas_.size();
+    };
 
     auto validateArrayIndex = [&](auto i, auto arrType, auto const& arena) {
         if (!arena.valid(static_cast<ArrayIndex>(i))) {
@@ -142,6 +167,10 @@ std::vector<std::string> ModelPool::checkForErrors() const
             if (node->addr().column() == Objects)
                 if (!validateArrayIndex(node->addr().index(), "object", impl_->columns_.objectMemberArrays_))
                     return;
+            if (!objectHasSchema(node->addr().index())) {
+                errors.emplace_back(fmt::format("Missing object schema index {}.", node->addr().index()));
+                return;
+            }
             for (auto const& [fieldName, fieldValue] : node->fields()) {
                 validatePooledString(fieldName);
                 validateModelNode(fieldValue);
@@ -151,6 +180,10 @@ std::vector<std::string> ModelPool::checkForErrors() const
             if (node->addr().column() == Arrays)
                 if (!validateArrayIndex(node->addr().index(), "arrays", impl_->columns_.arrayMemberArrays_))
                     return;
+            if (!arrayHasSchema(node->addr().index())) {
+                errors.emplace_back(fmt::format("Missing array schema index {}.", node->addr().index()));
+                return;
+            }
             for (auto const& member : *node)
                 validateModelNode(member);
         }
@@ -163,16 +196,28 @@ std::vector<std::string> ModelPool::checkForErrors() const
     };
 
     // Validate objects
-    for (auto i = 0; i < impl_->columns_.objectMemberArrays_.size(); ++i)
+    for (auto i = FirstRegularArrayIndex; i < impl_->columns_.objectMemberArrays_.size(); ++i)
         validateModelNode(ModelNode::Ptr::make(
             shared_from_this(),
             ModelNodeAddress{Objects, (uint32_t)i}));
+    for (auto i = 0u; i < impl_->columns_.objectMemberArrays_.singleton_handle_count(); ++i)
+        validateModelNode(ModelNode::Ptr::make(
+            shared_from_this(),
+            ModelNodeAddress{
+                Objects,
+                SingletonArrayHandleMask | static_cast<uint32_t>(i)}));
 
     // Validate arrays
-    for (auto i = 0; i < impl_->columns_.arrayMemberArrays_.size(); ++i)
+    for (auto i = FirstRegularArrayIndex; i < impl_->columns_.arrayMemberArrays_.size(); ++i)
         validateModelNode(ModelNode::Ptr::make(
             shared_from_this(),
             ModelNodeAddress{Arrays, (uint32_t)i}));
+    for (auto i = 0u; i < impl_->columns_.arrayMemberArrays_.singleton_handle_count(); ++i)
+        validateModelNode(ModelNode::Ptr::make(
+            shared_from_this(),
+            ModelNodeAddress{
+                Arrays,
+                SingletonArrayHandleMask | static_cast<uint32_t>(i)}));
 
     // Validate roots
     for (auto i = 0; i < numRoots(); ++i)
@@ -205,6 +250,10 @@ void ModelPool::clear()
     clear_and_shrink(columns.strings_);
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.byteArrays_);
+    clear_and_shrink(columns.objectSchemas_);
+    clear_and_shrink(columns.objectSingletonSchemas_);
+    clear_and_shrink(columns.arraySchemas_);
+    clear_and_shrink(columns.arraySingletonSchemas_);
     clear_and_shrink(columns.objectMemberArrays_);
     clear_and_shrink(columns.arrayMemberArrays_);
 }
@@ -293,12 +342,32 @@ void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
 model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSize)
 {
     auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity, fixedSize);
+    if (Object::Storage::is_singleton_handle(memberArrId)) {
+        auto singletonIndex = Object::Storage::singleton_payload(memberArrId);
+        if (impl_->columns_.objectSingletonSchemas_.size() <= singletonIndex)
+            impl_->columns_.objectSingletonSchemas_.resize(singletonIndex + 1);
+        impl_->columns_.objectSingletonSchemas_[singletonIndex] = SchemaId{};
+    } else {
+        if (impl_->columns_.objectSchemas_.size() <= memberArrId)
+            impl_->columns_.objectSchemas_.resize(memberArrId + 1);
+        impl_->columns_.objectSchemas_[memberArrId] = SchemaId{};
+    }
     return model_ptr<Object>::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)memberArrId});
 }
 
 model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize)
 {
     auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity, fixedSize);
+    if (Array::Storage::is_singleton_handle(memberArrId)) {
+        auto singletonIndex = Array::Storage::singleton_payload(memberArrId);
+        if (impl_->columns_.arraySingletonSchemas_.size() <= singletonIndex)
+            impl_->columns_.arraySingletonSchemas_.resize(singletonIndex + 1);
+        impl_->columns_.arraySingletonSchemas_[singletonIndex] = SchemaId{};
+    } else {
+        if (impl_->columns_.arraySchemas_.size() <= memberArrId)
+            impl_->columns_.arraySchemas_.resize(memberArrId + 1);
+        impl_->columns_.arraySchemas_[memberArrId] = SchemaId{};
+    }
     return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
 }
 
@@ -434,7 +503,11 @@ ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
     stats.stringRangeBytes = impl_->columns_.strings_.byte_size();
     stats.stringRangeBytes += impl_->columns_.byteArrays_.byte_size();
     stats.objectMemberBytes = impl_->columns_.objectMemberArrays_.byte_size();
+    stats.objectSchemaBytes = impl_->columns_.objectSchemas_.byte_size()
+        + impl_->columns_.objectSingletonSchemas_.byte_size();
     stats.arrayMemberBytes = impl_->columns_.arrayMemberArrays_.byte_size();
+    stats.arraySchemaBytes = impl_->columns_.arraySchemas_.byte_size()
+        + impl_->columns_.arraySingletonSchemas_.byte_size();
     return stats;
 }
 
@@ -445,6 +518,64 @@ std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId
 
 Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
+}
+
+SchemaId ModelPool::objectSchemaId(ArrayIndex members) const
+{
+    if (Object::Storage::is_singleton_handle(members)) {
+        auto singletonIndex = Object::Storage::singleton_payload(members);
+        if (singletonIndex >= impl_->columns_.objectSingletonSchemas_.size())
+            return {};
+        return SchemaId{impl_->columns_.objectSingletonSchemas_[singletonIndex]};
+    }
+    if (members >= impl_->columns_.objectSchemas_.size())
+        return {};
+    return SchemaId{impl_->columns_.objectSchemas_[members]};
+}
+
+auto ModelPool::setObjectSchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
+{
+    if (Object::Storage::is_singleton_handle(members)) {
+        auto singletonIndex = Object::Storage::singleton_payload(members);
+        if (singletonIndex >= impl_->columns_.objectSingletonSchemas_.size())
+            return tl::unexpected<Error>(Error::RuntimeError, "Object singleton schema index out of range.");
+        impl_->columns_.objectSingletonSchemas_[singletonIndex] = schemaId;
+        return {};
+    }
+    if (members >= impl_->columns_.objectSchemas_.size())
+        return tl::unexpected<Error>(Error::RuntimeError, "Object schema index out of range.");
+
+    impl_->columns_.objectSchemas_[members] = schemaId;
+    return {};
+}
+
+SchemaId ModelPool::arraySchemaId(ArrayIndex members) const
+{
+    if (Array::Storage::is_singleton_handle(members)) {
+        auto singletonIndex = Array::Storage::singleton_payload(members);
+        if (singletonIndex >= impl_->columns_.arraySingletonSchemas_.size())
+            return {};
+        return SchemaId{impl_->columns_.arraySingletonSchemas_[singletonIndex]};
+    }
+    if (members >= impl_->columns_.arraySchemas_.size())
+        return {};
+    return SchemaId{impl_->columns_.arraySchemas_[members]};
+}
+
+auto ModelPool::setArraySchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
+{
+    if (Array::Storage::is_singleton_handle(members)) {
+        auto singletonIndex = Array::Storage::singleton_payload(members);
+        if (singletonIndex >= impl_->columns_.arraySingletonSchemas_.size())
+            return tl::unexpected<Error>(Error::RuntimeError, "Array singleton schema index out of range.");
+        impl_->columns_.arraySingletonSchemas_[singletonIndex] = schemaId;
+        return {};
+    }
+    if (members >= impl_->columns_.arraySchemas_.size())
+        return tl::unexpected<Error>(Error::RuntimeError, "Array schema index out of range.");
+
+    impl_->columns_.arraySchemas_[members] = schemaId;
+    return {};
 }
 
 Object::Storage const& ModelPool::objectMemberStorage() const
@@ -480,6 +611,7 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
+
     return {};
 }
 

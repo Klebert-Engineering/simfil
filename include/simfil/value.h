@@ -104,7 +104,7 @@ inline auto valueType2String(ValueType t) -> const char*
  */
 struct TypeFlags
 {
-    std::bitset<10> flags;
+    std::bitset<static_cast<size_t>(ValueType::LAST_)> flags;
 
     auto test(ValueType type) const
     {

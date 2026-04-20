@@ -21,6 +21,7 @@ class UnpackExpr;
 class UnaryWordOpExpr;
 class BinaryWordOpExpr;
 class FieldExpr;
+class WildcardFieldExpr;
 class PathExpr;
 class AndExpr;
 class OrExpr;
@@ -54,6 +55,7 @@ public:
     virtual void visit(const CallExpression& expr);
     virtual void visit(const PathExpr& expr);
     virtual void visit(const FieldExpr& expr);
+    virtual void visit(const WildcardFieldExpr& expr);
     virtual void visit(const UnpackExpr& expr);
     virtual void visit(const UnaryWordOpExpr& expr);
     virtual void visit(const BinaryWordOpExpr& expr);

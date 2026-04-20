@@ -125,8 +125,8 @@ auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::
 namespace simfil
 {
 
-CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token, bool inPath)
-    : Expr(id, token)
+CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath)
+    : Expr(token)
     , prefix_(std::move(prefix))
     , comp_(comp)
     , inPath_(inPath)
@@ -225,9 +225,8 @@ struct FindExpressionRange : ExprVisitor
 
 }
 
-CompletionAndExpr::CompletionAndExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp)
-    : Expr(id)
-    , left_(std::move(left))
+CompletionAndExpr::CompletionAndExpr(ExprPtr left, ExprPtr right, const Completion* comp)
+    : left_(std::move(left))
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
@@ -281,9 +280,8 @@ auto CompletionAndExpr::toString() const -> std::string
     return "(and ? ?)";
 }
 
-CompletionOrExpr::CompletionOrExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp)
-    : Expr(id)
-    , left_(std::move(left))
+CompletionOrExpr::CompletionOrExpr(ExprPtr left, ExprPtr right, const Completion* comp)
+    : left_(std::move(left))
     , right_(std::move(right))
 {
     FindExpressionRange leftRange;
@@ -337,8 +335,8 @@ auto CompletionOrExpr::toString() const -> std::string
     return "(or ? ?)";
 }
 
-CompletionWordExpr::CompletionWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token)
-    : Expr(id, token)
+CompletionWordExpr::CompletionWordExpr(std::string prefix, Completion* comp, const Token& token)
+    : Expr(token)
     , prefix_(std::move(prefix))
     , comp_(comp)
 {}
