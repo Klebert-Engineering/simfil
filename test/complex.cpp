@@ -98,8 +98,27 @@ TEST_CASE("Multimap JSON", "[multimap.serialization]") {
     root->addField("c", array);
     root->addField("c", static_cast<uint16_t>(2));
 
+    auto const expected = nlohmann::json::parse(R"([{"a":[1],"b":[1,2,3],"c":[[1],2],"_multimap":true}])");
     INFO(model->toJson().dump(2));
-    REQUIRE(model->toJson() == nlohmann::json::parse(R"([{"a":[1],"b":[1,2,3],"c":[[1],2],"_multimap":true}])"));
+    REQUIRE(model->toJson() == expected);
+
+    auto roundTrip = json::parse(expected.dump());
+    REQUIRE(roundTrip);
+    auto roundTripRoot = roundTrip.value()->root(0);
+    REQUIRE(roundTripRoot);
+    auto roundTripObject = roundTripRoot.value()->at(0);
+    REQUIRE(roundTripObject);
+    REQUIRE(roundTripObject->size() == 6);
+    REQUIRE(roundTripObject->toJson() == expected[0]);
+}
+
+TEST_CASE("Null JSON values build explicit null nodes", "[json.serialization][null]") {
+    auto model = json::parse(R"({"a":null,"b":[null,{"c":null}]})");
+    REQUIRE(model);
+
+    auto root = model.value()->root(0);
+    REQUIRE(root);
+    REQUIRE(root.value()->toJson() == nlohmann::json::parse(R"({"a":null,"b":[null,{"c":null}]})"));
 }
 
 TEST_CASE("Tagged bytes JSON", "[bytes.serialization]") {
