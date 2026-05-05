@@ -87,7 +87,15 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
     case json::value_t::number_integer:
         return model.newValue(input.get<int64_t>());
     case json::value_t::string:
-        return model.newValue(input.get<std::string>());
+        {
+            // JSON strings are expected to participate in simfil's pooled-string
+            // facilities such as completion of uppercase constants.
+            auto stringId = model.strings()->emplace(input.get<std::string>());
+            if (!stringId) {
+                return tl::unexpected<Error>(stringId.error());
+            }
+            return model.newValue(static_cast<StringId>(*stringId));
+        }
     default:
         break;
     }
