@@ -282,6 +282,9 @@ struct ModelNode
     /// Get the node's address
     [[nodiscard]] inline ModelNodeAddress addr() const {return addr_;}
 
+    /// Get raw runtime payload attached to this node without triggering resolution.
+    [[nodiscard]] inline ScalarValueType const& runtimeData() const {return data_;}
+
     /// True if the node points at a valid model and address.
     [[nodiscard]] inline bool isResolved() const {return model_ && addr_;}
 
