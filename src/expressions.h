@@ -76,6 +76,7 @@ class ConstExpr : public Expr
 public:
     ConstExpr() = delete;
     template <class CType_>
+    requires (!std::derived_from<std::remove_cvref_t<CType_>, ConstExpr>)
     explicit ConstExpr(CType_&& value)
         : value_(Value::make(std::forward<CType_>(value)))
     {}
