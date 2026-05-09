@@ -361,6 +361,7 @@ TEST_CASE("Schema query performance", "[perf.schema]") {
     const auto bId = strings->emplace("b").value();
     const auto yId = strings->emplace("y").value();
     const auto xId = strings->emplace("x").value();
+    const auto missingId = strings->emplace("missing").value();
     const auto payloadId = strings->emplace("payload").value();
 
     auto payloadASchema = std::make_unique<ObjectSchema>();
@@ -433,15 +434,18 @@ TEST_CASE("Schema query performance", "[perf.schema]") {
     Environment env(strings);
     env.querySchemaCallback = registry.asFunction();
 
-    auto ast = compile(env, "count(**.a == 1)", false, false);
-    REQUIRE(ast);
-
     auto modelRoot = model->root(0);
     REQUIRE(modelRoot);
 
+    auto aAst = compile(env, "count(**.a == 1)", false, false);
+    REQUIRE(aAst);
+
+    auto missingAst = compile(env, "count(**.missing == 1)", false, false);
+    REQUIRE(missingAst);
+
     registry.enabled = false;
     BENCHMARK("Query nested field 'a' recursive without schema") {
-        auto res = eval(env, **ast, **modelRoot, nullptr);
+        auto res = eval(env, **aAst, **modelRoot, nullptr);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
@@ -450,14 +454,34 @@ TEST_CASE("Schema query performance", "[perf.schema]") {
         return count;
     };
 
+    BENCHMARK("Query missing field 'missing' without schema") {
+        auto res = eval(env, **missingAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == 0);
+        return count;
+    };
+
     registry.enabled = true;
     BENCHMARK("Query nested field 'a' recursive with schema") {
-        auto res = eval(env, **ast, **modelRoot, nullptr);
+        auto res = eval(env, **aAst, **modelRoot, nullptr);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
         auto count = res->front().template as<ValueType::Int>();
         REQUIRE(count == int64_t(n / 2));
+        return count;
+    };
+
+    BENCHMARK("Query missing field 'missing' with schema") {
+        auto res = eval(env, **missingAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == 0);
         return count;
     };
 }
