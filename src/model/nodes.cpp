@@ -79,6 +79,15 @@ bool ModelNode::iterate(const IterCallback& cb) const {
     return result;
 }
 
+auto ModelNode::iterate() const -> asyncpp::generator<ModelNode::Ptr>
+{
+    const auto childCount = static_cast<int64_t>(size());
+    for (auto i = 0; i < childCount; ++i) {
+        if (auto child = at(i); child)
+            co_yield child;
+    }
+}
+
 #if defined(SIMFIL_WITH_MODEL_JSON)
 nlohmann::json ModelNode::toJson() const
 {

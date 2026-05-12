@@ -5,12 +5,17 @@
 #include "simfil/token.h"
 #include "simfil/value.h"
 #include "simfil/environment.h"
-#include "simfil/result.h"
 
+#include "asyncpp/generator.h"
+
+#include <coroutine>
 #include <memory>
+#include <utility>
 
 namespace simfil
 {
+
+using EvalStream = asyncpp::generator<tl::expected<Value, Error>>;
 
 class ExprVisitor;
 
@@ -59,6 +64,15 @@ public:
     /* Debug */
     virtual auto toString() const -> std::string = 0;
 
+    auto eval(Context ctx, Value val) const -> EvalStream
+    {
+        if (ctx.canceled())
+            return {};
+
+        return ieval(ctx, std::move(val));
+    }
+
+    /*
     auto eval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
         if (ctx.canceled())
@@ -89,6 +103,7 @@ public:
 
         return ieval(ctx, std::move(val), res);
     }
+    */
 
     /* Accept expression visitor */
     virtual auto accept(ExprVisitor& v) const -> void = 0;
@@ -102,13 +117,7 @@ public:
 
 private:
     /* Abstract evaluation implementation */
-    virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> = 0;
-    
-    /* Move-optimized evaluation implementation */
-    virtual auto ieval(Context ctx, Value&& value, const ResultFn& result) const -> tl::expected<Result, Error>
-    {
-        return ieval(ctx, value, result);
-    }
+    virtual auto ieval(Context ctx, Value value) const -> EvalStream = 0;
 
     ExprId id_;
     SourceLocation sourceLocation_;

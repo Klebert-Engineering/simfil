@@ -162,6 +162,11 @@ struct Context
             return *timeout < std::chrono::steady_clock::now();
         return false;
     }
+
+    auto compiling() const -> bool
+    {
+        return phase == Compilation;
+    }
 };
 
 /**

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "simfil/diagnostics.h"
+#include "simfil/expression.h"
 #include "simfil/simfil.h"
 #include "simfil/environment.h"
-#include "simfil/exception-handler.h"
 #include "simfil/function.h"
 #include "simfil/model/json.h"
 #include "simfil/result.h"
@@ -13,7 +13,6 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <string>
-#include <stdexcept>
 
 using namespace simfil;
 
@@ -59,23 +58,29 @@ static const char* const TestModel = R"json(
 class PanicFn : public simfil::Function
 {
 public:
+    const bool comptime = false;
+
+    explicit PanicFn(bool comptime)
+        : comptime(comptime)
+    {}
+
     auto ident() const -> const FnInfo& override
     {
         static const FnInfo info{
-          "panic",
+          comptime ? "cpanic" : "epanic",
           "Raise an error",
-          "panic()"
+          comptime ? "cpanic()" : "epanic()"
         };
 
         return info;
     }
 
-    auto eval(Context ctx, const Value&, const std::vector<ExprPtr>&, const ResultFn& res) const -> tl::expected<Result, Error> override
+    auto eval(Context ctx, Value, const std::vector<ExprPtr>&) const -> EvalStream override
     {
-        if (ctx.phase != Context::Phase::Compilation)
-            return tl::unexpected<Error>(Error::RuntimeError, "Panic!");
-
-        return res(ctx, Value::undef());
+        if (!ctx.compiling() || comptime)
+            co_yield tl::unexpected<Error>(Error::RuntimeError, "Panic!");
+        else
+            co_yield Value::undef();
     }
 };
 

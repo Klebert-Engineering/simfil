@@ -1,6 +1,7 @@
 #pragma once
 #include "nodes.h"
 #include "tl/expected.hpp"
+#include <asyncpp/generator.h>
 #include <functional>
 
 namespace simfil
@@ -50,6 +51,13 @@ bool BaseArray<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback&
             return cont;
         });
     return cont;
+}
+
+template <class ModelType, class ModelNodeType>
+auto BaseArray<ModelType, ModelNodeType>::iterate() const -> asyncpp::generator<ModelNode::Ptr>
+{
+    for (auto&& member : storage_->iterate(members_))
+        co_yield ModelNode::Ptr::make(model_, member);
 }
 
 template <class ModelType, class ModelNodeType>
@@ -152,6 +160,13 @@ bool BaseObject<ModelType, ModelNodeType>::iterate(const ModelNode::IterCallback
             return cont;
         });
     return cont;
+}
+
+template <class ModelType, class ModelNodeType>
+auto BaseObject<ModelType, ModelNodeType>::iterate() const -> asyncpp::generator<ModelNode::Ptr>
+{
+    for (auto&& member : storage_->iterate(members_))
+        co_yield ModelNode::Ptr::make(model_, detail::objectFieldNode(member));
 }
 
 template <class ModelType, class ModelNodeType>

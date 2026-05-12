@@ -1,5 +1,6 @@
 #include "simfil/function.h"
 
+#include "simfil/expression.h"
 #include "simfil/model/nodes.h"
 #include "simfil/result.h"
 #include "simfil/operator.h"
@@ -8,6 +9,7 @@
 #include "simfil/types.h"
 #include "simfil/overlay.h"
 #include "fmt/core.h"
+#include "src/expressions.h"
 #include "tl/expected.hpp"
 #include "expected.h"
 
@@ -43,35 +45,37 @@ struct ArgParser
     auto arg(const char* name, ValueType type, Value& outValue) -> ArgParser&
     {
         if (args.size() <= idx) {
-            error = Error(Error::InvalidArguments, fmt::format("missing argument {} for function {}", name, this->functionName));
+            error.emplace(Error::InvalidArguments, fmt::format("missing argument {} for function {}", name, this->functionName));
             return *this;
         }
 
         auto subctx = ctx;
-        auto res = args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value&& vv) mutable -> tl::expected<Result, Error> {
+        auto n = 0u;
+        for (auto&& value : args[idx]->eval(subctx, value)) {
+            if (!value) {
+                error.emplace(std::move(value.error()));
+                outValue = std::move(*value);
+                break;
+            }
+
             if (++n > 1) [[unlikely]] {
-                return tl::unexpected<Error>(Error::ExpectedSingleValue,
-                                             fmt::format("expeted single argument value for argument {} for function {}", name, functionName));
+                error.emplace(Error::ExpectedSingleValue,
+                              fmt::format("expected single argument value for argument {} for function {}", name, functionName));
+                break;
             }
 
-            if (vv.isa(ValueType::Undef)) {
+            if (value->isa(ValueType::Undef)) {
                 anyUndef = true;
-                outValue = std::move(vv);
-                return Result::Continue;
+                outValue = std::move(*value);
+            }
+            else if (!value->isa(type)) [[unlikely]] {
+                error.emplace(Error::TypeMissmatch,
+                              fmt::format("invalid type for argument {} for function {}", name, functionName));
+                break;
             }
 
-            if (!vv.isa(type)) [[unlikely]] {
-                return tl::unexpected<Error>(Error::TypeMissmatch,
-                                             fmt::format("invalid type for argument {} for function {}", name, functionName));
-            }
-
-            outValue = std::move(vv);
-
-            return Result::Continue;
-        }));
-
-        if (!res) [[unlikely]]
-            error = std::move(res.error());
+            outValue = std::move(*value);
+        }
 
         ++idx;
         return *this;
@@ -84,28 +88,28 @@ struct ArgParser
             return *this;
         }
 
+        auto n = 0u;
         auto subctx = ctx;
-        auto res = args[idx]->eval(subctx, value, LambdaResultFn([&, n = 0](Context, Value&& vv) mutable -> tl::expected<Result, Error> {
+        for (auto&& value : args[idx]->eval(subctx, value)) {
             if (++n > 1) {
-                return tl::unexpected<Error>(Error::ExpectedSingleValue,
-                                             fmt::format("{}: argument {} must return a single value", functionName, name));
+                error.emplace(Error::ExpectedSingleValue,
+                              fmt::format("{}: argument {} must return a single value", functionName, name));
+                break;
             }
 
-            if (vv.isa(ValueType::Undef)) {
+            if (value->isa(ValueType::Undef)) {
                 anyUndef = true;
-                outValue = std::move(vv);
-                return Result::Continue;
+                outValue = std::move(*value);
             }
 
-            if (!vv.isa(type))
-                return tl::unexpected<Error>(Error::TypeMissmatch,
-                                             fmt::format("{}: invalid value type for argument", functionName, name));
+            if (!value->isa(type)) {
+                error.emplace(Error::TypeMissmatch,
+                              fmt::format("{}: invalid value type for argument", functionName, name));
+                break;
+            }
 
-            outValue = std::move(vv);
-            return Result::Continue;
-        }));
-        if (!res) [[unlikely]]
-            error = std::move(res.error());
+            outValue = std::move(*value);
+        };
 
         ++idx;
         return *this;
@@ -143,36 +147,31 @@ auto CountFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto CountFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto CountFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
-    if (args.empty())
-        return tl::unexpected<Error>(Error::InvalidArguments,
-                                     fmt::format("function 'count' expects one argument, got {}", args.size()));
-
-    auto subctx = ctx;
-    auto undef = false; /* At least one value is undef */
-    int64_t count = 0;
-
-    for (const auto& arg : args) {
-        auto evalRes = arg->eval(ctx, val, LambdaResultFn([&](Context, const Value& vv) {
-            if (ctx.phase == Context::Phase::Compilation) {
-                if (vv.isa(ValueType::Undef)) {
-                    undef = true;
-                    return Result::Stop;
-                }
-            }
-            count += boolify(vv) ? 1 : 0;
-            return Result::Continue;
-        }));
-        TRY_EXPECTED(evalRes);
-
-        if (undef)
-            break;
+    if (args.empty()) {
+        co_yield tl::unexpected<Error>(Error::InvalidArguments,
+                                       fmt::format("function 'count' expects one argument, got {}", args.size()));
+        co_return;
     }
 
-    if (undef)
-        return res(subctx, Value::undef());
-    return res(subctx, Value::make(count));
+    int64_t count = 0;
+    for (const auto& arg : args) {
+        for (const auto& value : arg->eval(ctx, val)) {
+            CO_TRY_EXPECTED(value);
+
+            if (ctx.compiling()) {
+                if (value->isa(ValueType::Undef)) {
+                    co_yield Value::undef();
+                    co_return;
+                }
+            }
+
+            count += boolify(*value) ? 1 : 0;
+        }
+    }
+
+    co_yield Value::make(count);
 }
 
 TraceFn TraceFn::Fn;
@@ -188,8 +187,14 @@ auto TraceFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto TraceFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto TraceFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
+    /* Never run in compilation phase */
+    if (ctx.compiling()) {
+        co_yield Value::undef();
+        co_return;
+    }
+
     Value name  = Value::undef();
     Value limit = Value::undef();
 
@@ -198,27 +203,27 @@ auto TraceFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
         .opt("limit", ValueType::Int, limit, Value::make(static_cast<int64_t>(-1)))
         .opt("name",  ValueType::String, name, Value::make(args[0]->toString()))
         .ok();
-    TRY_EXPECTED(ok);
-
-    /* Never run in compilation phase */
-    if (ctx.phase == Context::Phase::Compilation)
-        return res(ctx, Value::undef());
+    CO_TRY_EXPECTED(ok);
 
     auto sname = name.as<ValueType::String>();
     auto ilimit = limit.as<ValueType::Int>();
     auto values = std::vector<Value>();
 
+    auto n = 0;
     auto start = std::chrono::steady_clock::now();
-    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value vv) mutable {
-        if (ilimit < 0 || n++ <= ilimit) {
+    for (auto&& value : args[0]->eval(ctx, val)) {
+        CO_TRY_EXPECTED(value);
+
+        n++;
+        if (ilimit < 0 || n <= ilimit) {
             // Do not allow string view to leak into the trace result.
-            auto copy = vv;
-            if (auto sv = vv.stringViewValue())
-                copy = Value::make(std::string(*sv));
-            values.emplace_back(std::move(copy));
+            if (auto sv = value->stringViewValue())
+                value = Value::make(std::string(*sv));
+            values.emplace_back(*value);
         }
-        return res(ctx, std::move(vv));
-    }));
+
+        co_yield std::move(*value);
+    }
     auto duration = std::chrono::steady_clock::now() - start;
 
     ctx.env->trace(sname, [&](auto& t) {
@@ -232,7 +237,8 @@ auto TraceFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
             t.values.resize(ilimit, Value::undef());
     });
 
-    return result;
+    if (n == 0)
+        co_yield Value::undef();
 }
 
 
@@ -249,11 +255,13 @@ auto RangeFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto RangeFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto RangeFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
-    if (args.size() != 2)
-        return tl::unexpected<Error>(Error::InvalidArguments,
-                                     fmt::format("function 'range' expects 2 arguments, got {}", args.size()));
+    if (args.size() != 2) {
+        co_yield tl::unexpected<Error>(Error::InvalidArguments,
+                                       fmt::format("function 'range' expects 2 arguments, got {}", args.size()));
+        co_return;
+    }
 
     Value begin = Value::undef();
     Value end = Value::undef();
@@ -262,13 +270,16 @@ auto RangeFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
         .arg("begin", ValueType::Int, begin)
         .arg("end",   ValueType::Int, end)
         .ok();
-    TRY_EXPECTED(ok);
-    if (!ok.value()) [[unlikely]]
-        return res(ctx, Value::undef());
+    CO_TRY_EXPECTED(ok);
+
+    if (!ok.value()) [[unlikely]] {
+        co_yield Value::undef();
+        co_return;
+    }
 
     auto ibegin = begin.as<ValueType::Int>();
     auto iend = end.as<ValueType::Int>();
-    return res(ctx, IRangeType::Type.make(ibegin, iend));
+    co_yield IRangeType::Type.make(ibegin, iend);
 }
 
 ReFn ReFn::Fn;
@@ -284,28 +295,42 @@ auto ReFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto ReFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto ReFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
-    if (args.size() != 1)
-        return tl::unexpected<Error>(Error::InvalidArguments,
-                                     fmt::format("'re' expects 1 argument, got {}", args.size()));
+    if (args.size() != 0) {
+        co_yield tl::unexpected<Error>(Error::InvalidArguments,
+                                       fmt::format("'re' expects 1 argument, got {}", args.size()));
+        co_return;
+    }
 
-    auto subctx = ctx;
-    return args[0]->eval(subctx, val, LambdaResultFn([&](Context, Value&& vv) -> tl::expected<Result, Error> {
-        if (vv.isa(ValueType::Undef))
-            return res(ctx, Value::undef());
+    for (auto&& value : args[0]->eval(ctx, val)) {
+        CO_TRY_EXPECTED(value);
 
-        if (vv.isa(ValueType::String))
-            return res(ctx, ReType:: Type.make(vv.as<ValueType::String>()));
+        if (value->isa(ValueType::Undef)) {
+            co_yield Value::undef();
+            co_return;
+        }
+
+        if (value->isa(ValueType::String)) {
+            co_yield  ReType::Type.make(value->as<ValueType::String>());
+            co_return;
+        }
 
         // Passing another <re> object is a no-op
-        if (vv.isa(ValueType::TransientObject))
-            if (const auto obj = vv.as<ValueType::TransientObject>(); obj.meta == &ReType::Type)
-                return res(ctx, std::move(vv));
+        if (value->isa(ValueType::TransientObject)) {
+            if (const auto obj = value->as<ValueType::TransientObject>(); obj.meta == &ReType::Type) {
+                co_yield std::move(value);
+                co_return;
+            }
+        }
 
-        return tl::unexpected<Error>(Error::TypeMissmatch,
-                                     fmt::format("invalid type for argument 'expr' for function 're'"));
-    }));
+        co_yield tl::unexpected<Error>(Error::TypeMissmatch,
+                                       fmt::format("invalid type for argument 'expr' for function 're'"));
+        co_return;
+    }
+
+    assert(0 && "unreachable");
+    co_yield Value::null();
 }
 
 ArrFn ArrFn::Fn;
@@ -322,21 +347,24 @@ auto ArrFn::ident() const -> const FnInfo&
 }
 
 
-auto ArrFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto ArrFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
-    if (args.empty())
-        return res(ctx, Value::null());
-
-    for (const auto& arg : args) {
-        auto r = arg->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value &&vv) {
-            return res(ctx, std::move(vv));
-        }));
-        TRY_EXPECTED(r);
-        if (*r == Result::Stop)
-            return Result::Stop;
+    if (args.empty()) {
+        co_yield Value::null();
+        co_return;
     }
 
-    return Result::Continue;
+    auto empty = true;
+    for (const auto& arg : args) {
+        for (auto&& value : arg->eval(ctx, val)) {
+            CO_TRY_EXPECTED(value);
+            empty = false;
+            co_yield std::move(*value);
+        }
+    }
+
+    if (empty)
+        co_yield ctx.compiling() ? Value::undef() : Value::null();
 }
 
 SplitFn SplitFn::Fn;
@@ -355,8 +383,8 @@ auto SplitFn::ident() const -> const FnInfo&
 namespace {
 template <class ContainerType = std::vector<std::string>>
 ContainerType split(std::string_view what,
-                 std::string_view at,
-                 bool removeEmpty = true)
+                    std::string_view at,
+                    bool removeEmpty = true)
 {
     using ResultType = typename ContainerType::value_type;
 
@@ -397,7 +425,7 @@ ContainerType split(std::string_view what,
 }
 }
 
-auto SplitFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto SplitFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
     Value str = Value::undef();
     Value sep = Value::undef();
@@ -408,22 +436,22 @@ auto SplitFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
         .arg("separator", ValueType::String, sep)
         .opt("keepEmpty", ValueType::Bool, keepEmpty, Value::t())
         .ok();
-    TRY_EXPECTED(ok);
+    CO_TRY_EXPECTED(ok);
 
-    auto subctx = ctx;
-    if (!ok.value()) [[unlikely]]
-        return res(subctx, Value::undef());
-
-    auto items = split(str.as<ValueType::String>(), sep.as<ValueType::String>(), !keepEmpty.as<ValueType::Bool>());
-    for (auto&& item : items) {
-        auto r = res(subctx, Value::make(std::move(item)));
-        TRY_EXPECTED(r);
-        if (*r == Result::Stop)
-            break;
+    if (!ok.value()) [[unlikely]] {
+        co_yield Value::undef();
+        co_return;
     }
 
-    return Result::Continue;
-};
+    auto items = split(str.as<ValueType::String>(), sep.as<ValueType::String>(), !keepEmpty.as<ValueType::Bool>());
+    if (!items.empty()) {
+        for (auto&& item : items)
+            co_yield Value::make(std::move(item));
+    }
+    else {
+        co_yield std::move(str);
+    }
+}
 
 SelectFn SelectFn::Fn;
 SelectFn::SelectFn() = default;
@@ -438,7 +466,7 @@ auto SelectFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SelectFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto SelectFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
     Value idx = Value::undef();
     Value cnt = Value::undef();
@@ -448,29 +476,42 @@ auto SelectFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& a
         .arg("index", ValueType::Int, idx)
         .opt("limit", ValueType::Int, cnt, Value::make(static_cast<int64_t>(1)))
         .ok();
-    TRY_EXPECTED(ok);
+    CO_TRY_EXPECTED(ok);
 
-    if (!ok.value()) [[unlikely]]
-        return res(ctx, Value::undef());
+    if (!ok.value()) [[unlikely]] {
+        co_yield Value::undef();
+        co_return;
+    }
 
     auto iidx = idx.as<ValueType::Int>();
     auto icnt = cnt.as<ValueType::Int>();
     if (icnt <= 0)
         icnt = std::numeric_limits<int>::max();
 
-    auto result = args[0]->eval(ctx, val, LambdaResultFn([&, n = -1](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
-        ++n;
-        if (ctx.phase == Context::Phase::Compilation)
-            if (vv.isa(ValueType::Undef))
-                return res(ctx, std::move(vv));
-        if (n >= iidx + icnt)
-            return Result::Stop;
-        if (n >= iidx)
-            return res(ctx, std::move(vv));
-        return Result::Continue;
-    }));
+    auto empty = true;
+    auto n = -1;
+    for (auto&& value : args[0]->eval(ctx, val)) {
+        CO_TRY_EXPECTED(value);
 
-    return result;
+        n++;
+        // if (ctx.compiling()) {
+        //     if (value->isa(ValueType::Undef)) {
+        //         co_yield Value::undef();
+        //         co_return;
+        //     }
+        // }
+
+        if (n >= iidx + icnt)
+            co_return;
+
+        if (n >= iidx) {
+            empty = false;
+            co_yield std::move(value);
+        }
+    }
+
+    if (empty)
+        co_yield ctx.compiling() ? Value::undef() : Value::null();
 }
 
 SumFn SumFn::Fn;
@@ -486,56 +527,59 @@ auto SumFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto SumFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
-    if (args.empty() || args.size() > 3)
-        return tl::unexpected<Error>(Error::InvalidArguments,
-                                     fmt::format("'sum' expects at least 1 argument, got {}", args.size()));
+    if (args.empty() || args.size() > 3) {
+        co_yield tl::unexpected<Error>(Error::InvalidArguments,
+                                       fmt::format("'sum' expects at least 1 argument, got {}", args.size()));
+        co_return;
+    }
 
     Value sum = Value::make(static_cast<int64_t>(0));
 
     Expr* subexpr = args.size() >= 2 ? args[1].get() : nullptr;
     Expr* initval = args.size() == 3 ? args[2].get() : nullptr;
     if (initval) {
-        auto initRes = initval->eval(ctx, val, LambdaResultFn([&sum](Context, Value&& vv) {
-            sum = std::move(vv);
-            return Result::Continue;
-        }));
-
-        TRY_EXPECTED(initRes);
-        if (sum.isa(ValueType::Undef))
-            return res(ctx, sum);
-    }
-
-    auto argRes = args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
-        if (subexpr) {
-            auto ov = model_ptr<OverlayNode>::make(vv);
-            ov->set(StringPool::OverlaySum, sum);
-            ov->set(StringPool::OverlayValue, vv);
-            ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n)));
-            n += 1;
-
-            auto subRes = subexpr->eval(ctx, Value::field(ov), LambdaResultFn([&ov, &sum](auto ctx, Value&& vv) {
-                ov->set(StringPool::OverlaySum, vv);
-                sum = vv;
-                return Result::Continue;
-            }));
-            TRY_EXPECTED(subRes);
-        } else {
-            if (sum.isa(ValueType::Null)) {
-                sum = std::move(vv);
-            } else {
-                auto newSum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv);
-                TRY_EXPECTED(newSum);
-                sum = std::move(newSum.value());
-            }
+        for (auto&& value : initval->eval(ctx, val)) {
+            CO_TRY_EXPECTED(value);
+            sum = std::move(*value);
         }
 
-        return Result::Continue;
-    }));
-    TRY_EXPECTED(argRes);
+        if (sum.isa(ValueType::Undef)) {
+            co_yield Value::undef();
+            co_return;
+        }
+    }
 
-    return res(ctx, sum);
+    auto n = 0;
+    for (auto&& value : args[0]->eval(ctx, val)) {
+        if (subexpr) {
+            auto ov = model_ptr<OverlayNode>::make(*value);
+            ov->set(StringPool::OverlaySum, sum);
+            ov->set(StringPool::OverlayValue, *value);
+            ov->set(StringPool::OverlayIndex, Value::make(static_cast<int64_t>(n)));
+
+            n++;
+            for (auto&& subValue : subexpr->eval(ctx, Value::field(ov))) {
+                CO_TRY_EXPECTED(subValue);
+
+                ov->set(StringPool::OverlaySum, *subValue);
+                sum = *subValue;
+            }
+        }
+        else {
+            if (sum.isa(ValueType::Null)) {
+                sum = std::move(*value);
+            }
+            else {
+                auto subSum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, *value);
+                CO_TRY_EXPECTED(subSum);
+                sum = std::move(*subSum);
+            }
+        }
+    }
+
+    co_yield std::move(sum);
 }
 
 KeysFn KeysFn::Fn;
@@ -551,30 +595,30 @@ auto KeysFn::ident() const -> const FnInfo&
     return info;
 }
 
-auto KeysFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
+auto KeysFn::eval(Context ctx, Value val, const std::vector<ExprPtr>& args) const -> EvalStream
 {
-    if (args.size() != 1)
-        return tl::unexpected<Error>(Error::InvalidArguments,
-                                     fmt::format("'keys' expects 1 argument got {}", args.size()));
+    if (args.size() != 1) {
+        co_yield tl::unexpected<Error>(Error::InvalidArguments,
+                                       fmt::format("'keys' expects 1 argument got {}", args.size()));
+        co_return;
+    }
 
-    auto result = args[0]->eval(ctx, val, LambdaResultFn([&res](Context ctx, const Value& vv) -> tl::expected<Result, Error> {
-        if (ctx.phase == Context::Phase::Compilation)
-            if (vv.isa(ValueType::Undef))
-                return res(ctx, vv);
+    for (auto&& value : args[0]->eval(ctx, val)) {
+        CO_TRY_EXPECTED(value);
 
-        if (vv.nodePtr())
-            for (auto&& fieldName : vv.node()->fieldNames()) {
-                if (auto key = ctx.env->stringPool->resolve(fieldName)) {
-                    auto r = res(ctx, Value::strref(*key));
-                    TRY_EXPECTED(r);
-                    if (*r == Result::Stop)
-                        return Result::Stop;
-                }
+        if (ctx.compiling() && value->isa(ValueType::Undef)) {
+            co_yield Value::undef();
+            co_return;
+        }
+
+        if (value->nodePtr()) {
+            for (const auto& name : value->node()->fieldNames()) {
+               if (auto key = ctx.env->stringPool->resolve(name)) {
+                   co_yield Value::strref(*key);
+               }
             }
-        return Result::Continue;
-    }));
-
-    return result;
+        }
+    }
 }
 
 }

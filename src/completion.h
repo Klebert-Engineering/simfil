@@ -48,7 +48,7 @@ public:
     CompletionFieldOrWordExpr(ExprId id, std::string prefix, Completion* comp, const Token& token, bool inPath);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value value) const -> EvalStream override;
     auto accept(ExprVisitor& v) const -> void override;
     auto toString() const -> std::string override;
 
@@ -63,7 +63,7 @@ public:
     CompletionAndExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value value) const -> EvalStream override;
     void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
@@ -76,7 +76,7 @@ public:
     CompletionOrExpr(ExprId id, ExprPtr left, ExprPtr right, const Completion* comp);
 
     auto type() const -> Type override;
-    auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value value) const -> EvalStream override;
     void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
@@ -90,7 +90,7 @@ public:
 
     auto type() const -> Type override;
     auto constant() const -> bool override;
-    auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value value) const -> EvalStream override;
     auto accept(ExprVisitor& v) const -> void override;
     auto toString() const -> std::string override;
 
@@ -108,7 +108,7 @@ public:
     using ConstExpr::ConstExpr;
 
     auto constant() const -> bool override;
-    auto ieval(Context ctx, const Value&, const ResultFn& res) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value value) const -> EvalStream override;
 };
 
 }

@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <asyncpp/generator.h>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -628,6 +629,15 @@ public:
         iterate_chunked(a, std::forward<Func>(lambda));
     }
 
+    auto iterate(ArrayIndex idx) -> asyncpp::generator<ElementType>
+    {
+        if (is_singleton_handle(idx))
+            return iterate_singleton(idx);
+        if (heads_.empty() && compactHeads_)
+            return iterate_compact(idx);
+        return iterate_chunked(idx);
+    }
+
 private:
     // Represents a chunk of an array in the arena.
     struct Chunk
@@ -682,6 +692,16 @@ private:
         }
     }
 
+    template <typename Value>
+    static ElementType materialize_iter_value(Value&& value)
+    {
+        if constexpr (requires { std::forward<Value>(value).to_value(); }) {
+            return std::forward<Value>(value).to_value();
+        } else {
+            return std::forward<Value>(value);
+        }
+    }
+
     template <typename Func>
     void iterate_singleton(ArrayIndex a, Func&& lambda)
     {
@@ -698,6 +718,22 @@ private:
         invoke_iter_callback(lambda, value, 0);
     }
 
+    auto iterate_singleton(ArrayIndex idx) -> asyncpp::generator<ElementType> // TODO: should be an expected with an error!
+    {
+        auto singletonIndex = singleton_payload(idx);
+        if (singletonIndex >= singletonValues_.size() ||
+            singletonIndex >= singletonOccupied_.size()) {
+            raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+            co_return;
+        }
+        else if (singletonOccupied_.at(singletonIndex) == 0) {
+            co_return;
+        }
+
+        auto value = materialize_iter_value(singletonValues_.at(singletonIndex));
+        co_yield value;
+    }
+
     template <typename Func>
     void iterate_compact(ArrayIndex a, Func&& lambda)
     {
@@ -712,6 +748,20 @@ private:
             if (!invoke_iter_callback(lambda, value, i)) {
                 return;
             }
+        }
+    }
+
+    auto iterate_compact(ArrayIndex idx) -> asyncpp::generator<ElementType>
+    {
+        if (idx >= compactHeads_->size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+            co_return;
+        }
+
+        auto const& compact = (*compactHeads_)[idx];
+        for (size_t i = 0; i < static_cast<size_t>(compact.size); ++i) {
+            auto value = materialize_iter_value(data_[static_cast<size_t>(compact.offset) + i]);
+            co_yield value;
         }
     }
 
@@ -734,6 +784,26 @@ private:
                 }
                 ++globalIndex;
             }
+            current = (current->next != InvalidArrayIndex)
+                ? &continuations_[current->next]
+                : nullptr;
+        }
+    }
+
+    auto iterate_chunked(ArrayIndex idx) -> asyncpp::generator<ElementType>
+    {
+        if (idx >= heads_.size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+            co_return;
+        }
+
+        Chunk const* current = &heads_[idx];
+        while (current != nullptr) {
+            for (size_t i = 0; i < current->size && i < current->capacity; ++i) {
+                auto value = materialize_iter_value(data_[current->offset + i]);
+                co_yield value;
+            }
+
             current = (current->next != InvalidArrayIndex)
                 ? &continuations_[current->next]
                 : nullptr;

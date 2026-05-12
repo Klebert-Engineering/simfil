@@ -3,15 +3,18 @@
 #include "simfil/environment.h"
 #include "src/completion.h"
 
-static const PanicFn panicFn{};
+static const PanicFn cPanicFn{true};
+static const PanicFn ePanicFn{false};
 
 auto CompileError(std::string_view query, bool autoWildcard) -> Error
 {
     Environment env(Environment::WithNewStringCache);
     env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
-    env.functions["panic"] = &panicFn;
+    env.functions["cpanic"] = &cPanicFn;
+    env.functions["epanic"] = &ePanicFn;
 
     auto ast = compile(env, query, false, autoWildcard);
+    INFO("AST: " << query);
     REQUIRE(!ast.has_value());
 
     return std::move(ast.error());
@@ -21,7 +24,8 @@ auto Compile(std::string_view query, bool autoWildcard) -> ASTPtr
 {
     Environment env(Environment::WithNewStringCache);
     env.constants.try_emplace("a_number", simfil::Value::make((int64_t)123));
-    env.functions["panic"] = &panicFn;
+    env.functions["cpanic"] = &cPanicFn;
+    env.functions["epanic"] = &ePanicFn;
 
     auto ast = compile(env, query, false, autoWildcard);
     if (!ast)
@@ -37,7 +41,8 @@ auto JoinedResult(std::string_view query, std::optional<std::string> json) -> st
     REQUIRE(model);
     Environment env(model.value()->strings());
 
-    env.functions["panic"] = &panicFn;
+    env.functions["cpanic"] = &cPanicFn;
+    env.functions["epanic"] = &ePanicFn;
 
     auto ast = compile(env, query, false);
     if (!ast) {
@@ -87,7 +92,8 @@ auto GetDiagnosticMessages(std::string_view query) -> std::vector<Diagnostics::M
     REQUIRE(model);
     Environment env(model.value()->strings());
 
-    env.functions["panic"] = &panicFn;
+    env.functions["cpanic"] = &cPanicFn;
+    env.functions["epanic"] = &ePanicFn;
 
     auto ast = compile(env, query, false);
     if (!ast)

@@ -125,17 +125,19 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
 
     std::deque<Value> values;
     auto stub = Context(env, nullptr, Context::Phase::Compilation);
-    auto res = (*expr)->eval(stub, Value::undef(), LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable {
-        n += 1;
-        if ((n <= MultiConstExpr::Limit) && (!vv.isa(ValueType::Undef) || vv.nodePtr())) {
-            values.push_back(std::move(vv));
-            return Result::Continue;
-        }
 
-        values.clear();
-        return Result::Stop;
-    }));
-    TRY_EXPECTED(res);
+    auto n = 0u;
+    for (auto&& value : (*expr)->eval(stub, Value::undef())) {
+        TRY_EXPECTED(value);
+
+        n++;
+        if ((n <= MultiConstExpr::Limit) && (!value->isa(ValueType::Undef) || value->nodePtr())) {
+            values.push_back(std::move(*value));
+        }
+        else {
+            values.clear();
+        }
+    }
 
     /* Warn about constant results */
     if (!values.empty() && std::ranges::all_of(values.begin(), values.end(), [](const Value& v) {
@@ -892,9 +894,7 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     if (options.timeoutMs > 0)
         ctx.timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeoutMs);
 
-    ast->eval(ctx, Value::field(node), LambdaResultFn([](Context, const Value&) {
-        return Result::Continue;
-    }));
+    for (auto& _ : ast->eval(ctx, Value::field(node))) { ; } // TODO: Is there a function to wait for all values?
 
     auto candidates = std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
     if (options.sorted)
@@ -937,11 +937,11 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     Context ctx(&env, &localDiag);
 
     std::vector<Value> values;
-    auto res = ast.expr().eval(ctx, Value::field(node), LambdaResultFn([&values](const Context&, Value&& value) {
-        values.push_back(std::move(value));
-        return Result::Continue;
-    }));
-    TRY_EXPECTED(res);
+    auto stream = ast.expr().eval(ctx, Value::field(node));
+    for (auto&& value : stream) {
+        TRY_EXPECTED(value);
+        values.push_back(*value);
+    }
 
     // Merge diagnostics
     if (diag)

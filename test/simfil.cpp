@@ -77,8 +77,8 @@ TEST_CASE("OperatorConst", "[ast.operator]") {
     REQUIRE_AST("a+2", "(+ a 2)");
     REQUIRE_AST("2+a", "(+ 2 a)");
     REQUIRE_AST("a+b", "(+ a b)");
-    REQUIRE_PANIC("1+panic()");
-    REQUIRE_PANIC("panic()+1");
+    REQUIRE_PANIC("1+cpanic()");
+    REQUIRE_PANIC("cpanic()+1");
 
     auto GetError = [&](std::string_view query) -> std::string {
         Environment env(Environment::WithNewStringCache);
@@ -300,7 +300,7 @@ TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fie
 TEST_CASE("OperatorNegate", "[ast.operator-negate]") {
     REQUIRE_ERROR("-('abc')");
     REQUIRE_ERROR("-(true)");
-    REQUIRE_PANIC("-panic()");
+    REQUIRE_PANIC("-cpanic()");
     REQUIRE_AST("-(1)", "-1");
     REQUIRE_AST("-(1.1)", "-1.100000");
     REQUIRE_AST("-(null)", "null");
@@ -371,8 +371,8 @@ TEST_CASE("ModeSetter", "[ast.mode-setter]") {
 }
 
 TEST_CASE("UtilityFns", "[ast.functions]") {
-    REQUIRE_PANIC("range(panic(), 5)");
-    REQUIRE_PANIC("range(1, panic())");
+    REQUIRE_ERROR("range(cpanic(), 5)");
+    REQUIRE_ERROR("range(1, cpanic())");
     REQUIRE_AST("range(a,b)",    "(range a b)"); /* Ca not optimize */
     REQUIRE_AST("range(1,5)",    "1..5");
     REQUIRE_AST("range(1,5)==0", "false");
@@ -396,15 +396,15 @@ TEST_CASE("UtilityFns", "[ast.functions]") {
 }
 
 TEST_CASE("PanicFunction", "[eval.panic-function]") {
-    REQUIRE_RESULT("panic()", "ERROR: Panic!");
+    REQUIRE_RESULT("epanic()", "ERROR: Panic!");
 }
 
 TEST_CASE("OperatorOrShortCircuit", "[eval.operator-or-short-circuit]") {
-    REQUIRE_RESULT("true or panic()", "true");
+    REQUIRE_RESULT("true or epanic()", "true");
 }
 
 TEST_CASE("OperatorAndShortCircuit", "[eval.operator-and-short-circuit]") {
-    REQUIRE_RESULT("false and panic()", "false");
+    REQUIRE_RESULT("false and epanic()", "false");
 }
 
 TEST_CASE("OperatorOr", "[eval.operator-or]") {
@@ -489,14 +489,14 @@ TEST_CASE("Model Functions", "[yaml.model-functions]") {
     SECTION("Test arr(...)") {
         REQUIRE_RESULT("arr(2,3,5,7,'ok')", "2|3|5|7|ok");
 
-        REQUIRE_PANIC("arr(0,panic(),2)");
+        REQUIRE_PANIC("arr(0,cpanic(),2)");
     }
     SECTION("Test split(...)") {
         REQUIRE_RESULT("split('hello.this.is.a.test.', '.')", "hello|this|is|a|test|");
         REQUIRE_RESULT("split('hello.this.is.a.test.', '.', false)", "hello|this|is|a|test");
 
-        REQUIRE_PANIC("split(panic(), '.')");
-        REQUIRE_PANIC("split('a.b.c', panic())");
+        REQUIRE_PANIC("split(cpanic(), '.')");
+        REQUIRE_PANIC("split('a.b.c', cpanic())");
     }
     SECTION("Test select(...)") {
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), a)", "b");
@@ -504,8 +504,8 @@ TEST_CASE("Model Functions", "[yaml.model-functions]") {
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 1, 2)", "b|c");
         REQUIRE_RESULT("select(split('a.b.c.d', '.'), 1, 0)", "b|c|d");
 
-        REQUIRE_PANIC("select(panic(), 0)");
-        REQUIRE_PANIC("select(0, panic())");
+        REQUIRE_PANIC("select(cpanic(), 0)");
+        REQUIRE_PANIC("select(0, cpanic())");
     }
     SECTION("Test sum(...)") {
         REQUIRE_RESULT("sum(range(1, 10)...)", "55");
@@ -513,9 +513,9 @@ TEST_CASE("Model Functions", "[yaml.model-functions]") {
         REQUIRE_RESULT("sum(range(1, 10)..., $sum + $val, 10)", "65");
         REQUIRE_RESULT("sum(range(1, 10)..., $sum * $val, 1)", "3628800");
 
-        REQUIRE_PANIC("sum(panic())");
-        REQUIRE_PANIC("sum(range(1, 10)..., panic())");
-        REQUIRE_PANIC("sum(range(1, 10)..., 0, panic())");
+        REQUIRE_PANIC("sum(cpanic())");
+        REQUIRE_PANIC("sum(range(1, 10)..., cpanic())");
+        REQUIRE_PANIC("sum(range(1, 10)..., 0, cpanic())");
     }
     SECTION("Count non-false values of arr(...)") {
         REQUIRE_RESULT("count(arr(null, null))", "0");
@@ -523,14 +523,14 @@ TEST_CASE("Model Functions", "[yaml.model-functions]") {
         REQUIRE_RESULT("count(arr(null, true))", "1");
         REQUIRE_RESULT("count(arr(true, true))", "2");
 
-        REQUIRE_PANIC("count(panic())");
+        REQUIRE_PANIC("count(cpanic())");
     }
     SECTION("Count model keys") {
         REQUIRE_RESULT("count(keys(**))", "50");
 
-        REQUIRE_PANIC("keys(panic())");
-        REQUIRE_PANIC("keys(**.{panic()})");
-        REQUIRE_PANIC("panic(keys(**))");
+        REQUIRE_PANIC("keys(epanic())");
+        REQUIRE_PANIC("keys(**.{epanic()})");
+        REQUIRE_PANIC("epanic(keys(**))");
     }
 }
 
