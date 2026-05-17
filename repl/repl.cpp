@@ -17,7 +17,6 @@
 #include <atomic>
 #include <fstream>
 #include <chrono>
-#include <optional>
 #include <iostream>
 
 #if defined(WITH_READLINE)
@@ -36,6 +35,7 @@ struct
     bool auto_wildcard = false;
     bool verbose = true;
     bool multi_threaded = true;
+    bool schema = true;
 } options;
 
 static void set_option(const std::string& option, bool& flag, std::string_view cmd)
@@ -197,6 +197,8 @@ static void show_help()
         << "Options:\n"
         << "  -D <identifier=value>\n"
         << "          Define a constant variable, set to value\n"
+        << "  -s SCHEMA\n"
+        << "          Use a JSON-Schema from SCHEMA file\n"
         << "  -h\n"
         << "          Show this help"
         << "\n";
@@ -240,6 +242,10 @@ int main(int argc, char *argv[])
 #endif
     };
 
+    auto load_schema = [](const std::string_view& filename) {
+        std::cerr << "Schema support is not implemented!\n";
+    };
+
     auto tail_args = false;
     while (*++argv != nullptr) {
         std::string_view arg = *argv;
@@ -251,6 +257,18 @@ int main(int argc, char *argv[])
             case 'h':
                 show_help();
                 return 0;
+            case 's':
+                arg.remove_prefix(2);
+                if (arg.empty()) {
+                    arg = *++argv;
+                }
+                if (!arg.empty()) {
+                    load_schema(arg);
+                } else {
+                    std::cerr << "Missing schema file\n";
+                    return 1;
+                }
+                break;
             case 'D':
                 arg.remove_prefix(2);
                 if (arg.empty()) {
@@ -284,6 +302,7 @@ int main(int argc, char *argv[])
             set_option("wildcard", options.auto_wildcard, cmd);
             set_option("verbose", options.verbose, cmd);
             set_option("mt", options.multi_threaded, cmd);
+            set_option("schema", options.schema, cmd);
             continue;
         }
 

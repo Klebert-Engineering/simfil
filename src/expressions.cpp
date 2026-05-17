@@ -5,6 +5,7 @@
 #include "simfil/expression.h"
 #include "simfil/model/string-pool.h"
 #include "simfil/result.h"
+#include "simfil/sourcelocation.h"
 #include "simfil/value.h"
 #include "simfil/function.h"
 #include "simfil/diagnostics.h"
@@ -80,6 +81,10 @@ auto boolify(const Value& v) -> bool
 }
 
 WildcardExpr::WildcardExpr() = default;
+
+WildcardExpr::WildcardExpr(SourceLocation location)
+    : Expr(location)
+{}
 
 auto WildcardExpr::type() const -> Type
 {
@@ -254,6 +259,16 @@ void FieldExpr::accept(ExprVisitor& v) const
 }
 
 auto FieldExpr::toString() const -> std::string
+{
+    return name_;
+}
+
+auto FieldExpr::isCurrent() const -> bool
+{
+    return name_ == "_";
+}
+
+auto FieldExpr::field() const -> std::string
 {
     return name_;
 }
@@ -740,6 +755,26 @@ auto PathExpr::toString() const -> std::string
     return fmt::format("(. {} {})", left_->toString(), right_->toString());
 }
 
+auto PathExpr::left() -> Expr*
+{
+    return left_.get();
+}
+
+auto PathExpr::left() const -> const Expr*
+{
+    return left_.get();
+}
+
+auto PathExpr::right() -> Expr*
+{
+    return right_.get();
+}
+
+auto PathExpr::right() const -> const Expr*
+{
+    return right_.get();
+}
+
 UnpackExpr::UnpackExpr(ExprPtr sub)
     : sub_(std::move(sub))
 {}
@@ -1038,8 +1073,9 @@ auto OrExpr::toString() const -> std::string
     return fmt::format("(or {} {})", left_->toString(), right_->toString());
 }
 
-WildcardFieldExpr::WildcardFieldExpr(std::string name, SourceLocation location)
+WildcardFieldExpr::WildcardFieldExpr(bool recurse, std::string name, SourceLocation location)
     : Expr(location)
+    , recurse_(recurse)
     , name_(std::move(name))
 {}
 
@@ -1083,24 +1119,34 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
         ResultFn& res;
         StringId field;
         Diagnostics::FieldExprData* diag;
+        size_t maxDepth = 0; // 0 = recurse inf.
+        bool pruneRoot = true;
 
-        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> tl::expected<Result, Error>
+        [[nodiscard]] auto iterate(ModelNode const& val, size_t depth) noexcept -> tl::expected<Result, Error>
         {
+            if (maxDepth > 0 && depth > maxDepth) {
+                return Result::Continue;
+            }
+
             if (field == StringPool::StaticStringIds::Empty)
                 return Result::Continue;
 
             if (val.type() == ValueType::Null) [[unlikely]]
                 return Result::Continue;
 
-            if (auto* schema = ctx.env->querySchema(val.schema())) {
-                if (!schema->canHaveField(field))
-                    return Result::Continue;
+            // `*.field` still needs to inspect immediate children even when the
+            // current node's schema is partial and cannot prove descendant fields.
+            if ((depth > 0 || pruneRoot)) {
+                if (auto* schema = ctx.env->querySchema(val.schema())) {
+                    if (!schema->canHaveField(field))
+                        return Result::Continue;
+                }
             }
 
             if (diag)
                 diag->evaluations++;
 
-            if (auto sub = val.get(field)) {
+            if (auto sub = val.get(field); sub && (maxDepth == 0 || depth > 0)) {
                 if (diag)
                     diag->hits++;
 
@@ -1112,7 +1158,7 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
 
             tl::expected<Result, Error> finalResult = Result::Continue;
             val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
-                auto subResult = iterate(subNode);
+                auto subResult = iterate(subNode, depth + 1);
                 if (!subResult) {
                     finalResult = std::move(subResult);
                     return false;
@@ -1131,7 +1177,7 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
     };
 
     auto r = val.nodePtr()
-        ? Iterate{ctx, res, nameId_, diag}.iterate(**val.nodePtr())
+        ? Iterate{ctx, res, nameId_, diag, recurse_ ? 0ul : 1ul, recurse_}.iterate(**val.nodePtr(), 0)
         : tl::expected<Result, Error>(Result::Continue);
     res.ensureCall();
     return r;
@@ -1144,7 +1190,7 @@ void WildcardFieldExpr::accept(ExprVisitor& v) const
 
 auto WildcardFieldExpr::toString() const -> std::string
 {
-    return fmt::format("**.{}", name_);
+    return fmt::format("{}.{}", recurse_ ? "**" : "*", name_);
 }
 
 }

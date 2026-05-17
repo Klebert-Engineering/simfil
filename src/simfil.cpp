@@ -55,6 +55,7 @@ static RewriteRule bottomUpRewriteRules[] = {
 
 static RewriteRule topDownRewriteRules[] = {
     rewriteAnyWildcardField,
+    rewriteAnyChildField,
 };
 
 /**

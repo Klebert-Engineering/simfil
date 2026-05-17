@@ -5,17 +5,21 @@
 #include "simfil/operator.h"
 #include "simfil/diagnostics.h"
 #include "simfil/expression-visitor.h"
+#include "simfil/sourcelocation.h"
 
-#include <cstdint>
 #include <string>
 
 namespace simfil
 {
 
+/**
+ * Returns the current node and every child of it recursively.
+ */
 class WildcardExpr : public Expr
 {
 public:
     WildcardExpr();
+    explicit WildcardExpr(SourceLocation location);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
@@ -49,6 +53,10 @@ public:
     void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
 
+    /** Returns true if this field is "_" */
+    auto isCurrent() const -> bool;
+    auto field() const -> std::string;
+
     std::string name_;
     mutable StringId nameId_ = {};
 };
@@ -75,11 +83,13 @@ class ConstExpr : public Expr
 {
 public:
     ConstExpr() = delete;
+
     template <class CType_>
     requires (!std::derived_from<std::remove_cvref_t<CType_>, ConstExpr>)
     explicit ConstExpr(CType_&& value)
         : value_(Value::make(std::forward<CType_>(value)))
     {}
+
     explicit ConstExpr(Value value);
 
     auto type() const -> Type override;
@@ -186,6 +196,11 @@ public:
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
     auto toString() const -> std::string override;
+
+    auto left() -> Expr*;
+    auto left() const -> const Expr*;
+    auto right() -> Expr*;
+    auto right() const -> const Expr*;
 
     ExprPtr left_, right_;
 };
@@ -515,13 +530,16 @@ public:
     ExprPtr left_, right_;
 };
 
-/** A specialized expression for queries of the form `**.field`, that
- *  takes object schema information into account.
+/**
+ * A specialized expression for queries of the form `**.field`, that
+ * takes object schema information into account.
+ *
+ * Special form of `WildcardExpr`.
  */
 class WildcardFieldExpr : public Expr
 {
 public:
-    explicit WildcardFieldExpr(std::string name, SourceLocation location = {});
+    explicit WildcardFieldExpr(bool recurse, std::string name, SourceLocation location = {});
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error> override;
@@ -530,6 +548,7 @@ public:
 
     std::string name_;
     mutable StringId nameId_ = {};
+    const bool recurse_ = {};
 };
 
 }
