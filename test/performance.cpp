@@ -1,6 +1,5 @@
 #include "simfil/simfil.h"
 #include "simfil/model/model.h"
-
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <vector>

@@ -22,6 +22,7 @@ namespace simfil
 class Expr;
 class Function;
 class Diagnostics;
+class Schema;
 struct ResultFn;
 struct Debug;
 
@@ -61,6 +62,8 @@ struct Trace
 struct Environment
 {
 public:
+    using QuerySchemaCallback = std::function<const Schema*(SchemaId)>;
+
     /**
      * Construct a SIMFIL execution environment with a string cache,
      * which is used to map field names to short integer IDs.
@@ -116,6 +119,12 @@ public:
     [[nodiscard]]
     auto strings() const -> std::shared_ptr<StringPool>;
 
+    /**
+     * Query an object schema by its schema id.
+     * Returns nullptr if no callback is configured or the schema is unknown.
+     */
+    auto querySchema(SchemaId schemaId) const -> const Schema*;
+
 public:
     std::unique_ptr<std::mutex> warnMtx;
     std::vector<std::pair<std::string, std::string>> warnings;
@@ -129,6 +138,7 @@ public:
     /* constant ident -> value */
     std::map<std::string, Value, CaseInsensitiveCompare> constants;
 
+    QuerySchemaCallback querySchemaCallback;
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;
 };

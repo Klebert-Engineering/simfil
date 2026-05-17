@@ -8,6 +8,7 @@ add_executable(test.simfil
   common.hpp
   common.cpp
   token.cpp
+  schema.cpp
   simfil.cpp
   diagnostics.cpp
   completion.cpp

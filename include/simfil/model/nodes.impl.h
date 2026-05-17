@@ -22,6 +22,18 @@ ValueType BaseArray<ModelType, ModelNodeType>::type() const
 }
 
 template <class ModelType, class ModelNodeType>
+SchemaId BaseArray<ModelType, ModelNodeType>::schema() const
+{
+    return model().arraySchemaId(members_);
+}
+
+template <class ModelType, class ModelNodeType>
+auto BaseArray<ModelType, ModelNodeType>::setSchema(SchemaId schemaId) -> tl::expected<void, Error>
+{
+    return model().setArraySchemaId(members_, schemaId);
+}
+
+template <class ModelType, class ModelNodeType>
 ModelNode::Ptr BaseArray<ModelType, ModelNodeType>::at(int64_t i) const
 {
     if (i < 0 || i >= (int64_t)storage_->size(members_))
@@ -94,6 +106,18 @@ template <class ModelType, class ModelNodeType>
 ValueType BaseObject<ModelType, ModelNodeType>::type() const
 {
     return ValueType::Object;
+}
+
+template <class ModelType, class ModelNodeType>
+SchemaId BaseObject<ModelType, ModelNodeType>::schema() const
+{
+    return model().objectSchemaId(members_);
+}
+
+template <class ModelType, class ModelNodeType>
+auto BaseObject<ModelType, ModelNodeType>::setSchema(SchemaId schemaId) -> tl::expected<void, Error>
+{
+    return model().setObjectSchemaId(members_, schemaId);
 }
 
 template <class ModelType, class ModelNodeType>

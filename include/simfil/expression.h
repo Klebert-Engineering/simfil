@@ -8,11 +8,15 @@
 #include "simfil/result.h"
 
 #include <memory>
+#include <stdexcept>
 
 namespace simfil
 {
 
+class Expr;
 class ExprVisitor;
+
+using ExprPtr = std::unique_ptr<Expr>;
 
 class Expr
 {
@@ -31,17 +35,16 @@ public:
         VALUE,
     };
 
-    Expr() = delete;
-    explicit Expr(ExprId id)
-        : id_(id)
-    {}
-    explicit Expr(ExprId id, const Token& token)
-        : id_(id)
+    Expr() = default;
+    explicit Expr(const Token& token)
     {
         assert(token.end >= token.begin);
         sourceLocation_.offset = token.begin;
         sourceLocation_.size = token.end - token.begin;
     }
+    explicit Expr(SourceLocation location)
+        : sourceLocation_(location)
+    {}
 
     virtual ~Expr() = default;
 
@@ -54,6 +57,28 @@ public:
     virtual auto constant() const -> bool
     {
         return false;
+    }
+
+    /* Accept expression visitor */
+    virtual auto accept(ExprVisitor& v) const -> void = 0;
+
+    /* Get the number of child expressions */
+    virtual auto numChildren() const -> std::size_t
+    {
+        return 0;
+    }
+
+    /* Get the n-th child expression */
+    virtual auto childAt(std::size_t index) -> ExprPtr&
+    {
+        if (numChildren() == 0)
+            throw std::out_of_range("AST Child index out of range");
+        throw std::runtime_error("Missing childAt function implementation");
+    }
+
+    virtual auto childAt(std::size_t index) const -> const ExprPtr&
+    {
+        return const_cast<Expr&>(*this).childAt(index);
     }
 
     /* Debug */
@@ -90,11 +115,7 @@ public:
         return ieval(ctx, std::move(val), res);
     }
 
-    /* Accept expression visitor */
-    virtual auto accept(ExprVisitor& v) const -> void = 0;
-
     /* Source location the expression got parsed from */
-    [[nodiscard]]
     auto sourceLocation() const -> SourceLocation
     {
         return sourceLocation_;
@@ -110,11 +131,9 @@ private:
         return ieval(ctx, value, result);
     }
 
-    ExprId id_;
+    ExprId id_ = 0;
     SourceLocation sourceLocation_;
 };
-
-using ExprPtr = std::unique_ptr<Expr>;
 
 class AST
 {
@@ -125,6 +144,8 @@ public:
     {}
 
     ~AST();
+
+    auto reenumerate() -> void;
 
     auto expr() const -> const Expr&
     {
@@ -137,6 +158,8 @@ public:
     }
 
 private:
+    static auto reenumerate(Expr& expr, Expr::ExprId& nextId) -> void;
+
     /* The original query string of the AST */
     std::string queryString_;
 

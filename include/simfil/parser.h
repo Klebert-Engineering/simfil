@@ -59,7 +59,6 @@ public:
     };
 
     struct Context {
-        Expr::ExprId id = 0;
         bool inPath = false;
     };
 
@@ -103,11 +102,6 @@ public:
      */
     auto mode() const -> Mode;
     auto relaxed() const -> bool;
-
-    /**
-     * Get the next expression id.
-     */
-    auto nextId() -> Expr::ExprId;
 
     Context ctx;
     Environment* const env;

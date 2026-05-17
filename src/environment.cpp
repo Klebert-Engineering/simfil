@@ -59,6 +59,13 @@ auto Environment::strings() const -> std::shared_ptr<StringPool> {
     return stringPool;
 }
 
+auto Environment::querySchema(SchemaId schemaId) const -> const Schema*
+{
+    if (!querySchemaCallback || schemaId == NoSchemaId)
+        return nullptr;
+    return querySchemaCallback(schemaId);
+}
+
 Context::Context(Environment* env, Diagnostics* diag, Context::Phase phase)
     : env(env)
     , diag(diag)

@@ -113,11 +113,6 @@ auto Parser::relaxed() const -> bool
     return mode_ == Mode::Relaxed;
 }
 
-auto Parser::nextId() -> Expr::ExprId
-{
-    return ctx.id++;
-}
-
 auto Parser::parseInfix(expected<ExprPtr, Error> left, int prec) -> expected<ExprPtr, Error>
 {
     TRY_EXPECTED(left);
@@ -127,7 +122,7 @@ auto Parser::parseInfix(expected<ExprPtr, Error> left, int prec) -> expected<Exp
         auto parser = findInfixParser(token);
         if (!parser) {
             if (relaxed())
-                return std::make_unique<NOOPExpr>(nextId());
+                return std::make_unique<NOOPExpr>();
 
             return unexpected<Error>(
                 Error::ParserError,
@@ -176,7 +171,7 @@ auto Parser::parseTo(Token::Type type) -> expected<ExprPtr, Error>
 
     if (!*expr) {
         if (relaxed())
-            return std::make_unique<NOOPExpr>(nextId());
+            return std::make_unique<NOOPExpr>();
 
         return unexpected<Error>(
             Error::ParserError,
