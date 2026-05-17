@@ -57,6 +57,7 @@ TEST_CASE("Path", "[ast.path]") {
 TEST_CASE("Wildcard", "[ast.wildcard]") {
     REQUIRE_AST("*", "*");
     REQUIRE_AST("**", "**");
+    REQUIRE_AST("*.a", "*.a");
     REQUIRE_AST("**.a", "**.a"); /* Optimization rewrites this from (. ** a) to **.a */
     REQUIRE_AST("**.a.b.c", "(. (. **.a b) c)");
     REQUIRE_AST("a.**.b", "(. a **.b)");

@@ -37,14 +37,15 @@ inline auto rewriteTopDown(ExprPtr expr, std::span<RewriteRule> rules, const Rew
     return std::move(expr);
 }
 
-/** Rewrite `PathExpr(WildcardExpr, WildcardExpr)` -> `WildcardExpr` */
-inline auto rewriteWildcardWildcard(ExprPtr& expr) -> ExprPtr
+/** Rewrite `PathExpr(AnyChildExpr, FieldExpr)` -> `WildcardFieldExpr(non-recursive)` */
+inline auto rewriteAnyChildField(ExprPtr& expr) -> ExprPtr
 {
     if (const auto* path = dynamic_cast<const PathExpr*>(expr.get())) {
-        const auto* lhs = path->left_.get();
-        const auto* rhs = path->right_.get();
-        if (dynamic_cast<const WildcardExpr*>(lhs) && dynamic_cast<const WildcardExpr*>(rhs))
-            return std::make_unique<WildcardExpr>();
+        const auto* lhs = dynamic_cast<const AnyChildExpr*>(path->left());
+        const auto* rhs = dynamic_cast<const FieldExpr*>(path->right());
+        if (lhs && rhs && !rhs->isCurrent()) {
+            return std::make_unique<WildcardFieldExpr>(false, rhs->field(), rhs->sourceLocation());
+        }
     }
 
     return nullptr;
@@ -56,16 +57,16 @@ inline auto rewriteWildcardThis(ExprPtr& expr) -> ExprPtr
     auto rewrite = [](const PathExpr* path, const Expr* left, const Expr* right) -> std::unique_ptr<WildcardExpr> {
         const auto* lhs = dynamic_cast<const WildcardExpr*>(left);
         const auto* rhs = dynamic_cast<const FieldExpr*>(right);
-        if (lhs && rhs && rhs->name_ == "_") {
-            return std::make_unique<WildcardExpr>();
+        if (lhs && rhs && rhs->isCurrent()) {
+            return std::make_unique<WildcardExpr>(lhs->sourceLocation());
         }
         return nullptr;
     };
 
     if (const auto* path = dynamic_cast<const PathExpr*>(expr.get())) {
-        if (auto replacement = rewrite(path, path->left_.get(), path->right_.get()))
+        if (auto replacement = rewrite(path, path->left(), path->right()))
             return std::move(replacement);
-        if (auto replacement = rewrite(path, path->right_.get(), path->left_.get()))
+        if (auto replacement = rewrite(path, path->right(), path->left()))
             return std::move(replacement);
     }
 
@@ -76,13 +77,13 @@ inline auto rewriteWildcardThis(ExprPtr& expr) -> ExprPtr
 inline auto rewriteAnyWildcardField(ExprPtr& expr) -> ExprPtr
 {
     if (auto* path = dynamic_cast<PathExpr*>(expr.get())) {
-        auto* lhs = dynamic_cast<PathExpr*>(path->left_.get());
-        auto* rhs = dynamic_cast<FieldExpr*>(path->right_.get());
+        auto* lhs = dynamic_cast<PathExpr*>(path->left());
+        auto* rhs = dynamic_cast<FieldExpr*>(path->right());
         if (lhs && rhs) {
-            auto* lhsRhs = dynamic_cast<WildcardExpr*>(lhs->right_.get());
+            auto* lhsRhs = dynamic_cast<WildcardExpr*>(lhs->right());
             if (lhsRhs) {
                 return std::make_unique<PathExpr>(std::move(lhs->left_),
-                                                  std::make_unique<WildcardFieldExpr>(rhs->name_, rhs->sourceLocation()));
+                                                  std::make_unique<WildcardFieldExpr>(true, rhs->field(), rhs->sourceLocation()));
             }
         }
     }
@@ -93,10 +94,10 @@ inline auto rewriteAnyWildcardField(ExprPtr& expr) -> ExprPtr
 inline auto rewriteWildcardField(ExprPtr& expr) -> ExprPtr
 {
     if (auto* path = dynamic_cast<PathExpr*>(expr.get())) {
-        auto* lhs = dynamic_cast<WildcardExpr*>(path->left_.get());
-        auto* rhs = dynamic_cast<FieldExpr*>(path->right_.get());
-        if (lhs && rhs) {
-            return std::make_unique<WildcardFieldExpr>(rhs->name_, rhs->sourceLocation());
+        auto* lhs = dynamic_cast<WildcardExpr*>(path->left());
+        auto* rhs = dynamic_cast<FieldExpr*>(path->right());
+        if (lhs && rhs && !rhs->isCurrent()) {
+            return std::make_unique<WildcardFieldExpr>(true, rhs->field(), rhs->sourceLocation());
         }
     }
 

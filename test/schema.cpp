@@ -335,6 +335,45 @@ TEST_CASE("WildcardFieldExpr Array Field Pruning", "[model.schema]")
     REQUIRE(withPruningData.evaluations < noPruningData.evaluations);
 }
 
+TEST_CASE("WildcardFieldExpr non-recursive queries ignore partial root schemas", "[model.schema]")
+{
+    auto jsonModel = R"json(
+    {
+      "object": {
+        "field": 123
+      }
+    }
+    )json";
+    auto model = json::parse(jsonModel).value();
+    auto registry = SchemaRegistry{};
+    auto strings = model->strings();
+    auto objectId = strings->get("object");
+    (void)strings->emplace("field");
+
+    const auto rootSchemaId = SchemaId{1};
+    auto rootSchema = std::make_unique<ObjectSchema>();
+    rootSchema->addField(objectId, { NoSchemaId });
+    registry.schemas[rootSchemaId] = std::move(rootSchema);
+    registry.finalize();
+
+    auto root = model->root(0);
+    REQUIRE(root);
+    auto rootObj = model->resolve<Object>(*root.value());
+    REQUIRE(rootObj);
+    REQUIRE(rootObj->setSchema(rootSchemaId));
+
+    Environment env(strings);
+    env.querySchemaCallback = registry.asFunction();
+
+    auto ast = compile(env, "*.field", false, false);
+    REQUIRE(ast);
+
+    auto result = eval(env, **ast, **root, nullptr);
+    REQUIRE(result);
+    REQUIRE(result->size() == 1);
+    REQUIRE((*result)[0].toString() == "123");
+}
+
 TEST_CASE("Schema query performance", "[perf.schema]") {
     if (RUNNING_ON_VALGRIND) { // NOLINT
         SKIP("Skipping benchmarks when running under valgrind");
