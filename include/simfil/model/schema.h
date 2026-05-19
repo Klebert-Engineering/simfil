@@ -5,8 +5,11 @@
 #include <cassert>
 #include <concepts>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <ranges>
 #include <sfl/small_vector.hpp>
+#include <span>
 #include <vector>
 
 namespace simfil
@@ -59,15 +62,11 @@ public:
     /**
      * Returns true if this schema or any of the schemas it refers to
      * can possibly contain the given field.
-     *
-     * @param fieldId The field id to query the schema for
      */
     virtual auto canHaveField(StringId fieldId) const -> bool = 0;
 
     /**
      * Finalize this schema and all schemas it refers to.
-     *
-     * @param queryFn Schema Query callback.
      */
     virtual auto finalize(const std::function<Schema*(SchemaId)>& queryFn) -> State
     {
@@ -78,6 +77,83 @@ public:
      * @return All nested field names.
      */
     virtual auto nestedFields() const & -> std::span<const StringId> = 0;
+
+protected:
+    using SchemaIdStack = sfl::small_vector<SchemaId, 8>;
+
+    /**
+     * Append all fields reachable from this schema without relying on cached
+     * finalization state. This lets cyclic schema graphs still produce an exact
+     * field set by cutting recursion at already visited schema ids.
+     */
+    virtual auto collectNestedFields(const std::function<Schema*(SchemaId)>& queryFn,
+                                     SchemaIdStack& visited,
+                                     std::vector<StringId>& fields) const -> void = 0;
+
+    /**
+     * Append fields reachable through a schema id, using a finalized child
+     * cache when possible and falling back to raw graph traversal for cycles.
+     */
+    static auto appendSchemaFields(SchemaId schemaId,
+                                   const std::function<Schema*(SchemaId)>& queryFn,
+                                   SchemaIdStack& visited,
+                                   std::vector<StringId>& fields) -> void
+    {
+        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+            return;
+
+        auto* schema = queryFn(schemaId);
+        if (!schema)
+            return;
+
+        visited.push_back(schemaId);
+
+        if (schema->finalize(queryFn) == State::Clean) {
+            auto childFields = schema->nestedFields();
+            fields.insert(fields.end(), childFields.begin(), childFields.end());
+            return;
+        }
+
+        schema->collectNestedFields(queryFn, visited, fields);
+    }
+
+    /**
+     * Shared finalization implementation for concrete schema classes.
+     */
+    template <class CollectFn>
+    static auto finalizeFields(State& state,
+                               std::vector<StringId>& flatFields,
+                               const std::function<Schema*(SchemaId)>& queryFn,
+                               CollectFn&& collect) -> State
+    {
+        if (state == State::Clean || state == State::Finalizing)
+            return state;
+
+        state = State::Finalizing;
+        flatFields.clear();
+
+        SchemaIdStack visited;
+        collect(queryFn, visited, flatFields);
+
+        std::ranges::sort(flatFields);
+        auto duplicates = std::ranges::unique(flatFields);
+        flatFields.erase(duplicates.begin(), duplicates.end());
+
+        state = State::Clean;
+        return State::Clean;
+    }
+
+    /**
+     * Shared membership test; dirty schemas remain conservative.
+     */
+    static auto containsField(State state, const std::vector<StringId>& flatFields, StringId field) -> bool
+    {
+        if (state != State::Clean)
+            return true;
+
+        auto iter = std::ranges::lower_bound(flatFields, field);
+        return iter != flatFields.end() && *iter == field;
+    }
 };
 
 /**
@@ -106,12 +182,7 @@ public:
 
     auto canHaveField(StringId field) const -> bool override
     {
-        // Be conservative if the schema has not been finalized.
-        if (state_ != State::Clean)
-            return true;
-
-        auto iter = std::lower_bound(flatFields_.begin(), flatFields_.end(), field);
-        return iter != flatFields_.end() && *iter == field;
+        return containsField(state_, flatFields_, field);
     }
 
     /**
@@ -132,39 +203,11 @@ public:
      */
     auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override
     {
-        if (state_ == State::Clean || state_ == State::Finalizing)
-            return state_;
-
-        state_ = State::Finalizing;
-        flatFields_.clear();
-        auto canFinalize = true;
-
-        for (const auto& field : fields_) {
-            flatFields_.push_back(field.field);
-            for (const auto& fieldSchemaId : field.schemas) {
-                if (auto* childSchema = lookup(fieldSchemaId)) {
-                    auto childState = childSchema->finalize(lookup);
-                    if (childState != State::Clean) {
-                        canFinalize = false;
-                        continue;
-                    }
-
-                    auto childFields = childSchema->nestedFields();
-                    flatFields_.insert(flatFields_.end(), childFields.begin(), childFields.end());
-                }
-            }
-        }
-
-        if (!canFinalize) {
-            flatFields_.clear();
-            state_ = State::Dirty;
-            return State::Dirty;
-        }
-
-        std::sort(flatFields_.begin(), flatFields_.end());
-        flatFields_.erase(std::unique(flatFields_.begin(), flatFields_.end()), flatFields_.end());
-        state_ = State::Clean;
-        return State::Clean;
+        return finalizeFields(state_, flatFields_, lookup, [this](const auto& queryFn,
+                                                                  auto& visited,
+                                                                  auto& fields) {
+            collectNestedFields(queryFn, visited, fields);
+        });
     }
 
     auto fields() const & -> std::span<const FieldSummary>
@@ -178,6 +221,17 @@ public:
     }
 
 private:
+    auto collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
+                             SchemaIdStack& visited,
+                             std::vector<StringId>& fields) const -> void override
+    {
+        for (const auto& field : fields_) {
+            fields.push_back(field.field);
+            for (const auto& fieldSchemaId : field.schemas)
+                appendSchemaFields(fieldSchemaId, lookup, visited, fields);
+        }
+    }
+
     sfl::small_vector<FieldSummary, 4> fields_;
 
     std::vector<StringId> flatFields_; // Ordered!
@@ -200,11 +254,7 @@ public:
 
     auto canHaveField(StringId field) const -> bool override
     {
-        if (state_ != State::Clean)
-            return true;
-
-        auto iter = std::lower_bound(flatFields_.begin(), flatFields_.end(), field);
-        return iter != flatFields_.end() && *iter == field;
+        return containsField(state_, flatFields_, field);
     }
 
     /**
@@ -222,36 +272,11 @@ public:
      */
     auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override
     {
-        if (state_ == State::Clean || state_ == State::Finalizing)
-            return state_;
-
-        state_ = State::Finalizing;
-        flatFields_.clear();
-        auto canFinalize = true;
-
-        for (const auto& schemaId : schemas_) {
-            if (auto* childSchema = lookup(schemaId)) {
-                auto childState = childSchema->finalize(lookup);
-                if (childState != State::Clean) {
-                    canFinalize = false;
-                    continue;
-                }
-
-                auto childFields = childSchema->nestedFields();
-                flatFields_.insert(flatFields_.end(), childFields.begin(), childFields.end());
-            }
-        }
-
-        if (!canFinalize) {
-            flatFields_.clear();
-            state_ = State::Dirty;
-            return State::Dirty;
-        }
-
-        std::sort(flatFields_.begin(), flatFields_.end());
-        flatFields_.erase(std::unique(flatFields_.begin(), flatFields_.end()), flatFields_.end());
-        state_ = State::Clean;
-        return State::Clean;
+        return finalizeFields(state_, flatFields_, lookup, [this](const auto& queryFn,
+                                                                  auto& visited,
+                                                                  auto& fields) {
+            collectNestedFields(queryFn, visited, fields);
+        });
     }
 
     auto nestedFields() const & -> std::span<const StringId> override
@@ -265,6 +290,14 @@ public:
     }
 
 private:
+    auto collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
+                             SchemaIdStack& visited,
+                             std::vector<StringId>& fields) const -> void override
+    {
+        for (const auto& schemaId : schemas_)
+            appendSchemaFields(schemaId, lookup, visited, fields);
+    }
+
     sfl::small_vector<SchemaId, 1> schemas_;
     std::vector<StringId> flatFields_; // Ordered!
     State state_ = State::Dirty;

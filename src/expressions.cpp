@@ -194,7 +194,8 @@ FieldExpr::FieldExpr(std::string name)
 {}
 
 FieldExpr::FieldExpr(std::string name, const Token& token)
-    : name_(std::move(name))
+    : Expr(token)
+    , name_(std::move(name))
 {}
 
 auto FieldExpr::type() const -> Type
@@ -414,14 +415,12 @@ auto SubscriptExpr::numChildren() const -> std::size_t
 
 auto SubscriptExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    switch (index) {
-    case 0:
-        return left_;
-    case 1:
-        return index_;
-    default:
-        return Expr::childAt(index);
-    }
+    return detail::childAtOrThrow(index, left_, index_);
+}
+
+auto SubscriptExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, left_, index_);
 }
 
 auto SubscriptExpr::toString() const -> std::string
@@ -483,14 +482,12 @@ auto SubExpr::numChildren() const -> std::size_t
 
 auto SubExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    switch (index) {
-    case 0:
-        return left_;
-    case 1:
-        return sub_;
-    default:
-        return Expr::childAt(index);
-    }
+    return detail::childAtOrThrow(index, left_, sub_);
+}
+
+auto SubExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, left_, sub_);
 }
 
 AnyExpr::AnyExpr(std::vector<ExprPtr> args)
@@ -543,7 +540,12 @@ auto AnyExpr::numChildren() const -> std::size_t
 
 auto AnyExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    return args_[index];
+    return detail::childAtOrThrow(index, args_);
+}
+
+auto AnyExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, args_);
 }
 
 auto AnyExpr::toString() const -> std::string
@@ -607,7 +609,12 @@ auto EachExpr::numChildren() const -> std::size_t
 
 auto EachExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    return args_[index];
+    return detail::childAtOrThrow(index, args_);
+}
+
+auto EachExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, args_);
 }
 
 auto EachExpr::toString() const -> std::string
@@ -670,7 +677,12 @@ auto CallExpression::numChildren() const -> std::size_t
 
 auto CallExpression::childAt(std::size_t index) -> ExprPtr&
 {
-    return args_[index];
+    return detail::childAtOrThrow(index, args_);
+}
+
+auto CallExpression::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, args_);
 }
 
 auto CallExpression::toString() const -> std::string
@@ -740,14 +752,12 @@ auto PathExpr::numChildren() const -> std::size_t
 
 auto PathExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    switch (index) {
-    case 0:
-        return left_;
-    case 1:
-        return right_;
-    default:
-        return Expr::childAt(index);
-    }
+    return detail::childAtOrThrow(index, left_, right_);
+}
+
+auto PathExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, left_, right_);
 }
 
 auto PathExpr::toString() const -> std::string
@@ -826,9 +836,12 @@ auto UnpackExpr::numChildren() const -> std::size_t
 
 auto UnpackExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    if (index == 0)
-        return sub_;
-    return Expr::childAt(index);
+    return detail::childAtOrThrow(index, sub_);
+}
+
+auto UnpackExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, sub_);
 }
 
 auto UnpackExpr::toString() const -> std::string
@@ -876,9 +889,12 @@ auto UnaryWordOpExpr::numChildren() const -> std::size_t
 
 auto UnaryWordOpExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    if (index == 0)
-        return left_;
-    return Expr::childAt(index);
+    return detail::childAtOrThrow(index, left_);
+}
+
+auto UnaryWordOpExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, left_);
 }
 
 auto UnaryWordOpExpr::toString() const -> std::string
@@ -937,14 +953,12 @@ auto BinaryWordOpExpr::numChildren() const -> std::size_t
 
 auto BinaryWordOpExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    switch (index) {
-    case 0:
-        return left_;
-    case 1:
-        return right_;
-    default:
-        return Expr::childAt(index);
-    }
+    return detail::childAtOrThrow(index, left_, right_);
+}
+
+auto BinaryWordOpExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, left_, right_);
 }
 
 auto BinaryWordOpExpr::toString() const -> std::string
@@ -997,14 +1011,12 @@ auto AndExpr::numChildren() const -> std::size_t
 
 auto AndExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    switch (index) {
-    case 0:
-        return left_;
-    case 1:
-        return right_;
-    default:
-        return Expr::childAt(index);
-    }
+    return detail::childAtOrThrow(index, left_, right_);
+}
+
+auto AndExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, left_, right_);
 }
 
 auto AndExpr::toString() const -> std::string
@@ -1058,14 +1070,12 @@ auto OrExpr::numChildren() const -> std::size_t
 
 auto OrExpr::childAt(std::size_t index) -> ExprPtr&
 {
-    switch (index) {
-    case 0:
-        return left_;
-    case 1:
-        return right_;
-    default:
-        return Expr::childAt(index);
-    }
+    return detail::childAtOrThrow(index, left_, right_);
+}
+
+auto OrExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, left_, right_);
 }
 
 auto OrExpr::toString() const -> std::string
@@ -1075,8 +1085,8 @@ auto OrExpr::toString() const -> std::string
 
 WildcardFieldExpr::WildcardFieldExpr(bool recurse, std::string name, SourceLocation location)
     : Expr(location)
-    , recurse_(recurse)
     , name_(std::move(name))
+    , recurse_(recurse)
 {}
 
 auto WildcardFieldExpr::type() const -> Type

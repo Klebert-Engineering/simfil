@@ -69,16 +69,14 @@ public:
     }
 
     /* Get the n-th child expression */
-    virtual auto childAt(std::size_t index) -> ExprPtr&
+    virtual auto childAt(std::size_t) -> ExprPtr&
     {
-        if (numChildren() == 0)
-            throw std::out_of_range("AST Child index out of range");
-        throw std::runtime_error("Missing childAt function implementation");
+        throw std::out_of_range("AST child index out of range");
     }
 
-    virtual auto childAt(std::size_t index) const -> const ExprPtr&
+    virtual auto childAt(std::size_t) const -> const ExprPtr&
     {
-        return const_cast<Expr&>(*this).childAt(index);
+        throw std::out_of_range("AST child index out of range");
     }
 
     /* Debug */

@@ -772,6 +772,50 @@ TEST_CASE("Visit AST", "[visit.ast]")
     REQUIRE(visitor.visitedFieldName == "field");
 }
 
+TEST_CASE("Visitors traverse unary children once", "[visit.ast]")
+{
+    UnaryExpr<OperatorNot> expr(std::make_unique<FieldExpr>("field"));
+
+    struct Visitor : ExprVisitor
+    {
+        int fieldVisits = 0;
+
+        using ExprVisitor::visit;
+
+        auto visit(const FieldExpr& expr) -> void override
+        {
+            ExprVisitor::visit(expr);
+            ++fieldVisits;
+        }
+    };
+
+    Visitor visitor;
+    expr.accept(visitor);
+
+    REQUIRE(visitor.fieldVisits == 1);
+}
+
+TEST_CASE("Parsed token locations are preserved", "[ast.source-location]")
+{
+    Environment env(Environment::WithNewStringCache);
+
+    auto fieldAst = compile(env, "field", false, false);
+    REQUIRE(fieldAst);
+
+    const auto* fieldExpr = dynamic_cast<const FieldExpr*>(&(*fieldAst)->expr());
+    REQUIRE(fieldExpr);
+    REQUIRE(fieldExpr->sourceLocation().offset == 0);
+    REQUIRE(fieldExpr->sourceLocation().size == 5);
+
+    auto binaryAst = compile(env, "field + 1", false, false);
+    REQUIRE(binaryAst);
+
+    const auto* binaryExpr = dynamic_cast<const BinaryExpr<OperatorAdd>*>(&(*binaryAst)->expr());
+    REQUIRE(binaryExpr);
+    REQUIRE(binaryExpr->sourceLocation().offset == 6);
+    REQUIRE(binaryExpr->sourceLocation().size == 1);
+}
+
 TEST_CASE("AST expr ids are reenumerated after rewrites", "[ast.expr-id]")
 {
     auto ast = Compile("**.field = 123", false);

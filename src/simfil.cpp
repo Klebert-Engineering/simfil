@@ -21,6 +21,7 @@
 #include "rewrite-rules.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -48,12 +49,12 @@ static constexpr std::string_view TypenameString("string");
 static constexpr std::string_view TypenameBytes("bytes");
 }
 
-static RewriteRule bottomUpRewriteRules[] = {
+static const std::array<RewriteRule, 2> bottomUpRewriteRules = {
     rewriteWildcardThis,
     rewriteWildcardField,
 };
 
-static RewriteRule topDownRewriteRules[] = {
+static const std::array<RewriteRule, 2> topDownRewriteRules = {
     rewriteAnyWildcardField,
     rewriteAnyChildField,
 };

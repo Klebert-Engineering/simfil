@@ -34,8 +34,17 @@ public:
         if (!enabled)
             return nullptr;
 
-        auto i = schemas.find(id);
-        if (i != schemas.end())
+        if (auto i = schemas.find(id); i != schemas.end())
+            return i->second.get();
+        return nullptr;
+    }
+
+    auto get(SchemaId id) -> Schema*
+    {
+        if (!enabled)
+            return nullptr;
+
+        if (auto i = schemas.find(id); i != schemas.end())
             return i->second.get();
         return nullptr;
     }
@@ -43,14 +52,14 @@ public:
     auto finalize() -> void
     {
         auto& self = *this;
-        for (const auto& [key, value] : schemas) {
+        for (const auto& [_, value] : schemas) {
             value->finalize([&self](auto id) { return self(id); });
         }
     }
 
     auto operator()(SchemaId id) -> Schema*
     {
-        return const_cast<Schema*>(const_cast<const SchemaRegistry*>(this)->get(id));
+        return get(id);
     }
 
     auto operator()(SchemaId id) const -> const Schema*
@@ -139,7 +148,7 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
         schemas[1].addField(a, {SchemaId{2}});
         schemas[2].addField(b);
 
-        auto lookup = [&](SchemaId schemaId) -> ObjectSchema* {
+        auto lookup = [&schemas](SchemaId schemaId) {
             const auto index = static_cast<std::size_t>(schemaId);
             return index < schemas.size() ? &schemas[index] : nullptr;
         };
@@ -151,21 +160,29 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
         REQUIRE_FALSE(schemas[1].canHaveField(c));
     }
 
-    SECTION("cyclic schemas stay conservative") {
+    SECTION("cyclic schemas collect reachable fields") {
         std::vector<ObjectSchema> schemas(3);
         schemas[1].addField(link, {SchemaId{2}});
         schemas[1].addField(c);
         schemas[2].addField(back, {SchemaId{1}});
 
-        auto lookup = [&](SchemaId schemaId) -> ObjectSchema* {
+        auto lookup = [&schemas](SchemaId schemaId) {
             const auto index = static_cast<std::size_t>(schemaId);
             return index < schemas.size() ? &schemas[index] : nullptr;
         };
 
         schemas[1].finalize(lookup);
+        schemas[2].finalize(lookup);
 
-        REQUIRE(schemas[1].canHaveField(missing));
-        REQUIRE(schemas[2].canHaveField(missing));
+        REQUIRE(schemas[1].canHaveField(link));
+        REQUIRE(schemas[1].canHaveField(back));
+        REQUIRE(schemas[1].canHaveField(c));
+        REQUIRE_FALSE(schemas[1].canHaveField(missing));
+
+        REQUIRE(schemas[2].canHaveField(link));
+        REQUIRE(schemas[2].canHaveField(back));
+        REQUIRE(schemas[2].canHaveField(c));
+        REQUIRE_FALSE(schemas[2].canHaveField(missing));
     }
 
     SECTION("array schemas finalize element fields") {
@@ -178,7 +195,7 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
         ArraySchema arraySchema;
         arraySchema.addElementSchemas({SchemaId{1}, SchemaId{2}});
 
-        auto lookup = [&](SchemaId schemaId) -> Schema* {
+        auto lookup = [&objectA, &objectB](SchemaId schemaId) -> Schema* {
             switch (schemaId) {
             case SchemaId{1}:
                 return &objectA;

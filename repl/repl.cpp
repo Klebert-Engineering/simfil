@@ -242,8 +242,15 @@ int main(int argc, char *argv[])
 #endif
     };
 
-    auto load_schema = [](const std::string_view& filename) {
+    auto load_schema = [](std::string_view) {
         std::cerr << "Schema support is not implemented!\n";
+    };
+
+    auto take_option_value = [&argv](std::string_view arg) -> std::string_view {
+        arg.remove_prefix(2);
+        if (!arg.empty() || argv[1] == nullptr)
+            return arg;
+        return *++argv;
     };
 
     auto tail_args = false;
@@ -258,10 +265,7 @@ int main(int argc, char *argv[])
                 show_help();
                 return 0;
             case 's':
-                arg.remove_prefix(2);
-                if (arg.empty()) {
-                    arg = *++argv;
-                }
+                arg = take_option_value(arg);
                 if (!arg.empty()) {
                     load_schema(arg);
                 } else {
@@ -270,10 +274,7 @@ int main(int argc, char *argv[])
                 }
                 break;
             case 'D':
-                arg.remove_prefix(2);
-                if (arg.empty()) {
-                    arg = *++argv;
-                }
+                arg = take_option_value(arg);
                 if (auto pos = arg.find('='); (pos != std::string::npos) && (pos > 0)) {
                     constants.try_emplace(std::string(arg.substr(0, pos)), simfil::Value::make(std::string(arg.substr(pos + 1))));
                 } else {

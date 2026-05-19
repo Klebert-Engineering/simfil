@@ -7,10 +7,47 @@
 #include "simfil/expression-visitor.h"
 #include "simfil/sourcelocation.h"
 
+#include <array>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <vector>
 
 namespace simfil
 {
+
+namespace detail
+{
+
+inline auto childAtOrThrow(std::size_t index, std::vector<ExprPtr>& children) -> ExprPtr&
+{
+    return children.at(index);
+}
+
+inline auto childAtOrThrow(std::size_t index, const std::vector<ExprPtr>& children) -> const ExprPtr&
+{
+    return children.at(index);
+}
+
+template <class... Children>
+auto childAtOrThrow(std::size_t index, Children&... children) -> ExprPtr&
+{
+    std::array<ExprPtr*, sizeof...(Children)> childPtrs{&children...};
+    if (index >= childPtrs.size())
+        throw std::out_of_range("AST child index out of range");
+    return *childPtrs[index];
+}
+
+template <class... Children>
+auto childAtOrThrow(std::size_t index, const Children&... children) -> const ExprPtr&
+{
+    std::array<const ExprPtr*, sizeof...(Children)> childPtrs{&children...};
+    if (index >= childPtrs.size())
+        throw std::out_of_range("AST child index out of range");
+    return *childPtrs[index];
+}
+
+}
 
 /**
  * Returns the current node and every child of it recursively.
@@ -85,10 +122,15 @@ public:
     ConstExpr() = delete;
 
     template <class CType_>
-    requires (!std::derived_from<std::remove_cvref_t<CType_>, ConstExpr>)
+    requires (!std::is_base_of_v<ConstExpr, std::remove_cvref_t<CType_>>)
     explicit ConstExpr(CType_&& value)
         : value_(Value::make(std::forward<CType_>(value)))
     {}
+
+    ConstExpr(const ConstExpr&) = delete;
+    ConstExpr(ConstExpr&&) = delete;
+    auto operator=(const ConstExpr&) -> ConstExpr& = delete;
+    auto operator=(ConstExpr&&) -> ConstExpr& = delete;
 
     explicit ConstExpr(Value value);
 
@@ -114,6 +156,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     ExprPtr left_;
@@ -131,6 +174,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, sub_;
@@ -146,6 +190,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     std::vector<ExprPtr> args_;
@@ -161,6 +206,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     std::vector<ExprPtr> args_;
@@ -177,6 +223,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     std::string name_;
@@ -195,6 +242,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     auto left() -> Expr*;
@@ -220,6 +268,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     ExprPtr sub_;
@@ -254,7 +303,6 @@ public:
     auto accept(ExprVisitor& v) const -> void override
     {
         v.visit(*this);
-        sub_->accept(v);
     }
 
     auto numChildren() const -> std::size_t override
@@ -264,9 +312,12 @@ public:
 
     auto childAt(std::size_t index) -> ExprPtr& override
     {
-        if (index == 0)
-            return sub_;
-        return Expr::childAt(index);
+        return detail::childAtOrThrow(index, sub_);
+    }
+
+    auto childAt(std::size_t index) const -> const ExprPtr& override
+    {
+        return detail::childAtOrThrow(index, sub_);
     }
 
     auto toString() const -> std::string override
@@ -290,7 +341,8 @@ public:
     {}
 
     BinaryExpr(const Token& token, ExprPtr left, ExprPtr right)
-        : left_(std::move(left))
+        : Expr(token)
+        , left_(std::move(left))
         , right_(std::move(right))
     {}
 
@@ -323,14 +375,12 @@ public:
 
     auto childAt(std::size_t index) -> ExprPtr& override
     {
-        switch (index) {
-        case 0:
-            return left_;
-        case 1:
-            return right_;
-        default:
-            return Expr::childAt(index);
-        }
+        return detail::childAtOrThrow(index, left_, right_);
+    }
+
+    auto childAt(std::size_t index) const -> const ExprPtr& override
+    {
+        return detail::childAtOrThrow(index, left_, right_);
     }
 
     auto toString() const -> std::string override
@@ -368,14 +418,12 @@ public:
 
     auto childAt(std::size_t index) -> ExprPtr& override
     {
-        switch (index) {
-        case 0:
-            return left_;
-        case 1:
-            return right_;
-        default:
-            return Expr::childAt(index);
-        }
+        return detail::childAtOrThrow(index, left_, right_);
+    }
+
+    auto childAt(std::size_t index) const -> const ExprPtr& override
+    {
+        return detail::childAtOrThrow(index, left_, right_);
     }
 
     ExprPtr left_, right_;
@@ -478,6 +526,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     std::string ident_;
@@ -494,6 +543,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     std::string ident_;
@@ -510,6 +560,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
@@ -525,6 +576,7 @@ public:
     void accept(ExprVisitor& v) const override;
     auto numChildren() const -> std::size_t override;
     auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
     auto toString() const -> std::string override;
 
     ExprPtr left_, right_;
