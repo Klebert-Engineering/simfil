@@ -535,16 +535,19 @@ SchemaId ModelPool::objectSchemaId(ArrayIndex members) const
 
 auto ModelPool::setObjectSchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
 {
+    if (!impl_->columns_.objectMemberArrays_.valid(members))
+        return tl::unexpected<Error>(Error::RuntimeError, "Object schema index out of range.");
+
     if (Object::Storage::is_singleton_handle(members)) {
         auto singletonIndex = Object::Storage::singleton_payload(members);
-        if (singletonIndex >= impl_->columns_.objectSingletonSchemas_.size())
-            return tl::unexpected<Error>(Error::RuntimeError, "Object singleton schema index out of range.");
+        if (impl_->columns_.objectSingletonSchemas_.size() <= singletonIndex)
+            impl_->columns_.objectSingletonSchemas_.resize(singletonIndex + 1);
         impl_->columns_.objectSingletonSchemas_[singletonIndex] = schemaId;
         return {};
     }
-    if (members >= impl_->columns_.objectSchemas_.size())
-        return tl::unexpected<Error>(Error::RuntimeError, "Object schema index out of range.");
 
+    if (impl_->columns_.objectSchemas_.size() <= members)
+        impl_->columns_.objectSchemas_.resize(members + 1);
     impl_->columns_.objectSchemas_[members] = schemaId;
     return {};
 }
@@ -564,16 +567,19 @@ SchemaId ModelPool::arraySchemaId(ArrayIndex members) const
 
 auto ModelPool::setArraySchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
 {
+    if (!impl_->columns_.arrayMemberArrays_.valid(members))
+        return tl::unexpected<Error>(Error::RuntimeError, "Array schema index out of range.");
+
     if (Array::Storage::is_singleton_handle(members)) {
         auto singletonIndex = Array::Storage::singleton_payload(members);
-        if (singletonIndex >= impl_->columns_.arraySingletonSchemas_.size())
-            return tl::unexpected<Error>(Error::RuntimeError, "Array singleton schema index out of range.");
+        if (impl_->columns_.arraySingletonSchemas_.size() <= singletonIndex)
+            impl_->columns_.arraySingletonSchemas_.resize(singletonIndex + 1);
         impl_->columns_.arraySingletonSchemas_[singletonIndex] = schemaId;
         return {};
     }
-    if (members >= impl_->columns_.arraySchemas_.size())
-        return tl::unexpected<Error>(Error::RuntimeError, "Array schema index out of range.");
 
+    if (impl_->columns_.arraySchemas_.size() <= members)
+        impl_->columns_.arraySchemas_.resize(members + 1);
     impl_->columns_.arraySchemas_[members] = schemaId;
     return {};
 }
