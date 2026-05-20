@@ -391,6 +391,52 @@ TEST_CASE("WildcardFieldExpr non-recursive queries ignore partial root schemas",
     REQUIRE((*result)[0].toString() == "123");
 }
 
+TEST_CASE("WildcardFieldExpr schema plan cache follows schema mutations", "[model.schema]")
+{
+    auto jsonModel = R"json(
+    {
+      "target": 123
+    }
+    )json";
+    auto model = json::parse(jsonModel).value();
+    auto registry = SchemaRegistry{};
+    auto strings = model->strings();
+    auto targetId = strings->get("target");
+    auto otherId = strings->emplace("other").value();
+
+    const auto rootSchemaId = SchemaId{1};
+    auto rootSchema = std::make_unique<ObjectSchema>();
+    auto* rootSchemaPtr = rootSchema.get();
+    rootSchema->addField(otherId);
+    registry.schemas[rootSchemaId] = std::move(rootSchema);
+    registry.finalize();
+
+    auto root = model->root(0);
+    REQUIRE(root);
+    auto rootObj = model->resolve<Object>(*root.value());
+    REQUIRE(rootObj);
+    REQUIRE(rootObj->setSchema(rootSchemaId));
+
+    Environment env(strings);
+    env.querySchemaCallback = registry.asFunction();
+
+    auto ast = compile(env, "**.target", false, false);
+    REQUIRE(ast);
+
+    auto beforeSchemaUpdate = eval(env, **ast, **root, nullptr);
+    REQUIRE(beforeSchemaUpdate);
+    REQUIRE(beforeSchemaUpdate->size() == 1);
+    REQUIRE((*beforeSchemaUpdate)[0].isa(ValueType::Null));
+
+    rootSchemaPtr->addField(targetId);
+    registry.finalize();
+
+    auto afterSchemaUpdate = eval(env, **ast, **root, nullptr);
+    REQUIRE(afterSchemaUpdate);
+    REQUIRE(afterSchemaUpdate->size() == 1);
+    REQUIRE((*afterSchemaUpdate)[0].toString() == "123");
+}
+
 TEST_CASE("Schema query performance", "[perf.schema]") {
     if (RUNNING_ON_VALGRIND) { // NOLINT
         SKIP("Skipping benchmarks when running under valgrind");

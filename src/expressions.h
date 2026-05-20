@@ -8,6 +8,8 @@
 #include "simfil/sourcelocation.h"
 
 #include <array>
+#include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -601,6 +603,34 @@ public:
     std::string name_;
     mutable StringId nameId_ = {};
     const bool recurse_ = {};
+
+private:
+    struct SchemaPlan {
+        enum class Kind {
+            Unknown,
+            Object,
+            Array,
+        };
+
+        Kind kind = Kind::Unknown;
+        bool canHaveField = true;
+        bool directField = true;
+        std::vector<StringId> objectChildFields;
+    };
+
+    struct CachedSchemaPlan {
+        SchemaId schemaId = NoSchemaId;
+        const Schema* schema = nullptr;
+        std::uint64_t schemaRevision = 0;
+        SchemaPlan plan;
+    };
+
+    auto schemaPlan(const Context& ctx, SchemaId schemaId, const Schema& schema) const -> const SchemaPlan*;
+    auto buildSchemaPlan(const Context& ctx, const Schema& schema) const -> SchemaPlan;
+    auto buildObjectSchemaPlan(const Context& ctx, const ObjectSchema& schema) const -> SchemaPlan;
+    auto childSchemaMayHaveField(const Context& ctx, SchemaId schemaId) const -> bool;
+
+    mutable std::vector<std::unique_ptr<CachedSchemaPlan>> schemaPlans_;
 };
 
 }

@@ -78,6 +78,22 @@ public:
      */
     virtual auto nestedFields() const & -> std::span<const StringId> = 0;
 
+    /**
+     * Return true once `canHaveField` is backed by finalized field caches.
+     */
+    virtual auto finalized() const -> bool
+    {
+        return true;
+    }
+
+    /**
+     * Monotonic counter for cache invalidation after schema mutations.
+     */
+    virtual auto revision() const -> std::uint64_t
+    {
+        return 0;
+    }
+
 protected:
     using SchemaIdStack = sfl::small_vector<SchemaId, 8>;
 
@@ -195,6 +211,7 @@ public:
         summary.schemas.insert(summary.schemas.end(), schemas.begin(), schemas.end());
         fields_.push_back(std::move(summary));
         state_ = State::Dirty;
+        ++revision_;
     }
 
     /**
@@ -220,6 +237,16 @@ public:
         return {flatFields_.cbegin(), flatFields_.cend()};
     }
 
+    auto finalized() const -> bool override
+    {
+        return state_ == State::Clean;
+    }
+
+    auto revision() const -> std::uint64_t override
+    {
+        return revision_;
+    }
+
 private:
     auto collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
                              SchemaIdStack& visited,
@@ -235,6 +262,7 @@ private:
     sfl::small_vector<FieldSummary, 4> fields_;
 
     std::vector<StringId> flatFields_; // Ordered!
+    std::uint64_t revision_ = 0;
     State state_ = State::Dirty;
 };
 
@@ -264,6 +292,7 @@ public:
     {
         schemas_.insert(schemas_.end(), schemas.begin(), schemas.end());
         state_ = State::Dirty;
+        ++revision_;
     }
 
     /**
@@ -284,6 +313,16 @@ public:
         return {flatFields_.cbegin(), flatFields_.cend()};
     }
 
+    auto finalized() const -> bool override
+    {
+        return state_ == State::Clean;
+    }
+
+    auto revision() const -> std::uint64_t override
+    {
+        return revision_;
+    }
+
     auto elementSchemas() const & -> std::span<const SchemaId>
     {
         return {schemas_.begin(), schemas_.end()};
@@ -300,6 +339,7 @@ private:
 
     sfl::small_vector<SchemaId, 1> schemas_;
     std::vector<StringId> flatFields_; // Ordered!
+    std::uint64_t revision_ = 0;
     State state_ = State::Dirty;
 };
 
