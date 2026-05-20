@@ -9,6 +9,8 @@
 
 #include <memory>
 #include <map>
+#include <string>
+#include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 
@@ -584,6 +586,118 @@ TEST_CASE("Schema query performance", "[perf.schema]") {
 
         auto count = res->front().template as<ValueType::Int>();
         REQUIRE(count == 0);
+        return count;
+    };
+}
+
+TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
+    if (RUNNING_ON_VALGRIND) { // NOLINT
+        SKIP("Skipping benchmarks when running under valgrind");
+    }
+
+    constexpr auto objectCount = std::size_t{2'000};
+    constexpr auto branchCount = std::size_t{32};
+
+    const auto targetBranchSchemaId = SchemaId{1};
+    const auto targetPayloadSchemaId = SchemaId{2};
+    const auto noiseBranchSchemaId = SchemaId{3};
+    const auto rootObjectSchemaId = SchemaId{4};
+    const auto arraySchemaId = SchemaId{5};
+
+    auto strings = std::make_shared<StringPool>();
+    auto model = std::make_shared<ModelPool>(strings);
+    auto registry = SchemaRegistry{};
+
+    const auto targetId = strings->emplace("target").value();
+    const auto payloadId = strings->emplace("payload").value();
+    const auto noiseId = strings->emplace("noise").value();
+
+    std::vector<std::string> branchNames;
+    std::vector<StringId> branchIds;
+    branchNames.reserve(branchCount);
+    branchIds.reserve(branchCount);
+    for (auto branchIndex = std::size_t{0}; branchIndex < branchCount; ++branchIndex) {
+        branchNames.push_back("branch" + std::to_string(branchIndex));
+        branchIds.push_back(strings->emplace(branchNames.back()).value());
+    }
+
+    auto targetBranchSchema = std::make_unique<ObjectSchema>();
+    targetBranchSchema->addField(payloadId, { targetPayloadSchemaId });
+    registry.schemas[targetBranchSchemaId] = std::move(targetBranchSchema);
+
+    auto targetPayloadSchema = std::make_unique<ObjectSchema>();
+    targetPayloadSchema->addField(targetId);
+    registry.schemas[targetPayloadSchemaId] = std::move(targetPayloadSchema);
+
+    auto noiseBranchSchema = std::make_unique<ObjectSchema>();
+    noiseBranchSchema->addField(noiseId);
+    registry.schemas[noiseBranchSchemaId] = std::move(noiseBranchSchema);
+
+    auto rootObjectSchema = std::make_unique<ObjectSchema>();
+    rootObjectSchema->addField(branchIds.front(), { targetBranchSchemaId });
+    for (auto branchIndex = std::size_t{1}; branchIndex < branchCount; ++branchIndex)
+        rootObjectSchema->addField(branchIds[branchIndex], { noiseBranchSchemaId });
+    registry.schemas[rootObjectSchemaId] = std::move(rootObjectSchema);
+
+    auto arraySchema = std::make_unique<ArraySchema>();
+    arraySchema->addElementSchemas({ rootObjectSchemaId });
+    registry.schemas[arraySchemaId] = std::move(arraySchema);
+    registry.finalize();
+
+    auto root = model->newArray(objectCount);
+    for (auto objectIndex = std::size_t{0}; objectIndex < objectCount; ++objectIndex) {
+        auto obj = model->newObject(branchCount, true);
+
+        auto targetBranch = model->newObject(1, true);
+        auto targetPayload = model->newObject(1, true);
+        targetPayload->addField("target", int64_t(1));
+        REQUIRE(targetPayload->setSchema(targetPayloadSchemaId));
+        targetBranch->addField("payload", targetPayload);
+        REQUIRE(targetBranch->setSchema(targetBranchSchemaId));
+        obj->addField(branchNames.front(), targetBranch);
+
+        for (auto branchIndex = std::size_t{1}; branchIndex < branchCount; ++branchIndex) {
+            auto noiseBranch = model->newObject(1, true);
+            noiseBranch->addField("noise", static_cast<int64_t>(objectIndex + branchIndex));
+            REQUIRE(noiseBranch->setSchema(noiseBranchSchemaId));
+            obj->addField(branchNames[branchIndex], noiseBranch);
+        }
+
+        REQUIRE(obj->setSchema(rootObjectSchemaId));
+        root->append(obj);
+    }
+
+    REQUIRE(root->setSchema(arraySchemaId));
+    model->addRoot(root);
+
+    Environment env(strings);
+    env.querySchemaCallback = registry.asFunction();
+
+    auto modelRoot = model->root(0);
+    REQUIRE(modelRoot);
+
+    auto targetAst = compile(env, "count(**.target == 1)", false, false);
+    REQUIRE(targetAst);
+
+    registry.enabled = false;
+    BENCHMARK("Query sparse wide field 'target' recursive without schema") {
+        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    registry.enabled = true;
+    BENCHMARK("Query sparse wide field 'target' recursive with schema") {
+        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
         return count;
     };
 }
