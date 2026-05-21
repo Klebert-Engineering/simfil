@@ -131,6 +131,9 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
     const auto link = strings->emplace("link").value();
     const auto back = strings->emplace("back").value();
     const auto missing = strings->emplace("missing").value();
+    const auto enumA = strings->emplace("ENUM_A").value();
+    const auto enumB = strings->emplace("ENUM_B").value();
+    const auto missingEnum = strings->emplace("MISSING_ENUM").value();
 
     SECTION("dirty schemas are conservative") {
         ObjectSchema schema;
@@ -213,6 +216,56 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
         REQUIRE(arraySchema.canHaveField(a));
         REQUIRE(arraySchema.canHaveField(b));
         REQUIRE_FALSE(arraySchema.canHaveField(c));
+    }
+
+    SECTION("value schemas finalize enum symbols") {
+        ValueSchema schema;
+        schema.addEnumSymbol(enumB);
+        schema.addEnumSymbol(enumA);
+        schema.addEnumSymbol(enumA);
+
+        // Dirty value schemas are conservative until finalized.
+        REQUIRE(schema.canHaveEnumSymbol(missingEnum));
+
+        schema.finalize([](SchemaId) { return nullptr; });
+        REQUIRE(schema.canHaveEnumSymbol(enumA));
+        REQUIRE(schema.canHaveEnumSymbol(enumB));
+        REQUIRE_FALSE(schema.canHaveEnumSymbol(missingEnum));
+        REQUIRE(schema.nestedEnumSymbols().size() == 2);
+    }
+
+    SECTION("object and array schemas collect reachable enum symbols") {
+        ObjectSchema objectSchema;
+        objectSchema.addField(a, {SchemaId{1}});
+
+        ArraySchema arraySchema;
+        arraySchema.addElementSchemas({SchemaId{2}});
+
+        ValueSchema enumSchema;
+        enumSchema.addEnumSymbol(enumA);
+        enumSchema.addEnumSymbol(enumB);
+
+        auto lookup = [&](SchemaId schemaId) -> Schema* {
+            switch (schemaId) {
+            case SchemaId{1}:
+                return &enumSchema;
+            case SchemaId{2}:
+                return &objectSchema;
+            default:
+                return nullptr;
+            }
+        };
+
+        objectSchema.finalize(lookup);
+        arraySchema.finalize(lookup);
+
+        REQUIRE(objectSchema.canHaveEnumSymbol(enumA));
+        REQUIRE(objectSchema.canHaveEnumSymbol(enumB));
+        REQUIRE_FALSE(objectSchema.canHaveEnumSymbol(missingEnum));
+
+        REQUIRE(arraySchema.canHaveEnumSymbol(enumA));
+        REQUIRE(arraySchema.canHaveEnumSymbol(enumB));
+        REQUIRE_FALSE(arraySchema.canHaveEnumSymbol(missingEnum));
     }
 }
 
