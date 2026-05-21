@@ -2,6 +2,7 @@
 #pragma once
 
 #include "simfil/model/string-pool.h"
+#include "simfil/model/schema.h"
 #include "simfil/byte-array.h"
 #include "tl/expected.hpp"
 #if defined(SIMFIL_WITH_MODEL_JSON)
@@ -274,7 +275,9 @@ public:
         size_t stringDataBytes = 0;
         size_t stringRangeBytes = 0;
         size_t objectMemberBytes = 0;
+        size_t objectSchemaBytes = 0;
         size_t arrayMemberBytes = 0;
+        size_t arraySchemaBytes = 0;
 
         [[nodiscard]] size_t totalBytes() const
         {
@@ -284,7 +287,9 @@ public:
                 + stringDataBytes
                 + stringRangeBytes
                 + objectMemberBytes
-                + arrayMemberBytes;
+                + objectSchemaBytes
+                + arrayMemberBytes
+                + arraySchemaBytes;
         }
     };
 
@@ -299,12 +304,18 @@ protected:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
+    [[nodiscard]] SchemaId objectSchemaId(ArrayIndex members) const;
+    auto setObjectSchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] SchemaId arraySchemaId(ArrayIndex members) const;
+    auto setArraySchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>;
+
     /**
      * Protected object/array member storage access,
      * so derived ModelPools can create Object/Array-derived nodes.
      */
     Object::Storage& objectMemberStorage();
     [[nodiscard]] Object::Storage const& objectMemberStorage() const;
+
     Array::Storage& arrayMemberStorage();
     [[nodiscard]] Array::Storage const& arrayMemberStorage() const;
 };

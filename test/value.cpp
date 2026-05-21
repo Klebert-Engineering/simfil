@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <cstdint>
+#include <iterator>
+#include <sstream>
 
 #include "simfil/value.h"
 #include "simfil/model/model.h"
+#include "simfil/model/schema.h"
 #include "simfil/token.h"
 #include "simfil/transient.h"
 

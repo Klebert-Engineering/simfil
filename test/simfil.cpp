@@ -57,9 +57,11 @@ TEST_CASE("Path", "[ast.path]") {
 TEST_CASE("Wildcard", "[ast.wildcard]") {
     REQUIRE_AST("*", "*");
     REQUIRE_AST("**", "**");
-    REQUIRE_AST("**.a", "(. ** a)");
-    REQUIRE_AST("a.**.b", "(. (. a **) b)");
-    REQUIRE_AST("a.**.b.**.c", "(. (. (. (. a **) b) **) c)");
+    REQUIRE_AST("*.a", "*.a");
+    REQUIRE_AST("**.a", "**.a"); /* Optimization rewrites this from (. ** a) to **.a */
+    REQUIRE_AST("**.a.b.c", "(. (. **.a b) c)");
+    REQUIRE_AST("a.**.b", "(. a **.b)");
+    REQUIRE_AST("a.**.b.**.c", "(. (. a **.b) **.c)");
 
     REQUIRE_AST("* == *", "(== * *)");     /* Do not optimize away */
     REQUIRE_AST("** == **", "(== ** **)"); /* Do not optimize away */
@@ -425,6 +427,7 @@ TEST_CASE("Path Wildcard", "[yaml.path-wildcard]") {
     REQUIRE_RESULT("sub.*", R"(sub a|sub b|{"a":"sub sub a","b":"sub sub b"})");
     REQUIRE_RESULT("sub.**", R"({"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}|sub a|sub b|)"
                              R"({"a":"sub sub a","b":"sub sub b"}|sub sub a|sub sub b)");
+    REQUIRE_RESULT("**.a", "1|sub a|sub sub a");
     REQUIRE_RESULT("(sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'})._", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* . filters null */
     REQUIRE_RESULT("sub.*.{typeof _ != 'model'} + sub.*.{typeof _ != 'model'}", "sub asub a|sub asub b|sub bsub a|sub bsub b"); /* {_} filters null */
     REQUIRE_RESULT("count(*)", "12");
@@ -754,10 +757,77 @@ TEST_CASE("Visit AST", "[visit.ast]")
 
             visitedFieldName = expr.name_;
         }
+
+        auto visit(const WildcardFieldExpr& expr) -> void override
+        {
+            ExprVisitor::visit(expr);
+
+            visitedFieldName = expr.name_;
+        }
     };
 
     Visitor visitor;
     (*ast)->expr().accept(visitor);
 
     REQUIRE(visitor.visitedFieldName == "field");
+}
+
+TEST_CASE("Visitors traverse unary children once", "[visit.ast]")
+{
+    UnaryExpr<OperatorNot> expr(std::make_unique<FieldExpr>("field"));
+
+    struct Visitor : ExprVisitor
+    {
+        int fieldVisits = 0;
+
+        using ExprVisitor::visit;
+
+        auto visit(const FieldExpr& expr) -> void override
+        {
+            ExprVisitor::visit(expr);
+            ++fieldVisits;
+        }
+    };
+
+    Visitor visitor;
+    expr.accept(visitor);
+
+    REQUIRE(visitor.fieldVisits == 1);
+}
+
+TEST_CASE("Parsed token locations are preserved", "[ast.source-location]")
+{
+    Environment env(Environment::WithNewStringCache);
+
+    auto fieldAst = compile(env, "field", false, false);
+    REQUIRE(fieldAst);
+
+    const auto* fieldExpr = dynamic_cast<const FieldExpr*>(&(*fieldAst)->expr());
+    REQUIRE(fieldExpr);
+    REQUIRE(fieldExpr->sourceLocation().offset == 0);
+    REQUIRE(fieldExpr->sourceLocation().size == 5);
+
+    auto binaryAst = compile(env, "field + 1", false, false);
+    REQUIRE(binaryAst);
+
+    const auto* binaryExpr = dynamic_cast<const BinaryExpr<OperatorAdd>*>(&(*binaryAst)->expr());
+    REQUIRE(binaryExpr);
+    REQUIRE(binaryExpr->sourceLocation().offset == 6);
+    REQUIRE(binaryExpr->sourceLocation().size == 1);
+}
+
+TEST_CASE("AST expr ids are reenumerated after rewrites", "[ast.expr-id]")
+{
+    auto ast = Compile("**.field = 123", false);
+
+    std::vector<Expr::ExprId> ids;
+    const auto collectIds = [&](const auto& self, const Expr& expr) -> void {
+        ids.emplace_back(expr.id());
+        for (auto i = 0u; i < expr.numChildren(); ++i)
+            self(self, *expr.childAt(i));
+    };
+
+    collectIds(collectIds, ast->expr());
+
+    REQUIRE(ids == std::vector<Expr::ExprId>{0, 1, 2});
 }
