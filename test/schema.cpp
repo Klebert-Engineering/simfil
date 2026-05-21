@@ -679,6 +679,9 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     auto targetAst = compile(env, "count(**.target == 1)", false, false);
     REQUIRE(targetAst);
 
+    auto exactPathAst = compile(env, "count(*." + branchNames.front() + ".payload.target == 1)", false, false);
+    REQUIRE(exactPathAst);
+
     registry.enabled = false;
     BENCHMARK("Query sparse wide field 'target' recursive without schema") {
         auto res = eval(env, **targetAst, **modelRoot, nullptr);
@@ -705,6 +708,18 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     env.enableWildcardFieldPlans = true;
     BENCHMARK("Query sparse wide field 'target' recursive with schema field plans") {
         auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    registry.enabled = false;
+    env.enableWildcardFieldPlans = false;
+    BENCHMARK("Query sparse wide field 'target' via exact path without schema") {
+        auto res = eval(env, **exactPathAst, **modelRoot, nullptr);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
