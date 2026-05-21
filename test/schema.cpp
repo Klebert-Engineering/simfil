@@ -691,7 +691,19 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     };
 
     registry.enabled = true;
-    BENCHMARK("Query sparse wide field 'target' recursive with schema") {
+    env.enableWildcardFieldPlans = false;
+    BENCHMARK("Query sparse wide field 'target' recursive with basic schema pruning") {
+        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    env.enableWildcardFieldPlans = true;
+    BENCHMARK("Query sparse wide field 'target' recursive with schema field plans") {
         auto res = eval(env, **targetAst, **modelRoot, nullptr);
         REQUIRE(res);
         REQUIRE(res->size() == 1);

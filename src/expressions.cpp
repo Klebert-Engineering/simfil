@@ -1281,10 +1281,17 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
             if (!schema)
                 return {};
 
-            if (const auto* plan = expr.schemaPlan(ctx, schemaId, *schema))
-                return {plan->canHaveField, plan};
+            if (ctx.env->enableWildcardFieldPlans) {
+                if (const auto* plan = expr.schemaPlan(ctx, schemaId, *schema))
+                    return {plan->canHaveField, plan};
+            }
 
-            return {schema->canHaveField(field), nullptr};
+            // This is the original schema-pruning path: the current node can be
+            // rejected, but child iteration is still generic when it may match.
+            if (schema->canHaveField(field))
+                return {};
+
+            return {false, nullptr};
         }
 
         [[nodiscard]] static auto matchingPlan(const SchemaPlan* plan, ValueType valType) noexcept -> const SchemaPlan*

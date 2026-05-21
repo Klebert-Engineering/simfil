@@ -139,6 +139,15 @@ public:
     std::map<std::string, Value, CaseInsensitiveCompare> constants;
 
     QuerySchemaCallback querySchemaCallback;
+
+    /**
+     * Enable cached schema-guided wildcard field traversal plans.
+     *
+     * Disabling this keeps the older behavior where wildcard field lookups only
+     * ask each node schema whether the requested field can appear below it.
+     */
+    bool enableWildcardFieldPlans = true;
+
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;
 };
