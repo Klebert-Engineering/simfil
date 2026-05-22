@@ -43,6 +43,7 @@ public:
     enum class Kind {
         Object,
         Array,
+        Value,
     };
 
     /** Finalization state */
@@ -66,6 +67,15 @@ public:
     virtual auto canHaveField(StringId fieldId) const -> bool = 0;
 
     /**
+     * Returns true if this schema or any of the schemas it refers to
+     * can possibly contain the given enum-like string symbol.
+     */
+    virtual auto canHaveEnumSymbol(StringId symbolId) const -> bool
+    {
+        return false;
+    }
+
+    /**
      * Finalize this schema and all schemas it refers to.
      */
     virtual auto finalize(const std::function<Schema*(SchemaId)>& queryFn) -> State
@@ -77,6 +87,25 @@ public:
      * @return All nested field names.
      */
     virtual auto nestedFields() const & -> std::span<const StringId> = 0;
+
+    /**
+     * Return field names directly available on this schema node.
+     *
+     * Completion uses this to suggest fields valid at the current node without
+     * also suggesting fields that only occur deeper in the schema graph.
+     */
+    virtual auto directFields() const & -> std::span<const StringId>
+    {
+        return nestedFields();
+    }
+
+    /**
+     * @return All nested enum-like string symbols.
+     */
+    virtual auto nestedEnumSymbols() const & -> std::span<const StringId>
+    {
+        return {};
+    }
 
     /**
      * Return true once `canHaveField` is backed by finalized field caches.
@@ -107,13 +136,26 @@ protected:
                                      std::vector<StringId>& fields) const -> void = 0;
 
     /**
-     * Append fields reachable through a schema id, using a finalized child
-     * cache when possible and falling back to raw graph traversal for cycles.
+     * Append all enum-like string symbols reachable from this schema without
+     * relying on cached finalization state.
      */
-    static auto appendSchemaFields(SchemaId schemaId,
+    virtual auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& queryFn,
+                                          SchemaIdStack& visited,
+                                          std::vector<StringId>& symbols) const -> void
+    {
+    }
+
+    /**
+     * Append reachable values through a schema id, using finalized child
+     * caches when possible and falling back to raw graph traversal for cycles.
+     */
+    template <class CachedValuesFn, class CollectValuesFn>
+    static auto appendSchemaValues(SchemaId schemaId,
                                    const std::function<Schema*(SchemaId)>& queryFn,
                                    SchemaIdStack& visited,
-                                   std::vector<StringId>& fields) -> void
+                                   std::vector<StringId>& values,
+                                   CachedValuesFn&& cachedValues,
+                                   CollectValuesFn&& collectValues) -> void
     {
         if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
             return;
@@ -125,35 +167,86 @@ protected:
         visited.push_back(schemaId);
 
         if (schema->finalize(queryFn) == State::Clean) {
-            auto childFields = schema->nestedFields();
-            fields.insert(fields.end(), childFields.begin(), childFields.end());
+            auto childValues = std::invoke(cachedValues, *schema);
+            values.insert(values.end(), childValues.begin(), childValues.end());
             return;
         }
 
-        schema->collectNestedFields(queryFn, visited, fields);
+        std::invoke(collectValues, *schema, queryFn, visited, values);
     }
 
     /**
-     * Shared finalization implementation for concrete schema classes.
+     * Append fields reachable through a schema id.
      */
-    template <class CollectFn>
-    static auto finalizeFields(State& state,
-                               std::vector<StringId>& flatFields,
-                               const std::function<Schema*(SchemaId)>& queryFn,
-                               CollectFn&& collect) -> State
+    static auto appendSchemaFields(SchemaId schemaId,
+                                   const std::function<Schema*(SchemaId)>& queryFn,
+                                   SchemaIdStack& visited,
+                                   std::vector<StringId>& fields) -> void
+    {
+        appendSchemaValues(
+            schemaId,
+            queryFn,
+            visited,
+            fields,
+            [](const Schema& schema) { return schema.nestedFields(); },
+            [](const Schema& schema, const auto& query, auto& visitedSchemas, auto& values) {
+                schema.collectNestedFields(query, visitedSchemas, values);
+            });
+    }
+
+    /**
+     * Append enum-like string symbols reachable through a schema id.
+     */
+    static auto appendSchemaEnumSymbols(SchemaId schemaId,
+                                        const std::function<Schema*(SchemaId)>& queryFn,
+                                        SchemaIdStack& visited,
+                                        std::vector<StringId>& symbols) -> void
+    {
+        appendSchemaValues(
+            schemaId,
+            queryFn,
+            visited,
+            symbols,
+            [](const Schema& schema) { return schema.nestedEnumSymbols(); },
+            [](const Schema& schema, const auto& query, auto& visitedSchemas, auto& values) {
+                schema.collectNestedEnumSymbols(query, visitedSchemas, values);
+            });
+    }
+
+    /**
+     * Sort ids and remove duplicates.
+     */
+    static auto sortUnique(std::vector<StringId>& values) -> void
+    {
+        std::ranges::sort(values);
+        auto duplicates = std::ranges::unique(values);
+        values.erase(duplicates.begin(), duplicates.end());
+    }
+
+    /**
+     * Shared finalization implementation for schemas that cache descendant
+     * fields and enum-like string symbols.
+     */
+    static auto finalizeReachableMetadata(State& state,
+                                          std::vector<StringId>& flatFields,
+                                          std::vector<StringId>& flatEnumSymbols,
+                                          const std::function<Schema*(SchemaId)>& queryFn,
+                                          const Schema& schema) -> State
     {
         if (state == State::Clean || state == State::Finalizing)
             return state;
 
         state = State::Finalizing;
         flatFields.clear();
+        flatEnumSymbols.clear();
 
-        SchemaIdStack visited;
-        collect(queryFn, visited, flatFields);
+        SchemaIdStack visitedFields;
+        schema.collectNestedFields(queryFn, visitedFields, flatFields);
+        sortUnique(flatFields);
 
-        std::ranges::sort(flatFields);
-        auto duplicates = std::ranges::unique(flatFields);
-        flatFields.erase(duplicates.begin(), duplicates.end());
+        SchemaIdStack visitedEnumSymbols;
+        schema.collectNestedEnumSymbols(queryFn, visitedEnumSymbols, flatEnumSymbols);
+        sortUnique(flatEnumSymbols);
 
         state = State::Clean;
         return State::Clean;
@@ -201,6 +294,11 @@ public:
         return containsField(state_, flatFields_, field);
     }
 
+    auto canHaveEnumSymbol(StringId symbol) const -> bool override
+    {
+        return containsField(state_, flatEnumSymbols_, symbol);
+    }
+
     /**
      * Add a direct field and optional child schemas reachable through it.
      */
@@ -210,6 +308,7 @@ public:
         summary.field = field;
         summary.schemas.insert(summary.schemas.end(), schemas.begin(), schemas.end());
         fields_.push_back(std::move(summary));
+        directFields_.push_back(field);
         state_ = State::Dirty;
         ++revision_;
     }
@@ -220,11 +319,7 @@ public:
      */
     auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override
     {
-        return finalizeFields(state_, flatFields_, lookup, [this](const auto& queryFn,
-                                                                  auto& visited,
-                                                                  auto& fields) {
-            collectNestedFields(queryFn, visited, fields);
-        });
+        return finalizeReachableMetadata(state_, flatFields_, flatEnumSymbols_, lookup, *this);
     }
 
     auto fields() const & -> std::span<const FieldSummary>
@@ -235,6 +330,16 @@ public:
     auto nestedFields() const & -> std::span<const StringId> override
     {
         return {flatFields_.cbegin(), flatFields_.cend()};
+    }
+
+    auto directFields() const & -> std::span<const StringId> override
+    {
+        return {directFields_.cbegin(), directFields_.cend()};
+    }
+
+    auto nestedEnumSymbols() const & -> std::span<const StringId> override
+    {
+        return {flatEnumSymbols_.cbegin(), flatEnumSymbols_.cend()};
     }
 
     auto finalized() const -> bool override
@@ -259,9 +364,105 @@ private:
         }
     }
 
+    auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& lookup,
+                                  SchemaIdStack& visited,
+                                  std::vector<StringId>& symbols) const -> void override
+    {
+        for (const auto& field : fields_) {
+            for (const auto& fieldSchemaId : field.schemas)
+                appendSchemaEnumSymbols(fieldSchemaId, lookup, visited, symbols);
+        }
+    }
+
     sfl::small_vector<FieldSummary, 4> fields_;
 
+    std::vector<StringId> directFields_;
     std::vector<StringId> flatFields_; // Ordered!
+    std::vector<StringId> flatEnumSymbols_; // Ordered!
+    std::uint64_t revision_ = 0;
+    State state_ = State::Dirty;
+};
+
+/**
+ * Schema for scalar value nodes.
+ *
+ * Stores optional enum-like string symbols for schema-aware completion and
+ * parsing. Value schemas never contribute nested fields.
+ */
+class ValueSchema : public Schema
+{
+public:
+    auto kind() const -> Kind override
+    {
+        return Kind::Value;
+    }
+
+    auto canHaveField(StringId) const -> bool override
+    {
+        return false;
+    }
+
+    auto canHaveEnumSymbol(StringId symbol) const -> bool override
+    {
+        return containsField(state_, enumSymbols_, symbol);
+    }
+
+    /**
+     * Add an enum-like string symbol accepted by this value schema.
+     */
+    auto addEnumSymbol(StringId symbol) -> void
+    {
+        enumSymbols_.push_back(symbol);
+        state_ = State::Dirty;
+        ++revision_;
+    }
+
+    auto finalize(const std::function<Schema*(SchemaId)>&) -> State override
+    {
+        if (state_ == State::Clean || state_ == State::Finalizing)
+            return state_;
+
+        state_ = State::Finalizing;
+        sortUnique(enumSymbols_);
+        state_ = State::Clean;
+        return State::Clean;
+    }
+
+    auto nestedFields() const & -> std::span<const StringId> override
+    {
+        return {};
+    }
+
+    auto nestedEnumSymbols() const & -> std::span<const StringId> override
+    {
+        return {enumSymbols_.cbegin(), enumSymbols_.cend()};
+    }
+
+    auto finalized() const -> bool override
+    {
+        return state_ == State::Clean;
+    }
+
+    auto revision() const -> std::uint64_t override
+    {
+        return revision_;
+    }
+
+private:
+    auto collectNestedFields(const std::function<Schema*(SchemaId)>&,
+                             SchemaIdStack&,
+                             std::vector<StringId>&) const -> void override
+    {
+    }
+
+    auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>&,
+                                  SchemaIdStack&,
+                                  std::vector<StringId>& symbols) const -> void override
+    {
+        symbols.insert(symbols.end(), enumSymbols_.begin(), enumSymbols_.end());
+    }
+
+    std::vector<StringId> enumSymbols_; // Ordered after finalize().
     std::uint64_t revision_ = 0;
     State state_ = State::Dirty;
 };
@@ -285,6 +486,11 @@ public:
         return containsField(state_, flatFields_, field);
     }
 
+    auto canHaveEnumSymbol(StringId symbol) const -> bool override
+    {
+        return containsField(state_, flatEnumSymbols_, symbol);
+    }
+
     /**
      * Add possible schemas for elements contained in the array.
      */
@@ -301,16 +507,17 @@ public:
      */
     auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override
     {
-        return finalizeFields(state_, flatFields_, lookup, [this](const auto& queryFn,
-                                                                  auto& visited,
-                                                                  auto& fields) {
-            collectNestedFields(queryFn, visited, fields);
-        });
+        return finalizeReachableMetadata(state_, flatFields_, flatEnumSymbols_, lookup, *this);
     }
 
     auto nestedFields() const & -> std::span<const StringId> override
     {
         return {flatFields_.cbegin(), flatFields_.cend()};
+    }
+
+    auto nestedEnumSymbols() const & -> std::span<const StringId> override
+    {
+        return {flatEnumSymbols_.cbegin(), flatEnumSymbols_.cend()};
     }
 
     auto finalized() const -> bool override
@@ -337,8 +544,17 @@ private:
             appendSchemaFields(schemaId, lookup, visited, fields);
     }
 
+    auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& lookup,
+                                  SchemaIdStack& visited,
+                                  std::vector<StringId>& symbols) const -> void override
+    {
+        for (const auto& schemaId : schemas_)
+            appendSchemaEnumSymbols(schemaId, lookup, visited, symbols);
+    }
+
     sfl::small_vector<SchemaId, 1> schemas_;
     std::vector<StringId> flatFields_; // Ordered!
+    std::vector<StringId> flatEnumSymbols_; // Ordered!
     std::uint64_t revision_ = 0;
     State state_ = State::Dirty;
 };
