@@ -1,10 +1,12 @@
 #include "src/completion.h"
 #include <algorithm>
+#include <map>
 #include <string_view>
 #include <optional>
 
 #include "common.hpp"
 #include "simfil/environment.h"
+#include "simfil/model/schema.h"
 #include "src/expected.h"
 
 const auto model = R"json(
@@ -50,6 +52,67 @@ auto EXPECT_COMPLETION(std::string_view query, std::optional<size_t> point, std:
     if (count > 0) {
         REQUIRE(comp.size() == count);
     }
+}
+
+auto CompleteSchemaQuery(std::string_view query, std::optional<size_t> point = {})
+{
+    auto parsed = simfil::json::parse(R"json({"present": 1})json");
+    REQUIRE(parsed);
+
+    auto model = std::move(*parsed);
+    auto strings = model->strings();
+    auto schemaOnlyField = strings->emplace("schemaOnlyField").value();
+    auto specialField = strings->emplace("schema field").value();
+    auto enumCarrier = strings->emplace("Carrier").value();
+    auto enumFast = strings->emplace("FAST_MODE").value();
+
+    auto valueSchema = std::make_unique<ValueSchema>();
+    valueSchema->addEnumSymbol(enumCarrier);
+    valueSchema->addEnumSymbol(enumFast);
+
+    auto objectSchema = std::make_unique<ObjectSchema>();
+    objectSchema->addField(schemaOnlyField, {SchemaId{2}});
+    objectSchema->addField(specialField);
+
+    auto registry = std::make_shared<std::map<SchemaId, std::unique_ptr<Schema>>>();
+    (*registry)[SchemaId{1}] = std::move(objectSchema);
+    (*registry)[SchemaId{2}] = std::move(valueSchema);
+
+    auto lookup = [registry](SchemaId schemaId) -> Schema* {
+        if (auto it = registry->find(schemaId); it != registry->end())
+            return it->second.get();
+        return nullptr;
+    };
+    for (auto const& [_, schema] : *registry)
+        schema->finalize(lookup);
+
+    auto root = model->root(0);
+    REQUIRE(root);
+    auto rootObj = model->resolve<Object>(**root);
+    REQUIRE(rootObj);
+    REQUIRE(rootObj->setSchema(SchemaId{1}));
+
+    Environment env(strings);
+    env.querySchemaCallback = [registry](SchemaId schemaId) -> const Schema* {
+        if (auto it = registry->find(schemaId); it != registry->end())
+            return it->second.get();
+        return nullptr;
+    };
+
+    CompletionOptions opts;
+    opts.showWildcardHints = false;
+    return complete(env, query, point.value_or(query.size()), **root, opts).value();
+}
+
+auto EXPECT_SCHEMA_COMPLETION(std::string_view query, std::string_view what, Type type)
+{
+    auto found = false;
+    for (const auto& item : CompleteSchemaQuery(query)) {
+        INFO("  Item: " << item.text);
+        if (item.text == what && item.type == type)
+            found = true;
+    }
+    REQUIRE(found);
 }
 
 TEST_CASE("CompleteField", "[completion.field.incompleteQuery]") {
@@ -153,4 +216,14 @@ TEST_CASE("Sort Completion", "[completion.sorted]") {
     REQUIRE(std::is_sorted(comp.begin(), comp.end(), [](const auto& l, const auto& r) {
         return l.text < r.text;
     }));
+}
+
+TEST_CASE("Complete schema fields", "[completion.schema-field]") {
+    EXPECT_SCHEMA_COMPLETION("schema", "schemaOnlyField", Type::FIELD);
+    EXPECT_SCHEMA_COMPLETION("schema", "[\"schema field\"]", Type::FIELD);
+}
+
+TEST_CASE("Complete schema enum symbols", "[completion.schema-enum]") {
+    EXPECT_SCHEMA_COMPLETION("Car", "\"Carrier\"", Type::CONSTANT);
+    EXPECT_SCHEMA_COMPLETION("FAST", "FAST_MODE", Type::CONSTANT);
 }

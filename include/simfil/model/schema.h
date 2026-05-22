@@ -89,6 +89,17 @@ public:
     virtual auto nestedFields() const & -> std::span<const StringId> = 0;
 
     /**
+     * Return field names directly available on this schema node.
+     *
+     * Completion uses this to suggest fields valid at the current node without
+     * also suggesting fields that only occur deeper in the schema graph.
+     */
+    virtual auto directFields() const & -> std::span<const StringId>
+    {
+        return nestedFields();
+    }
+
+    /**
      * @return All nested enum-like string symbols.
      */
     virtual auto nestedEnumSymbols() const & -> std::span<const StringId>
@@ -297,6 +308,7 @@ public:
         summary.field = field;
         summary.schemas.insert(summary.schemas.end(), schemas.begin(), schemas.end());
         fields_.push_back(std::move(summary));
+        directFields_.push_back(field);
         state_ = State::Dirty;
         ++revision_;
     }
@@ -318,6 +330,11 @@ public:
     auto nestedFields() const & -> std::span<const StringId> override
     {
         return {flatFields_.cbegin(), flatFields_.cend()};
+    }
+
+    auto directFields() const & -> std::span<const StringId> override
+    {
+        return {directFields_.cbegin(), directFields_.cend()};
     }
 
     auto nestedEnumSymbols() const & -> std::span<const StringId> override
@@ -359,6 +376,7 @@ private:
 
     sfl::small_vector<FieldSummary, 4> fields_;
 
+    std::vector<StringId> directFields_;
     std::vector<StringId> flatFields_; // Ordered!
     std::vector<StringId> flatEnumSymbols_; // Ordered!
     std::uint64_t revision_ = 0;

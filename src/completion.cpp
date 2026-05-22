@@ -1,6 +1,7 @@
 #include "completion.h"
 
 #include "expressions.h"
+#include "simfil/model/schema.h"
 #include "simfil/model/string-pool.h"
 #include "simfil/result.h"
 #include "simfil/simfil.h"
@@ -78,6 +79,125 @@ auto escapeKey(std::string_view str)
     return escaped;
 }
 
+/// Return whether a string can be represented as an unquoted SIMFIL symbol.
+auto isSymbolLiteralWord(std::string_view str)
+{
+    if (str.empty())
+        return false;
+
+    auto first = static_cast<unsigned char>(str.front());
+    if (!(std::isalpha(first) != 0 || str.front() == '_'))
+        return false;
+
+    auto uppercaseLetters = 0;
+    return std::ranges::all_of(str, [&uppercaseLetters](auto c) {
+        auto uc = static_cast<unsigned char>(c);
+        if (std::isupper(uc) != 0) {
+            ++uppercaseLetters;
+            return true;
+        }
+        return c == '_' || std::isdigit(uc) != 0;
+    }) && uppercaseLetters > 0;
+}
+
+/// Escape a string value as a SIMFIL string literal completion.
+auto escapeStringLiteral(std::string_view str)
+{
+    std::string escaped = "\"";
+    escaped.reserve(str.size() + 2);
+
+    for (auto c : str) {
+        if (c == '"' || c == '\\')
+            escaped.push_back('\\');
+        escaped.push_back(c);
+    }
+
+    escaped.push_back('"');
+    return escaped;
+}
+
+/// Return the text that should be inserted for an enum-like string symbol.
+auto enumSymbolCompletionText(std::string_view str)
+{
+    if (isSymbolLiteralWord(str))
+        return std::string{str};
+    return escapeStringLiteral(str);
+}
+
+/// Add one field completion candidate if it matches the current prefix.
+auto completeFieldName(
+    std::string_view key,
+    std::string_view prefix,
+    bool caseSensitive,
+    simfil::Completion& comp,
+    simfil::SourceLocation loc) -> simfil::Result
+{
+    if (comp.size() >= comp.limit)
+        return simfil::Result::Stop;
+
+    if (!startsWith(key, prefix, caseSensitive))
+        return simfil::Result::Continue;
+
+    if (needsEscaping(key))
+        comp.add(escapeKey(key), loc, simfil::CompletionCandidate::Type::FIELD);
+    else
+        comp.add(std::string{key}, loc, simfil::CompletionCandidate::Type::FIELD);
+
+    return simfil::Result::Continue;
+}
+
+/// Complete fields listed by the node schema but not necessarily present in the model.
+auto completeSchemaFields(
+    const simfil::Context& ctx,
+    const simfil::ModelNode& node,
+    std::string_view prefix,
+    simfil::Completion& comp,
+    simfil::SourceLocation loc) -> simfil::Result
+{
+    const auto* schema = ctx.env->querySchema(node.schema());
+    if (!schema)
+        return simfil::Result::Continue;
+
+    const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
+    for (auto fieldId : schema->directFields()) {
+        auto fieldName = ctx.env->strings()->resolve(fieldId);
+        if (!fieldName || fieldName->empty())
+            continue;
+
+        if (auto r = completeFieldName(*fieldName, prefix, caseSensitive, comp, loc); r != simfil::Result::Continue)
+            return r;
+    }
+
+    return simfil::Result::Continue;
+}
+
+/// Complete enum-like string symbols reachable from the node schema.
+auto completeSchemaEnumSymbols(
+    const simfil::Context& ctx,
+    const simfil::ModelNode& node,
+    std::string_view prefix,
+    simfil::Completion& comp,
+    simfil::SourceLocation loc) -> simfil::Result
+{
+    const auto* schema = ctx.env->querySchema(node.schema());
+    if (!schema)
+        return simfil::Result::Continue;
+
+    const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
+    for (auto symbolId : schema->nestedEnumSymbols()) {
+        if (comp.size() >= comp.limit)
+            return simfil::Result::Stop;
+
+        auto symbol = ctx.env->strings()->resolve(symbolId);
+        if (!symbol || symbol->empty() || !startsWith(*symbol, prefix, caseSensitive))
+            continue;
+
+        comp.add(enumSymbolCompletionText(*symbol), loc, simfil::CompletionCandidate::Type::CONSTANT);
+    }
+
+    return simfil::Result::Continue;
+}
+
 /// Complete a function name staritng with `prefix` at `loc`.
 auto completeFunctions(const simfil::Context& ctx, std::string_view prefix, simfil::Completion& comp, simfil::SourceLocation loc) -> simfil::Result
 {
@@ -94,7 +214,12 @@ auto completeFunctions(const simfil::Context& ctx, std::string_view prefix, simf
 }
 
 /// Complete a single WORD starting with `prefix` at `loc`.
-auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::Completion& comp, simfil::SourceLocation loc) -> simfil::Result
+auto completeWords(
+    const simfil::Context& ctx,
+    std::string_view prefix,
+    simfil::Completion& comp,
+    simfil::SourceLocation loc,
+    const simfil::ModelNode* node = nullptr) -> simfil::Result
 {
     using simfil::Result;
 
@@ -115,6 +240,11 @@ auto completeWords(const simfil::Context& ctx, std::string_view prefix, simfil::
         if (isWORD && str.size() >= prefix.size() && startsWith(str, prefix, caseSensitive)) {
             comp.add(str, loc, simfil::CompletionCandidate::Type::CONSTANT);
         }
+    }
+
+    if (node) {
+        if (auto r = completeSchemaEnumSymbols(ctx, *node, prefix, comp, loc); r != Result::Continue)
+            return r;
     }
 
     return Result::Continue;
@@ -151,12 +281,8 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
 
     const auto caseSensitive = comp_->options.smartCase && containsUppercaseCharacter(prefix_);
 
-    // First we try to complete fields
+    // First we try to complete fields already present in the model.
     for (StringId id : node->fieldNames()) {
-        if (comp_->size() >= comp_->limit) {
-            return Result::Stop;
-        }
-
         if (id == StringPool::Empty)
             continue;
 
@@ -165,18 +291,16 @@ auto CompletionFieldOrWordExpr::ieval(Context ctx, const Value& val, const Resul
             continue;
         const auto& key = *keyPtr;
 
-        if (startsWith(key, prefix_, caseSensitive)) {
-            if (needsEscaping(key)) {
-                comp_->add(escapeKey(key), sourceLocation(), CompletionCandidate::Type::FIELD);
-            } else {
-                comp_->add(std::string{key}, sourceLocation(), CompletionCandidate::Type::FIELD);
-            }
-        }
+        if (auto r = completeFieldName(key, prefix_, caseSensitive, *comp_, sourceLocation()); r != Result::Continue)
+            return r;
     }
+
+    if (auto r = completeSchemaFields(ctx, *node, prefix_, *comp_, sourceLocation()); r != Result::Continue)
+        return r;
 
     // If not in a path, we try to complete words and functions
     if (!inPath_) {
-        if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
+        if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation(), node); r != Result::Continue)
             return r;
 
         if (auto r = completeFunctions(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
@@ -356,7 +480,8 @@ auto CompletionWordExpr::ieval(Context ctx, const Value& val, const ResultFn& re
     if (ctx.phase == Context::Phase::Compilation)
         return res(ctx, Value::undef());
 
-    if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation()); r != Result::Continue)
+    auto node = val.node();
+    if (auto r = completeWords(ctx, prefix_, *comp_, sourceLocation(), node); r != Result::Continue)
         return r;
 
     return res(ctx, Value::undef());
