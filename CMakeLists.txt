@@ -83,6 +83,7 @@ target_sources(simfil PUBLIC
       include/simfil/error.h
       include/simfil/sourcelocation.h
       include/simfil/environment.h
+      include/simfil/diagnostics-bitsery.h
       include/simfil/diagnostics.h
       include/simfil/expression.h
       include/simfil/function.h

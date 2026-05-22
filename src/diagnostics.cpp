@@ -1,6 +1,7 @@
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 
 #include "simfil/diagnostics.h"
+#include "simfil/diagnostics-bitsery.h"
 #include "simfil/expression-visitor.h"
 
 #include "expressions.h"
@@ -13,9 +14,6 @@
 #include <fmt/ranges.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/stream.h>
-#include <bitsery/ext/std_bitset.h>
-#include <bitsery/traits/string.h>
-#include <bitsery/traits/vector.h>
 
 namespace simfil
 {
@@ -98,36 +96,6 @@ std::string comparisonPrefix(Diagnostics::ComparisonExprData const& data)
 }
 
 }  // namespace
-
-template<typename S>
-void serialize(S& s, TypeFlags& flags)
-{
-    s.ext(flags.flags, bitsery::ext::StdBitset{});
-}
-
-template<typename S>
-void serialize(S& s, Diagnostics& data)
-{
-    s.container(data.exprIndex_, std::numeric_limits<uint16_t>::max(), [](auto& s2, std::uint32_t& v) {
-        s2.value4b(v);
-    });
-    s.container(data.fieldData_, std::numeric_limits<uint16_t>::max(), [](auto& s2, Diagnostics::FieldExprData& data) {
-        s2.value4b(data.location.offset);
-        s2.value4b(data.location.size);
-        s2.value4b(data.hits);
-        s2.value4b(data.evaluations);
-        s2.text1b(data.name, 0xff);
-    });
-    s.container(data.comparisonData_, std::numeric_limits<uint16_t>::max(), [](auto& s2, Diagnostics::ComparisonExprData& data) {
-        s2.value4b(data.location.offset);
-        s2.value4b(data.location.size);
-        s2.object(data.leftTypes);
-        s2.object(data.rightTypes);
-        s2.value4b(data.evaluations);
-        s2.value4b(data.trueResults);
-        s2.value4b(data.falseResults);
-    });
-}
 
 Diagnostics::Diagnostics() = default;
 
