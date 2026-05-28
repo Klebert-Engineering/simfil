@@ -95,6 +95,115 @@ static auto isSymbolWord(std::string_view sv) -> bool
 }
 
 /**
+ * Extract the user-facing string from a single field or string-literal query.
+ */
+static auto schemaLookupName(const Expr& expr) -> std::optional<std::string>
+{
+    if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
+        return field->field();
+    }
+
+    if (auto const* constant = dynamic_cast<const ConstExpr*>(&expr)) {
+        auto const& value = constant->value();
+        if (value.isa(ValueType::String)) {
+            return value.as<ValueType::String>();
+        }
+    }
+
+    return std::nullopt;
+}
+
+/**
+ * Convert a schema path to a SIMFIL path expression.
+ */
+static auto pathExpressionFromSchemaPath(Environment& env, const SchemaPath& path) -> expected<ExprPtr, Error>
+{
+    ExprPtr expr = std::make_unique<FieldExpr>("_");
+    for (auto const& segment : path) {
+        ExprPtr next;
+        switch (segment.kind) {
+        case SchemaPathSegment::Kind::Field: {
+            auto fieldName = env.strings()->resolve(segment.field);
+            if (!fieldName) {
+                return unexpected<Error>(Error::ParserError, "Schema path contains an unknown field string id.");
+            }
+            next = std::make_unique<FieldExpr>(std::string(*fieldName));
+            break;
+        }
+        case SchemaPathSegment::Kind::ArrayElement:
+            next = std::make_unique<AnyChildExpr>();
+            break;
+        }
+        expr = std::make_unique<PathExpr>(std::move(expr), std::move(next));
+    }
+    return expr;
+}
+
+/**
+ * Build `exact.path == enumValue` expressions for all schema-derived paths.
+ */
+static auto enumPathExpression(Environment& env, std::vector<SchemaPath> const& paths, std::string enumValue) -> expected<ExprPtr, Error>
+{
+    ExprPtr result;
+    for (auto const& path : paths) {
+        auto lhs = pathExpressionFromSchemaPath(env, path);
+        TRY_EXPECTED(lhs);
+
+        auto comparison = std::make_unique<BinaryExpr<OperatorEq>>(
+            std::move(*lhs),
+            std::make_unique<ConstExpr>(Value::make(std::string(enumValue))));
+
+        if (!result)
+            result = std::move(comparison);
+        else
+            result = std::make_unique<OrExpr>(std::move(result), std::move(comparison));
+    }
+    return result;
+}
+
+/**
+ * Rewrite a single field/enum query by using schema metadata as source of truth.
+ */
+static auto rewriteAutoWildcardBySchema(Environment& env, ExprPtr expr, SchemaId rootSchema) -> expected<ExprPtr, Error>
+{
+    if (rootSchema == NoSchemaId || !expr)
+        return expr;
+
+    auto name = schemaLookupName(*expr);
+    if (!name)
+        return expr;
+
+    // Querying the root schema may materialize schema-owned strings in
+    // completion/compile-local environments.
+    (void) env.querySchema(rootSchema);
+
+    auto stringId = env.strings()->get(*name);
+    if (stringId == StringPool::Empty)
+        return expr;
+
+    auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
+        return env.querySchema(schemaId);
+    };
+
+    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, stringId);
+    auto fieldPaths = Schema::fieldPaths(rootSchema, querySchema, stringId);
+
+    if (!enumPaths.empty() && !fieldPaths.empty()) {
+        return unexpected<Error>(
+            Error::ParserError,
+            fmt::format("Ambiguous schema auto-wildcard token '{}': it is both a field and an enum-like string symbol.", *name));
+    }
+
+    if (!enumPaths.empty())
+        return enumPathExpression(env, enumPaths, std::move(*name));
+
+    if (!fieldPaths.empty())
+        return std::make_unique<WildcardFieldExpr>(true, std::move(*name));
+
+    return expr;
+}
+
+/**
  * RIIA Helper for calling function at destruction.
  */
 template <class Fun>
@@ -840,6 +949,11 @@ static auto setupParser(Parser& p)
 
 auto compile(Environment& env, std::string_view query, bool any, bool autoWildcard) -> expected<ASTPtr, Error>
 {
+    return compile(env, query, CompileOptions{.any = any, .autoWildcard = autoWildcard});
+}
+
+auto compile(Environment& env, std::string_view query, CompileOptions options) -> expected<ASTPtr, Error>
+{
     auto tokens = tokenize(query);
     TRY_EXPECTED(tokens);
 
@@ -850,8 +964,13 @@ auto compile(Environment& env, std::string_view query, bool any, bool autoWildca
         auto root = p.parse();
         TRY_EXPECTED(root);
 
+        if (options.autoWildcard && options.rootSchema != NoSchemaId) {
+            root = rewriteAutoWildcardBySchema(env, std::move(*root), options.rootSchema);
+            TRY_EXPECTED(root);
+        }
+
         /* Expand a single value to `** == <value>` */
-        if (autoWildcard && *root && (*root)->constant()) {
+        if (options.autoWildcard && options.rootSchema == NoSchemaId && *root && (*root)->constant()) {
             root = simplifyOrForward(p.env, std::make_unique<BinaryExpr<OperatorEq>>(
                 std::make_unique<WildcardExpr>(), std::move(*root)));
         }
@@ -859,7 +978,7 @@ auto compile(Environment& env, std::string_view query, bool any, bool autoWildca
         if (!*root)
             return unexpected<Error>(Error::ParserError, "Expression is null");
 
-        if (any) {
+        if (options.any) {
             std::vector<ExprPtr> args;
             args.emplace_back(std::move(*root));
             return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(args)));

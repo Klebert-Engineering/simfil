@@ -289,6 +289,82 @@ TEST_CASE("Array schema serialization", "[model.schema]") {
     REQUIRE((*recoveredRoot)->schema() == SchemaId{7});
 }
 
+TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.schema]")
+{
+    auto model = json::parse(R"json(
+    {
+      "status": "Other",
+      "items": [
+        {"kind": "Other"}
+      ],
+      "unrelated": {
+        "value": "Carrier"
+      },
+      "CARRIER": 7
+    }
+    )json").value();
+
+    auto registry = SchemaRegistry{};
+    auto strings = model->strings();
+    auto status = strings->get("status");
+    auto items = strings->get("items");
+    auto kind = strings->get("kind");
+    auto carrierField = strings->get("CARRIER");
+    auto carrierEnum = strings->get("Carrier");
+
+    auto rootSchema = std::make_unique<ObjectSchema>();
+    rootSchema->addField(status, {SchemaId{2}});
+    rootSchema->addField(items, {SchemaId{3}});
+    rootSchema->addField(carrierField);
+
+    auto enumSchema = std::make_unique<ValueSchema>();
+    enumSchema->addEnumSymbol(carrierEnum);
+
+    auto arraySchema = std::make_unique<ArraySchema>();
+    arraySchema->addElementSchemas({SchemaId{4}});
+
+    auto itemSchema = std::make_unique<ObjectSchema>();
+    itemSchema->addField(kind, {SchemaId{2}});
+
+    registry.schemas[SchemaId{1}] = std::move(rootSchema);
+    registry.schemas[SchemaId{2}] = std::move(enumSchema);
+    registry.schemas[SchemaId{3}] = std::move(arraySchema);
+    registry.schemas[SchemaId{4}] = std::move(itemSchema);
+    registry.finalize();
+
+    auto root = model->root(0);
+    REQUIRE(root);
+    auto rootObj = model->resolve<Object>(**root);
+    REQUIRE(rootObj);
+    REQUIRE(rootObj->setSchema(SchemaId{1}));
+
+    Environment env(strings);
+    env.querySchemaCallback = registry.asFunction();
+
+    auto enumAst = compile(env, "Carrier", CompileOptions{
+        .any = false,
+        .autoWildcard = true,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(enumAst);
+    INFO((*enumAst)->expr().toString());
+    REQUIRE((*enumAst)->expr().toString().find("**") == std::string::npos);
+    REQUIRE((*enumAst)->expr().toString().find("status") != std::string::npos);
+    REQUIRE((*enumAst)->expr().toString().find("kind") != std::string::npos);
+
+    auto enumResult = eval(env, **enumAst, **root, nullptr);
+    REQUIRE(enumResult);
+    REQUIRE(enumResult->size() == 1);
+    REQUIRE(enumResult->front().isa(ValueType::Bool));
+    REQUIRE_FALSE(enumResult->front().as<ValueType::Bool>());
+
+    auto fieldAst = compile(env, "CARRIER", CompileOptions{
+        .any = false,
+        .autoWildcard = true,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(fieldAst);
+    REQUIRE((*fieldAst)->expr().toString() == "**.CARRIER");
+}
+
 // A minimal test that makes sure a field not in the schema
 // is pruned if we query for it via **.field.
 TEST_CASE("WildcardFieldExpr Field Pruning", "[model.schema]")

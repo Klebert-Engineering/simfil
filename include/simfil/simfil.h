@@ -18,6 +18,16 @@ namespace simfil
 struct ModelNode;
 
 /**
+ * Options used while parsing and rewriting a query.
+ */
+struct CompileOptions
+{
+    bool any = true;
+    bool autoWildcard = false;
+    SchemaId rootSchema = NoSchemaId;
+};
+
+/**
  * Compile expression `src`.
  * Param:
  *   env   Environment used for compilation. Register custom functions there.
@@ -29,6 +39,14 @@ struct ModelNode;
  *   autoWildcard  If true, expand constant expressions to `** == <const>`.
  */
 auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> tl::expected<ASTPtr, Error>;
+
+/**
+ * Compile expression `src` with explicit options.
+ *
+ * If rootSchema is set and autoWildcard is enabled, single field/enum queries
+ * are classified through the schema instead of legacy casing heuristics.
+ */
+auto compile(Environment& env, std::string_view query, CompileOptions options) -> tl::expected<ASTPtr, Error>;
 
 /**
  * Evaluate compiled expression.

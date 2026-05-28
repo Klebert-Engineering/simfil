@@ -3,6 +3,7 @@
 #include "simfil/model/string-pool.h"
 #include <algorithm>
 #include <cassert>
+#include <compare>
 #include <concepts>
 #include <cstdint>
 #include <functional>
@@ -20,6 +21,28 @@ class Schema;
 using SchemaId = std::uint16_t;
 constexpr SchemaId NoSchemaId = SchemaId{0};
 constexpr SchemaId MaxSchemaId = SchemaId{std::numeric_limits<SchemaId>::max()};
+
+/**
+ * One segment in a schema-derived query path.
+ *
+ * Field segments address object members. Array-element segments represent the
+ * non-recursive `*` operator needed to traverse array elements precisely.
+ */
+struct SchemaPathSegment
+{
+    enum class Kind {
+        Field,
+        ArrayElement,
+    };
+
+    Kind kind = Kind::Field;
+    StringId field = 0;
+
+    auto operator<=>(const SchemaPathSegment&) const = default;
+};
+
+/** Sequence of schema path segments from a root schema to a reachable value. */
+using SchemaPath = std::vector<SchemaPathSegment>;
 
 /**
  * Concept defining a callback to query a Schema* by SchemaId.
@@ -52,6 +75,8 @@ public:
         Finalizing,
         Clean,
     };
+
+    using SchemaIdStack = sfl::small_vector<SchemaId, 8>;
 
     virtual ~Schema() = default;
 
@@ -108,6 +133,47 @@ public:
     }
 
     /**
+     * Return enum-like string symbols accepted directly by this schema node.
+     *
+     * Unlike nestedEnumSymbols(), this does not include descendants and is used
+     * to derive precise schema paths for auto-wildcard rewrites.
+     */
+    virtual auto directEnumSymbols() const & -> std::span<const StringId>
+    {
+        return {};
+    }
+
+    /**
+     * Enumerate precise paths to all fields with the requested name.
+     */
+    static auto fieldPaths(SchemaId root,
+                           const std::function<const Schema*(SchemaId)>& queryFn,
+                           StringId field) -> std::vector<SchemaPath>
+    {
+        std::vector<SchemaPath> paths;
+        SchemaIdStack visited;
+        SchemaPath current;
+        collectFieldPaths(root, queryFn, field, visited, current, paths);
+        sortUniquePaths(paths);
+        return paths;
+    }
+
+    /**
+     * Enumerate precise paths to all values that can hold the enum-like symbol.
+     */
+    static auto enumSymbolPaths(SchemaId root,
+                                const std::function<const Schema*(SchemaId)>& queryFn,
+                                StringId symbol) -> std::vector<SchemaPath>
+    {
+        std::vector<SchemaPath> paths;
+        SchemaIdStack visited;
+        SchemaPath current;
+        collectEnumSymbolPaths(root, queryFn, symbol, visited, current, paths);
+        sortUniquePaths(paths);
+        return paths;
+    }
+
+    /**
      * Return true once `canHaveField` is backed by finalized field caches.
      */
     virtual auto finalized() const -> bool
@@ -124,8 +190,6 @@ public:
     }
 
 protected:
-    using SchemaIdStack = sfl::small_vector<SchemaId, 8>;
-
     /**
      * Append all fields reachable from this schema without relying on cached
      * finalization state. This lets cyclic schema graphs still produce an exact
@@ -143,6 +207,111 @@ protected:
                                           SchemaIdStack& visited,
                                           std::vector<StringId>& symbols) const -> void
     {
+    }
+
+    /**
+     * Visit fields declared directly by this schema and their possible child
+     * schemas. The default is empty for scalar schemas.
+     */
+    virtual auto forEachDirectField(
+        const std::function<void(StringId, std::span<const SchemaId>)>&) const -> void
+    {
+    }
+
+    /**
+     * Visit possible array element schemas. The default is empty for non-arrays.
+     */
+    virtual auto forEachElementSchema(const std::function<void(SchemaId)>&) const -> void
+    {
+    }
+
+    /**
+     * Recursively collect schema paths to matching fields.
+     */
+    static auto collectFieldPaths(SchemaId schemaId,
+                                  const std::function<const Schema*(SchemaId)>& queryFn,
+                                  StringId field,
+                                  SchemaIdStack& visited,
+                                  SchemaPath& current,
+                                  std::vector<SchemaPath>& paths) -> void
+    {
+        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+            return;
+
+        auto const* schema = queryFn(schemaId);
+        if (!schema)
+            return;
+
+        visited.push_back(schemaId);
+
+        schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+            current.push_back({SchemaPathSegment::Kind::Field, directField});
+            if (directField == field)
+                paths.push_back(current);
+            for (auto childSchemaId : childSchemas)
+                collectFieldPaths(childSchemaId, queryFn, field, visited, current, paths);
+            current.pop_back();
+        });
+
+        schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+            current.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
+            collectFieldPaths(elementSchemaId, queryFn, field, visited, current, paths);
+            current.pop_back();
+        });
+
+        visited.pop_back();
+    }
+
+    /**
+     * Recursively collect schema paths to values accepting a matching enum-like
+     * string symbol.
+     */
+    static auto collectEnumSymbolPaths(SchemaId schemaId,
+                                       const std::function<const Schema*(SchemaId)>& queryFn,
+                                       StringId symbol,
+                                       SchemaIdStack& visited,
+                                       SchemaPath& current,
+                                       std::vector<SchemaPath>& paths) -> void
+    {
+        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+            return;
+
+        auto const* schema = queryFn(schemaId);
+        if (!schema)
+            return;
+
+        visited.push_back(schemaId);
+
+        for (auto directSymbol : schema->directEnumSymbols()) {
+            if (directSymbol == symbol)
+                paths.push_back(current);
+        }
+
+        schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+            current.push_back({SchemaPathSegment::Kind::Field, directField});
+            for (auto childSchemaId : childSchemas)
+                collectEnumSymbolPaths(childSchemaId, queryFn, symbol, visited, current, paths);
+            current.pop_back();
+        });
+
+        schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+            current.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
+            collectEnumSymbolPaths(elementSchemaId, queryFn, symbol, visited, current, paths);
+            current.pop_back();
+        });
+
+        visited.pop_back();
+    }
+
+    /**
+     * Keep path rewrites deterministic and avoid duplicate paths from combined
+     * schemas or shared references.
+     */
+    static auto sortUniquePaths(std::vector<SchemaPath>& paths) -> void
+    {
+        std::ranges::sort(paths);
+        auto duplicates = std::ranges::unique(paths);
+        paths.erase(duplicates.begin(), duplicates.end());
     }
 
     /**
@@ -327,6 +496,13 @@ public:
         return {fields_.begin(), fields_.end()};
     }
 
+    auto forEachDirectField(
+        const std::function<void(StringId, std::span<const SchemaId>)>& fn) const -> void override
+    {
+        for (auto const& field : fields_)
+            fn(field.field, {field.schemas.begin(), field.schemas.end()});
+    }
+
     auto nestedFields() const & -> std::span<const StringId> override
     {
         return {flatFields_.cbegin(), flatFields_.cend()};
@@ -438,6 +614,11 @@ public:
         return {enumSymbols_.cbegin(), enumSymbols_.cend()};
     }
 
+    auto directEnumSymbols() const & -> std::span<const StringId> override
+    {
+        return {enumSymbols_.cbegin(), enumSymbols_.cend()};
+    }
+
     auto finalized() const -> bool override
     {
         return state_ == State::Clean;
@@ -533,6 +714,12 @@ public:
     auto elementSchemas() const & -> std::span<const SchemaId>
     {
         return {schemas_.begin(), schemas_.end()};
+    }
+
+    auto forEachElementSchema(const std::function<void(SchemaId)>& fn) const -> void override
+    {
+        for (auto schemaId : schemas_)
+            fn(schemaId);
     }
 
 private:
