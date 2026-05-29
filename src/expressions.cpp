@@ -325,6 +325,11 @@ ConstExpr::ConstExpr(Value value)
     : value_(std::move(value))
 {}
 
+ConstExpr::ConstExpr(Value value, const Token& token)
+    : Expr(token)
+    , value_(std::move(value))
+{}
+
 auto ConstExpr::type() const -> Type
 {
     return Type::VALUE;
@@ -702,6 +707,15 @@ auto CallExpression::toString() const -> std::string
 
 PathExpr::PathExpr(ExprPtr left, ExprPtr right)
     : left_(std::move(left))
+    , right_(std::move(right))
+{
+    assert(left_.get());
+    assert(right_.get());
+}
+
+PathExpr::PathExpr(ExprPtr left, ExprPtr right, SourceLocation location)
+    : Expr(location)
+    , left_(std::move(left))
     , right_(std::move(right))
 {
     assert(left_.get());

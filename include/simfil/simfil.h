@@ -11,6 +11,7 @@
 #include "simfil/diagnostics.h"
 #include "simfil/value.h"
 #include "simfil/error.h"
+#include "simfil/model/schema.h"
 
 namespace simfil
 {
@@ -25,6 +26,35 @@ struct CompileOptions
     bool any = true;
     bool autoWildcard = false;
     SchemaId rootSchema = NoSchemaId;
+};
+
+/**
+ * One schema path referenced by a compiled expression.
+ *
+ * The path is expressed relative to the root schema supplied to
+ * `referencedSchemaPaths`. If `viaWildcard` is set, the path came from a
+ * recursive wildcard-field lookup such as `**.foo`.
+ */
+struct ReferencedSchemaPath
+{
+    SchemaPath path;
+    SourceLocation location;
+    bool viaWildcard = false;
+};
+
+/**
+ * Schema references discovered by static AST inspection.
+ *
+ * The flags make the result conservative: callers can reject automatic scope
+ * decisions when the query contains broad wildcards or field access that cannot
+ * be tied to concrete schema paths.
+ */
+struct ReferencedSchemaPaths
+{
+    std::vector<ReferencedSchemaPath> paths;
+    bool hasDynamicAccess = false;
+    bool hasUnresolvedAccess = false;
+    bool hasBroadWildcardAccess = false;
 };
 
 /**
@@ -47,6 +77,15 @@ auto compile(Environment& env, std::string_view query, bool any = true, bool aut
  * are classified through the schema instead of legacy casing heuristics.
  */
 auto compile(Environment& env, std::string_view query, CompileOptions options) -> tl::expected<ASTPtr, Error>;
+
+/**
+ * Collect schema paths that are referenced by a compiled query.
+ *
+ * This is static analysis over the AST, not runtime evaluation: both sides of
+ * `and`/`or` are inspected, and schema-aware auto-wildcard rewrites are resolved
+ * to the exact paths they can touch.
+ */
+auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
 
 /**
  * Evaluate compiled expression.

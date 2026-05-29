@@ -363,6 +363,65 @@ TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.s
         .rootSchema = SchemaId{1}});
     REQUIRE(fieldAst);
     REQUIRE((*fieldAst)->expr().toString() == "**.CARRIER");
+
+    auto enumRefs = referencedSchemaPaths(env, **enumAst, SchemaId{1});
+    REQUIRE(enumRefs);
+    REQUIRE_FALSE(enumRefs->hasBroadWildcardAccess);
+    REQUIRE_FALSE(enumRefs->hasDynamicAccess);
+    REQUIRE(enumRefs->paths.size() == 2);
+    REQUIRE(std::ranges::all_of(enumRefs->paths, [](auto const& ref) {
+        return ref.location == SourceLocation{0, 7};
+    }));
+    REQUIRE(std::ranges::any_of(enumRefs->paths, [&](auto const& ref) {
+        return ref.path.size() == 1 && ref.path[0].field == status && !ref.viaWildcard;
+    }));
+    REQUIRE(std::ranges::any_of(enumRefs->paths, [&](auto const& ref) {
+        return ref.path.size() == 3
+            && ref.path[0].field == items
+            && ref.path[1].kind == SchemaPathSegment::Kind::ArrayElement
+            && ref.path[2].field == kind
+            && !ref.viaWildcard;
+    }));
+
+    auto fieldRefs = referencedSchemaPaths(env, **fieldAst, SchemaId{1});
+    REQUIRE(fieldRefs);
+    REQUIRE(fieldRefs->paths.size() == 1);
+    REQUIRE(fieldRefs->paths.front().viaWildcard);
+    REQUIRE(fieldRefs->paths.front().location == SourceLocation{0, 7});
+    REQUIRE(fieldRefs->paths.front().path.size() == 1);
+    REQUIRE(fieldRefs->paths.front().path.front().field == carrierField);
+
+    auto unresolvedAst = compile(env, "unrelated.value", CompileOptions{
+        .any = false,
+        .autoWildcard = false,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(unresolvedAst);
+    auto unresolvedRefs = referencedSchemaPaths(env, **unresolvedAst, SchemaId{1});
+    REQUIRE(unresolvedRefs);
+    REQUIRE(unresolvedRefs->paths.empty());
+    REQUIRE(unresolvedRefs->hasUnresolvedAccess);
+
+    REQUIRE(strings->get("absent") == StringPool::Empty);
+    auto absentAst = compile(env, "absent", CompileOptions{
+        .any = false,
+        .autoWildcard = false,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(absentAst);
+    auto absentRefs = referencedSchemaPaths(env, **absentAst, SchemaId{1});
+    REQUIRE(absentRefs);
+    REQUIRE(absentRefs->paths.empty());
+    REQUIRE(absentRefs->hasUnresolvedAccess);
+    REQUIRE(strings->get("absent") == StringPool::Empty);
+
+    auto childWildcardAst = compile(env, "*.CARRIER", CompileOptions{
+        .any = false,
+        .autoWildcard = false,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(childWildcardAst);
+    auto childWildcardRefs = referencedSchemaPaths(env, **childWildcardAst, SchemaId{1});
+    REQUIRE(childWildcardRefs);
+    REQUIRE(childWildcardRefs->paths.empty());
+    REQUIRE(childWildcardRefs->hasDynamicAccess);
 }
 
 // A minimal test that makes sure a field not in the schema

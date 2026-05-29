@@ -116,7 +116,7 @@ static auto schemaLookupName(const Expr& expr) -> std::optional<std::string>
 /**
  * Convert a schema path to a SIMFIL path expression.
  */
-static auto pathExpressionFromSchemaPath(Environment& env, const SchemaPath& path) -> expected<ExprPtr, Error>
+static auto pathExpressionFromSchemaPath(Environment& env, const SchemaPath& path, SourceLocation location) -> expected<ExprPtr, Error>
 {
     ExprPtr expr = std::make_unique<FieldExpr>("_");
     for (auto const& segment : path) {
@@ -134,7 +134,7 @@ static auto pathExpressionFromSchemaPath(Environment& env, const SchemaPath& pat
             next = std::make_unique<AnyChildExpr>();
             break;
         }
-        expr = std::make_unique<PathExpr>(std::move(expr), std::move(next));
+        expr = std::make_unique<PathExpr>(std::move(expr), std::move(next), location);
     }
     return expr;
 }
@@ -142,11 +142,15 @@ static auto pathExpressionFromSchemaPath(Environment& env, const SchemaPath& pat
 /**
  * Build `exact.path == enumValue` expressions for all schema-derived paths.
  */
-static auto enumPathExpression(Environment& env, std::vector<SchemaPath> const& paths, std::string enumValue) -> expected<ExprPtr, Error>
+static auto enumPathExpression(
+    Environment& env,
+    std::vector<SchemaPath> const& paths,
+    std::string enumValue,
+    SourceLocation location) -> expected<ExprPtr, Error>
 {
     ExprPtr result;
     for (auto const& path : paths) {
-        auto lhs = pathExpressionFromSchemaPath(env, path);
+        auto lhs = pathExpressionFromSchemaPath(env, path, location);
         TRY_EXPECTED(lhs);
 
         auto comparison = std::make_unique<BinaryExpr<OperatorEq>>(
@@ -195,12 +199,209 @@ static auto rewriteAutoWildcardBySchema(Environment& env, ExprPtr expr, SchemaId
     }
 
     if (!enumPaths.empty())
-        return enumPathExpression(env, enumPaths, std::move(*name));
+        return enumPathExpression(env, enumPaths, std::move(*name), expr->sourceLocation());
 
     if (!fieldPaths.empty())
-        return std::make_unique<WildcardFieldExpr>(true, std::move(*name));
+        return std::make_unique<WildcardFieldExpr>(true, std::move(*name), expr->sourceLocation());
 
     return expr;
+}
+
+static auto fieldPathSegment(Environment& env, std::string_view fieldName) -> std::optional<SchemaPathSegment>
+{
+    auto fieldId = env.strings()->get(fieldName);
+    if (fieldId == StringPool::Empty) {
+        return std::nullopt;
+    }
+    return SchemaPathSegment{SchemaPathSegment::Kind::Field, fieldId};
+}
+
+static auto stringConstValue(const Expr& expr) -> std::optional<std::string>
+{
+    auto const* constant = dynamic_cast<const ConstExpr*>(&expr);
+    if (!constant) {
+        return std::nullopt;
+    }
+    auto const& value = constant->value();
+    if (!value.isa(ValueType::String)) {
+        return std::nullopt;
+    }
+    return value.as<ValueType::String>();
+}
+
+/**
+ * Flatten a static field path expression to a schema path. Returns nullopt for
+ * dynamic expressions, broad wildcards, or operators that cannot name one path.
+ */
+static auto flattenReferencedPath(Environment& env, const Expr& expr) -> expected<std::optional<SchemaPath>, Error>
+{
+    if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
+        if (field->isCurrent()) {
+            return SchemaPath{};
+        }
+        auto segment = fieldPathSegment(env, field->field());
+        if (!segment) {
+            return std::nullopt;
+        }
+        return SchemaPath{*segment};
+    }
+
+    if (auto const* path = dynamic_cast<const PathExpr*>(&expr)) {
+        auto left = flattenReferencedPath(env, *path->left());
+        TRY_EXPECTED(left);
+        if (!*left) {
+            return std::nullopt;
+        }
+
+        SchemaPath result = std::move(**left);
+        if (auto const* field = dynamic_cast<const FieldExpr*>(path->right())) {
+            auto segment = fieldPathSegment(env, field->field());
+            if (!segment) {
+                return std::nullopt;
+            }
+            result.push_back(*segment);
+            return result;
+        }
+        if (dynamic_cast<const AnyChildExpr*>(path->right())) {
+            result.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
+            return result;
+        }
+        if (auto const* subscript = dynamic_cast<const SubscriptExpr*>(path->right())) {
+            auto right = flattenReferencedPath(env, *subscript);
+            TRY_EXPECTED(right);
+            if (!*right) {
+                return std::nullopt;
+            }
+            result.insert(result.end(), (*right)->begin(), (*right)->end());
+            return result;
+        }
+        return std::nullopt;
+    }
+
+    if (auto const* subscript = dynamic_cast<const SubscriptExpr*>(&expr)) {
+        auto left = flattenReferencedPath(env, *subscript->left_);
+        TRY_EXPECTED(left);
+        if (!*left) {
+            return std::nullopt;
+        }
+        auto index = stringConstValue(*subscript->index_);
+        if (!index) {
+            return std::nullopt;
+        }
+        SchemaPath result = std::move(**left);
+        auto segment = fieldPathSegment(env, *index);
+        if (!segment) {
+            return std::nullopt;
+        }
+        result.push_back(*segment);
+        return result;
+    }
+
+    return std::nullopt;
+}
+
+static auto addReferencedPath(
+    ReferencedSchemaPaths& result,
+    SchemaPath path,
+    SourceLocation location,
+    bool viaWildcard) -> void
+{
+    if (path.empty()) {
+        return;
+    }
+    if (std::ranges::any_of(result.paths, [&](auto const& existing) {
+        return existing.path == path && existing.viaWildcard == viaWildcard;
+    })) {
+        return;
+    }
+    result.paths.push_back({std::move(path), location, viaWildcard});
+}
+
+static auto schemaPathIsReachable(Environment& env, SchemaId rootSchema, const SchemaPath& path) -> bool
+{
+    auto leafField = std::ranges::find_if(
+        path.rbegin(),
+        path.rend(),
+        [](auto const& segment) {
+            return segment.kind == SchemaPathSegment::Kind::Field;
+        });
+    if (leafField == path.rend()) {
+        return true;
+    }
+
+    auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
+        return env.querySchema(schemaId);
+    };
+    auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field);
+    return std::ranges::find(possiblePaths, path) != possiblePaths.end();
+}
+
+static auto collectReferencedSchemaPaths(
+    Environment& env,
+    const Expr& expr,
+    SchemaId rootSchema,
+    ReferencedSchemaPaths& result) -> expected<void, Error>
+{
+    if (dynamic_cast<const WildcardExpr*>(&expr)) {
+        result.hasBroadWildcardAccess = true;
+        return {};
+    }
+
+    if (auto const* wildcardField = dynamic_cast<const WildcardFieldExpr*>(&expr)) {
+        // Non-recursive child wildcards (`*.foo`) cannot currently be mapped
+        // to exact schema paths without exposing child traversal internals.
+        if (!wildcardField->recurse_) {
+            result.hasDynamicAccess = true;
+            return {};
+        }
+
+        auto fieldId = env.strings()->get(wildcardField->name_);
+        if (fieldId == StringPool::Empty) {
+            result.hasUnresolvedAccess = true;
+            return {};
+        }
+
+        auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
+            return env.querySchema(schemaId);
+        };
+        auto paths = Schema::fieldPaths(rootSchema, querySchema, fieldId);
+        if (paths.empty()) {
+            result.hasUnresolvedAccess = true;
+            return {};
+        }
+        for (auto& path : paths) {
+            addReferencedPath(result, std::move(path), wildcardField->sourceLocation(), true);
+        }
+        return {};
+    }
+
+    if (dynamic_cast<const FieldExpr*>(&expr)
+        || dynamic_cast<const PathExpr*>(&expr)
+        || dynamic_cast<const SubscriptExpr*>(&expr)) {
+        auto path = flattenReferencedPath(env, expr);
+        TRY_EXPECTED(path);
+        if (*path) {
+            if (schemaPathIsReachable(env, rootSchema, **path)) {
+                addReferencedPath(result, std::move(**path), expr.sourceLocation(), false);
+            }
+            else {
+                result.hasUnresolvedAccess = true;
+            }
+            return {};
+        }
+        if (dynamic_cast<const SubscriptExpr*>(&expr)) {
+            result.hasDynamicAccess = true;
+        }
+        else {
+            result.hasUnresolvedAccess = true;
+        }
+    }
+
+    for (auto i = 0u; i < expr.numChildren(); ++i) {
+        auto childResult = collectReferencedSchemaPaths(env, *expr.childAt(i), rootSchema, result);
+        TRY_EXPECTED(childResult);
+    }
+    return {};
 }
 
 /**
@@ -530,7 +731,7 @@ class ScalarParser : public PrefixParselet
 {
     auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
-        return std::make_unique<ConstExpr>(std::get<Type>(t.value));
+        return std::make_unique<ConstExpr>(std::get<Type>(t.value), t);
     }
 };
 
@@ -544,7 +745,7 @@ class RegExpParser : public PrefixParselet
     auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
         auto value = ReType::Type.make(std::get<std::string>(t.value));
-        return std::make_unique<ConstExpr>(std::move(value));
+        return std::make_unique<ConstExpr>(std::move(value), t);
     }
 };
 
@@ -565,7 +766,7 @@ public:
 
     auto parse(Parser& p, Token t) const -> expected<ExprPtr, Error> override
     {
-        return std::make_unique<ConstExpr>(value_);
+        return std::make_unique<ConstExpr>(value_, t);
     }
 
     Value value_;
@@ -698,11 +899,11 @@ public:
         } else if (!p.ctx.inPath) {
             /* Parse Symbols (words in upper-case) */
             if (isSymbolWord(word)) {
-                return std::make_unique<ConstExpr>(Value::make<std::string>(std::move(word)));
+                return std::make_unique<ConstExpr>(Value::make<std::string>(std::move(word)), t);
             }
             /* Constant */
             else if (auto constant = p.env->findConstant(word)) {
-                return std::make_unique<ConstExpr>(*constant);
+                return std::make_unique<ConstExpr>(*constant, t);
             }
         }
 
@@ -760,7 +961,7 @@ public:
             }
             /* Constant */
             else if (auto constant = p.env->findConstant(word)) {
-                return std::make_unique<ConstExpr>(*constant);
+                return std::make_unique<ConstExpr>(*constant, t);
             }
         }
 
@@ -1077,6 +1278,20 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
                                 "Expand to recursive query");
 
     return candidates;
+}
+
+auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> expected<ReferencedSchemaPaths, Error>
+{
+    ReferencedSchemaPaths result;
+    if (rootSchema == NoSchemaId) {
+        result.hasUnresolvedAccess = true;
+        return result;
+    }
+
+    (void) env.querySchema(rootSchema);
+    auto collected = collectReferencedSchemaPaths(env, ast.expr(), rootSchema, result);
+    TRY_EXPECTED(collected);
+    return result;
 }
 
 auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag) -> expected<std::vector<Value>, Error>

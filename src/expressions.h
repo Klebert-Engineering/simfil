@@ -129,12 +129,20 @@ public:
         : value_(Value::make(std::forward<CType_>(value)))
     {}
 
+    template <class CType_>
+    requires (!std::is_base_of_v<ConstExpr, std::remove_cvref_t<CType_>>)
+    ConstExpr(CType_&& value, const Token& token)
+        : Expr(token)
+        , value_(Value::make(std::forward<CType_>(value)))
+    {}
+
     ConstExpr(const ConstExpr&) = delete;
     ConstExpr(ConstExpr&&) = delete;
     auto operator=(const ConstExpr&) -> ConstExpr& = delete;
     auto operator=(ConstExpr&&) -> ConstExpr& = delete;
 
     explicit ConstExpr(Value value);
+    ConstExpr(Value value, const Token& token);
 
     auto type() const -> Type override;
     auto constant() const -> bool override;
@@ -237,6 +245,7 @@ class PathExpr : public Expr
 {
 public:
     PathExpr(ExprPtr left, ExprPtr right);
+    PathExpr(ExprPtr left, ExprPtr right, SourceLocation location);
 
     auto type() const -> Type override;
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
