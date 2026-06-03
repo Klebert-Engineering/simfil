@@ -717,6 +717,24 @@ TEST_CASE("Switch Model String Pool", "[model.setStrings]")
     REQUIRE(oldFieldDict->size() != newFieldDict->size());
 }
 
+TEST_CASE("StringPool copy owns lookup views", "[string-pool]")
+{
+    simfil::StringPool source;
+    auto id = source.emplace("owned-dynamic-field");
+    REQUIRE(id);
+
+    auto sourceView = source.resolve(*id);
+    REQUIRE(sourceView);
+
+    simfil::StringPool copy(source);
+    auto copyView = copy.resolve(*id);
+    REQUIRE(copyView);
+
+    REQUIRE(*copyView == *sourceView);
+    REQUIRE(copyView->data() != sourceView->data());
+    REQUIRE(copy.get("owned-dynamic-field") == *id);
+}
+
 TEST_CASE("Exception Handler", "[exception]")
 {
     bool handlerCalled = false;

@@ -60,30 +60,34 @@ StringPool::StringPool(const StringPool& other)
     // Copy storedStrings_.
     storedStrings_ = other.storedStrings_;
 
-    // Map from old string data pointer to new string_view.
-    std::unordered_map<const char*, std::string_view> strDataToNewStrView;
+    // Map every string from the source pool to the equivalent view owned by this copy.
+    std::unordered_map<std::string_view, std::string_view> copiedViewForSourceView;
 
-    // Build the mapping from old string data pointers to new string_views.
     for (size_t i = 0; i < other.storedStrings_.size(); ++i) {
-        strDataToNewStrView[other.storedStrings_[i].data()] = storedStrings_[i];
+        copiedViewForSourceView.emplace(
+            std::string_view(other.storedStrings_[i]),
+            std::string_view(storedStrings_[i]));
     }
 
-    // Rebuild idForString_ with new string_views pointing into this->storedStrings_.
+    auto copiedViewFor = [&](std::string_view oldStrView) -> std::string_view {
+        auto it = copiedViewForSourceView.find(oldStrView);
+        if (it != copiedViewForSourceView.end())
+            return it->second;
+
+        // This should not happen if the source pool only references its own storage.
+        raise<std::runtime_error>("Failed to rebuild StringPool copy: unresolved stored string view");
+    };
+
+    // Rebuild both lookup maps with string_views pointing into this->storedStrings_.
     idForString_.clear();
     for (const auto& [oldStrView, id] : other.idForString_) {
-        // Get the new string_view corresponding to the old string data pointer.
-        auto it = strDataToNewStrView.find(oldStrView.data());
-        if (it != strDataToNewStrView.end()) {
-            idForString_.emplace(it->second, id);
-        }
-        else {
-            // This should not happen if everything is consistent.
-            raise<std::runtime_error>("Failed to rebuild idForString_ in StringPool copy constructor");
-        }
+        idForString_.emplace(copiedViewFor(oldStrView), id);
     }
 
-    // Copy stringForId_.
-    stringForId_ = other.stringForId_;
+    stringForId_.clear();
+    for (const auto& [id, oldStrView] : other.stringForId_) {
+        stringForId_.emplace(id, copiedViewFor(oldStrView));
+    }
 
     // Copy other member variables.
     nextId_ = other.nextId_;
