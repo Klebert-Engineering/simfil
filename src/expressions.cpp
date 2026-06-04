@@ -802,6 +802,69 @@ auto PathExpr::right() const -> const Expr*
     return right_.get();
 }
 
+PathAlternativesExpr::PathAlternativesExpr(std::vector<ExprPtr> alternatives, SourceLocation location)
+    : Expr(location)
+    , alternatives_(std::move(alternatives))
+{}
+
+auto PathAlternativesExpr::type() const -> Type
+{
+    return Type::PATH;
+}
+
+auto PathAlternativesExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
+{
+    CountedResultFn<const ResultFn&> res(ores, ctx);
+    auto finalResult = Result::Continue;
+
+    for (auto const& alternative : alternatives_) {
+        auto result = alternative->eval(ctx, val, LambdaResultFn([&res](Context ctx, Value&& vv) -> tl::expected<Result, Error> {
+            return res(ctx, std::move(vv));
+        }));
+        TRY_EXPECTED(result);
+        if (*result == Result::Stop) {
+            finalResult = Result::Stop;
+            break;
+        }
+    }
+
+    res.ensureCall();
+    return finalResult;
+}
+
+auto PathAlternativesExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl::expected<Result, Error>
+{
+    return ieval(ctx, val, ores);
+}
+
+void PathAlternativesExpr::accept(ExprVisitor& v) const
+{
+    v.visit(*this);
+}
+
+auto PathAlternativesExpr::numChildren() const -> std::size_t
+{
+    return alternatives_.size();
+}
+
+auto PathAlternativesExpr::childAt(std::size_t index) -> ExprPtr&
+{
+    return detail::childAtOrThrow(index, alternatives_);
+}
+
+auto PathAlternativesExpr::childAt(std::size_t index) const -> const ExprPtr&
+{
+    return detail::childAtOrThrow(index, alternatives_);
+}
+
+auto PathAlternativesExpr::toString() const -> std::string
+{
+    auto items = alternatives_ | std::views::transform([](const auto& arg) {
+        return arg->toString();
+    });
+    return fmt::format("(paths {})", fmt::join(items, " "));
+}
+
 UnpackExpr::UnpackExpr(ExprPtr sub)
     : sub_(std::move(sub))
 {}

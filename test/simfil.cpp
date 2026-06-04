@@ -246,13 +246,13 @@ TEST_CASE("CompareIncompatibleTypes", "[ast.compare-incompatible]") {
     REQUIRE_AST("range(0,10)!=\"A\"", "true");
 }
 
-TEST_CASE("Auto Expand Constant", "[ast.auto-expand-constant]") {
+TEST_CASE("Deprecated auto wildcard has no non-schema fallback", "[ast.auto-expand-constant]") {
     REQUIRE_AST_AUTOWILDCARD("a = 1",   "(== a 1)");
     REQUIRE_AST_AUTOWILDCARD("a.* = 1", "(== (. a *) 1)");
     REQUIRE_AST_AUTOWILDCARD("** = 1",  "(== ** 1)");
-    REQUIRE_AST_AUTOWILDCARD("1",       "(== ** 1)");
-    REQUIRE_AST_AUTOWILDCARD("1+4",     "(== ** 5)");
-    REQUIRE_AST_AUTOWILDCARD("ABC",     "(== ** \"ABC\")");
+    REQUIRE_AST_AUTOWILDCARD("1",       "1");
+    REQUIRE_AST_AUTOWILDCARD("1+4",     "5");
+    REQUIRE_AST_AUTOWILDCARD("ABC",     "\"ABC\"");
 }
 
 TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fields]") {

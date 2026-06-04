@@ -43,6 +43,43 @@ either side of `.`, such as `ABC.field`!
 To force parsing a symbol as a field, you can put it in a path expression:
 `_.FIELD` or use the subscript operator `[FIELD]`.
 
+### Schema-Aware Field and Enum Resolution
+
+When the caller supplies a schema for the current model, simfil can use that schema while compiling, completing, and evaluating path expressions. This keeps short queries practical without changing the core path syntax.
+
+Schema-aware behavior is conservative:
+
+- A standalone scalar field name can resolve to the concrete schema path that owns that field.
+- A recursive wildcard such as `**.speedLimitKmh` can skip schema branches that cannot contain `speedLimitKmh`.
+- Uppercase enum-like symbols can resolve to string constants when the schema proves they belong to an enum domain.
+- If the same token can mean both a field and an enum-like value, simfil reports an ambiguity instead of guessing.
+
+Examples:
+
+```simfil
+speedLimitKmh > 80
+```
+
+can be compiled against a schema as the concrete path that owns `speedLimitKmh`, while:
+
+```simfil
+WARNING_SIGN
+```
+
+can be compiled as a comparison against schema paths whose enum domain contains `WARNING_SIGN`.
+
+Use explicit path syntax when you want to force field access:
+
+```simfil
+_.WARNING_SIGN
+```
+
+or:
+
+```simfil
+["WARNING_SIGN"]
+```
+
 ### Sub-Queries
 
 Sub-queries can be written as a brace-enclosed expression. Path modifications inside
@@ -224,6 +261,7 @@ of `expr` are stored for debugging purposes; see `limit`.
 *Example*
 ```
 trace(a.**.b{trace("sub", c == "test")})
+trace(**.speedLimitKmh, name="speed limits")
 ```
 
 Arguments:

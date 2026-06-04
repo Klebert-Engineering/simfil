@@ -19,12 +19,20 @@ namespace simfil
 struct ModelNode;
 
 /**
+ * Rewrite families available during compilation.
+ */
+enum class RewriteMode {
+    None,
+    Schema,
+};
+
+/**
  * Options used while parsing and rewriting a query.
  */
 struct CompileOptions
 {
     bool any = true;
-    bool autoWildcard = false;
+    RewriteMode rewriteMode = RewriteMode::None;
     SchemaId rootSchema = NoSchemaId;
 };
 
@@ -66,15 +74,16 @@ struct ReferencedSchemaPaths
  * Param:
  *   any   If true, wrap expression with call to `any(...)`.
  * Param:
- *   autoWildcard  If true, expand constant expressions to `** == <const>`.
+ *   autoWildcard  Deprecated compatibility switch. Ignored; use CompileOptions
+ *                 with RewriteMode::Schema and a root schema for rewrites.
  */
 auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> tl::expected<ASTPtr, Error>;
 
 /**
  * Compile expression `src` with explicit options.
  *
- * If rootSchema is set and autoWildcard is enabled, single field/enum queries
- * are classified through the schema instead of legacy casing heuristics.
+ * If rootSchema is set and schema rewrites are enabled, shorthand field/enum
+ * queries are classified through the schema instead of lexical heuristics.
  */
 auto compile(Environment& env, std::string_view query, CompileOptions options) -> tl::expected<ASTPtr, Error>;
 
@@ -82,8 +91,8 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
  * Collect schema paths that are referenced by a compiled query.
  *
  * This is static analysis over the AST, not runtime evaluation: both sides of
- * `and`/`or` are inspected, and schema-aware auto-wildcard rewrites are resolved
- * to the exact paths they can touch.
+ * `and`/`or` are inspected, and schema-aware rewrites are resolved to the exact
+ * paths they can touch.
  */
 auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
 

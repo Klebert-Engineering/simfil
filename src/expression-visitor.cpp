@@ -69,6 +69,11 @@ void ExprVisitor::visit(const PathExpr& expr)
     visit(static_cast<const Expr&>(expr));
 }
 
+void ExprVisitor::visit(const PathAlternativesExpr& expr)
+{
+    visit(static_cast<const Expr&>(expr));
+}
+
 void ExprVisitor::visit(const FieldExpr& expr)
 {
     visit(static_cast<const Expr&>(expr));

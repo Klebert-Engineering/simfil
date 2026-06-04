@@ -23,6 +23,7 @@ class BinaryWordOpExpr;
 class FieldExpr;
 class WildcardFieldExpr;
 class PathExpr;
+class PathAlternativesExpr;
 class AndExpr;
 class OrExpr;
 struct OperatorEq;
@@ -54,6 +55,7 @@ public:
     virtual void visit(const EachExpr& expr);
     virtual void visit(const CallExpression& expr);
     virtual void visit(const PathExpr& expr);
+    virtual void visit(const PathAlternativesExpr& expr);
     virtual void visit(const FieldExpr& expr);
     virtual void visit(const WildcardFieldExpr& expr);
     virtual void visit(const UnpackExpr& expr);

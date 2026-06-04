@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <ranges>
 #include <sfl/small_vector.hpp>
 #include <span>
@@ -136,7 +137,7 @@ public:
      * Return enum-like string symbols accepted directly by this schema node.
      *
      * Unlike nestedEnumSymbols(), this does not include descendants and is used
-     * to derive precise schema paths for auto-wildcard rewrites.
+     * to derive precise schema paths for schema-backed rewrites.
      */
     virtual auto directEnumSymbols() const & -> std::span<const StringId>
     {
@@ -171,6 +172,41 @@ public:
         collectEnumSymbolPaths(root, queryFn, symbol, visited, current, paths);
         sortUniquePaths(paths);
         return paths;
+    }
+
+    /**
+     * Return paths that should be compared with the supplied string symbol when
+     * the symbol appears as a full standalone query. Embedders can use this for
+     * schema-native aliases such as attribute type-code predicates.
+     */
+    virtual auto symbolEqualityPaths(
+        StringId,
+        const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath>
+    {
+        return {};
+    }
+
+    /**
+     * Return scalar field paths that should replace the supplied symbol when it
+     * appears as a standalone operand inside a larger expression.
+     */
+    virtual auto scalarFieldPathsForSymbol(
+        StringId,
+        const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath>
+    {
+        return {};
+    }
+
+    /**
+     * Return the first reachable scalar path below the supplied schema.
+     */
+    static auto firstScalarFieldPath(
+        SchemaId root,
+        const std::function<const Schema*(SchemaId)>& queryFn) -> std::optional<SchemaPath>
+    {
+        SchemaIdStack visited;
+        SchemaPath current;
+        return firstScalarFieldPath(root, queryFn, visited, current);
     }
 
     /**
@@ -301,6 +337,63 @@ protected:
         });
 
         visited.pop_back();
+    }
+
+    /**
+     * Recursively find the first scalar field path in schema declaration order.
+     */
+    static auto firstScalarFieldPath(SchemaId schemaId,
+                                     const std::function<const Schema*(SchemaId)>& queryFn,
+                                     SchemaIdStack& visited,
+                                     SchemaPath& current) -> std::optional<SchemaPath>
+    {
+        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+            return std::nullopt;
+
+        auto const* schema = queryFn(schemaId);
+        if (!schema)
+            return std::nullopt;
+
+        if (schema->kind() == Kind::Value)
+            return current;
+
+        visited.push_back(schemaId);
+
+        if (schema->kind() == Kind::Object) {
+            std::optional<SchemaPath> result;
+            schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+                if (result)
+                    return;
+
+                current.push_back({SchemaPathSegment::Kind::Field, directField});
+                if (childSchemas.empty()) {
+                    result = current;
+                }
+                else {
+                    for (auto childSchemaId : childSchemas) {
+                        result = firstScalarFieldPath(childSchemaId, queryFn, visited, current);
+                        if (result)
+                            break;
+                    }
+                }
+                current.pop_back();
+            });
+            visited.pop_back();
+            return result;
+        }
+
+        std::optional<SchemaPath> result;
+        schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+            if (result)
+                return;
+
+            current.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
+            result = firstScalarFieldPath(elementSchemaId, queryFn, visited, current);
+            current.pop_back();
+        });
+
+        visited.pop_back();
+        return result;
     }
 
     /**

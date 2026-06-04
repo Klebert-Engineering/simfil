@@ -114,6 +114,34 @@ static auto schemaLookupName(const Expr& expr) -> std::optional<std::string>
 }
 
 /**
+ * Return names eligible for operand shorthand rewrites. Quoted string literals
+ * stay values; unquoted symbol words parse as string constants but remain
+ * eligible because their source text is not quoted.
+ */
+static auto schemaOperandShorthandName(const Expr& expr, std::string_view query) -> std::optional<std::string>
+{
+    if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
+        return field->field();
+    }
+
+    if (auto const* constant = dynamic_cast<const ConstExpr*>(&expr)) {
+        auto const loc = constant->sourceLocation();
+        if (loc.size == 0 || loc.offset + loc.size > query.size()) {
+            return std::nullopt;
+        }
+        if (loc.offset < query.size() && (query[loc.offset] == '"' || query[loc.offset] == '\'')) {
+            return std::nullopt;
+        }
+        auto const& value = constant->value();
+        if (value.isa(ValueType::String)) {
+            return value.as<ValueType::String>();
+        }
+    }
+
+    return std::nullopt;
+}
+
+/**
  * Convert a schema path to a SIMFIL path expression.
  */
 static auto pathExpressionFromSchemaPath(Environment& env, const SchemaPath& path, SourceLocation location) -> expected<ExprPtr, Error>
@@ -165,10 +193,68 @@ static auto enumPathExpression(
     return result;
 }
 
+static auto schemaQuery(Environment& env) -> std::function<const Schema*(SchemaId)>
+{
+    return [&env](SchemaId schemaId) -> const Schema* {
+        return env.querySchema(schemaId);
+    };
+}
+
+static auto stringIdForSchemaLookup(Environment& env, std::string_view name) -> std::optional<StringId>
+{
+    if (auto existing = env.strings()->get(name); existing != StringPool::Empty) {
+        return existing;
+    }
+
+    auto inserted = env.strings()->emplace(name);
+    if (!inserted) {
+        return std::nullopt;
+    }
+    return *inserted;
+}
+
+static auto expressionForSingleSchemaPath(
+    Environment& env,
+    SchemaPath const& path,
+    SourceLocation location) -> expected<ExprPtr, Error>
+{
+    return pathExpressionFromSchemaPath(env, path, location);
+}
+
+static auto expressionForSchemaPathAlternatives(
+    Environment& env,
+    std::vector<SchemaPath> const& paths,
+    SourceLocation location,
+    std::string_view) -> expected<ExprPtr, Error>
+{
+    if (paths.empty()) {
+        return nullptr;
+    }
+
+    if (paths.size() == 1) {
+        return expressionForSingleSchemaPath(env, paths.front(), location);
+    }
+
+    std::vector<ExprPtr> alternatives;
+    alternatives.reserve(paths.size());
+    for (auto const& path : paths) {
+        auto alternative = expressionForSingleSchemaPath(env, path, location);
+        TRY_EXPECTED(alternative);
+        if (*alternative) {
+            alternatives.push_back(std::move(*alternative));
+        }
+    }
+
+    if (alternatives.empty()) {
+        return nullptr;
+    }
+    return std::make_unique<PathAlternativesExpr>(std::move(alternatives), location);
+}
+
 /**
  * Rewrite a single field/enum query by using schema metadata as source of truth.
  */
-static auto rewriteAutoWildcardBySchema(Environment& env, ExprPtr expr, SchemaId rootSchema) -> expected<ExprPtr, Error>
+static auto rewriteStandaloneNameBySchema(Environment& env, ExprPtr expr, SchemaId rootSchema) -> expected<ExprPtr, Error>
 {
     if (rootSchema == NoSchemaId || !expr)
         return expr;
@@ -181,21 +267,25 @@ static auto rewriteAutoWildcardBySchema(Environment& env, ExprPtr expr, SchemaId
     // completion/compile-local environments.
     (void) env.querySchema(rootSchema);
 
-    auto stringId = env.strings()->get(*name);
-    if (stringId == StringPool::Empty)
+    auto stringId = stringIdForSchemaLookup(env, *name);
+    if (!stringId)
         return expr;
 
-    auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
-        return env.querySchema(schemaId);
-    };
+    auto querySchema = schemaQuery(env);
+    auto const* root = env.querySchema(rootSchema);
+    if (root) {
+        auto symbolEqualityPaths = root->symbolEqualityPaths(*stringId, querySchema);
+        if (!symbolEqualityPaths.empty())
+            return enumPathExpression(env, symbolEqualityPaths, std::move(*name), expr->sourceLocation());
+    }
 
-    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, stringId);
-    auto fieldPaths = Schema::fieldPaths(rootSchema, querySchema, stringId);
+    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId);
+    auto fieldPaths = Schema::fieldPaths(rootSchema, querySchema, *stringId);
 
     if (!enumPaths.empty() && !fieldPaths.empty()) {
         return unexpected<Error>(
             Error::ParserError,
-            fmt::format("Ambiguous schema auto-wildcard token '{}': it is both a field and an enum-like string symbol.", *name));
+            fmt::format("Ambiguous schema rewrite token '{}': it is both a field and an enum-like string symbol.", *name));
     }
 
     if (!enumPaths.empty())
@@ -203,6 +293,51 @@ static auto rewriteAutoWildcardBySchema(Environment& env, ExprPtr expr, SchemaId
 
     if (!fieldPaths.empty())
         return std::make_unique<WildcardFieldExpr>(true, std::move(*name), expr->sourceLocation());
+
+    return expr;
+}
+
+static auto rewriteScalarShorthandBySchema(
+    Environment& env,
+    std::string_view query,
+    ExprPtr expr,
+    SchemaId rootSchema,
+    bool isRoot,
+    bool insidePath) -> expected<ExprPtr, Error>
+{
+    if (!expr || rootSchema == NoSchemaId) {
+        return expr;
+    }
+
+    auto const entersPath = insidePath || dynamic_cast<const PathExpr*>(expr.get()) != nullptr;
+    if (!isRoot && !insidePath) {
+        if (auto name = schemaOperandShorthandName(*expr, query)) {
+            if (auto stringId = stringIdForSchemaLookup(env, *name)) {
+                if (auto const* root = env.querySchema(rootSchema)) {
+                    auto paths = root->scalarFieldPathsForSymbol(*stringId, schemaQuery(env));
+                    if (!paths.empty()) {
+                        auto replacement = expressionForSchemaPathAlternatives(
+                            env,
+                            paths,
+                            expr->sourceLocation(),
+                            *name);
+                        TRY_EXPECTED(replacement);
+                        if (*replacement) {
+                            return std::move(*replacement);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    auto const count = expr->numChildren();
+    for (auto i = 0u; i < count; ++i) {
+        auto& child = expr->childAt(i);
+        auto rewritten = rewriteScalarShorthandBySchema(env, query, std::move(child), rootSchema, false, entersPath);
+        TRY_EXPECTED(rewritten);
+        child = std::move(*rewritten);
+    }
 
     return expr;
 }
@@ -1148,9 +1283,14 @@ static auto setupParser(Parser& p)
     p.infixParsers[Token::DOT]  = &pathParser;
 }
 
-auto compile(Environment& env, std::string_view query, bool any, bool autoWildcard) -> expected<ASTPtr, Error>
+auto compile(Environment& env, std::string_view query, bool any, bool) -> expected<ASTPtr, Error>
 {
-    return compile(env, query, CompileOptions{.any = any, .autoWildcard = autoWildcard});
+    return compile(
+        env,
+        query,
+        CompileOptions{
+            .any = any,
+            .rewriteMode = RewriteMode::None});
 }
 
 auto compile(Environment& env, std::string_view query, CompileOptions options) -> expected<ASTPtr, Error>
@@ -1165,15 +1305,9 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
         auto root = p.parse();
         TRY_EXPECTED(root);
 
-        if (options.autoWildcard && options.rootSchema != NoSchemaId) {
-            root = rewriteAutoWildcardBySchema(env, std::move(*root), options.rootSchema);
+        if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoSchemaId) {
+            root = rewriteStandaloneNameBySchema(env, std::move(*root), options.rootSchema);
             TRY_EXPECTED(root);
-        }
-
-        /* Expand a single value to `** == <value>` */
-        if (options.autoWildcard && options.rootSchema == NoSchemaId && *root && (*root)->constant()) {
-            root = simplifyOrForward(p.env, std::make_unique<BinaryExpr<OperatorEq>>(
-                std::make_unique<WildcardExpr>(), std::move(*root)));
         }
 
         if (!*root)
@@ -1188,6 +1322,11 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
         }
     }();
     TRY_EXPECTED(expr);
+
+    if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoSchemaId) {
+        expr = rewriteScalarShorthandBySchema(env, query, std::move(*expr), options.rootSchema, true, false);
+        TRY_EXPECTED(expr);
+    }
 
     /* Apply AST rewrite rules */
     expr = rewriteTopDown(std::move(*expr), topDownRewriteRules);

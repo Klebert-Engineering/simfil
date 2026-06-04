@@ -289,7 +289,7 @@ TEST_CASE("Array schema serialization", "[model.schema]") {
     REQUIRE((*recoveredRoot)->schema() == SchemaId{7});
 }
 
-TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.schema]")
+TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
 {
     auto model = json::parse(R"json(
     {
@@ -343,7 +343,7 @@ TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.s
 
     auto enumAst = compile(env, "Carrier", CompileOptions{
         .any = false,
-        .autoWildcard = true,
+        .rewriteMode = RewriteMode::Schema,
         .rootSchema = SchemaId{1}});
     REQUIRE(enumAst);
     INFO((*enumAst)->expr().toString());
@@ -359,7 +359,7 @@ TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.s
 
     auto fieldAst = compile(env, "CARRIER", CompileOptions{
         .any = false,
-        .autoWildcard = true,
+        .rewriteMode = RewriteMode::Schema,
         .rootSchema = SchemaId{1}});
     REQUIRE(fieldAst);
     REQUIRE((*fieldAst)->expr().toString() == "**.CARRIER");
@@ -393,7 +393,7 @@ TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.s
 
     auto unresolvedAst = compile(env, "unrelated.value", CompileOptions{
         .any = false,
-        .autoWildcard = false,
+        .rewriteMode = RewriteMode::None,
         .rootSchema = SchemaId{1}});
     REQUIRE(unresolvedAst);
     auto unresolvedRefs = referencedSchemaPaths(env, **unresolvedAst, SchemaId{1});
@@ -404,7 +404,7 @@ TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.s
     REQUIRE(strings->get("absent") == StringPool::Empty);
     auto absentAst = compile(env, "absent", CompileOptions{
         .any = false,
-        .autoWildcard = false,
+        .rewriteMode = RewriteMode::None,
         .rootSchema = SchemaId{1}});
     REQUIRE(absentAst);
     auto absentRefs = referencedSchemaPaths(env, **absentAst, SchemaId{1});
@@ -415,13 +415,175 @@ TEST_CASE("Schema auto-wildcard rewrites enum symbols to exact paths", "[model.s
 
     auto childWildcardAst = compile(env, "*.CARRIER", CompileOptions{
         .any = false,
-        .autoWildcard = false,
+        .rewriteMode = RewriteMode::None,
         .rootSchema = SchemaId{1}});
     REQUIRE(childWildcardAst);
     auto childWildcardRefs = referencedSchemaPaths(env, **childWildcardAst, SchemaId{1});
     REQUIRE(childWildcardRefs);
     REQUIRE(childWildcardRefs->paths.empty());
     REQUIRE(childWildcardRefs->hasDynamicAccess);
+}
+
+TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema]")
+{
+    auto model = json::parse(R"json(
+    {
+      "$name": "speed",
+      "value": 50,
+      "primary": 70,
+      "secondary": 90
+    }
+    )json").value();
+
+    auto strings = model->strings();
+    auto alias = strings->emplace("speed").value();
+    auto multiAlias = strings->emplace("limit").value();
+    auto name = strings->emplace("$name").value();
+    auto value = strings->emplace("value").value();
+    auto primary = strings->emplace("primary").value();
+    auto secondary = strings->emplace("secondary").value();
+
+    class AliasSchema final : public ObjectSchema
+    {
+    public:
+        AliasSchema(StringId alias, StringId multiAlias, StringId name, StringId value, StringId primary, StringId secondary)
+            : alias_(alias)
+            , multiAlias_(multiAlias)
+            , name_(name)
+            , value_(value)
+            , primary_(primary)
+            , secondary_(secondary)
+        {
+            addField(name_);
+            addField(value_);
+            addField(primary_);
+            addField(secondary_);
+        }
+
+        auto symbolEqualityPaths(
+            StringId symbol,
+            const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath> override
+        {
+            if (symbol != alias_)
+                return {};
+            return {SchemaPath{{SchemaPathSegment::Kind::Field, name_}}};
+        }
+
+        auto scalarFieldPathsForSymbol(
+            StringId symbol,
+            const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath> override
+        {
+            if (symbol == alias_) {
+                return {SchemaPath{{SchemaPathSegment::Kind::Field, value_}}};
+            }
+            if (symbol == multiAlias_) {
+                return {
+                    SchemaPath{{SchemaPathSegment::Kind::Field, primary_}},
+                    SchemaPath{{SchemaPathSegment::Kind::Field, secondary_}},
+                };
+            }
+            else {
+                return {};
+            }
+        }
+
+    private:
+        StringId alias_;
+        StringId multiAlias_;
+        StringId name_;
+        StringId value_;
+        StringId primary_;
+        StringId secondary_;
+    };
+
+    SchemaRegistry registry;
+    registry.schemas[SchemaId{1}] = std::make_unique<AliasSchema>(alias, multiAlias, name, value, primary, secondary);
+    registry.finalize();
+
+    auto root = model->root(0);
+    REQUIRE(root);
+    auto rootObj = model->resolve<Object>(**root);
+    REQUIRE(rootObj);
+    REQUIRE(rootObj->setSchema(SchemaId{1}));
+
+    Environment env(strings);
+    env.querySchemaCallback = registry.asFunction();
+
+    auto standaloneAst = compile(env, "speed", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(standaloneAst);
+    INFO((*standaloneAst)->expr().toString());
+    REQUIRE((*standaloneAst)->expr().toString().find("$name") != std::string::npos);
+    REQUIRE((*standaloneAst)->expr().toString().find("value") == std::string::npos);
+
+    auto standaloneResult = eval(env, **standaloneAst, **root, nullptr);
+    REQUIRE(standaloneResult);
+    REQUIRE(standaloneResult->size() == 1);
+    REQUIRE(standaloneResult->front().isa(ValueType::Bool));
+    REQUIRE(standaloneResult->front().as<ValueType::Bool>());
+
+    auto expressionAst = compile(env, "speed > 40", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(expressionAst);
+    INFO((*expressionAst)->expr().toString());
+    REQUIRE((*expressionAst)->expr().toString().find("value") != std::string::npos);
+
+    auto expressionResult = eval(env, **expressionAst, **root, nullptr);
+    REQUIRE(expressionResult);
+    REQUIRE(expressionResult->size() == 1);
+    REQUIRE(expressionResult->front().isa(ValueType::Bool));
+    REQUIRE(expressionResult->front().as<ValueType::Bool>());
+
+    auto quotedAst = compile(env, R"("speed" == speed)", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(quotedAst);
+    INFO((*quotedAst)->expr().toString());
+    REQUIRE((*quotedAst)->expr().toString().find("\"speed\"") != std::string::npos);
+    REQUIRE((*quotedAst)->expr().toString().find("value") != std::string::npos);
+
+    auto anyAlternativeAst = compile(env, "limit > 80", CompileOptions{
+        .any = true,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(anyAlternativeAst);
+    INFO((*anyAlternativeAst)->expr().toString());
+    REQUIRE((*anyAlternativeAst)->expr().toString().find("(paths") != std::string::npos);
+    REQUIRE((*anyAlternativeAst)->expr().toString().find("primary") != std::string::npos);
+    REQUIRE((*anyAlternativeAst)->expr().toString().find("secondary") != std::string::npos);
+
+    auto anyAlternativeResult = eval(env, **anyAlternativeAst, **root, nullptr);
+    REQUIRE(anyAlternativeResult);
+    REQUIRE(anyAlternativeResult->size() == 1);
+    REQUIRE(anyAlternativeResult->front().isa(ValueType::Bool));
+    REQUIRE(anyAlternativeResult->front().as<ValueType::Bool>());
+
+    auto eachAlternativeAst = compile(env, "each(limit > 80)", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(eachAlternativeAst);
+    auto eachAlternativeResult = eval(env, **eachAlternativeAst, **root, nullptr);
+    REQUIRE(eachAlternativeResult);
+    REQUIRE(eachAlternativeResult->size() == 1);
+    REQUIRE(eachAlternativeResult->front().isa(ValueType::Bool));
+    REQUIRE_FALSE(eachAlternativeResult->front().as<ValueType::Bool>());
+
+    auto eachAllAlternativeAst = compile(env, "each(limit < 100)", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(eachAllAlternativeAst);
+    auto eachAllAlternativeResult = eval(env, **eachAllAlternativeAst, **root, nullptr);
+    REQUIRE(eachAllAlternativeResult);
+    REQUIRE(eachAllAlternativeResult->size() == 1);
+    REQUIRE(eachAllAlternativeResult->front().isa(ValueType::Bool));
+    REQUIRE(eachAllAlternativeResult->front().as<ValueType::Bool>());
 }
 
 // A minimal test that makes sure a field not in the schema

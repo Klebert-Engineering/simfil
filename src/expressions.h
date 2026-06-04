@@ -264,6 +264,24 @@ public:
     ExprPtr left_, right_;
 };
 
+/** Evaluates a set of exact path alternatives and forwards every produced value. */
+class PathAlternativesExpr : public Expr
+{
+public:
+    explicit PathAlternativesExpr(std::vector<ExprPtr> alternatives, SourceLocation location = {});
+
+    auto type() const -> Type override;
+    auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    auto ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& v) const override;
+    auto numChildren() const -> std::size_t override;
+    auto childAt(std::size_t index) -> ExprPtr& override;
+    auto childAt(std::size_t index) const -> const ExprPtr& override;
+    auto toString() const -> std::string override;
+
+    std::vector<ExprPtr> alternatives_;
+};
+
 /** Calls `unpack` onto values of type Object. Forwards the value(s) otherwise.
  *
  * 1... => 1
