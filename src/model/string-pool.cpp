@@ -53,9 +53,10 @@ StringPool::StringPool()
 
 StringPool::StringPool(const StringPool& other)
 {
-    std::unique_lock lockThis(stringStoreMutex_, std::defer_lock);
-    std::shared_lock lockOther(other.stringStoreMutex_, std::defer_lock);
-    std::lock(lockThis, lockOther);
+    // `this` is not observable while its copy constructor runs, so only the
+    // source pool needs synchronization. Locking both rwlocks through
+    // std::lock trips Helgrind's rwlock bookkeeping on some CI runners.
+    std::shared_lock lockOther(other.stringStoreMutex_);
 
     // Copy storedStrings_.
     storedStrings_ = other.storedStrings_;

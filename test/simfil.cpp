@@ -719,20 +719,20 @@ TEST_CASE("Switch Model String Pool", "[model.setStrings]")
 
 TEST_CASE("StringPool copy owns lookup views", "[string-pool]")
 {
-    simfil::StringPool source;
-    auto id = source.emplace("owned-dynamic-field");
+    auto source = std::make_shared<simfil::StringPool>();
+    auto id = source->emplace("owned-dynamic-field");
     REQUIRE(id);
 
-    auto sourceView = source.resolve(*id);
+    auto sourceView = source->resolve(*id);
     REQUIRE(sourceView);
 
-    simfil::StringPool copy(source);
-    auto copyView = copy.resolve(*id);
+    auto copy = std::make_shared<simfil::StringPool>(*source);
+    auto copyView = copy->resolve(*id);
     REQUIRE(copyView);
 
     REQUIRE(*copyView == *sourceView);
     REQUIRE(copyView->data() != sourceView->data());
-    REQUIRE(copy.get("owned-dynamic-field") == *id);
+    REQUIRE(copy->get("owned-dynamic-field") == *id);
 }
 
 TEST_CASE("Exception Handler", "[exception]")
