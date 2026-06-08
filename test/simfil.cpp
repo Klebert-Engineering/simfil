@@ -252,7 +252,7 @@ TEST_CASE("Deprecated auto wildcard has no non-schema fallback", "[ast.auto-expa
     REQUIRE_AST_AUTOWILDCARD("** = 1",  "(== ** 1)");
     REQUIRE_AST_AUTOWILDCARD("1",       "1");
     REQUIRE_AST_AUTOWILDCARD("1+4",     "5");
-    REQUIRE_AST_AUTOWILDCARD("ABC",     "\"ABC\"");
+    REQUIRE_AST_AUTOWILDCARD("ABC",     "ABC");
 }
 
 TEST_CASE("CompareIncompatibleTypesFields", "[ast.compare-incompatible-types-fields]") {
@@ -350,16 +350,16 @@ TEST_CASE("Constants", "[ast.constant]") {
     REQUIRE_AST("a_number", "123");
 }
 
-TEST_CASE("Symbols", "[ast.symbol]") {
-    REQUIRE_AST("ABC", "\"ABC\"");
-    REQUIRE_AST("ABC == ABC", "true");
+TEST_CASE("Unquoted words are fields without schema metadata", "[ast.symbol]") {
+    REQUIRE_AST("ABC", "ABC");
+    REQUIRE_AST("ABC == ABC", "(== ABC ABC)");
     REQUIRE_AST("a.ABC", "(. a ABC)");
     REQUIRE_AST("a.ABC.DEF", "(. (. a ABC) DEF)");
-    REQUIRE_AST("a.(ABC)", "(. a \"ABC\")");
+    REQUIRE_AST("a.(ABC)", "(. a ABC)");
     REQUIRE_AST("a.(_.ABC)", "(. a (. _ ABC))");
-    REQUIRE_AST("a[ABC]", "(index a \"ABC\")");
+    REQUIRE_AST("a[ABC]", "(index a ABC)");
     REQUIRE_AST("a[_.ABC]", "(index a (. _ ABC))");
-    REQUIRE_AST("a{ABC}", "(sub a \"ABC\")");
+    REQUIRE_AST("a{ABC}", "(sub a ABC)");
     REQUIRE_AST("a{_.ABC}", "(sub a (. _ ABC))");
 }
 

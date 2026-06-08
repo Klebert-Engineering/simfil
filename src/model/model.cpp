@@ -260,6 +260,12 @@ void ModelPool::clear()
 
 tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
+    // Merged/container views can surface child nodes from another model. Always
+    // let the owning model interpret its own column/index address.
+    if (auto owner = n.owningModel(); owner && owner.get() != this) {
+        return owner->resolve(n, cb);
+    }
+
     auto checkBounds = [&n](auto const& vec) -> std::optional<Error> {
         auto idx = n.addr_.index();
         if (idx >= vec.size())

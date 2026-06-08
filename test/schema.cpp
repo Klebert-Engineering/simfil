@@ -431,33 +431,38 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
       "$name": "speed",
       "value": 50,
       "primary": 70,
-      "secondary": 90
+      "secondary": 90,
+      "unit": "MPH"
     }
     )json").value();
 
     auto strings = model->strings();
     auto alias = strings->emplace("speed").value();
     auto multiAlias = strings->emplace("limit").value();
+    auto enumSymbol = strings->emplace("MPH").value();
     auto name = strings->emplace("$name").value();
     auto value = strings->emplace("value").value();
     auto primary = strings->emplace("primary").value();
     auto secondary = strings->emplace("secondary").value();
+    auto unit = strings->emplace("unit").value();
 
     class AliasSchema final : public ObjectSchema
     {
     public:
-        AliasSchema(StringId alias, StringId multiAlias, StringId name, StringId value, StringId primary, StringId secondary)
+        AliasSchema(StringId alias, StringId multiAlias, StringId name, StringId value, StringId primary, StringId secondary, StringId unit)
             : alias_(alias)
             , multiAlias_(multiAlias)
             , name_(name)
             , value_(value)
             , primary_(primary)
             , secondary_(secondary)
+            , unit_(unit)
         {
             addField(name_);
             addField(value_);
             addField(primary_);
             addField(secondary_);
+            addField(unit_, {SchemaId{2}});
         }
 
         auto symbolEqualityPaths(
@@ -494,10 +499,14 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
         StringId value_;
         StringId primary_;
         StringId secondary_;
+        StringId unit_;
     };
 
     SchemaRegistry registry;
-    registry.schemas[SchemaId{1}] = std::make_unique<AliasSchema>(alias, multiAlias, name, value, primary, secondary);
+    auto enumSchema = std::make_unique<ValueSchema>();
+    enumSchema->addEnumSymbol(enumSymbol);
+    registry.schemas[SchemaId{1}] = std::make_unique<AliasSchema>(alias, multiAlias, name, value, primary, secondary, unit);
+    registry.schemas[SchemaId{2}] = std::move(enumSchema);
     registry.finalize();
 
     auto root = model->root(0);
@@ -537,6 +546,20 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     REQUIRE(expressionResult->size() == 1);
     REQUIRE(expressionResult->front().isa(ValueType::Bool));
     REQUIRE(expressionResult->front().as<ValueType::Bool>());
+
+    auto enumOperandAst = compile(env, "unit == MPH", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(enumOperandAst);
+    INFO((*enumOperandAst)->expr().toString());
+    REQUIRE((*enumOperandAst)->expr().toString().find("\"MPH\"") != std::string::npos);
+
+    auto enumOperandResult = eval(env, **enumOperandAst, **root, nullptr);
+    REQUIRE(enumOperandResult);
+    REQUIRE(enumOperandResult->size() == 1);
+    REQUIRE(enumOperandResult->front().isa(ValueType::Bool));
+    REQUIRE(enumOperandResult->front().as<ValueType::Bool>());
 
     auto quotedAst = compile(env, R"("speed" == speed)", CompileOptions{
         .any = false,

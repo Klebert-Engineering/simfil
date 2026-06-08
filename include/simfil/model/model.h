@@ -136,6 +136,16 @@ public:
             }
             else {
                 using ModelType = detail::ModelTypeOf<Target>;
+
+                // Merged views may expose nodes owned by another model, e.g.
+                // overlay feature references returned through a base tile. The
+                // node address must be interpreted by the model that created it.
+                if (auto owner = node.owningModel(); owner && owner.get() != this) {
+                    if (auto typedOwner = dynamic_cast<ModelType const*>(owner.get())) {
+                        return resolveInternal(res::tag<Target>{}, *typedOwner, node);
+                    }
+                }
+
 #if !defined(NDEBUG)
                 // In debug builds, validate the model type to catch misuse early.
                 auto typedModel = dynamic_cast<ModelType const*>(this);

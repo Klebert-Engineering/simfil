@@ -34,14 +34,12 @@ Example: `*.["field name with spaces"]`.
 
 ### Symbols
 
-Simfil parses identifiers containing only uppercase letters and underscores
-as strings, but only if not on either side of a path operator `.`.
-This means, that expressions like `**.field = ABC` get parsed as
-`**.field = "ABC"`. Note that this is not the case if a symbol appears on 
-either side of `.`, such as `ABC.field`!
+Simfil parses unquoted identifiers as field names. String values should be
+written as quoted literals, for example `field = "ABC"`.
 
-To force parsing a symbol as a field, you can put it in a path expression:
-`_.FIELD` or use the subscript operator `[FIELD]`.
+When schema metadata is available, the compiler may reinterpret an unquoted
+standalone token as a schema symbol. This is a schema rewrite, not a parser
+rule: without schema metadata, `ABC` is the field `ABC`.
 
 ### Schema-Aware Field and Enum Resolution
 
@@ -50,9 +48,9 @@ When the caller supplies a schema for the current model, simfil can use that sch
 Schema-aware behavior is conservative:
 
 - A standalone scalar field name can resolve to the concrete schema path that owns that field.
-- A recursive wildcard such as `**.speedLimitKmh` can skip schema branches that cannot contain `speedLimitKmh`.
-- Uppercase enum-like symbols can resolve to string constants when the schema proves they belong to an enum domain.
-- If the same token can mean both a field and an enum-like value, simfil reports an ambiguity instead of guessing.
+- A recursive wildcard such as `**.speedLimitKmh` can skip schema branches that cannot contain `speedLimitKmh`, which avoids scanning arbitrary object branches when the schema is precise.
+- An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum domain.
+- If the same token can mean both a field and an enum-like value, field access wins. This keeps schema shorthand aligned with normal unquoted identifiers.
 
 Examples:
 
@@ -63,10 +61,26 @@ speedLimitKmh > 80
 can be compiled against a schema as the concrete path that owns `speedLimitKmh`, while:
 
 ```simfil
-WARNING_SIGN
+SPEED_LIMIT_END
 ```
 
-can be compiled as a comparison against schema paths whose enum domain contains `WARNING_SIGN`.
+can be compiled as a comparison against schema paths whose enum domain contains `SPEED_LIMIT_END`.
+
+Other common schema-aware patterns:
+
+```simfil
+**.speedLimitKmh > 80
+```
+
+uses the recursive wildcard syntax while still allowing schema-guided pruning, and:
+
+```simfil
+"SPEED_LIMIT_END"
+```
+
+uses the quoted enum value inserted by schema-aware completion. Schema mode can
+also resolve unquoted enum tokens when the schema proves they are enum values,
+but quoted strings are the explicit representation.
 
 Use explicit path syntax when you want to force field access:
 

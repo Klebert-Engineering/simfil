@@ -79,27 +79,6 @@ auto escapeKey(std::string_view str)
     return escaped;
 }
 
-/// Return whether a string can be represented as an unquoted SIMFIL symbol.
-auto isSymbolLiteralWord(std::string_view str)
-{
-    if (str.empty())
-        return false;
-
-    auto first = static_cast<unsigned char>(str.front());
-    if (!(std::isalpha(first) != 0 || str.front() == '_'))
-        return false;
-
-    auto uppercaseLetters = 0;
-    return std::ranges::all_of(str, [&uppercaseLetters](auto c) {
-        auto uc = static_cast<unsigned char>(c);
-        if (std::isupper(uc) != 0) {
-            ++uppercaseLetters;
-            return true;
-        }
-        return c == '_' || std::isdigit(uc) != 0;
-    }) && uppercaseLetters > 0;
-}
-
 /// Escape a string value as a SIMFIL string literal completion.
 auto escapeStringLiteral(std::string_view str)
 {
@@ -119,8 +98,6 @@ auto escapeStringLiteral(std::string_view str)
 /// Return the text that should be inserted for an enum-like string symbol.
 auto enumSymbolCompletionText(std::string_view str)
 {
-    if (isSymbolLiteralWord(str))
-        return std::string{str};
     return escapeStringLiteral(str);
 }
 
@@ -171,6 +148,42 @@ auto completeSchemaFields(
     return simfil::Result::Continue;
 }
 
+/// Complete schema fields reachable below the current node as shorthand root tokens.
+auto completeSchemaShorthandFields(
+    const simfil::Context& ctx,
+    const simfil::ModelNode& node,
+    std::string_view prefix,
+    simfil::Completion& comp,
+    simfil::SourceLocation loc) -> simfil::Result
+{
+    const auto* schema = ctx.env->querySchema(node.schema());
+    if (!schema)
+        return simfil::Result::Continue;
+
+    const auto directFields = schema->directFields();
+    const auto isDirectField = [&](simfil::StringId fieldId) {
+        return std::ranges::find(directFields, fieldId) != directFields.end();
+    };
+
+    const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
+    for (auto fieldId : schema->nestedFields()) {
+        if (comp.size() >= comp.limit)
+            return simfil::Result::Stop;
+        if (isDirectField(fieldId)) {
+            continue;
+        }
+
+        auto fieldName = ctx.env->strings()->resolve(fieldId);
+        if (!fieldName || fieldName->empty())
+            continue;
+
+        if (auto r = completeFieldName(*fieldName, prefix, caseSensitive, comp, loc); r != simfil::Result::Continue)
+            return r;
+    }
+
+    return simfil::Result::Continue;
+}
+
 /// Complete enum-like string symbols reachable from the node schema.
 auto completeSchemaEnumSymbols(
     const simfil::Context& ctx,
@@ -191,6 +204,9 @@ auto completeSchemaEnumSymbols(
         auto symbol = ctx.env->strings()->resolve(symbolId);
         if (!symbol || symbol->empty() || !startsWith(*symbol, prefix, caseSensitive))
             continue;
+        if (schema->canHaveField(symbolId)) {
+            continue;
+        }
 
         comp.add(enumSymbolCompletionText(*symbol), loc, simfil::CompletionCandidate::Type::CONSTANT);
     }
@@ -223,9 +239,12 @@ auto completeWords(
 {
     using simfil::Result;
 
-    // Generate completion candidates for uppercase string constants from string pool.
+    // String values from the model are string literals in SIMFIL. They are
+    // suggested quoted because bare words are fields unless schema compilation
+    // later proves that a token is an enum-like operand.
     auto stringPool = ctx.env->strings();
     const auto& strings = stringPool->strings();
+    const auto* schema = node ? ctx.env->querySchema(node->schema()) : nullptr;
 
     const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
     for (const auto& str : strings) {
@@ -238,11 +257,20 @@ auto completeWords(
         });
 
         if (isWORD && str.size() >= prefix.size() && startsWith(str, prefix, caseSensitive)) {
-            comp.add(str, loc, simfil::CompletionCandidate::Type::CONSTANT);
+            auto const stringId = stringPool->get(str);
+            if (schema && stringId != simfil::StringPool::Empty && schema->canHaveEnumSymbol(stringId)) {
+                // Schema enum values are completed below from schema metadata,
+                // which also prevents datasource string-pool duplicates.
+                continue;
+            }
+            comp.add(escapeStringLiteral(str), loc, simfil::CompletionCandidate::Type::CONSTANT);
         }
     }
 
     if (node) {
+        if (auto r = completeSchemaShorthandFields(ctx, *node, prefix, comp, loc); r != Result::Continue)
+            return r;
+
         if (auto r = completeSchemaEnumSymbols(ctx, *node, prefix, comp, loc); r != Result::Continue)
             return r;
     }

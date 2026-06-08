@@ -79,22 +79,6 @@ enum Precedence {
 };
 
 /**
- * Returns if a word should be parsed as a symbol (string).
- * This is true for all UPPER_CASE words.
- */
-static auto isSymbolWord(std::string_view sv) -> bool
-{
-    auto numUpperCaseLetters = 0;
-    return std::ranges::all_of(sv.begin(), sv.end(), [&numUpperCaseLetters](auto c) {
-       if (std::isupper(c)) {
-           ++numUpperCaseLetters;
-           return true;
-       }
-       return c == '_' || std::isdigit(c) != 0;
-    }) && numUpperCaseLetters > 0;
-}
-
-/**
  * Extract the user-facing string from a single field or string-literal query.
  */
 static auto schemaLookupName(const Expr& expr) -> std::optional<std::string>
@@ -114,9 +98,9 @@ static auto schemaLookupName(const Expr& expr) -> std::optional<std::string>
 }
 
 /**
- * Return names eligible for operand shorthand rewrites. Quoted string literals
- * stay values; unquoted symbol words parse as string constants but remain
- * eligible because their source text is not quoted.
+ * Return names eligible for operand rewrites. Quoted string literals stay
+ * values; unquoted words are parsed as fields and may be reinterpreted by
+ * schema metadata below.
  */
 static auto schemaOperandShorthandName(const Expr& expr, std::string_view query) -> std::optional<std::string>
 {
@@ -279,25 +263,18 @@ static auto rewriteStandaloneNameBySchema(Environment& env, ExprPtr expr, Schema
             return enumPathExpression(env, symbolEqualityPaths, std::move(*name), expr->sourceLocation());
     }
 
-    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId);
     auto fieldPaths = Schema::fieldPaths(rootSchema, querySchema, *stringId);
-
-    if (!enumPaths.empty() && !fieldPaths.empty()) {
-        return unexpected<Error>(
-            Error::ParserError,
-            fmt::format("Ambiguous schema rewrite token '{}': it is both a field and an enum-like string symbol.", *name));
-    }
-
-    if (!enumPaths.empty())
-        return enumPathExpression(env, enumPaths, std::move(*name), expr->sourceLocation());
-
     if (!fieldPaths.empty())
         return std::make_unique<WildcardFieldExpr>(true, std::move(*name), expr->sourceLocation());
+
+    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId);
+    if (!enumPaths.empty())
+        return enumPathExpression(env, enumPaths, std::move(*name), expr->sourceLocation());
 
     return expr;
 }
 
-static auto rewriteScalarShorthandBySchema(
+static auto rewriteOperandShorthandBySchema(
     Environment& env,
     std::string_view query,
     ExprPtr expr,
@@ -326,6 +303,17 @@ static auto rewriteScalarShorthandBySchema(
                             return std::move(*replacement);
                         }
                     }
+
+                    auto querySchema = schemaQuery(env);
+                    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId);
+                    if (!enumPaths.empty()) {
+                        auto fieldPaths = Schema::fieldPaths(rootSchema, querySchema, *stringId);
+                        if (!fieldPaths.empty()) {
+                            return expr;
+                        }
+
+                        return std::make_unique<ConstExpr>(Value::make(std::move(*name)));
+                    }
                 }
             }
         }
@@ -334,7 +322,7 @@ static auto rewriteScalarShorthandBySchema(
     auto const count = expr->numChildren();
     for (auto i = 0u; i < count; ++i) {
         auto& child = expr->childAt(i);
-        auto rewritten = rewriteScalarShorthandBySchema(env, query, std::move(child), rootSchema, false, entersPath);
+        auto rewritten = rewriteOperandShorthandBySchema(env, query, std::move(child), rootSchema, false, entersPath);
         TRY_EXPECTED(rewritten);
         child = std::move(*rewritten);
     }
@@ -362,6 +350,98 @@ static auto stringConstValue(const Expr& expr) -> std::optional<std::string>
         return std::nullopt;
     }
     return value.as<ValueType::String>();
+}
+
+static auto fieldNodeName(const Expr& expr) -> std::optional<std::string>
+{
+    if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
+        return field->field();
+    }
+    return std::nullopt;
+}
+
+static auto addReferencedQueryStringLiteral(ReferencedQueryTerms& terms, std::string literal) -> void
+{
+    if (!literal.empty()) {
+        terms.stringLiterals.insert(std::move(literal));
+    }
+}
+
+static auto addReferencedQueryLeafField(ReferencedQueryTerms& terms, std::string fieldName) -> void
+{
+    if (!fieldName.empty()) {
+        terms.leafFields.insert(std::move(fieldName));
+    }
+}
+
+static auto collectReferencedQueryTermsFromExpr(const Expr& expr, ReferencedQueryTerms& terms) -> void;
+
+static auto collectReferencedQueryTermsFromPathLeaf(const Expr& expr, ReferencedQueryTerms& terms) -> void
+{
+    if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
+        addReferencedQueryLeafField(terms, field->field());
+        return;
+    }
+    if (auto const* wildcardField = dynamic_cast<const WildcardFieldExpr*>(&expr)) {
+        addReferencedQueryLeafField(terms, wildcardField->name_);
+        return;
+    }
+    if (auto const* subscript = dynamic_cast<const SubscriptExpr*>(&expr)) {
+        if (auto literal = stringConstValue(*subscript->index_)) {
+            addReferencedQueryLeafField(terms, *literal);
+            addReferencedQueryStringLiteral(terms, std::move(*literal));
+            return;
+        }
+    }
+    collectReferencedQueryTermsFromExpr(expr, terms);
+}
+
+static auto collectReferencedQueryComparison(
+    ReferencedQueryTerms& terms,
+    const Expr& lhs,
+    const Expr& rhs) -> void
+{
+    auto fieldName = fieldNodeName(lhs);
+    auto literal = stringConstValue(rhs);
+    if (fieldName && literal) {
+        terms.positiveFieldStringComparisons.push_back({std::move(*fieldName), std::move(*literal)});
+    }
+}
+
+static auto collectReferencedQueryTermsFromExpr(const Expr& expr, ReferencedQueryTerms& terms) -> void
+{
+    if (auto const* constant = dynamic_cast<const ConstExpr*>(&expr)) {
+        if (auto literal = stringConstValue(*constant)) {
+            addReferencedQueryStringLiteral(terms, std::move(*literal));
+        }
+        return;
+    }
+    if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
+        addReferencedQueryLeafField(terms, field->field());
+        return;
+    }
+    if (auto const* wildcardField = dynamic_cast<const WildcardFieldExpr*>(&expr)) {
+        addReferencedQueryLeafField(terms, wildcardField->name_);
+        return;
+    }
+    if (auto const* path = dynamic_cast<const PathExpr*>(&expr)) {
+        collectReferencedQueryTermsFromPathLeaf(*path->right(), terms);
+        return;
+    }
+    if (auto const* subscript = dynamic_cast<const SubscriptExpr*>(&expr)) {
+        if (auto literal = stringConstValue(*subscript->index_)) {
+            addReferencedQueryLeafField(terms, *literal);
+            addReferencedQueryStringLiteral(terms, std::move(*literal));
+            return;
+        }
+    }
+    if (auto const* eq = dynamic_cast<const BinaryExpr<OperatorEq>*>(&expr)) {
+        collectReferencedQueryComparison(terms, *eq->left_, *eq->right_);
+        collectReferencedQueryComparison(terms, *eq->right_, *eq->left_);
+    }
+    for (auto i = 0u; i < expr.numChildren(); ++i) {
+        collectReferencedQueryTermsFromExpr(*expr.childAt(i), terms);
+    }
 }
 
 /**
@@ -1032,12 +1112,8 @@ public:
                 return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
             }
         } else if (!p.ctx.inPath) {
-            /* Parse Symbols (words in upper-case) */
-            if (isSymbolWord(word)) {
-                return std::make_unique<ConstExpr>(Value::make<std::string>(std::move(word)), t);
-            }
             /* Constant */
-            else if (auto constant = p.env->findConstant(word)) {
+            if (auto constant = p.env->findConstant(word)) {
                 return std::make_unique<ConstExpr>(*constant, t);
             }
         }
@@ -1087,15 +1163,8 @@ public:
 
             return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
         } else if (!p.ctx.inPath) {
-            /* Parse Symbols (words in upper-case) */
-            if (isSymbolWord(word)) {
-                if (t.containsPoint(comp_->point)) {
-                    return std::make_unique<CompletionWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t);
-                }
-                return std::make_unique<CompletionConstExpr>(Value::make<std::string>(std::move(word)));
-            }
             /* Constant */
-            else if (auto constant = p.env->findConstant(word)) {
+            if (auto constant = p.env->findConstant(word)) {
                 return std::make_unique<ConstExpr>(*constant, t);
             }
         }
@@ -1324,7 +1393,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
     TRY_EXPECTED(expr);
 
     if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoSchemaId) {
-        expr = rewriteScalarShorthandBySchema(env, query, std::move(*expr), options.rootSchema, true, false);
+        expr = rewriteOperandShorthandBySchema(env, query, std::move(*expr), options.rootSchema, true, false);
         TRY_EXPECTED(expr);
     }
 
@@ -1430,6 +1499,13 @@ auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema
     (void) env.querySchema(rootSchema);
     auto collected = collectReferencedSchemaPaths(env, ast.expr(), rootSchema, result);
     TRY_EXPECTED(collected);
+    return result;
+}
+
+auto referencedQueryTerms(const AST& ast) -> ReferencedQueryTerms
+{
+    ReferencedQueryTerms result;
+    collectReferencedQueryTermsFromExpr(ast.expr(), result);
     return result;
 }
 

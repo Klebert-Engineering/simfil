@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <set>
+#include <string>
 #include <vector>
 #include <string_view>
 #include <tl/expected.hpp>
@@ -66,6 +68,32 @@ struct ReferencedSchemaPaths
 };
 
 /**
+ * One static `field == "value"` comparison discovered in a compiled query.
+ *
+ * Only direct positive equality comparisons are reported. The field name is
+ * the exact AST field node text and is not interpreted by simfil.
+ */
+struct FieldStringComparison
+{
+    std::string fieldName;
+    std::string value;
+};
+
+/**
+ * Schema-independent query terms extracted from a compiled AST.
+ *
+ * `leafFields` contains the final field-like segment of field/path access,
+ * including recursive wildcard field names such as `**.speedLimitKmh`.
+ * `stringLiterals` contains string constants that appeared in the query.
+ */
+struct ReferencedQueryTerms
+{
+    std::set<std::string> leafFields;
+    std::set<std::string> stringLiterals;
+    std::vector<FieldStringComparison> positiveFieldStringComparisons;
+};
+
+/**
  * Compile expression `src`.
  * Param:
  *   env   Environment used for compilation. Register custom functions there.
@@ -95,6 +123,15 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
  * paths they can touch.
  */
 auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
+
+/**
+ * Collect schema-independent terms referenced by a compiled query AST.
+ *
+ * This uses simfil's parser/rewriter output, but deliberately does not require
+ * a schema root. Callers can use the returned terms with their own schema
+ * indices without re-tokenizing the query string.
+ */
+auto referencedQueryTerms(const AST& ast) -> ReferencedQueryTerms;
 
 /**
  * Evaluate compiled expression.

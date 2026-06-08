@@ -293,6 +293,9 @@ struct ModelNode
     /// True if the node points at a valid model and address.
     [[nodiscard]] inline bool isResolved() const {return model_ && addr_;}
 
+    /// Return the model that owns this node address.
+    [[nodiscard]] inline ModelConstPtr owningModel() const {return model_;}
+
     /// Virtual destructor to allow polymorphism
     virtual ~ModelNode() = default;
 
