@@ -17,7 +17,6 @@
 #include <atomic>
 #include <fstream>
 #include <chrono>
-#include <optional>
 #include <iostream>
 
 #if defined(WITH_READLINE)
@@ -36,6 +35,7 @@ struct
     bool auto_wildcard = false;
     bool verbose = true;
     bool multi_threaded = true;
+    bool schema = true;
 } options;
 
 static void set_option(const std::string& option, bool& flag, std::string_view cmd)
@@ -197,6 +197,8 @@ static void show_help()
         << "Options:\n"
         << "  -D <identifier=value>\n"
         << "          Define a constant variable, set to value\n"
+        << "  -s SCHEMA\n"
+        << "          Use a JSON-Schema from SCHEMA file\n"
         << "  -h\n"
         << "          Show this help"
         << "\n";
@@ -240,6 +242,17 @@ int main(int argc, char *argv[])
 #endif
     };
 
+    auto load_schema = [](std::string_view) {
+        std::cerr << "Schema support is not implemented!\n";
+    };
+
+    auto take_option_value = [&argv](std::string_view arg) -> std::string_view {
+        arg.remove_prefix(2);
+        if (!arg.empty() || argv[1] == nullptr)
+            return arg;
+        return *++argv;
+    };
+
     auto tail_args = false;
     while (*++argv != nullptr) {
         std::string_view arg = *argv;
@@ -251,11 +264,17 @@ int main(int argc, char *argv[])
             case 'h':
                 show_help();
                 return 0;
-            case 'D':
-                arg.remove_prefix(2);
-                if (arg.empty()) {
-                    arg = *++argv;
+            case 's':
+                arg = take_option_value(arg);
+                if (!arg.empty()) {
+                    load_schema(arg);
+                } else {
+                    std::cerr << "Missing schema file\n";
+                    return 1;
                 }
+                break;
+            case 'D':
+                arg = take_option_value(arg);
                 if (auto pos = arg.find('='); (pos != std::string::npos) && (pos > 0)) {
                     constants.try_emplace(std::string(arg.substr(0, pos)), simfil::Value::make(std::string(arg.substr(pos + 1))));
                 } else {
@@ -284,6 +303,7 @@ int main(int argc, char *argv[])
             set_option("wildcard", options.auto_wildcard, cmd);
             set_option("verbose", options.verbose, cmd);
             set_option("mt", options.multi_threaded, cmd);
+            set_option("schema", options.schema, cmd);
             continue;
         }
 

@@ -1,10 +1,12 @@
 #include "src/completion.h"
 #include <algorithm>
+#include <map>
 #include <string_view>
 #include <optional>
 
 #include "common.hpp"
 #include "simfil/environment.h"
+#include "simfil/model/schema.h"
 #include "src/expected.h"
 
 const auto model = R"json(
@@ -52,6 +54,73 @@ auto EXPECT_COMPLETION(std::string_view query, std::optional<size_t> point, std:
     }
 }
 
+auto CompleteSchemaQuery(std::string_view query, std::optional<size_t> point = {})
+{
+    auto parsed = simfil::json::parse(R"json({"present": 1})json");
+    REQUIRE(parsed);
+
+    auto model = std::move(*parsed);
+    auto strings = model->strings();
+    auto schemaOnlyField = strings->emplace("schemaOnlyField").value();
+    auto specialField = strings->emplace("schema field").value();
+    auto enumCarrier = strings->emplace("Carrier").value();
+    auto enumFast = strings->emplace("FAST_MODE").value();
+    auto nested = strings->emplace("nested").value();
+
+    auto valueSchema = std::make_unique<ValueSchema>();
+    valueSchema->addEnumSymbol(enumCarrier);
+    valueSchema->addEnumSymbol(enumFast);
+
+    auto objectSchema = std::make_unique<ObjectSchema>();
+    objectSchema->addField(schemaOnlyField, {SchemaId{2}});
+    objectSchema->addField(specialField);
+    objectSchema->addField(nested, {SchemaId{3}});
+
+    auto nestedSchema = std::make_unique<ObjectSchema>();
+    nestedSchema->addField(enumFast);
+
+    auto registry = std::make_shared<std::map<SchemaId, std::unique_ptr<Schema>>>();
+    (*registry)[SchemaId{1}] = std::move(objectSchema);
+    (*registry)[SchemaId{2}] = std::move(valueSchema);
+    (*registry)[SchemaId{3}] = std::move(nestedSchema);
+
+    auto lookup = [registry](SchemaId schemaId) -> Schema* {
+        if (auto it = registry->find(schemaId); it != registry->end())
+            return it->second.get();
+        return nullptr;
+    };
+    for (auto const& [_, schema] : *registry)
+        schema->finalize(lookup);
+
+    auto root = model->root(0);
+    REQUIRE(root);
+    auto rootObj = model->resolve<Object>(**root);
+    REQUIRE(rootObj);
+    REQUIRE(rootObj->setSchema(SchemaId{1}));
+
+    Environment env(strings);
+    env.querySchemaCallback = [registry](SchemaId schemaId) -> const Schema* {
+        if (auto it = registry->find(schemaId); it != registry->end())
+            return it->second.get();
+        return nullptr;
+    };
+
+    CompletionOptions opts;
+    opts.showWildcardHints = false;
+    return complete(env, query, point.value_or(query.size()), **root, opts).value();
+}
+
+auto EXPECT_SCHEMA_COMPLETION(std::string_view query, std::string_view what, Type type)
+{
+    auto found = false;
+    for (const auto& item : CompleteSchemaQuery(query)) {
+        INFO("  Item: " << item.text);
+        if (item.text == what && item.type == type)
+            found = true;
+    }
+    REQUIRE(found);
+}
+
 TEST_CASE("CompleteField", "[completion.field.incompleteQuery]") {
     EXPECT_COMPLETION("((oth", {}, "other");
 }
@@ -77,7 +146,7 @@ TEST_CASE("CompleteField", "[completion.sub-field]") {
 }
 
 TEST_CASE("CompleteString", "[completion.string-const]") {
-    EXPECT_COMPLETION("1 > C", {}, "CONSTANT_1");
+    EXPECT_COMPLETION("1 > C", {}, "\"CONSTANT_1\"");
 }
 
 TEST_CASE("Complete Function", "[completion.function]") {
@@ -106,13 +175,13 @@ TEST_CASE("Complete in unclosed expression", "[completion.complete-in-unclosed-e
 }
 
 TEST_CASE("Complete SmartCas", "[completion.smart-case]") {
-    // Complete both the field and the constants
+    // Complete both the field and string literals from the model.
     EXPECT_COMPLETION("cons", {}, "constant", Type::FIELD, 4);
-    EXPECT_COMPLETION("cons", {}, "CONSTANT_1", Type::CONSTANT);
+    EXPECT_COMPLETION("cons", {}, "\"CONSTANT_1\"", Type::CONSTANT);
 
     // Do not complete the field
-    EXPECT_COMPLETION("CONS", {}, "CONSTANT_1", Type::CONSTANT, 4); // 3 entries bc. of `** =`
-    EXPECT_COMPLETION("CONS", {}, "CONSTANT_2", Type::CONSTANT);
+    EXPECT_COMPLETION("CONS", {}, "\"CONSTANT_1\"", Type::CONSTANT, 3);
+    EXPECT_COMPLETION("CONS", {}, "\"CONSTANT_2\"", Type::CONSTANT);
 }
 
 TEST_CASE("Complete Field with Special Characters", "[copletion.escape-field]") {
@@ -131,8 +200,8 @@ TEST_CASE("Complete And/Or", "[copletion.and-or]") {
 }
 
 TEST_CASE("Complete Wildcard Hint", "[completion.generate-eq-value-hint]") {
-    EXPECT_COMPLETION("A_CONST", {}, "** = A_CONST", Type::HINT);
     EXPECT_COMPLETION("A_CONST", {}, "**.A_CONST", Type::HINT);
+    EXPECT_COMPLETION("\"A_CONST\"", {}, "** = \"A_CONST\"", Type::HINT);
     EXPECT_COMPLETION("field", {}, "**.field", Type::HINT);
 }
 
@@ -153,4 +222,19 @@ TEST_CASE("Sort Completion", "[completion.sorted]") {
     REQUIRE(std::is_sorted(comp.begin(), comp.end(), [](const auto& l, const auto& r) {
         return l.text < r.text;
     }));
+}
+
+TEST_CASE("Complete schema fields", "[completion.schema-field]") {
+    EXPECT_SCHEMA_COMPLETION("schema", "schemaOnlyField", Type::FIELD);
+    EXPECT_SCHEMA_COMPLETION("schema", "[\"schema field\"]", Type::FIELD);
+}
+
+TEST_CASE("Complete schema enum symbols", "[completion.schema-enum]") {
+    EXPECT_SCHEMA_COMPLETION("Car", "\"Carrier\"", Type::CONSTANT);
+    EXPECT_SCHEMA_COMPLETION("FAST", "FAST_MODE", Type::FIELD);
+
+    for (const auto& item : CompleteSchemaQuery("FAST")) {
+        INFO("  Item: " << item.text);
+        REQUIRE(item.text != "\"FAST_MODE\"");
+    }
 }

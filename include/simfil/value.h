@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cassert>
 #include <bitset>
+#include <type_traits>
 
 #include "model/nodes.h"
 #include "simfil/byte-array.h"
@@ -104,11 +105,11 @@ inline auto valueType2String(ValueType t) -> const char*
  */
 struct TypeFlags
 {
-    std::bitset<10> flags;
+    std::bitset<static_cast<size_t>(static_cast<std::underlying_type_t<ValueType>>(ValueType::LAST_))> flags;
 
     auto test(ValueType type) const
     {
-        return flags.test(static_cast<std::underlying_type_t<ValueType>>(type));
+        return flags.test(static_cast<size_t>(static_cast<std::underlying_type_t<ValueType>>(type)));
     }
 
     auto test(TypeFlags other) const

@@ -15,6 +15,14 @@
 #include <string>
 #include <stdexcept>
 
+#if __has_include(<valgrind/callgrind.h>)
+#    include <valgrind/callgrind.h>
+#else
+#    define RUNNING_ON_VALGRIND false
+#    define CALLGRIND_START_INSTRUMENTATION (void)0
+#    define CALLGRIND_STOP_INSTRUMENTATION (void)0
+#endif
+
 using namespace simfil;
 
 static const char* const TestModel = R"json(

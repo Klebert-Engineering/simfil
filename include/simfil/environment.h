@@ -22,6 +22,7 @@ namespace simfil
 class Expr;
 class Function;
 class Diagnostics;
+class Schema;
 struct ResultFn;
 struct Debug;
 
@@ -61,6 +62,8 @@ struct Trace
 struct Environment
 {
 public:
+    using QuerySchemaCallback = std::function<const Schema*(SchemaId)>;
+
     /**
      * Construct a SIMFIL execution environment with a string cache,
      * which is used to map field names to short integer IDs.
@@ -116,6 +119,12 @@ public:
     [[nodiscard]]
     auto strings() const -> std::shared_ptr<StringPool>;
 
+    /**
+     * Query an object schema by its schema id.
+     * Returns nullptr if no callback is configured or the schema is unknown.
+     */
+    auto querySchema(SchemaId schemaId) const -> const Schema*;
+
 public:
     std::unique_ptr<std::mutex> warnMtx;
     std::vector<std::pair<std::string, std::string>> warnings;
@@ -128,6 +137,16 @@ public:
 
     /* constant ident -> value */
     std::map<std::string, Value, CaseInsensitiveCompare> constants;
+
+    QuerySchemaCallback querySchemaCallback;
+
+    /**
+     * Enable cached schema-guided wildcard field traversal plans.
+     *
+     * Disabling this keeps the older behavior where wildcard field lookups only
+     * ask each node schema whether the requested field can appear below it.
+     */
+    bool enableWildcardFieldPlans = true;
 
     Debug* debug = nullptr;
     std::shared_ptr<StringPool> stringPool;
