@@ -50,6 +50,7 @@ Schema-aware behavior is conservative:
 - A standalone scalar field name can resolve to the concrete schema path that owns that field.
 - A recursive wildcard such as `**.speedLimitKmh` can skip schema branches that cannot contain `speedLimitKmh`, which avoids scanning arbitrary object branches when the schema is precise.
 - An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum domain.
+- A standalone enum-like string literal can resolve to an equality comparison against the schema path that owns that enum value.
 - If the same token can mean both a field and an enum-like value, field access wins. This keeps schema shorthand aligned with normal unquoted identifiers.
 
 Examples:

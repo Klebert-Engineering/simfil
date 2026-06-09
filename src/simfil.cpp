@@ -461,6 +461,17 @@ static auto flattenReferencedPath(Environment& env, const Expr& expr) -> expecte
         return SchemaPath{*segment};
     }
 
+    if (auto const* wildcardField = dynamic_cast<const WildcardFieldExpr*>(&expr)) {
+        if (!wildcardField->recurse_) {
+            return std::nullopt;
+        }
+        auto segment = fieldPathSegment(env, wildcardField->name_);
+        if (!segment) {
+            return std::nullopt;
+        }
+        return SchemaPath{*segment};
+    }
+
     if (auto const* path = dynamic_cast<const PathExpr*>(&expr)) {
         auto left = flattenReferencedPath(env, *path->left());
         TRY_EXPECTED(left);
@@ -519,17 +530,20 @@ static auto addReferencedPath(
     ReferencedSchemaPaths& result,
     SchemaPath path,
     SourceLocation location,
-    bool viaWildcard) -> void
+    bool viaWildcard,
+    std::optional<std::string> equalsStringLiteral = std::nullopt) -> void
 {
     if (path.empty()) {
         return;
     }
     if (std::ranges::any_of(result.paths, [&](auto const& existing) {
-        return existing.path == path && existing.viaWildcard == viaWildcard;
+        return existing.path == path
+            && existing.viaWildcard == viaWildcard
+            && existing.equalsStringLiteral == equalsStringLiteral;
     })) {
         return;
     }
-    result.paths.push_back({std::move(path), location, viaWildcard});
+    result.paths.push_back({std::move(path), location, viaWildcard, std::move(equalsStringLiteral)});
 }
 
 static auto schemaPathIsReachable(Environment& env, SchemaId rootSchema, const SchemaPath& path) -> bool
@@ -551,12 +565,84 @@ static auto schemaPathIsReachable(Environment& env, SchemaId rootSchema, const S
     return std::ranges::find(possiblePaths, path) != possiblePaths.end();
 }
 
+static auto schemaPathEndsWith(const SchemaPath& path, const SchemaPath& suffix) -> bool
+{
+    if (suffix.size() > path.size()) {
+        return false;
+    }
+    return std::equal(suffix.rbegin(), suffix.rend(), path.rbegin());
+}
+
+static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, const SchemaPath& suffix) -> std::vector<SchemaPath>
+{
+    auto leafField = std::ranges::find_if(
+        suffix.rbegin(),
+        suffix.rend(),
+        [](auto const& segment) {
+            return segment.kind == SchemaPathSegment::Kind::Field;
+        });
+    if (leafField == suffix.rend()) {
+        return {};
+    }
+
+    auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
+        return env.querySchema(schemaId);
+    };
+    auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field);
+    std::erase_if(possiblePaths, [&](auto const& path) {
+        return !schemaPathEndsWith(path, suffix);
+    });
+    return possiblePaths;
+}
+
 static auto collectReferencedSchemaPaths(
     Environment& env,
     const Expr& expr,
     SchemaId rootSchema,
     ReferencedSchemaPaths& result) -> expected<void, Error>
 {
+    if (auto const* eq = dynamic_cast<const BinaryExpr<OperatorEq>*>(&expr)) {
+        auto addComparisonPath = [&](Expr const& maybePath, Expr const& maybeLiteral) -> expected<bool, Error> {
+            auto literal = stringConstValue(maybeLiteral);
+            if (!literal) {
+                return false;
+            }
+
+            auto path = flattenReferencedPath(env, maybePath);
+            TRY_EXPECTED(path);
+            if (!*path) {
+                return false;
+            }
+
+            auto pathValue = std::move(**path);
+            if (schemaPathIsReachable(env, rootSchema, pathValue)) {
+                addReferencedPath(result, std::move(pathValue), maybePath.sourceLocation(), false, std::move(*literal));
+            }
+            else {
+                auto expandedPaths = schemaPathsMatchingSuffix(env, rootSchema, pathValue);
+                if (expandedPaths.empty()) {
+                    result.hasUnresolvedAccess = true;
+                }
+                for (auto& expandedPath : expandedPaths) {
+                    addReferencedPath(result, std::move(expandedPath), maybePath.sourceLocation(), false, *literal);
+                }
+            }
+            return true;
+        };
+
+        auto leftAdded = addComparisonPath(*eq->left_, *eq->right_);
+        TRY_EXPECTED(leftAdded);
+        if (*leftAdded) {
+            return {};
+        }
+
+        auto rightAdded = addComparisonPath(*eq->right_, *eq->left_);
+        TRY_EXPECTED(rightAdded);
+        if (*rightAdded) {
+            return {};
+        }
+    }
+
     if (dynamic_cast<const WildcardExpr*>(&expr)) {
         result.hasBroadWildcardAccess = true;
         return {};
@@ -1188,6 +1274,20 @@ public:
 class PathParser : public InfixParselet
 {
 public:
+    /** Return a source range covering `left . right` for downstream AST rewrites. */
+    static auto pathSourceLocation(Expr const& left, Expr const& right, Token const& dot) -> SourceLocation
+    {
+        auto leftLocation = left.sourceLocation();
+        auto rightLocation = right.sourceLocation();
+        auto dotBegin = static_cast<std::uint32_t>(dot.begin);
+        auto dotEnd = static_cast<std::uint32_t>(dot.end);
+        auto begin = leftLocation.size == 0 ? dotBegin : std::min(leftLocation.offset, dotBegin);
+        auto end = rightLocation.size == 0
+            ? dotEnd
+            : std::max(rightLocation.offset + rightLocation.size, dotEnd);
+        return SourceLocation(begin, end - begin);
+    }
+
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
         auto inPath = true;
@@ -1200,7 +1300,8 @@ public:
         auto right = p.parsePrecedence(precedence());
         TRY_EXPECTED(right);
 
-        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right)));
+        auto location = pathSourceLocation(*left, **right, t);
+        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right), location));
     }
 
     auto precedence() const -> int override
@@ -1234,7 +1335,8 @@ public:
             right = std::make_unique<CompletionFieldOrWordExpr>("", comp_, expectedWord, p.ctx.inPath);
         }
 
-        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right)));
+        auto location = pathSourceLocation(*left, **right, t);
+        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right), location));
     }
 
     Completion* comp_;
@@ -1507,6 +1609,26 @@ auto referencedQueryTerms(const AST& ast) -> ReferencedQueryTerms
     ReferencedQueryTerms result;
     collectReferencedQueryTermsFromExpr(ast.expr(), result);
     return result;
+}
+
+auto standaloneQuerySymbol(Environment& env, std::string_view query) -> expected<std::optional<std::string>, Error>
+{
+    auto ast = compile(
+        env,
+        query,
+        CompileOptions{
+            .any = false,
+            .rewriteMode = RewriteMode::None});
+    TRY_EXPECTED(ast);
+
+    auto const& expr = (*ast)->expr();
+    if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
+        return field->field();
+    }
+    if (auto literal = stringConstValue(expr)) {
+        return literal;
+    }
+    return std::nullopt;
 }
 
 auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag) -> expected<std::vector<Value>, Error>

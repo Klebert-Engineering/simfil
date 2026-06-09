@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <string_view>
+#include <optional>
 #include <tl/expected.hpp>
 
 #include "simfil/expression.h"
@@ -50,6 +51,7 @@ struct ReferencedSchemaPath
     SchemaPath path;
     SourceLocation location;
     bool viaWildcard = false;
+    std::optional<std::string> equalsStringLiteral;
 };
 
 /**
@@ -123,6 +125,14 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
  * paths they can touch.
  */
 auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
+
+/**
+ * Return the symbol represented by a whole-query bare field or string literal.
+ *
+ * This is intentionally AST-based: callers that need exact-query shorthand
+ * handling should not re-tokenize the source string with ad-hoc rules.
+ */
+auto standaloneQuerySymbol(Environment& env, std::string_view query) -> tl::expected<std::optional<std::string>, Error>;
 
 /**
  * Collect schema-independent terms referenced by a compiled query AST.
