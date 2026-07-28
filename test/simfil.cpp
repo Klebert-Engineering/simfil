@@ -521,33 +521,38 @@ TEST_CASE("Model Functions", "[yaml.model-functions]") {
         REQUIRE_PANIC("sum(range(1, 10)..., 0, panic())");
     }
 
-    SECTION("Test min(...)") {
-        REQUIRE_RESULT("min(4, 6, 7)", "4");
-        REQUIRE_RESULT("min(arr(8, 3, 5))", "3");
-        REQUIRE_RESULT("min(1.5, 1)", "1");
-        REQUIRE_RESULT("min('beta', 'alpha')", "alpha");
-        REQUIRE_RESULT("min(number, 7)", "7");
-        REQUIRE_RESULT("min(missing.value, 7)", "7");
-        REQUIRE_RESULT("min(missing.value)", "null");
-        REQUIRE_RESULT("min(null, 4)", "4");
-        REQUIRE_RESULT("min(null)", "null");
-        REQUIRE_ERROR("min()");
-        REQUIRE_PANIC("min(panic())");
-        REQUIRE_PANIC("min(4, panic())");
-    }
-    SECTION("Test max(...)") {
-        REQUIRE_RESULT("max(4, 6, 7)", "7");
-        REQUIRE_RESULT("max(arr(8, 3, 5))", "8");
-        REQUIRE_RESULT("max(1.5, 1)", "1.500000");
-        REQUIRE_RESULT("max('alpha', 'beta')", "beta");
-        REQUIRE_RESULT("max(number, 7)", "123");
-        REQUIRE_RESULT("max(missing.value, 7)", "7");
-        REQUIRE_RESULT("max(missing.value)", "null");
-        REQUIRE_RESULT("max(null, 4)", "4");
-        REQUIRE_RESULT("max(null)", "null");
-        REQUIRE_ERROR("max()");
-        REQUIRE_PANIC("max(panic())");
-        REQUIRE_PANIC("max(4, panic())");
+    SECTION("Test extrema") {
+        struct ExtremumExpectations {
+            std::string_view name;
+            std::string_view scalarResult;
+            std::string_view arrayResult;
+            std::string_view numericResult;
+            std::string_view stringResult;
+            std::string_view modelResult;
+        };
+
+        const auto call = [](std::string_view name, std::string_view arguments) {
+            return std::string(name) + "(" + std::string(arguments) + ")";
+        };
+
+        for (const auto& expectation : {
+                 ExtremumExpectations{"min", "4", "3", "1", "alpha", "7"},
+                 ExtremumExpectations{"max", "7", "8", "1.500000", "beta", "123"},
+             }) {
+            CAPTURE(expectation.name);
+            REQUIRE_RESULT(call(expectation.name, "4, 6, 7"), expectation.scalarResult);
+            REQUIRE_RESULT(call(expectation.name, "arr(8, 3, 5)"), expectation.arrayResult);
+            REQUIRE_RESULT(call(expectation.name, "1.5, 1"), expectation.numericResult);
+            REQUIRE_RESULT(call(expectation.name, "'beta', 'alpha'"), expectation.stringResult);
+            REQUIRE_RESULT(call(expectation.name, "number, 7"), expectation.modelResult);
+            REQUIRE_RESULT(call(expectation.name, "missing.value, 7"), "7");
+            REQUIRE_RESULT(call(expectation.name, "missing.value"), "null");
+            REQUIRE_RESULT(call(expectation.name, "null, 4"), "4");
+            REQUIRE_RESULT(call(expectation.name, "null"), "null");
+            REQUIRE_ERROR(call(expectation.name, ""));
+            REQUIRE_PANIC(call(expectation.name, "panic()"));
+            REQUIRE_PANIC(call(expectation.name, "4, panic()"));
+        }
     }
     SECTION("Count non-false values of arr(...)") {
         REQUIRE_RESULT("count(arr(null, null))", "0");
