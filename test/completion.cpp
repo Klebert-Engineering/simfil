@@ -151,6 +151,8 @@ TEST_CASE("CompleteString", "[completion.string-const]") {
 
 TEST_CASE("Complete Function", "[completion.function]") {
     EXPECT_COMPLETION("cou", {}, "count");
+    EXPECT_COMPLETION("ma", {}, "max");
+    EXPECT_COMPLETION("mi", {}, "min");
     EXPECT_COMPLETION("su", {}, "sum");
 }
 

@@ -128,6 +128,68 @@ auto boolify(const Value& v) -> bool
         return false;
     return UnaryOperatorDispatcher<OperatorBool>::dispatch(v).value_or(Value::f()).as<ValueType::Bool>();
 }
+
+/** Reduce all defined, non-null argument values using the supplied comparison operator. */
+template <class ComparisonOperator>
+auto evalExtremum(
+    std::string_view functionName,
+    Context ctx,
+    const Value& val,
+    const std::vector<ExprPtr>& args,
+    const ResultFn& res) -> tl::expected<Result, Error>
+{
+    if (args.empty()) {
+        return tl::unexpected<Error>(
+            Error::InvalidArguments,
+            fmt::format("function '{}' expects at least one argument", functionName));
+    }
+
+    std::optional<Value> extremum;
+    bool compilationUndef = false;
+    for (auto const& arg : args) {
+        auto argResult = arg->eval(
+            ctx,
+            val,
+            LambdaResultFn(
+                [&](Context valueContext, Value&& value)
+                    -> tl::expected<Result, Error>
+                {
+                    if (value.isa(ValueType::Undef)) {
+                        // Preserve runtime-dependent expressions instead of folding around them.
+                        compilationUndef = compilationUndef ||
+                            valueContext.phase == Context::Phase::Compilation;
+                        return Result::Continue;
+                    }
+                    // Null represents no candidate, just like an expression that emits no value.
+                    if (value.isa(ValueType::Null)) {
+                        return Result::Continue;
+                    }
+                    if (!extremum) {
+                        extremum = std::move(value);
+                        return Result::Continue;
+                    }
+
+                    auto candidateWins =
+                        BinaryOperatorDispatcher<ComparisonOperator>::dispatch(
+                            value,
+                            *extremum);
+                    TRY_EXPECTED(candidateWins);
+                    if (candidateWins->template as<ValueType::Bool>()) {
+                        extremum = std::move(value);
+                    }
+                    return Result::Continue;
+                }));
+        TRY_EXPECTED(argResult);
+    }
+
+    if (compilationUndef) {
+        return res(ctx, Value::undef());
+    }
+    if (!extremum) {
+        return res(ctx, Value::null());
+    }
+    return res(ctx, std::move(*extremum));
+}
 }
 
 CountFn CountFn::Fn;
@@ -546,7 +608,7 @@ auto MinFn::ident() const -> const FnInfo&
     static const FnInfo info{
         "min",
         "Returns the smallest non-null value produced by its arguments.",
-        "min(expr...) -> <any>"
+        "min(values...) -> <any>"
     };
     return info;
 }
@@ -557,57 +619,29 @@ auto MinFn::eval(
     const std::vector<ExprPtr>& args,
     const ResultFn& res) const -> tl::expected<Result, Error>
 {
-    if (args.empty()) {
-        return tl::unexpected<Error>(
-            Error::InvalidArguments,
-            "function 'min' expects at least one argument");
-    }
+    return evalExtremum<OperatorLt>("min", ctx, val, args, res);
+}
 
-    std::optional<Value> minimum;
-    bool compilationUndef = false;
-    for (auto const& arg : args) {
-        auto argResult = arg->eval(
-            ctx,
-            val,
-            LambdaResultFn(
-                [&](Context valueContext, Value&& value)
-                    -> tl::expected<Result, Error>
-                {
-                    if (value.isa(ValueType::Undef)) {
-                        compilationUndef =
-                            compilationUndef ||
-                            valueContext.phase ==
-                                Context::Phase::Compilation;
-                        return Result::Continue;
-                    }
-                    if (value.isa(ValueType::Null)) {
-                        return Result::Continue;
-                    }
-                    if (!minimum) {
-                        minimum = std::move(value);
-                        return Result::Continue;
-                    }
+MaxFn MaxFn::Fn;
+MaxFn::MaxFn() = default;
 
-                    auto less =
-                        BinaryOperatorDispatcher<OperatorLt>::dispatch(
-                            value,
-                            *minimum);
-                    TRY_EXPECTED(less);
-                    if (less->as<ValueType::Bool>()) {
-                        minimum = std::move(value);
-                    }
-                    return Result::Continue;
-                }));
-        TRY_EXPECTED(argResult);
-    }
+auto MaxFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{
+        "max",
+        "Returns the largest non-null value produced by its arguments.",
+        "max(values...) -> <any>"
+    };
+    return info;
+}
 
-    if (compilationUndef) {
-        return res(ctx, Value::undef());
-    }
-    if (!minimum) {
-        return res(ctx, Value::null());
-    }
-    return res(ctx, std::move(*minimum));
+auto MaxFn::eval(
+    Context ctx,
+    const Value& val,
+    const std::vector<ExprPtr>& args,
+    const ResultFn& res) const -> tl::expected<Result, Error>
+{
+    return evalExtremum<OperatorGt>("max", ctx, val, args, res);
 }
 
 KeysFn KeysFn::Fn;

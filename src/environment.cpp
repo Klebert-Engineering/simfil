@@ -20,6 +20,7 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
     functions["select"] = &SelectFn::Fn;
     functions["sum"]    = &SumFn::Fn;
     functions["min"]    = &MinFn::Fn;
+    functions["max"]    = &MaxFn::Fn;
     functions["keys"]   = &KeysFn::Fn;
     functions["trace"]  = &TraceFn::Fn;
     functions["re"]     = &ReFn::Fn;

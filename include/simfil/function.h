@@ -124,12 +124,25 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Returns the smallest non-null value emitted by its argument expressions. */
 class MinFn : public Function
 {
 public:
     static MinFn Fn;
 
     MinFn();
+
+    auto ident() const -> const FnInfo& override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+};
+
+/** Returns the largest non-null value emitted by its argument expressions. */
+class MaxFn : public Function
+{
+public:
+    static MaxFn Fn;
+
+    MaxFn();
 
     auto ident() const -> const FnInfo& override;
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
