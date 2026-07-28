@@ -124,6 +124,17 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+class MinFn : public Function
+{
+public:
+    static MinFn Fn;
+
+    MinFn();
+
+    auto ident() const -> const FnInfo& override;
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+};
+
 class KeysFn : public Function
 {
 public:

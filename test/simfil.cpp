@@ -520,6 +520,14 @@ TEST_CASE("Model Functions", "[yaml.model-functions]") {
         REQUIRE_PANIC("sum(range(1, 10)..., panic())");
         REQUIRE_PANIC("sum(range(1, 10)..., 0, panic())");
     }
+
+    SECTION("Test min(...)") {
+        REQUIRE_RESULT("min(4, 6, 7)", "4");
+        REQUIRE_RESULT("min(arr(8, 3, 5))", "3");
+        REQUIRE_RESULT("min(null, 4)", "4");
+        REQUIRE_RESULT("min(null)", "null");
+        REQUIRE_PANIC("min(panic())");
+    }
     SECTION("Count non-false values of arr(...)") {
         REQUIRE_RESULT("count(arr(null, null))", "0");
         REQUIRE_RESULT("count(arr(true, null))", "1");

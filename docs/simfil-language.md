@@ -360,6 +360,18 @@ sum(range(1, 10)..., $sum * $val, 1) => 3628800
 sum(list, #$sum > 0 and $sum + ', ' + $val or $val, '')
 ```
 
+#### `min(...)`
+
+Returns the smallest non-null value produced by its arguments. Arguments may
+produce several values; an explicit final argument can provide a fallback when
+the preceding paths are absent.
+
+*Example*
+```
+min(8, 3, 5) => 3
+min(optional.rank, 7) => 7  # when optional.rank is absent
+```
+
 
 #### `keys(object)`
 

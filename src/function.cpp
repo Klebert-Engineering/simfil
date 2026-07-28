@@ -538,6 +538,78 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
     return res(ctx, sum);
 }
 
+MinFn MinFn::Fn;
+MinFn::MinFn() = default;
+
+auto MinFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{
+        "min",
+        "Returns the smallest non-null value produced by its arguments.",
+        "min(expr...) -> <any>"
+    };
+    return info;
+}
+
+auto MinFn::eval(
+    Context ctx,
+    const Value& val,
+    const std::vector<ExprPtr>& args,
+    const ResultFn& res) const -> tl::expected<Result, Error>
+{
+    if (args.empty()) {
+        return tl::unexpected<Error>(
+            Error::InvalidArguments,
+            "function 'min' expects at least one argument");
+    }
+
+    std::optional<Value> minimum;
+    bool compilationUndef = false;
+    for (auto const& arg : args) {
+        auto argResult = arg->eval(
+            ctx,
+            val,
+            LambdaResultFn(
+                [&](Context valueContext, Value&& value)
+                    -> tl::expected<Result, Error>
+                {
+                    if (value.isa(ValueType::Undef)) {
+                        compilationUndef =
+                            compilationUndef ||
+                            valueContext.phase ==
+                                Context::Phase::Compilation;
+                        return Result::Continue;
+                    }
+                    if (value.isa(ValueType::Null)) {
+                        return Result::Continue;
+                    }
+                    if (!minimum) {
+                        minimum = std::move(value);
+                        return Result::Continue;
+                    }
+
+                    auto less =
+                        BinaryOperatorDispatcher<OperatorLt>::dispatch(
+                            value,
+                            *minimum);
+                    TRY_EXPECTED(less);
+                    if (less->as<ValueType::Bool>()) {
+                        minimum = std::move(value);
+                    }
+                    return Result::Continue;
+                }));
+        TRY_EXPECTED(argResult);
+    }
+
+    if (compilationUndef) {
+        return res(ctx, Value::undef());
+    }
+    if (!minimum) {
+        return res(ctx, Value::null());
+    }
+    return res(ctx, std::move(*minimum));
+}
+
 KeysFn KeysFn::Fn;
 KeysFn::KeysFn() = default;
 
