@@ -88,6 +88,24 @@ TEST_CASE("ArrayArena clear and shrink_to_fit", "[ArrayArena]") {
     }
 }
 
+TEST_CASE("ModelColumn and ArrayArena report retained capacity", "[memory][ModelColumn][ArrayArena]")
+{
+    ModelColumn<uint32_t, 8> column;
+    column.reserve(17);
+    column.push_back(7);
+    auto const columnUsage = column.memory_usage();
+    REQUIRE(columnUsage.logicalBytes == sizeof(uint32_t));
+    REQUIRE(columnUsage.allocatedBytes >= 17 * sizeof(uint32_t));
+
+    ArrayArena<uint32_t, 8> arena;
+    auto const values = arena.new_array(16);
+    arena.push_back(values, 1);
+    auto const arenaUsage = arena.memory_usage();
+    REQUIRE(arenaUsage.logicalBytes >= sizeof(uint32_t));
+    REQUIRE(arenaUsage.allocatedBytes >= 16 * sizeof(uint32_t));
+    REQUIRE(arenaUsage.allocatedBytes >= arenaUsage.logicalBytes);
+}
+
 TEST_CASE("ArrayArena multiple arrays", "[ArrayArena]") {
     ArrayArena<int> arena;
     std::vector<std::vector<int>> expected = {

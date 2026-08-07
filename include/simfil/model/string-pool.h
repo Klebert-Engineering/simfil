@@ -14,6 +14,7 @@
 #include <tl/expected.hpp>
 
 #include "simfil/error.h"
+#include "simfil/model/memory.h"
 
 namespace simfil
 {
@@ -68,6 +69,9 @@ struct StringPool
     size_t bytes() const;
     size_t hits() const;
     size_t misses() const;
+
+    /** Return interned string payload and estimated retained container capacity. */
+    [[nodiscard]] MemoryUsage memoryUsage() const;
 
     /// Add a static key-string mapping - Warning: Not thread-safe.
     void addStaticKey(StringId id, std::string const& value);

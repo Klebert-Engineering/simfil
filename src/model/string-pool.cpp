@@ -10,6 +10,7 @@
 #include <fmt/core.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <mutex>
 
 /**
@@ -175,6 +176,37 @@ size_t StringPool::hits() const
 size_t StringPool::misses() const
 {
     return cacheMisses_;
+}
+
+MemoryUsage StringPool::memoryUsage() const
+{
+    std::shared_lock lock(stringStoreMutex_);
+
+    MemoryUsage result;
+    result.logicalBytes = static_cast<size_t>(byteSize_.load());
+
+    // deque does not expose capacity. Count occupied string objects plus any
+    // character buffers which live outside those objects; block slack remains
+    // part of the documented lower-bound gap.
+    result.allocatedBytes = storedStrings_.size() * sizeof(std::string);
+    for (auto const& string : storedStrings_) {
+        auto const objectBegin = reinterpret_cast<std::uintptr_t>(&string);
+        auto const objectEnd = objectBegin + sizeof(string);
+        auto const data = reinterpret_cast<std::uintptr_t>(string.data());
+        if (data < objectBegin || data >= objectEnd) {
+            result.allocatedBytes += string.capacity() + 1;
+        }
+    }
+
+    // Unordered-map buckets and occupied values are stable, useful lower-bound
+    // estimates; implementation-specific node and allocator overhead is omitted.
+    result.allocatedBytes +=
+        idForString_.bucket_count() * sizeof(void*) +
+        idForString_.size() * sizeof(decltype(idForString_)::value_type) +
+        stringForId_.bucket_count() * sizeof(void*) +
+        stringForId_.size() * sizeof(decltype(stringForId_)::value_type);
+    result.allocatedBytes = std::max(result.logicalBytes, result.allocatedBytes);
+    return result;
 }
 
 void StringPool::addStaticKey(StringId id, const std::string& value)

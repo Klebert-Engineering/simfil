@@ -517,6 +517,30 @@ ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
     return stats;
 }
 
+ModelPool::MemoryUsageStats ModelPool::memoryUsageStats() const
+{
+    MemoryUsageStats stats;
+    stats.implementation = {sizeof(Impl), sizeof(Impl)};
+    stats.roots = impl_->columns_.roots_.memory_usage();
+    stats.int64Values = impl_->columns_.i64_.memory_usage();
+    stats.doubleValues = impl_->columns_.double_.memory_usage();
+    stats.stringData = {
+        impl_->columns_.stringData_.size(),
+        impl_->columns_.stringData_.capacity(),
+    };
+    stats.stringRanges = impl_->columns_.strings_.memory_usage();
+    stats.byteArrayRanges = impl_->columns_.byteArrays_.memory_usage();
+    stats.objectMembers = impl_->columns_.objectMemberArrays_.memory_usage();
+    stats.objectSchemas =
+        impl_->columns_.objectSchemas_.memory_usage() +
+        impl_->columns_.objectSingletonSchemas_.memory_usage();
+    stats.arrayMembers = impl_->columns_.arrayMemberArrays_.memory_usage();
+    stats.arraySchemas =
+        impl_->columns_.arraySchemas_.memory_usage() +
+        impl_->columns_.arraySingletonSchemas_.memory_usage();
+    return stats;
+}
+
 std::optional<std::string_view> ModelPool::lookupStringId(const simfil::StringId id) const
 {
     return impl_->strings_->resolve(id);

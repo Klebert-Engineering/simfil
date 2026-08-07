@@ -266,6 +266,32 @@ public:
     }
 
     /**
+     * Return compact logical payload and all retained arena backing capacity.
+     *
+     * Unlike `byte_size()`, allocated bytes include unused array capacity,
+     * continuation chunks, and storage retained after clear operations.
+     */
+    [[nodiscard]] MemoryUsage memory_usage() const
+    {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
+        std::shared_lock guard(lock_);
+        #endif
+        MemoryUsage result;
+        result.logicalBytes = byte_size();
+        result.allocatedBytes =
+            heads_.memory_usage().allocatedBytes +
+            continuations_.memory_usage().allocatedBytes +
+            data_.memory_usage().allocatedBytes +
+            singletonValues_.memory_usage().allocatedBytes +
+            singletonOccupied_.memory_usage().allocatedBytes;
+        if (compactHeads_) {
+            result.allocatedBytes += compactHeads_->memory_usage().allocatedBytes;
+        }
+        result.allocatedBytes = std::max(result.logicalBytes, result.allocatedBytes);
+        return result;
+    }
+
+    /**
      * Returns a reference to the element at the specified index in the array.
      *
      * @param a The index of the array.

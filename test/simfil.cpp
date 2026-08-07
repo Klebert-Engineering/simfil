@@ -769,6 +769,22 @@ TEST_CASE("StringPool copy owns lookup views", "[string-pool]")
     REQUIRE(copy->get("owned-dynamic-field") == *id);
 }
 
+TEST_CASE("Model and string pools report retained memory", "[memory][model][string-pool]")
+{
+    auto pool = std::make_shared<ModelPool>();
+    auto object = pool->newObject(8);
+    object->addField("long-enough-field-name-to-allocate", "long-enough-value-to-allocate");
+    pool->addRoot(object);
+
+    auto const modelUsage = pool->memoryUsageStats().total();
+    REQUIRE(modelUsage.logicalBytes > 0);
+    REQUIRE(modelUsage.allocatedBytes >= modelUsage.logicalBytes);
+
+    auto const stringUsage = pool->strings()->memoryUsage();
+    REQUIRE(stringUsage.logicalBytes >= std::string_view("long-enough-field-name-to-allocate").size());
+    REQUIRE(stringUsage.allocatedBytes >= stringUsage.logicalBytes);
+}
+
 TEST_CASE("Exception Handler", "[exception]")
 {
     bool handlerCalled = false;

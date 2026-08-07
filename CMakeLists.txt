@@ -99,6 +99,7 @@ target_sources(simfil PUBLIC
 
       include/simfil/model/arena.h
       include/simfil/model/column.h
+      include/simfil/model/memory.h
       include/simfil/model/string-pool.h
       include/simfil/model/model.h
       include/simfil/model/nodes.h
