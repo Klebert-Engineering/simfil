@@ -520,6 +520,40 @@ TEST_CASE("Model Functions", "[yaml.model-functions]") {
         REQUIRE_PANIC("sum(range(1, 10)..., panic())");
         REQUIRE_PANIC("sum(range(1, 10)..., 0, panic())");
     }
+
+    SECTION("Test extrema") {
+        struct ExtremumExpectations {
+            std::string_view name;
+            std::string_view scalarResult;
+            std::string_view arrayResult;
+            std::string_view numericResult;
+            std::string_view stringResult;
+            std::string_view modelResult;
+        };
+
+        const auto call = [](std::string_view name, std::string_view arguments) {
+            return std::string(name) + "(" + std::string(arguments) + ")";
+        };
+
+        for (const auto& expectation : {
+                 ExtremumExpectations{"min", "4", "3", "1", "alpha", "7"},
+                 ExtremumExpectations{"max", "7", "8", "1.500000", "beta", "123"},
+             }) {
+            CAPTURE(expectation.name);
+            REQUIRE_RESULT(call(expectation.name, "4, 6, 7"), expectation.scalarResult);
+            REQUIRE_RESULT(call(expectation.name, "arr(8, 3, 5)"), expectation.arrayResult);
+            REQUIRE_RESULT(call(expectation.name, "1.5, 1"), expectation.numericResult);
+            REQUIRE_RESULT(call(expectation.name, "'beta', 'alpha'"), expectation.stringResult);
+            REQUIRE_RESULT(call(expectation.name, "number, 7"), expectation.modelResult);
+            REQUIRE_RESULT(call(expectation.name, "missing.value, 7"), "7");
+            REQUIRE_RESULT(call(expectation.name, "missing.value"), "null");
+            REQUIRE_RESULT(call(expectation.name, "null, 4"), "4");
+            REQUIRE_RESULT(call(expectation.name, "null"), "null");
+            REQUIRE_ERROR(call(expectation.name, ""));
+            REQUIRE_PANIC(call(expectation.name, "panic()"));
+            REQUIRE_PANIC(call(expectation.name, "4, panic()"));
+        }
+    }
     SECTION("Count non-false values of arr(...)") {
         REQUIRE_RESULT("count(arr(null, null))", "0");
         REQUIRE_RESULT("count(arr(true, null))", "1");
@@ -733,6 +767,22 @@ TEST_CASE("StringPool copy owns lookup views", "[string-pool]")
     REQUIRE(*copyView == *sourceView);
     REQUIRE(copyView->data() != sourceView->data());
     REQUIRE(copy->get("owned-dynamic-field") == *id);
+}
+
+TEST_CASE("Model and string pools report retained memory", "[memory][model][string-pool]")
+{
+    auto pool = std::make_shared<ModelPool>();
+    auto object = pool->newObject(8);
+    object->addField("long-enough-field-name-to-allocate", "long-enough-value-to-allocate");
+    pool->addRoot(object);
+
+    auto const modelUsage = pool->memoryUsageStats().total();
+    REQUIRE(modelUsage.logicalBytes > 0);
+    REQUIRE(modelUsage.allocatedBytes >= modelUsage.logicalBytes);
+
+    auto const stringUsage = pool->strings()->memoryUsage();
+    REQUIRE(stringUsage.logicalBytes >= std::string_view("long-enough-field-name-to-allocate").size());
+    REQUIRE(stringUsage.allocatedBytes >= stringUsage.logicalBytes);
 }
 
 TEST_CASE("Exception Handler", "[exception]")

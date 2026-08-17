@@ -2,6 +2,7 @@
 #pragma once
 
 #include "simfil/model/string-pool.h"
+#include "simfil/model/memory.h"
 #include "simfil/model/schema.h"
 #include "simfil/byte-array.h"
 #include "tl/expected.hpp"
@@ -304,6 +305,33 @@ public:
     };
 
     [[nodiscard]] SerializationSizeStats serializationSizeStats() const;
+
+    /** Capacity-oriented memory breakdown of the generic model-pool columns. */
+    struct MemoryUsageStats
+    {
+        MemoryUsage implementation;
+        MemoryUsage roots;
+        MemoryUsage int64Values;
+        MemoryUsage doubleValues;
+        MemoryUsage stringData;
+        MemoryUsage stringRanges;
+        MemoryUsage byteArrayRanges;
+        MemoryUsage objectMembers;
+        MemoryUsage objectSchemas;
+        MemoryUsage arrayMembers;
+        MemoryUsage arraySchemas;
+
+        /** Sum all independently owned model-pool storage. */
+        [[nodiscard]] MemoryUsage total() const
+        {
+            return implementation + roots + int64Values + doubleValues + stringData +
+                stringRanges + byteArrayRanges + objectMembers + objectSchemas +
+                arrayMembers + arraySchemas;
+        }
+    };
+
+    /** Return live payload and retained capacity for generic model-pool storage. */
+    [[nodiscard]] MemoryUsageStats memoryUsageStats() const;
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
     /** JSON Serialization */

@@ -21,6 +21,8 @@
 #include <sfl/segmented_vector.hpp>
 #include <tl/expected.hpp>
 
+#include "simfil/model/memory.h"
+
 namespace simfil
 {
 
@@ -291,6 +293,17 @@ public:
     std::size_t byte_size() const
     {
         return values_.size() * sizeof(value_type);
+    }
+
+    /** Return live payload and retained backing capacity for this column. */
+    [[nodiscard]] MemoryUsage memory_usage() const
+    {
+        auto const logicalBytes = byte_size();
+        auto const allocatedBytes = values_.capacity() * sizeof(value_type);
+        return {
+            logicalBytes,
+            std::max(logicalBytes, allocatedBytes),
+        };
     }
 
     bool empty() const { return values_.empty(); }
@@ -656,6 +669,12 @@ public:
     [[nodiscard]] std::size_t byte_size() const
     {
         return first_values_.byte_size() + second_values_.byte_size();
+    }
+
+    /** Return combined live payload and retained capacity of both split columns. */
+    [[nodiscard]] MemoryUsage memory_usage() const
+    {
+        return first_values_.memory_usage() + second_values_.memory_usage();
     }
 
     [[nodiscard]] bool empty() const { return size() == 0; }

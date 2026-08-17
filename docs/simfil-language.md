@@ -360,6 +360,37 @@ sum(range(1, 10)..., $sum * $val, 1) => 3628800
 sum(list, #$sum > 0 and $sum + ', ' + $val or $val, '')
 ```
 
+#### `min(values...)`
+
+Returns the smallest non-null value produced by its arguments. Missing and null
+values are ignored, and arguments may produce several values. If no argument
+produces a value, the result is null. Values are compared with the ordinary `<`
+operator and should therefore be mutually comparable.
+
+A final literal participates in the comparison like every other value. It can
+therefore provide both a fallback for missing paths and an upper bound.
+
+*Example*
+```
+min(8, 3, 5) => 3
+min(optional.rank, 7) => 7  # when optional.rank is absent
+```
+
+#### `max(values...)`
+
+Returns the largest non-null value produced by its arguments. Missing and null
+values are ignored, and arguments may produce several values. If no argument
+produces a value, the result is null. Values are compared with the ordinary `>`
+operator and should therefore be mutually comparable.
+
+A final literal can provide both a fallback for missing paths and a lower
+bound.
+
+*Example*
+```
+max(8, 3, 5) => 8
+max(optional.rank, 0) => 0  # when optional.rank is absent
+```
 
 #### `keys(object)`
 
