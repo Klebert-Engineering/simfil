@@ -518,6 +518,30 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     Environment env(strings);
     env.querySchemaCallback = registry.asFunction();
 
+    env.constants.insert_or_assign("boundName", Value::make(std::string("speed")));
+
+    auto boundStandaloneAst = compile(env, "boundName", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(boundStandaloneAst);
+    auto boundStandaloneResult = eval(env, **boundStandaloneAst, **root, nullptr);
+    REQUIRE(boundStandaloneResult);
+    REQUIRE(boundStandaloneResult->size() == 1);
+    REQUIRE(boundStandaloneResult->front().isa(ValueType::String));
+    REQUIRE(boundStandaloneResult->front().as<ValueType::String>() == "speed");
+
+    auto boundOperandAst = compile(env, "$name == boundName", CompileOptions{
+        .any = false,
+        .rewriteMode = RewriteMode::Schema,
+        .rootSchema = SchemaId{1}});
+    REQUIRE(boundOperandAst);
+    auto boundOperandResult = eval(env, **boundOperandAst, **root, nullptr);
+    REQUIRE(boundOperandResult);
+    REQUIRE(boundOperandResult->size() == 1);
+    REQUIRE(boundOperandResult->front().isa(ValueType::Bool));
+    REQUIRE(boundOperandResult->front().as<ValueType::Bool>());
+
     auto standaloneAst = compile(env, "speed", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,

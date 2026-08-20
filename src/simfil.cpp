@@ -98,17 +98,52 @@ static auto schemaLookupName(const Expr& expr) -> std::optional<std::string>
 }
 
 /**
+ * Return true when a parsed string constant came from a named environment constant.
+ *
+ * The parser substitutes environment constants before schema rewriting. Looking only
+ * at the resulting ConstExpr would therefore mistake string-valued bindings for
+ * unquoted schema shorthand.
+ */
+static auto isEnvironmentConstantReference(
+    const Environment& env,
+    const Expr& expr,
+    std::string_view query) -> bool
+{
+    auto const* constant = dynamic_cast<const ConstExpr*>(&expr);
+    if (!constant)
+        return false;
+
+    auto const loc = constant->sourceLocation();
+    if (loc.size == 0 || loc.offset + loc.size > query.size())
+        return false;
+
+    auto const token = query.substr(loc.offset, loc.size);
+    if (token.empty() || token.front() == '"' || token.front() == '\'')
+        return false;
+
+    return env.findConstant(std::string(token)) != nullptr;
+}
+
+/**
  * Return names eligible for operand rewrites. Quoted string literals stay
  * values; unquoted words are parsed as fields and may be reinterpreted by
  * schema metadata below.
  */
-static auto schemaOperandShorthandName(const Expr& expr, std::string_view query) -> std::optional<std::string>
+static auto schemaOperandShorthandName(
+    const Environment& env,
+    const Expr& expr,
+    std::string_view query) -> std::optional<std::string>
 {
     if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
         return field->field();
     }
 
     if (auto const* constant = dynamic_cast<const ConstExpr*>(&expr)) {
+        // Named constants have already won parser name resolution and must not
+        // be reinterpreted from their string value as schema shorthand.
+        if (isEnvironmentConstantReference(env, expr, query)) {
+            return std::nullopt;
+        }
         auto const loc = constant->sourceLocation();
         if (loc.size == 0 || loc.offset + loc.size > query.size()) {
             return std::nullopt;
@@ -238,9 +273,17 @@ static auto expressionForSchemaPathAlternatives(
 /**
  * Rewrite a single field/enum query by using schema metadata as source of truth.
  */
-static auto rewriteStandaloneNameBySchema(Environment& env, ExprPtr expr, SchemaId rootSchema) -> expected<ExprPtr, Error>
+static auto rewriteStandaloneNameBySchema(
+    Environment& env,
+    std::string_view query,
+    ExprPtr expr,
+    SchemaId rootSchema) -> expected<ExprPtr, Error>
 {
     if (rootSchema == NoSchemaId || !expr)
+        return expr;
+
+    // Environment constants have parser-level precedence over schema aliases.
+    if (isEnvironmentConstantReference(env, *expr, query))
         return expr;
 
     auto name = schemaLookupName(*expr);
@@ -288,7 +331,7 @@ static auto rewriteOperandShorthandBySchema(
 
     auto const entersPath = insidePath || dynamic_cast<const PathExpr*>(expr.get()) != nullptr;
     if (!isRoot && !insidePath) {
-        if (auto name = schemaOperandShorthandName(*expr, query)) {
+        if (auto name = schemaOperandShorthandName(env, *expr, query)) {
             if (auto stringId = stringIdForSchemaLookup(env, *name)) {
                 if (auto const* root = env.querySchema(rootSchema)) {
                     auto paths = root->scalarFieldPathsForSymbol(*stringId, schemaQuery(env));
@@ -1477,7 +1520,11 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
         TRY_EXPECTED(root);
 
         if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoSchemaId) {
-            root = rewriteStandaloneNameBySchema(env, std::move(*root), options.rootSchema);
+            root = rewriteStandaloneNameBySchema(
+                env,
+                query,
+                std::move(*root),
+                options.rootSchema);
             TRY_EXPECTED(root);
         }
 
