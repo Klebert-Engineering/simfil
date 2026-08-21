@@ -8,7 +8,6 @@
 #include "simfil/model/schema.h"
 
 #include <memory>
-#include <ranges>
 #include <string_view>
 #include <vector>
 
@@ -85,13 +84,26 @@ public:
         if (plans.size() <= planIndex)
             plans.resize(planIndex + 1);
         plans[planIndex] = std::make_unique<CachedWildcardSchemaPlan>(
-            CachedWildcardSchemaPlan{&schema, schemaRevision, std::forward<BuildFn>(build)()});
+            schema,
+            schemaRevision,
+            std::forward<BuildFn>(build)());
         return &plans[planIndex]->plan;
     }
 
 private:
     struct CachedWildcardSchemaPlan
     {
+        /** Retain one plan together with the schema state that produced it. */
+        CachedWildcardSchemaPlan(
+            const Schema& sourceSchema,
+            std::uint64_t sourceRevision,
+            WildcardSchemaPlan sourcePlan)
+            : schema(&sourceSchema)
+            , schemaRevision(sourceRevision)
+            , plan(std::move(sourcePlan))
+        {
+        }
+
         const Schema* schema = nullptr;
         std::uint64_t schemaRevision = 0;
         WildcardSchemaPlan plan;

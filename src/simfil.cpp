@@ -1553,9 +1553,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
     if (!p.match(Token::Type::NIL))
         return unexpected<Error>(Error::ExpectedEOF, "Expected end-of-input; got "s + p.current().toString());
 
-    auto ast = std::make_unique<AST>(std::string(query), std::move(*expr));
-    ast->reenumerate();
-    return ast;
+    return std::make_unique<AST>(std::string(query), std::move(*expr));
 }
 
 auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node, const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>

@@ -7,7 +7,6 @@
 #include "src/expressions.h"
 
 #include <catch2/catch_test_macros.hpp>
-#include <future>
 #include <optional>
 #include <stdexcept>
 
@@ -133,6 +132,47 @@ TEST_CASE(
     CHECK(secondResult->front().toString() == "2");
 }
 
+TEST_CASE("Manually constructed ASTs assign distinct runtime cache slots", "[evaluation.binding]")
+{
+    auto model = simfil::json::parse(R"({"outer": {"target": 42}})");
+    REQUIRE(model);
+
+    auto rootExpression = std::make_unique<PathExpr>(
+        std::make_unique<FieldExpr>("outer"),
+        std::make_unique<FieldExpr>("target"));
+    SharedAST ast = std::make_shared<AST>("outer.target", std::move(rootExpression));
+    Environment env(model.value()->strings());
+    BoundExpression expression(std::move(ast), env);
+
+    auto result = expression.eval(**model.value()->root(0));
+    REQUIRE(result);
+    REQUIRE(result->size() == 1);
+    CHECK(result->front().toString() == "42");
+}
+
+TEST_CASE(
+    "Shared expressions retain compile-time constants used by extrema functions",
+    "[evaluation.binding]")
+{
+    auto model = simfil::json::parse("{}");
+    REQUIRE(model);
+
+    Environment compileEnv(model.value()->strings());
+    compileEnv.constants.insert_or_assign("fallback", Value::make(int64_t{7}));
+    Environment runtimeEnv(model.value()->strings());
+    runtimeEnv.constants.insert_or_assign("fallback", Value::make(int64_t{99}));
+
+    for (const auto function : {"min", "max"}) {
+        auto ast = sharedAst(compileEnv, fmt::format("{}(missing, fallback)", function));
+        BoundExpression expression(std::move(ast), runtimeEnv);
+        auto result = expression.eval(**model.value()->root(0));
+        CAPTURE(function);
+        REQUIRE(result);
+        REQUIRE(result->size() == 1);
+        CHECK(result->front().toString() == "7");
+    }
+}
+
 TEST_CASE("Compiled expressions resolve functions per bound environment", "[evaluation.binding]")
 {
     auto model = simfil::json::parse("{}");
@@ -203,31 +243,26 @@ TEST_CASE(
     Environment compileEnv(compileModel.value()->strings());
     auto ast = sharedAst(compileEnv, "**.target");
 
-    std::vector<std::future<bool>> workers;
-    for (auto worker = 0; worker < 8; ++worker) {
-        workers.push_back(std::async(
-            std::launch::async,
-            [ast, worker]
-            {
-                auto model = simfil::json::parse(
-                    fmt::format(R"({{"padding{}": 0, "target": {}}})", worker, worker));
-                if (!model)
+    const auto results = RunConcurrentWorkers<8>(
+        [ast](std::size_t worker)
+        {
+            auto model = simfil::json::parse(
+                fmt::format(R"({{"padding{}": 0, "target": {}}})", worker, worker));
+            if (!model)
+                return false;
+
+            Environment env(model.value()->strings());
+            BoundExpression expression(ast, env);
+            for (auto iteration = 0; iteration < 100; ++iteration) {
+                auto result = expression.eval(**model.value()->root(0));
+                if (!result || result->size() != 1 ||
+                    result->front().toString() != std::to_string(worker))
                     return false;
-
-                Environment env(model.value()->strings());
-                BoundExpression expression(ast, env);
-                for (auto iteration = 0; iteration < 100; ++iteration) {
-                    auto result = expression.eval(**model.value()->root(0));
-                    if (!result || result->size() != 1 ||
-                        result->front().toString() != std::to_string(worker))
-                        return false;
-                }
-                return true;
-            }));
-    }
-
-    for (auto& worker : workers)
-        CHECK(worker.get());
+            }
+            return true;
+        });
+    for (auto result : results)
+        CHECK(result);
 }
 
 TEST_CASE("OperatorConst", "[ast.operator]") {

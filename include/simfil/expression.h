@@ -139,7 +139,10 @@ public:
     AST(std::string query, ExprPtr expr)
         : queryString_(std::move(query))
         , expr_(std::move(expr))
-    {}
+    {
+        // Runtime caches use expression IDs, including for manually built ASTs.
+        reenumerate();
+    }
 
     ~AST();
 
