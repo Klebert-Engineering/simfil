@@ -1745,11 +1745,6 @@ auto BoundExpression::eval(const ModelNode& node, Diagnostics* diag)
     return impl_->eval(node, diag);
 }
 
-auto BoundExpression::ast() const -> const SharedAST&
-{
-    return impl_->ast_;
-}
-
 auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag)
     -> expected<std::vector<Value>, Error>
 {

@@ -158,6 +158,40 @@ TEST_CASE("Compiled expressions resolve functions per bound environment", "[eval
     REQUIRE(secondResult);
     CHECK(firstResult->front().toString() == "11");
     CHECK(secondResult->front().toString() == "22");
+
+    Environment lateEnv(model.value()->strings());
+    BoundExpression late(ast, lateEnv);
+    auto missingResult = late.eval(**model.value()->root(0));
+    REQUIRE_FALSE(missingResult);
+    CHECK(missingResult.error().type == Error::UnknownFunction);
+    lateEnv.functions["environmentValue"] = &firstFunction;
+    auto lateResult = late.eval(**model.value()->root(0));
+    REQUIRE(lateResult);
+    CHECK(lateResult->front().toString() == "11");
+}
+
+TEST_CASE("Expression bindings retry fields added to their string pool", "[evaluation.binding]")
+{
+    auto model = simfil::json::parse("{}");
+    REQUIRE(model);
+    Environment env(model.value()->strings());
+    auto ast = sharedAst(env, "later");
+    BoundExpression expression(ast, env);
+
+    auto root = model.value()->root(0);
+    REQUIRE(root);
+    auto before = expression.eval(**root);
+    REQUIRE(before);
+    REQUIRE(before->size() == 1);
+    CHECK(before->front().isa(ValueType::Null));
+
+    auto object = model.value()->resolve<Object>(**root);
+    REQUIRE(object);
+    REQUIRE(object->addField("later", int64_t{7}));
+    auto after = expression.eval(**root);
+    REQUIRE(after);
+    REQUIRE(after->size() == 1);
+    CHECK(after->front().toString() == "7");
 }
 
 TEST_CASE(

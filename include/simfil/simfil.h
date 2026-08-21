@@ -52,9 +52,6 @@ public:
     auto eval(ModelNode const& node, Diagnostics* diag = nullptr)
         -> tl::expected<std::vector<Value>, Error>;
 
-    /** Return the immutable compiled expression behind this binding. */
-    [[nodiscard]] auto ast() const -> const SharedAST&;
-
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
