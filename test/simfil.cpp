@@ -7,6 +7,7 @@
 #include "src/expressions.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <future>
 #include <optional>
 #include <stdexcept>
 
@@ -15,6 +16,44 @@
 using namespace simfil;
 
 static constexpr auto StaticTestKey = StringPool::NextStaticId;
+
+namespace
+{
+
+class EnvironmentValueFn final : public Function
+{
+public:
+    explicit EnvironmentValueFn(int64_t value) : value_(value) {}
+
+    auto ident() const -> const FnInfo& override
+    {
+        static const FnInfo info{
+            "environmentValue",
+            "Return an environment-specific test value",
+            "environmentValue()"};
+        return info;
+    }
+
+    auto eval(Context ctx, const Value&, const std::vector<ExprPtr>&, const ResultFn& res) const
+        -> tl::expected<Result, Error> override
+    {
+        return res(
+            ctx,
+            ctx.phase == Context::Phase::Compilation ? Value::undef() : Value::make(value_));
+    }
+
+private:
+    int64_t value_;
+};
+
+auto sharedAst(Environment& env, std::string_view query) -> SharedAST
+{
+    auto compiled = compile(env, query, false);
+    REQUIRE(compiled);
+    return SharedAST(std::move(*compiled));
+}
+
+}  // namespace
 
 #define REQUIRE_RESULT(query, result) \
     REQUIRE(JoinedResult((query)) == (result))
@@ -65,6 +104,96 @@ TEST_CASE("Wildcard", "[ast.wildcard]") {
 
     REQUIRE_AST("* == *", "(== * *)");     /* Do not optimize away */
     REQUIRE_AST("** == **", "(== ** **)"); /* Do not optimize away */
+}
+
+TEST_CASE(
+    "Compiled expressions bind environment-dependent state per evaluator",
+    "[evaluation.binding]")
+{
+    auto firstModel = simfil::json::parse(R"({"target": 1})");
+    auto secondModel = simfil::json::parse(R"({"unrelated": 0, "target": 2})");
+    REQUIRE(firstModel);
+    REQUIRE(secondModel);
+
+    Environment compileEnv(firstModel.value()->strings());
+    auto ast = sharedAst(compileEnv, "target");
+
+    Environment firstEnv(firstModel.value()->strings());
+    Environment secondEnv(secondModel.value()->strings());
+    BoundExpression first(ast, firstEnv);
+    BoundExpression second(ast, secondEnv);
+
+    auto firstResult = first.eval(**firstModel.value()->root(0));
+    auto secondResult = second.eval(**secondModel.value()->root(0));
+    REQUIRE(firstResult);
+    REQUIRE(secondResult);
+    REQUIRE(firstResult->size() == 1);
+    REQUIRE(secondResult->size() == 1);
+    CHECK(firstResult->front().toString() == "1");
+    CHECK(secondResult->front().toString() == "2");
+}
+
+TEST_CASE("Compiled expressions resolve functions per bound environment", "[evaluation.binding]")
+{
+    auto model = simfil::json::parse("{}");
+    REQUIRE(model);
+
+    Environment compileEnv(model.value()->strings());
+    EnvironmentValueFn compileFunction(0);
+    compileEnv.functions["environmentValue"] = &compileFunction;
+    auto ast = sharedAst(compileEnv, "environmentValue()");
+
+    Environment firstEnv(model.value()->strings());
+    Environment secondEnv(model.value()->strings());
+    EnvironmentValueFn firstFunction(11);
+    EnvironmentValueFn secondFunction(22);
+    firstEnv.functions["environmentValue"] = &firstFunction;
+    secondEnv.functions["environmentValue"] = &secondFunction;
+
+    BoundExpression first(ast, firstEnv);
+    BoundExpression second(ast, secondEnv);
+    auto firstResult = first.eval(**model.value()->root(0));
+    auto secondResult = second.eval(**model.value()->root(0));
+    REQUIRE(firstResult);
+    REQUIRE(secondResult);
+    CHECK(firstResult->front().toString() == "11");
+    CHECK(secondResult->front().toString() == "22");
+}
+
+TEST_CASE(
+    "Immutable compiled expressions support concurrent independent bindings",
+    "[evaluation.binding]")
+{
+    auto compileModel = simfil::json::parse(R"({"target": 0})");
+    REQUIRE(compileModel);
+    Environment compileEnv(compileModel.value()->strings());
+    auto ast = sharedAst(compileEnv, "**.target");
+
+    std::vector<std::future<bool>> workers;
+    for (auto worker = 0; worker < 8; ++worker) {
+        workers.push_back(std::async(
+            std::launch::async,
+            [ast, worker]
+            {
+                auto model = simfil::json::parse(
+                    fmt::format(R"({{"padding{}": 0, "target": {}}})", worker, worker));
+                if (!model)
+                    return false;
+
+                Environment env(model.value()->strings());
+                BoundExpression expression(ast, env);
+                for (auto iteration = 0; iteration < 100; ++iteration) {
+                    auto result = expression.eval(**model.value()->root(0));
+                    if (!result || result->size() != 1 ||
+                        result->front().toString() != std::to_string(worker))
+                        return false;
+                }
+                return true;
+            }));
+    }
+
+    for (auto& worker : workers)
+        CHECK(worker.get());
 }
 
 TEST_CASE("OperatorConst", "[ast.operator]") {

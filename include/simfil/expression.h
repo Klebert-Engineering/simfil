@@ -167,4 +167,6 @@ private:
 
 using ASTPtr = std::unique_ptr<AST>;
 
+/** Immutable compiled expression shared by independently bound evaluators. */
+using SharedAST = std::shared_ptr<const AST>;
 }

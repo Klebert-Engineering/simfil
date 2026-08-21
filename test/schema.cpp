@@ -7,12 +7,15 @@
 #include "simfil/model/json.h"
 #include "common.hpp"
 
-#include <memory>
+#include "fmt/format.h"
+
+#include <catch2/benchmark/catch_benchmark.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <future>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
-#include <catch2/catch_test_macros.hpp>
-#include <catch2/benchmark/catch_benchmark.hpp>
 
 using namespace simfil;
 
@@ -821,8 +824,10 @@ TEST_CASE("WildcardFieldExpr schema plan cache follows schema mutations", "[mode
 
     auto ast = compile(env, "**.target", false, false);
     REQUIRE(ast);
+    auto sharedAst = SharedAST(std::move(*ast));
+    BoundExpression expression(sharedAst, env);
 
-    auto beforeSchemaUpdate = eval(env, **ast, **root, nullptr);
+    auto beforeSchemaUpdate = expression.eval(**root);
     REQUIRE(beforeSchemaUpdate);
     REQUIRE(beforeSchemaUpdate->size() == 1);
     REQUIRE((*beforeSchemaUpdate)[0].isa(ValueType::Null));
@@ -830,10 +835,63 @@ TEST_CASE("WildcardFieldExpr schema plan cache follows schema mutations", "[mode
     rootSchemaPtr->addField(targetId);
     registry.finalize();
 
-    auto afterSchemaUpdate = eval(env, **ast, **root, nullptr);
+    auto afterSchemaUpdate = expression.eval(**root);
     REQUIRE(afterSchemaUpdate);
     REQUIRE(afterSchemaUpdate->size() == 1);
     REQUIRE((*afterSchemaUpdate)[0].toString() == "123");
+}
+
+TEST_CASE(
+    "Wildcard schema plans are local to concurrent expression bindings",
+    "[model.schema][evaluation.binding]")
+{
+    auto compileModel = json::parse(R"({"target": 0})");
+    REQUIRE(compileModel);
+    Environment compileEnvironment(compileModel.value()->strings());
+    auto compiled = compile(compileEnvironment, "**.target", false, false);
+    REQUIRE(compiled);
+    auto shared = SharedAST(std::move(*compiled));
+
+    std::vector<std::future<bool>> workers;
+    for (auto worker = 0; worker < 8; ++worker) {
+        workers.push_back(std::async(
+            std::launch::async,
+            [shared, worker]
+            {
+                auto model = json::parse(fmt::format(R"({{"target": {}}})", worker));
+                if (!model)
+                    return false;
+
+                auto strings = model.value()->strings();
+                auto targetId = strings->get("target");
+                SchemaRegistry registry;
+                auto rootSchema = std::make_unique<ObjectSchema>();
+                rootSchema->addField(targetId);
+                registry.schemas[SchemaId{1}] = std::move(rootSchema);
+                registry.finalize();
+
+                auto root = model.value()->root(0);
+                if (!root)
+                    return false;
+                auto object = model.value()->resolve<Object>(**root);
+                if (!object || !object->setSchema(SchemaId{1}))
+                    return false;
+
+                Environment environment(strings);
+                environment.querySchemaCallback = registry.asFunction();
+                BoundExpression expression(shared, environment);
+                for (auto iteration = 0; iteration < 100; ++iteration) {
+                    auto result = expression.eval(**root);
+                    if (!result || result->size() != 1 ||
+                        result->front().toString() != std::to_string(worker))
+                        return false;
+                }
+                return true;
+            }));
+    }
+
+    for (auto& worker : workers)
+        CHECK(worker.get());
 }
 
 TEST_CASE("Schema query performance", "[perf.schema]") {

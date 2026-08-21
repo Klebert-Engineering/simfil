@@ -65,6 +65,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/parser.cpp
   src/token.cpp
   src/types.cpp
+  src/expression-runtime.h
   src/expressions.h
   src/expressions.cpp
   src/simfil.cpp
