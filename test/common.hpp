@@ -11,9 +11,13 @@
 
 #include "src/expressions.h"
 
+#include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <exception>
 #include <string>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
 #if __has_include(<valgrind/callgrind.h>)
 #    include <valgrind/callgrind.h>
@@ -24,6 +28,35 @@
 #endif
 
 using namespace simfil;
+
+/** Run a test callback on explicit worker threads and propagate worker failures. */
+template <std::size_t WorkerCount, typename WorkerFn>
+auto RunConcurrentWorkers(WorkerFn&& workerFn) -> std::array<bool, WorkerCount>
+{
+    std::array<bool, WorkerCount> results{};
+    std::array<std::exception_ptr, WorkerCount> failures{};
+    std::vector<std::jthread> workers;
+    workers.reserve(WorkerCount);
+    for (auto worker = std::size_t{0}; worker < WorkerCount; ++worker) {
+        workers.emplace_back(
+            [&workerFn, &results, &failures, worker]
+            {
+                try {
+                    results[worker] = workerFn(worker);
+                }
+                catch (...) {
+                    failures[worker] = std::current_exception();
+                }
+            });
+    }
+    for (auto& worker : workers)
+        worker.join();
+    for (const auto& failure : failures) {
+        if (failure)
+            std::rethrow_exception(failure);
+    }
+    return results;
+}
 
 static const char* const TestModel = R"json(
 {

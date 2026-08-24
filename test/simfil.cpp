@@ -16,6 +16,44 @@ using namespace simfil;
 
 static constexpr auto StaticTestKey = StringPool::NextStaticId;
 
+namespace
+{
+
+class EnvironmentValueFn final : public Function
+{
+public:
+    explicit EnvironmentValueFn(int64_t value) : value_(value) {}
+
+    auto ident() const -> const FnInfo& override
+    {
+        static const FnInfo info{
+            "environmentValue",
+            "Return an environment-specific test value",
+            "environmentValue()"};
+        return info;
+    }
+
+    auto eval(Context ctx, const Value&, const std::vector<ExprPtr>&, const ResultFn& res) const
+        -> tl::expected<Result, Error> override
+    {
+        return res(
+            ctx,
+            ctx.phase == Context::Phase::Compilation ? Value::undef() : Value::make(value_));
+    }
+
+private:
+    int64_t value_;
+};
+
+auto sharedAst(Environment& env, std::string_view query) -> SharedAST
+{
+    auto compiled = compile(env, query, false);
+    REQUIRE(compiled);
+    return SharedAST(std::move(*compiled));
+}
+
+}  // namespace
+
 #define REQUIRE_RESULT(query, result) \
     REQUIRE(JoinedResult((query)) == (result))
 
@@ -65,6 +103,166 @@ TEST_CASE("Wildcard", "[ast.wildcard]") {
 
     REQUIRE_AST("* == *", "(== * *)");     /* Do not optimize away */
     REQUIRE_AST("** == **", "(== ** **)"); /* Do not optimize away */
+}
+
+TEST_CASE(
+    "Compiled expressions bind environment-dependent state per evaluator",
+    "[evaluation.binding]")
+{
+    auto firstModel = simfil::json::parse(R"({"target": 1})");
+    auto secondModel = simfil::json::parse(R"({"unrelated": 0, "target": 2})");
+    REQUIRE(firstModel);
+    REQUIRE(secondModel);
+
+    Environment compileEnv(firstModel.value()->strings());
+    auto ast = sharedAst(compileEnv, "target");
+
+    Environment firstEnv(firstModel.value()->strings());
+    Environment secondEnv(secondModel.value()->strings());
+    BoundExpression first(ast, firstEnv);
+    BoundExpression second(ast, secondEnv);
+
+    auto firstResult = first.eval(**firstModel.value()->root(0));
+    auto secondResult = second.eval(**secondModel.value()->root(0));
+    REQUIRE(firstResult);
+    REQUIRE(secondResult);
+    REQUIRE(firstResult->size() == 1);
+    REQUIRE(secondResult->size() == 1);
+    CHECK(firstResult->front().toString() == "1");
+    CHECK(secondResult->front().toString() == "2");
+}
+
+TEST_CASE("Manually constructed ASTs assign distinct runtime cache slots", "[evaluation.binding]")
+{
+    auto model = simfil::json::parse(R"({"outer": {"target": 42}})");
+    REQUIRE(model);
+
+    auto rootExpression = std::make_unique<PathExpr>(
+        std::make_unique<FieldExpr>("outer"),
+        std::make_unique<FieldExpr>("target"));
+    SharedAST ast = std::make_shared<AST>("outer.target", std::move(rootExpression));
+    Environment env(model.value()->strings());
+    BoundExpression expression(std::move(ast), env);
+
+    auto result = expression.eval(**model.value()->root(0));
+    REQUIRE(result);
+    REQUIRE(result->size() == 1);
+    CHECK(result->front().toString() == "42");
+}
+
+TEST_CASE(
+    "Shared expressions retain compile-time constants used by extrema functions",
+    "[evaluation.binding]")
+{
+    auto model = simfil::json::parse("{}");
+    REQUIRE(model);
+
+    Environment compileEnv(model.value()->strings());
+    compileEnv.constants.insert_or_assign("fallback", Value::make(int64_t{7}));
+    Environment runtimeEnv(model.value()->strings());
+    runtimeEnv.constants.insert_or_assign("fallback", Value::make(int64_t{99}));
+
+    for (const auto function : {"min", "max"}) {
+        auto ast = sharedAst(compileEnv, fmt::format("{}(missing, fallback)", function));
+        BoundExpression expression(std::move(ast), runtimeEnv);
+        auto result = expression.eval(**model.value()->root(0));
+        CAPTURE(function);
+        REQUIRE(result);
+        REQUIRE(result->size() == 1);
+        CHECK(result->front().toString() == "7");
+    }
+}
+
+TEST_CASE("Compiled expressions resolve functions per bound environment", "[evaluation.binding]")
+{
+    auto model = simfil::json::parse("{}");
+    REQUIRE(model);
+
+    Environment compileEnv(model.value()->strings());
+    EnvironmentValueFn compileFunction(0);
+    compileEnv.functions["environmentValue"] = &compileFunction;
+    auto ast = sharedAst(compileEnv, "environmentValue()");
+
+    Environment firstEnv(model.value()->strings());
+    Environment secondEnv(model.value()->strings());
+    EnvironmentValueFn firstFunction(11);
+    EnvironmentValueFn secondFunction(22);
+    firstEnv.functions["environmentValue"] = &firstFunction;
+    secondEnv.functions["environmentValue"] = &secondFunction;
+
+    BoundExpression first(ast, firstEnv);
+    BoundExpression second(ast, secondEnv);
+    auto firstResult = first.eval(**model.value()->root(0));
+    auto secondResult = second.eval(**model.value()->root(0));
+    REQUIRE(firstResult);
+    REQUIRE(secondResult);
+    CHECK(firstResult->front().toString() == "11");
+    CHECK(secondResult->front().toString() == "22");
+
+    Environment lateEnv(model.value()->strings());
+    BoundExpression late(ast, lateEnv);
+    auto missingResult = late.eval(**model.value()->root(0));
+    REQUIRE_FALSE(missingResult);
+    CHECK(missingResult.error().type == Error::UnknownFunction);
+    lateEnv.functions["environmentValue"] = &firstFunction;
+    auto lateResult = late.eval(**model.value()->root(0));
+    REQUIRE(lateResult);
+    CHECK(lateResult->front().toString() == "11");
+}
+
+TEST_CASE("Expression bindings retry fields added to their string pool", "[evaluation.binding]")
+{
+    auto model = simfil::json::parse("{}");
+    REQUIRE(model);
+    Environment env(model.value()->strings());
+    auto ast = sharedAst(env, "later");
+    BoundExpression expression(ast, env);
+
+    auto root = model.value()->root(0);
+    REQUIRE(root);
+    auto before = expression.eval(**root);
+    REQUIRE(before);
+    REQUIRE(before->size() == 1);
+    CHECK(before->front().isa(ValueType::Null));
+
+    auto object = model.value()->resolve<Object>(**root);
+    REQUIRE(object);
+    REQUIRE(object->addField("later", int64_t{7}));
+    auto after = expression.eval(**root);
+    REQUIRE(after);
+    REQUIRE(after->size() == 1);
+    CHECK(after->front().toString() == "7");
+}
+
+TEST_CASE(
+    "Immutable compiled expressions support concurrent independent bindings",
+    "[evaluation.binding]")
+{
+    auto compileModel = simfil::json::parse(R"({"target": 0})");
+    REQUIRE(compileModel);
+    Environment compileEnv(compileModel.value()->strings());
+    auto ast = sharedAst(compileEnv, "**.target");
+
+    const auto results = RunConcurrentWorkers<8>(
+        [ast](std::size_t worker)
+        {
+            auto model = simfil::json::parse(
+                fmt::format(R"({{"padding{}": 0, "target": {}}})", worker, worker));
+            if (!model)
+                return false;
+
+            Environment env(model.value()->strings());
+            BoundExpression expression(ast, env);
+            for (auto iteration = 0; iteration < 100; ++iteration) {
+                auto result = expression.eval(**model.value()->root(0));
+                if (!result || result->size() != 1 ||
+                    result->front().toString() != std::to_string(worker))
+                    return false;
+            }
+            return true;
+        });
+    for (auto result : results)
+        CHECK(result);
 }
 
 TEST_CASE("OperatorConst", "[ast.operator]") {

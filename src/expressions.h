@@ -1,10 +1,11 @@
 #pragma once
 
+#include "expression-runtime.h"
+#include "simfil/diagnostics.h"
+#include "simfil/expression-visitor.h"
 #include "simfil/expression.h"
 #include "simfil/model/nodes.h"
 #include "simfil/operator.h"
-#include "simfil/diagnostics.h"
-#include "simfil/expression-visitor.h"
 #include "simfil/sourcelocation.h"
 
 #include <array>
@@ -97,7 +98,6 @@ public:
     auto field() const -> std::string;
 
     std::string name_;
-    mutable StringId nameId_ = {};
 };
 
 class MultiConstExpr : public Expr
@@ -238,7 +238,6 @@ public:
 
     std::string name_;
     std::vector<ExprPtr> args_;
-    mutable const Function* fn_ = nullptr;
 };
 
 class PathExpr : public Expr
@@ -628,36 +627,19 @@ public:
     auto toString() const -> std::string override;
 
     std::string name_;
-    mutable StringId nameId_ = {};
     const bool recurse_ = {};
 
 private:
-    struct SchemaPlan {
-        enum class Kind {
-            Unknown,
-            Object,
-            Array,
-        };
-
-        Kind kind = Kind::Unknown;
-        bool canHaveField = true;
-        bool directField = true;
-        std::vector<StringId> objectChildFields;
-    };
-
-    struct CachedSchemaPlan {
-        SchemaId schemaId = NoSchemaId;
-        const Schema* schema = nullptr;
-        std::uint64_t schemaRevision = 0;
-        SchemaPlan plan;
-    };
+    using SchemaPlan = detail::ExpressionRuntime::WildcardSchemaPlan;
 
     auto schemaPlan(const Context& ctx, SchemaId schemaId, const Schema& schema) const -> const SchemaPlan*;
-    auto buildSchemaPlan(const Context& ctx, const Schema& schema) const -> SchemaPlan;
-    auto buildObjectSchemaPlan(const Context& ctx, const ObjectSchema& schema) const -> SchemaPlan;
-    auto childSchemaMayHaveField(const Context& ctx, SchemaId schemaId) const -> bool;
-
-    mutable std::vector<std::unique_ptr<CachedSchemaPlan>> schemaPlans_;
+    auto buildSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId) const
+        -> SchemaPlan;
+    auto
+    buildObjectSchemaPlan(const Context& ctx, const ObjectSchema& schema, StringId fieldId) const
+        -> SchemaPlan;
+    auto childSchemaMayHaveField(const Context& ctx, SchemaId schemaId, StringId fieldId) const
+        -> bool;
 };
 
 }

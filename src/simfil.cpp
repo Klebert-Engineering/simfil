@@ -14,10 +14,11 @@
 #include "simfil/error.h"
 #include "fmt/core.h"
 
-#include "expressions.h"
 #include "completion.h"
 #include "expected.h"
 #include "expression-patterns.h"
+#include "expression-runtime.h"
+#include "expressions.h"
 #include "rewrite-rules.h"
 
 #include <algorithm>
@@ -1552,9 +1553,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
     if (!p.match(Token::Type::NIL))
         return unexpected<Error>(Error::ExpectedEOF, "Expected end-of-input; got "s + p.current().toString());
 
-    auto ast = std::make_unique<AST>(std::string(query), std::move(*expr));
-    ast->reenumerate();
-    return ast;
+    return std::make_unique<AST>(std::string(query), std::move(*expr));
 }
 
 auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node, const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>
@@ -1678,9 +1677,14 @@ auto standaloneQuerySymbol(Environment& env, std::string_view query) -> expected
     return std::nullopt;
 }
 
-auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag) -> expected<std::vector<Value>, Error>
+static auto evaluate(
+    Environment& env,
+    const AST& ast,
+    const ModelNode& node,
+    Diagnostics* diag,
+    detail::ExpressionRuntime& runtime) -> expected<std::vector<Value>, Error>
 {
-    if (!node.model_)
+    if (!node.owningModel())
         return unexpected<Error>(Error::NullModel, "ModelNode must have a model!");
 
     // For thread-safety we work on a local diagnostics object that gets merged
@@ -1689,6 +1693,7 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
     localDiag.prepareIndices(ast.expr());
 
     Context ctx(&env, &localDiag);
+    ctx.runtime = &runtime;
 
     std::vector<Value> values;
     auto res = ast.expr().eval(ctx, Value::field(node), LambdaResultFn([&values](const Context&, Value&& value) {
@@ -1702,6 +1707,47 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* 
         diag->append(localDiag);
 
     return values;
+}
+
+class BoundExpression::Impl
+{
+public:
+    Impl(SharedAST ast, Environment& env) : ast_(std::move(ast)), env_(env), runtime_(env)
+    {
+        if (!ast_)
+            raise<std::invalid_argument>("Cannot bind a null simfil AST.");
+    }
+
+    auto eval(const ModelNode& node, Diagnostics* diag) -> expected<std::vector<Value>, Error>
+    {
+        return evaluate(env_, *ast_, node, diag, runtime_);
+    }
+
+    SharedAST ast_;
+    Environment& env_;
+    detail::ExpressionRuntime runtime_;
+};
+
+BoundExpression::BoundExpression(SharedAST ast, Environment& env)
+    : impl_(std::make_unique<Impl>(std::move(ast), env))
+{
+}
+
+BoundExpression::~BoundExpression() = default;
+BoundExpression::BoundExpression(BoundExpression&&) noexcept = default;
+auto BoundExpression::operator=(BoundExpression&&) noexcept -> BoundExpression& = default;
+
+auto BoundExpression::eval(const ModelNode& node, Diagnostics* diag)
+    -> expected<std::vector<Value>, Error>
+{
+    return impl_->eval(node, diag);
+}
+
+auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag)
+    -> expected<std::vector<Value>, Error>
+{
+    detail::ExpressionRuntime runtime(env);
+    return evaluate(env, ast, node, diag, runtime);
 }
 
 auto diagnostics(const Diagnostics& diag) -> expected<std::vector<Diagnostics::Message>, Error>

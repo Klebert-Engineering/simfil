@@ -19,6 +19,11 @@
 namespace simfil
 {
 
+namespace detail
+{
+class ExpressionRuntime;
+}
+
 class Expr;
 class Function;
 class Diagnostics;
@@ -159,6 +164,15 @@ struct Context
 {
     Environment* const env;
     Diagnostics* const diag;
+
+    /**
+     * Evaluation-local caches for environment-dependent expression state.
+     *
+     * This is populated by the public evaluation APIs. Expression evaluation
+     * during compilation deliberately leaves it null and performs uncached
+     * lookups instead.
+     */
+    detail::ExpressionRuntime* runtime = nullptr;
 
     /* Current phase under which the evaluation
      * takes place. */

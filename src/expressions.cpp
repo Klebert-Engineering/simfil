@@ -237,16 +237,16 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl
     if (!val.node())
         return res(ctx, Value::null());
 
-    if (!nameId_) [[unlikely]] {
-        nameId_ = ctx.env->strings()->get(name_);
-        if (!nameId_)
-            /* If the field name is not in the string cache, then there
-               is no field with that name. */
-            return res(ctx, Value::null());
-    }
+    const auto nameId = ctx.runtime ?
+        ctx.runtime->fieldId(id(), name_) :
+        ctx.env->strings()->get(name_);
+    if (!nameId)
+        /* If the field name is not in the string cache, then there
+           is no field with that name. */
+        return res(ctx, Value::null());
 
     /* Enter sub-node */
-    if (auto sub = val.node()->get(nameId_)) {
+    if (auto sub = val.node()->get(nameId)) {
         if (diag)
             diag->hits++;
         return res(ctx, Value::field(*sub));
@@ -654,17 +654,25 @@ auto CallExpression::ieval(Context ctx, const Value& val, const ResultFn& res) c
 
 auto CallExpression::ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error>
 {
-    if (!fn_) [[unlikely]] {
-        fn_ = ctx.env->findFunction(name_);
-        if (!fn_)
-            return tl::unexpected<Error>(Error::UnknownFunction, fmt::format("Unknown function '{}'", name_));
-    }
+    const auto* function = ctx.runtime ?
+        ctx.runtime->function(id(), name_) :
+        ctx.env->findFunction(name_);
+    if (!function)
+        return tl::unexpected<Error>(
+            Error::UnknownFunction,
+            fmt::format("Unknown function '{}'", name_));
 
     auto anyval = false;
-    auto result = fn_->eval(ctx, std::move(val), args_, LambdaResultFn([&res, &anyval](const Context& ctx, Value&& vv) {
-        anyval = true;
-        return res(ctx, std::move(vv));
-    }));
+    auto result = function->eval(
+        ctx,
+        std::move(val),
+        args_,
+        LambdaResultFn(
+            [&res, &anyval](const Context& ctx, Value&& vv)
+            {
+                anyval = true;
+                return res(ctx, std::move(vv));
+            }));
     if (!result)
         return result;
     if (!anyval)
@@ -1169,7 +1177,10 @@ WildcardFieldExpr::WildcardFieldExpr(bool recurse, std::string name, SourceLocat
     , recurse_(recurse)
 {}
 
-auto WildcardFieldExpr::childSchemaMayHaveField(const Context& ctx, SchemaId schemaId) const -> bool
+auto WildcardFieldExpr::childSchemaMayHaveField(
+    const Context& ctx,
+    SchemaId schemaId,
+    StringId fieldId) const -> bool
 {
     if (schemaId == NoSchemaId)
         return true;
@@ -1178,23 +1189,26 @@ auto WildcardFieldExpr::childSchemaMayHaveField(const Context& ctx, SchemaId sch
     if (!childSchema || !childSchema->finalized())
         return true;
 
-    return childSchema->canHaveField(nameId_);
+    return childSchema->canHaveField(fieldId);
 }
 
-auto WildcardFieldExpr::buildObjectSchemaPlan(const Context& ctx, const ObjectSchema& schema) const -> SchemaPlan
+auto WildcardFieldExpr::buildObjectSchemaPlan(
+    const Context& ctx,
+    const ObjectSchema& schema,
+    StringId fieldId) const -> SchemaPlan
 {
     SchemaPlan plan;
     plan.kind = SchemaPlan::Kind::Object;
     plan.directField = false;
 
     for (const auto& field : schema.fields()) {
-        if (field.field == nameId_)
+        if (field.field == fieldId)
             plan.directField = true;
 
-        const auto descendsToTarget = field.schemas.empty()
-            || std::ranges::any_of(field.schemas, [this, &ctx](auto schemaId) {
-                return childSchemaMayHaveField(ctx, schemaId);
-            });
+        const auto descendsToTarget = field.schemas.empty() ||
+            std::ranges::any_of(field.schemas,
+                                [this, &ctx, fieldId](auto schemaId)
+                                { return childSchemaMayHaveField(ctx, schemaId, fieldId); });
         if (descendsToTarget)
             plan.objectChildFields.push_back(field.field);
     }
@@ -1215,10 +1229,11 @@ auto WildcardFieldExpr::buildObjectSchemaPlan(const Context& ctx, const ObjectSc
     return plan;
 }
 
-auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema) const -> SchemaPlan
+auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId)
+    const -> SchemaPlan
 {
     SchemaPlan plan;
-    plan.canHaveField = schema.canHaveField(nameId_);
+    plan.canHaveField = schema.canHaveField(fieldId);
     if (!plan.canHaveField) {
         plan.directField = false;
         return plan;
@@ -1226,7 +1241,7 @@ auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema
 
     if (schema.kind() == Schema::Kind::Object) {
         if (const auto* objectSchema = dynamic_cast<const ObjectSchema*>(&schema))
-            return buildObjectSchemaPlan(ctx, *objectSchema);
+            return buildObjectSchemaPlan(ctx, *objectSchema, fieldId);
         return plan;
     }
 
@@ -1241,24 +1256,15 @@ auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema
 
 auto WildcardFieldExpr::schemaPlan(const Context& ctx, SchemaId schemaId, const Schema& schema) const -> const SchemaPlan*
 {
-    if (schemaId == NoSchemaId || !schema.finalized())
+    if (!ctx.runtime)
         return nullptr;
 
-    const auto planIndex = static_cast<std::size_t>(schemaId);
-    const auto schemaRevision = schema.revision();
-    if (planIndex < schemaPlans_.size()) {
-        const auto& cachedPlan = schemaPlans_[planIndex];
-        if (cachedPlan && cachedPlan->schema == &schema && cachedPlan->schemaRevision == schemaRevision)
-            return &cachedPlan->plan;
-    }
-
-    if (schemaPlans_.size() <= planIndex)
-        schemaPlans_.resize(planIndex + 1);
-    auto plan = buildSchemaPlan(ctx, schema);
-    schemaPlans_[planIndex] = std::make_unique<CachedSchemaPlan>(
-        CachedSchemaPlan{schemaId, &schema, schemaRevision, std::move(plan)});
-
-    return &schemaPlans_[planIndex]->plan;
+    const auto fieldId = ctx.runtime->fieldId(id(), name_);
+    return ctx.runtime->wildcardSchemaPlan(
+        id(),
+        schemaId,
+        schema,
+        [this, &ctx, &schema, fieldId] { return buildSchemaPlan(ctx, schema, fieldId); });
 }
 
 auto WildcardFieldExpr::type() const -> Type
@@ -1285,14 +1291,14 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
 
     // Querying a field not in the string-pool
     // is a no-op here (not true for FieldExpr).
-    if (!nameId_) {
-        nameId_ = ctx.env->strings()->get(name_);
-        if (!nameId_) {
-            if (diag)
-                diag->evaluations++;
-            res.ensureCall();
-            return {Result::Continue};
-        }
+    const auto nameId = ctx.runtime ?
+        ctx.runtime->fieldId(id(), name_) :
+        ctx.env->strings()->get(name_);
+    if (!nameId) {
+        if (diag)
+            diag->evaluations++;
+        res.ensureCall();
+        return {Result::Continue};
     }
 
     struct Iterate
@@ -1460,9 +1466,10 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
         }
     };
 
-    auto r = val.nodePtr()
-        ? Iterate{ctx, res, *this, nameId_, diag, recurse_ ? 0ul : 1ul, recurse_}.iterate(**val.nodePtr(), 0)
-        : tl::expected<Result, Error>(Result::Continue);
+    auto r = val.nodePtr() ?
+        Iterate{ctx, res, *this, nameId, diag, recurse_ ? 0ul : 1ul, recurse_}
+            .iterate(**val.nodePtr(), 0) :
+        tl::expected<Result, Error>(Result::Continue);
     res.ensureCall();
     return r;
 }

@@ -65,6 +65,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/parser.cpp
   src/token.cpp
   src/types.cpp
+  src/expression-runtime.h
   src/expressions.h
   src/expressions.cpp
   src/simfil.cpp
@@ -154,6 +155,11 @@ endif()
 
 if (SIMFIL_WITH_COVERAGE)
   include(CodeCoverage)
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Concurrent evaluator tests otherwise race while updating GCC's coverage
+    # counters, which can produce impossible negative branch hit counts.
+    string(APPEND COVERAGE_COMPILER_FLAGS " -fprofile-update=atomic")
+  endif()
   append_coverage_compiler_flags()
 endif()
 

@@ -7,7 +7,7 @@ This guide describes simfil’s internal architecture: data storage, parsing and
 ```mermaid
 flowchart LR
   Q["Query string"] -->|"tokenize / parse"| AST["AST + Expr tree"]
-  AST -->|"intern strings, resolve env"| Eval["Interpreter"]
+  AST -->|"bind environment-local caches"| Eval["Interpreter"]
   ModelPool["ModelPool + StringPool"] --> Eval
   Env["Environment (functions, constants, trace)"] --> Eval
   Meta["Meta types (TransientObject ops)"] --> Eval
@@ -26,7 +26,7 @@ flowchart LR
 |---------|-------|---------|-----------|
 | Model storage | `model/model.h`, `model/nodes.h` | Columnar pool for objects, arrays, scalars; backs every query. | `ModelPool`, `ModelNode`, `ModelNodeAddress`, `StringPool` |
 | Runtime values | `value.h`, `types.h` | Immutable runtime data passed between expressions and functions. | `Value`, `ValueType`, `TransientObject`, `MetaType` |
-| Expressions | `expression.h`, `expressions.*` | AST node classes with `ieval` implementations. | `Expr` subclasses (field, path, call, wildcard, logical, etc.) |
+| Expressions | `expression.h`, `expressions.*` | Immutable AST nodes plus environment-bound runtime caches. | `Expr`, `AST`, `SharedAST`, `BoundExpression` |
 | Environment | `environment.h` | Registry for functions/constants, string pools, tracing, warnings, timeouts. | `Environment`, `Context`, `Trace`, `Debug` |
 | Meta types | `typed-meta-type.h`, `types.*` | Custom operator/unpack implementations on transient values; not part of the environment. | `MetaType`, `TypedMetaType`, `TransientObject`, `IRangeType`, `ReType` |
 | Parser | `parser.cpp`, `expression-patterns.h`, `token.cpp` | Pratt parser building `Expr` trees from tokens. | `Token`, `AST` |
@@ -191,9 +191,11 @@ The result is an immutable `AST` (query string + root expression). Failures carr
 
 ## Query pipeline
 
-From a caller’s perspective, the entry points are `compile` and `eval`. `compile(env, query, …)` tokenises/parses the query and interns identifiers through the environment’s `StringPool` so runtime lookups are cheap.
+From a caller’s perspective, the entry points are `compile` and `eval`. `compile(env, query, …)` tokenises, parses, and performs requested schema rewrites. The resulting AST retains field and function names rather than environment-local `StringId` values or function pointers, so it can be published as an immutable `SharedAST`.
 
-`eval(env, ast, rootNode, diagnostics)` builds a `Context` (phase flag, environment pointer, optional timeout) and drives the root expression while checking cancellation and optional debug hooks. Navigation stays model-agnostic: expressions talk only to the `ModelNode` interface (`get`, `at`, `iterate`, `size`, `keyAt`), so different pools can be swapped in without touching interpreter logic. Short-circuiting is pervasive; errors and warnings flow into `Diagnostics` when provided.
+`BoundExpression(sharedAst, env)` owns field-ID, function, and wildcard-schema-plan caches for one environment. Reuse one binding for a sequential hot loop; create an independent binding and environment for each concurrent worker. The convenience `eval(env, ast, rootNode, diagnostics)` creates a temporary binding and is appropriate for one-off evaluation.
+
+Evaluation builds a `Context` (phase flag, environment pointer, runtime-cache pointer, and optional timeout) and drives the root expression while checking cancellation and optional debug hooks. Navigation stays model-agnostic: expressions talk only to the `ModelNode` interface (`get`, `at`, `iterate`, `size`, `keyAt`), so different pools can be swapped in without touching interpreter logic. Short-circuiting is pervasive; errors and warnings flow into `Diagnostics` when provided. Compile-time constants and constant-folded results remain part of the AST, so a cache that shares compiled expressions across environments must include every compile-affecting constant and schema identity in its key.
 
 ```mermaid
 sequenceDiagram
@@ -204,7 +206,8 @@ sequenceDiagram
   participant Model as ModelPool
   Client->>Parser: compile(query)
   Parser-->>AST: AST (Expr tree)
-  Client->>Eval: eval(AST, root)
+  Client->>Eval: bind SharedAST to Environment
+  Client->>Eval: BoundExpression.eval(root)
   Eval->>Model: resolve(field/wildcards)
   Model-->>Eval: ModelNode views
   Eval-->>Client: vector<Value> + diagnostics

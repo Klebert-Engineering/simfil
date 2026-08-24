@@ -139,7 +139,10 @@ public:
     AST(std::string query, ExprPtr expr)
         : queryString_(std::move(query))
         , expr_(std::move(expr))
-    {}
+    {
+        // Runtime caches use expression IDs, including for manually built ASTs.
+        reenumerate();
+    }
 
     ~AST();
 
@@ -167,4 +170,6 @@ private:
 
 using ASTPtr = std::unique_ptr<AST>;
 
+/** Immutable compiled expression shared by independently bound evaluators. */
+using SharedAST = std::shared_ptr<const AST>;
 }
