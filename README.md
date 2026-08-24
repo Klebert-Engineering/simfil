@@ -1,7 +1,7 @@
 # `simfil`
 
-[![](https://img.shields.io/badge/Coverage-HTML-orange)](https://htmlpreview.github.io/?https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/ed28c457ebc09ce8ddddc9cec6668e130d59b64c/coverage.html)
-[![](https://gist.githubusercontent.com/johannes-wolf/61e57af50757b03e0c7cd119ec2d2f4b/raw/0ae49c7509dea18b4c110b8bf416f2715a214933/badge.svg)](https://github.com/Klebert-Engineering/simfil)
+[![Build](https://github.com/Klebert-Engineering/simfil/actions/workflows/cmake.yml/badge.svg?branch=main)](https://github.com/Klebert-Engineering/simfil/actions/workflows/cmake.yml)
+[![Coverage](https://github.com/Klebert-Engineering/simfil/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/Klebert-Engineering/simfil/actions/workflows/coverage.yml)
 
 `simfil` is a C++ 20 library and a language for querying structured map feature data. The library provides an efficient in-memory storage pool for map data, optimized for the `simfil` query language, along with a query interpreter to query the actual data.
 
