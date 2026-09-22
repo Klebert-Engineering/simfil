@@ -164,12 +164,14 @@ std::vector<std::string> ModelPool::checkForErrors() const
     std::function<void(ModelNode::Ptr)> validateModelNode = [&](ModelNode::Ptr node)
     {
         if (node->type() == ValueType::Object) {
-            if (node->addr().column() == Objects)
+            // Custom object columns own their schema storage; their indices are not ours.
+            if (node->addr().column() == Objects) {
                 if (!validateArrayIndex(node->addr().index(), "object", impl_->columns_.objectMemberArrays_))
                     return;
-            if (!objectHasSchema(node->addr().index())) {
-                errors.emplace_back(fmt::format("Missing object schema index {}.", node->addr().index()));
-                return;
+                if (!objectHasSchema(node->addr().index())) {
+                    errors.emplace_back(fmt::format("Missing object schema index {}.", node->addr().index()));
+                    return;
+                }
             }
             for (auto const& [fieldName, fieldValue] : node->fields()) {
                 validatePooledString(fieldName);
@@ -177,12 +179,14 @@ std::vector<std::string> ModelPool::checkForErrors() const
             }
         }
         else if (node->type() == ValueType::Array) {
-            if (node->addr().column() == Arrays)
+            // Custom arrays still have their children checked, but need no core arena/schema entry.
+            if (node->addr().column() == Arrays) {
                 if (!validateArrayIndex(node->addr().index(), "arrays", impl_->columns_.arrayMemberArrays_))
                     return;
-            if (!arrayHasSchema(node->addr().index())) {
-                errors.emplace_back(fmt::format("Missing array schema index {}.", node->addr().index()));
-                return;
+                if (!arrayHasSchema(node->addr().index())) {
+                    errors.emplace_back(fmt::format("Missing array schema index {}.", node->addr().index()));
+                    return;
+                }
             }
             for (auto const& member : *node)
                 validateModelNode(member);

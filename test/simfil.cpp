@@ -19,6 +19,29 @@ static constexpr auto StaticTestKey = StringPool::NextStaticId;
 namespace
 {
 
+/** Resolve custom-column aliases onto containers without sharing their schema indices. */
+class AliasedContainerPool : public ModelPool
+{
+public:
+    /** Register a custom root whose address deliberately exceeds the core schema columns. */
+    void addAlias(ModelNode::Ptr const& target)
+    {
+        target_ = target->addr();
+        addRoot(ModelNode::Ptr::make(shared_from_this(), ModelNodeAddress{FirstCustomColumnId, 1000}));
+    }
+
+    /** Expose the target's normal container protocol through the custom column. */
+    tl::expected<void, Error> resolve(ModelNode const& node, ResolveFn const& cb) const override
+    {
+        if (node.addr().column() == FirstCustomColumnId)
+            return ModelPool::resolve(*ModelNode::Ptr::make(shared_from_this(), target_), cb);
+        return ModelPool::resolve(node, cb);
+    }
+
+private:
+    ModelNodeAddress target_;
+};
+
 class EnvironmentValueFn final : public Function
 {
 public:
@@ -829,6 +852,26 @@ TEST_CASE("Model Pool Validation", "[model.validation]") {
     // An empty object should also be valid
     pool->newObject()->addField("good", pool->newObject());
     REQUIRE(pool->validate());
+}
+
+TEST_CASE("Custom containers do not use core schema indices", "[model.validation]")
+{
+    auto pool = std::make_shared<AliasedContainerPool>();
+    auto object = pool->newObject();
+    auto array = pool->newArray();
+    SECTION("Object alias") {
+        object->addField("children", array);
+        pool->addAlias(object);
+    }
+    SECTION("Array alias") {
+        array->append(object);
+        pool->addAlias(array);
+    }
+    REQUIRE(pool->validate());
+
+    // Accepting the custom root must not suppress validation of its ordinary children.
+    object->addField("bad", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
+    REQUIRE_FALSE(pool->validate());
 }
 
 TEST_CASE("Procedural Object Node", "[model.procedural]") {
