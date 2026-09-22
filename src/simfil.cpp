@@ -570,6 +570,21 @@ static auto flattenReferencedPath(Environment& env, const Expr& expr) -> expecte
     return std::nullopt;
 }
 
+/** Whether a flattened path is relative to a recursive descendant, not the root. */
+static auto hasLeadingRecursiveWildcard(const Expr& expr) -> bool
+{
+    if (auto const* wildcard = dynamic_cast<const WildcardFieldExpr*>(&expr)) {
+        return wildcard->recurse_;
+    }
+    if (auto const* path = dynamic_cast<const PathExpr*>(&expr)) {
+        return hasLeadingRecursiveWildcard(*path->left());
+    }
+    if (auto const* subscript = dynamic_cast<const SubscriptExpr*>(&expr)) {
+        return hasLeadingRecursiveWildcard(*subscript->left_);
+    }
+    return false;
+}
+
 static auto addReferencedPath(
     ReferencedSchemaPaths& result,
     SchemaPath path,
@@ -726,7 +741,19 @@ static auto collectReferencedSchemaPaths(
         auto path = flattenReferencedPath(env, expr);
         TRY_EXPECTED(path);
         if (*path) {
-            if (schemaPathIsReachable(env, rootSchema, **path)) {
+            if (hasLeadingRecursiveWildcard(expr)) {
+                // `**.parent.child` flattens to a suffix, not a root path.
+                // Expand all matching owners, even when the suffix also exists
+                // at the root; otherwise scope inference can miss nested data.
+                auto paths = schemaPathsMatchingSuffix(env, rootSchema, **path);
+                if (paths.empty()) {
+                    result.hasUnresolvedAccess = true;
+                }
+                for (auto& expanded : paths) {
+                    addReferencedPath(result, std::move(expanded), expr.sourceLocation(), true);
+                }
+            }
+            else if (schemaPathIsReachable(env, rootSchema, **path)) {
                 addReferencedPath(result, std::move(**path), expr.sourceLocation(), false);
             }
             else {
