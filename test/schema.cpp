@@ -460,6 +460,68 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     REQUIRE(childWildcardRefs->hasDynamicAccess);
 }
 
+TEST_CASE("Schema references expand recursive wildcard paths with a static suffix", "[model.schema]")
+{
+    auto model = json::parse(R"({
+        "numLanes": {"normalLanes": 1},
+        "nested": {"numLanes": {"normalLanes": 2}, "other": {"normalLanes": 3}}
+    })").value();
+    auto strings = model->strings();
+    auto numLanes = strings->get("numLanes");
+    auto normalLanes = strings->get("normalLanes");
+    auto nested = strings->get("nested");
+    auto other = strings->get("other");
+    SchemaRegistry registry;
+    auto root = std::make_unique<ObjectSchema>();
+    root->addField(numLanes, {SchemaId{3}});
+    root->addField(nested, {SchemaId{2}});
+    auto container = std::make_unique<ObjectSchema>();
+    container->addField(numLanes, {SchemaId{3}});
+    container->addField(other, {SchemaId{3}});
+    auto lanes = std::make_unique<ObjectSchema>();
+    lanes->addField(normalLanes, {SchemaId{4}});
+    registry.schemas[SchemaId{1}] = std::move(root);
+    registry.schemas[SchemaId{2}] = std::move(container);
+    registry.schemas[SchemaId{3}] = std::move(lanes);
+    registry.schemas[SchemaId{4}] = std::make_unique<ValueSchema>();
+    registry.finalize();
+    Environment env(strings);
+    env.querySchemaCallback = registry.asFunction();
+
+    for (auto query : {"**.numLanes.normalLanes", "**.numLanes[\"normalLanes\"]",
+                       "**.numLanes.normalLanes > 1", "**.numLanes.normalLanes == 2"}) {
+        CAPTURE(query);
+        auto ast = compile(env, query, CompileOptions{
+            .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = SchemaId{1}});
+        REQUIRE(ast);
+        auto refs = referencedSchemaPaths(env, **ast, SchemaId{1});
+        REQUIRE(refs);
+        REQUIRE_FALSE(refs->hasUnresolvedAccess);
+        REQUIRE_FALSE(refs->hasBroadWildcardAccess);
+        REQUIRE(refs->paths.size() == 2);
+        for (auto const& ref : refs->paths) {
+            REQUIRE(ref.viaWildcard);
+            REQUIRE(ref.path.back().field == normalLanes);
+            REQUIRE(ref.path[ref.path.size() - 2].field == numLanes);
+        }
+        REQUIRE(std::ranges::any_of(refs->paths, [](auto const& ref) {return ref.path.size() == 2;}));
+        REQUIRE(std::ranges::any_of(refs->paths, [&](auto const& ref) {
+            return ref.path.size() == 3 && ref.path.front().field == nested;
+        }));
+    }
+
+    SECTION("Static paths still refer only to the root") {
+        auto ast = compile(env, "numLanes.normalLanes", CompileOptions{
+            .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = SchemaId{1}});
+        REQUIRE(ast);
+        auto refs = referencedSchemaPaths(env, **ast, SchemaId{1});
+        REQUIRE(refs);
+        REQUIRE(refs->paths.size() == 1);
+        REQUIRE_FALSE(refs->paths.front().viaWildcard);
+        REQUIRE(refs->paths.front().path.size() == 2);
+    }
+}
+
 TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema]")
 {
     auto model = json::parse(R"json(
