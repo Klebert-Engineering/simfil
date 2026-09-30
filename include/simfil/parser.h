@@ -104,6 +104,8 @@ public:
     auto relaxed() const -> bool;
 
     Context ctx;
+    /** Schema completion parses structure without executing constant/custom functions. */
+    bool simplify = true;
     Environment* const env;
     std::unordered_map<Token::Type, const PrefixParselet*> prefixParsers;
     std::unordered_map<Token::Type, const InfixParselet*> infixParsers;

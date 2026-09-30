@@ -50,6 +50,32 @@ StringPool::StringPool()
     addStaticKey(OverlaySum, "$sum");
     addStaticKey(OverlayValue, "$val");
     addStaticKey(OverlayIndex, "$idx");
+    addStaticKey(SchemaUnknown, "unknown");
+    addStaticKey(SchemaAny, "any");
+    addStaticKey(SchemaNever, "never");
+    addStaticKey(SchemaValue, "value");
+    addStaticKey(SchemaNull, "null");
+    addStaticKey(SchemaBool, "boolean");
+    addStaticKey(SchemaInt, "integer");
+    addStaticKey(SchemaFloat, "float");
+    addStaticKey(SchemaString, "string");
+    addStaticKey(SchemaBytes, "bytes");
+    addStaticKey(SchemaObject, "object");
+    addStaticKey(SchemaArray, "array");
+    addStaticKey(SchemaUnion, "union");
+    addStaticKey(SchemaOneOf, "oneOf");
+    addStaticKey(SchemaIntersection, "intersection");
+    addStaticKey(SchemaKind, "kind");
+    addStaticKey(SchemaTypeName, "typename");
+    addStaticKey(SchemaFields, "fields");
+    addStaticKey(SchemaElements, "elements");
+    addStaticKey(SchemaAlternatives, "alternatives");
+    addStaticKey(SchemaEnum, "enum");
+    addStaticKey(SchemaRequired, "required");
+    addStaticKey(SchemaOpen, "open");
+    addStaticKey(SchemaNullable, "nullable");
+    addStaticKey(SchemaRef, "$ref");
+    addStaticKey(SchemaTruncated, "truncated");
 }
 
 StringPool::StringPool(const StringPool& other)

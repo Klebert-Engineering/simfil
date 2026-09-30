@@ -82,6 +82,7 @@ struct ValueToString
 }
 
 
+/** Name a runtime category; the terminal enum sentinel is not a value type. */
 inline auto valueType2String(ValueType t) -> const char*
 {
     switch (t) {
@@ -95,6 +96,7 @@ inline auto valueType2String(ValueType t) -> const char*
     case ValueType::TransientObject: return "transient";
     case ValueType::Object: return "object";
     case ValueType::Array:  return "array";
+    case ValueType::LAST_: break;
     }
     assert(0 && "unreachable"); return "unknown"; // GCOVR_EXCL_LINE
 }
@@ -334,6 +336,8 @@ public:
     static auto field(const ModelNode& node) -> Value
     {
         const auto type = node.type();
+        if (type == ValueType::Undef)
+            return Value::undef();
         if (type == ValueType::Object || type == ValueType::Array) {
             return Value{type, model_ptr<ModelNode>(node)};
         } else if (type == ValueType::String) {
@@ -349,6 +353,8 @@ public:
     static auto field(ModelNode&& node) -> Value
     {
         const auto type = node.type();
+        if (type == ValueType::Undef)
+            return Value::undef();
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(std::move(node))};
         } else if (type == ValueType::String) {
@@ -365,6 +371,8 @@ public:
     static auto field(const model_ptr<ModelNodeT>& node) -> Value
     {
         const auto type = node->type();
+        if (type == ValueType::Undef)
+            return Value::undef();
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(node)};
         } else {
@@ -416,6 +424,7 @@ public:
         return type == ValueType::Bool && asBool() == v;
     }
 
+    /** Visit the typed payload, preserving the undefined fallback for invalid tags. */
     template <class Visitor>
     [[nodiscard]] auto visit(Visitor fn) const
     {
@@ -442,6 +451,9 @@ public:
                 return fn(**nodePtr);
             else
                 return fn(NullType{});
+        // Name the sentinel explicitly so newly added runtime categories still warn.
+        case ValueType::LAST_:
+            break;
         }
         return fn(UndefinedType{});
     }
@@ -459,7 +471,7 @@ public:
         return visit(impl::ValueToString());
     }
 
-    [[nodiscard]] auto getScalar() noexcept
+    [[nodiscard]] auto getScalar() const noexcept
     {
         struct {
             void operator() (std::monostate const& v) {result = v;}

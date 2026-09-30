@@ -414,51 +414,6 @@ auto SplitFn::ident() const -> const FnInfo&
     return info;
 }
 
-namespace {
-template <class ContainerType = std::vector<std::string>>
-ContainerType split(std::string_view what,
-                 std::string_view at,
-                 bool removeEmpty = true)
-{
-    using ResultType = typename ContainerType::value_type;
-
-    ContainerType container;
-    auto out = std::back_inserter(container);
-
-    /* Special case: empty `what` */
-    if (what.empty())
-        return container;
-
-    /* Special case: empty `at` */
-    if (at.empty()) {
-        *out++ = ResultType(what);
-        return container;
-    }
-
-    std::string::size_type begin{};
-    std::string::size_type end{};
-
-    auto next = [&]() {
-        if ((end = what.find(at, begin)) != std::string::npos) {
-            if ((end - begin) != 0 || !removeEmpty)
-                *out++ = ResultType(what).substr(begin, end - begin);
-
-            begin = end + at.size();
-            return true;
-        }
-
-        if (what.size() - begin || !removeEmpty)
-            *out++ = ResultType(what).substr(begin);
-
-        return false;
-    };
-
-    while (next()) { /* noop */ }
-
-    return container;
-}
-}
-
 auto SplitFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const -> tl::expected<Result, Error>
 {
     Value str = Value::undef();
@@ -476,12 +431,27 @@ auto SplitFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
     if (!ok.value()) [[unlikely]]
         return res(subctx, Value::undef());
 
-    auto items = split(str.as<ValueType::String>(), sep.as<ValueType::String>(), !keepEmpty.as<ValueType::Bool>());
-    for (auto&& item : items) {
-        auto r = res(subctx, Value::make(std::move(item)));
-        TRY_EXPECTED(r);
-        if (*r == Result::Stop)
+    const auto text = str.as<ValueType::String>();
+    const auto separator = sep.as<ValueType::String>();
+    if (text.empty())
+        return Result::Continue;
+
+    // Emit one slice at a time: a result/work limit must stop before allocating
+    // the remaining pieces. Copy the slice, never the entire input per piece.
+    for (std::size_t begin = 0;;) {
+        if (ctx.evaluation && !ctx.step())
+            return Result::Stop;
+        auto end = separator.empty() ? std::string_view::npos : text.find(separator, begin);
+        auto piece = text.substr(begin, end == std::string_view::npos ? end : end - begin);
+        if (!piece.empty() || keepEmpty.as<ValueType::Bool>()) {
+            auto emitted = res(subctx, Value::make(std::string(piece)));
+            TRY_EXPECTED(emitted);
+            if (*emitted == Result::Stop)
+                return Result::Stop;
+        }
+        if (end == std::string_view::npos)
             break;
+        begin = end + separator.size();
     }
 
     return Result::Continue;
@@ -669,7 +639,10 @@ auto KeysFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& arg
                 return res(ctx, vv);
 
         if (vv.nodePtr())
-            for (auto&& fieldName : vv.node()->fieldNames()) {
+            for (auto fieldName : vv.node()->fieldNames()) {
+                // Charge visits even when a key cannot resolve to an emitted string.
+                if (ctx.evaluation && !ctx.step())
+                    return Result::Stop;
                 if (auto key = ctx.env->stringPool->resolve(fieldName)) {
                     auto r = res(ctx, Value::strref(*key));
                     TRY_EXPECTED(r);

@@ -34,8 +34,36 @@ struct StringPool
         OverlayValue,
         OverlayIndex,
 
+        SchemaUnknown,
+        SchemaAny,
+        SchemaNever,
+        SchemaValue,
+        SchemaNull,
+        SchemaBool,
+        SchemaInt,
+        SchemaFloat,
+        SchemaString,
+        SchemaBytes,
+        SchemaObject,
+        SchemaArray,
+        SchemaUnion,
+        SchemaOneOf,
+        SchemaIntersection,
+
+        SchemaKind,
+        SchemaTypeName,
+        SchemaFields,
+        SchemaElements,
+        SchemaAlternatives,
+        SchemaEnum,
+        SchemaRequired,
+        SchemaOpen,
+        SchemaNullable,
+        SchemaRef,
+        SchemaTruncated,
+
         NextStaticId,
-        FirstDynamicId = 128
+        FirstDynamicId = 256
     };
 
     /// Default constructor initializes strings for static Ids
