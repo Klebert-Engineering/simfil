@@ -39,11 +39,11 @@ jobs:
     - name: Run Valgrind Memcheck
       working-directory: build/test
       run: |
-        valgrind --tool=memcheck ./test.simfil
+        valgrind --tool=memcheck --error-exitcode=1 --leak-check=full ./test.simfil
     - name: Run Valgrind Helgrind
       working-directory: build/test
       run: |
-        valgrind --tool=helgrind ./test.simfil
+        valgrind --tool=helgrind --error-exitcode=1 ./test.simfil
     - name: Run Valgrind Cachegrind
       working-directory: build/test
       run: |

@@ -463,16 +463,18 @@ TEST_CASE("Domain completion preserves source ranges escaping and literal enums"
 
 TEST_CASE("Static schema names agree across isolated pools", "[model.schema-domain]")
 {
-    StringPool left, right;
+    // Heap lifetimes let Helgrind distinguish these locks from reused stack mutex addresses.
+    auto left = std::make_shared<StringPool>();
+    auto right = std::make_shared<StringPool>();
     for (StringId id = StringPool::SchemaUnknown; id < StringPool::NextStaticId; ++id) {
-        auto name = left.resolve(id);
+        auto name = left->resolve(id);
         REQUIRE(name);
-        REQUIRE(right.resolve(id) == name);
-        REQUIRE(left.get(*name) == id);
-        REQUIRE(right.get(*name) == id);
+        REQUIRE(right->resolve(id) == name);
+        REQUIRE(left->get(*name) == id);
+        REQUIRE(right->get(*name) == id);
     }
     REQUIRE(StringPool::NextStaticId < StringPool::FirstDynamicId);
-    REQUIRE(left.emplace("dynamic-domain-name").value() >= StringPool::FirstDynamicId);
+    REQUIRE(left->emplace("dynamic-domain-name").value() >= StringPool::FirstDynamicId);
 }
 
 TEST_CASE("Registry adapters participate in sparse plans and retain incomplete metadata", "[model.schema-domain]")
