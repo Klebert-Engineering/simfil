@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "simfil/expression.h"
+#include "simfil/evaluation.h"
 #include "simfil/environment.h"
 #include "simfil/diagnostics.h"
 #include "simfil/value.h"
@@ -51,6 +52,10 @@ public:
     /** Evaluate the expression while retaining its environment-bound caches. */
     auto eval(ModelNode const& node, Diagnostics* diag = nullptr)
         -> tl::expected<std::vector<Value>, Error>;
+
+    /** Stream results with cooperative limits and retain only environment-bound caches. */
+    auto eval(ModelNode const& node, const ResultFn& consumer, const EvaluationOptions& options = {},
+              Diagnostics* diag = nullptr) -> tl::expected<EvaluationSummary, Error>;
 
 private:
     class Impl;
@@ -193,6 +198,16 @@ auto referencedQueryTerms(const AST& ast) -> ReferencedQueryTerms;
 auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* diag) -> tl::expected<std::vector<Value>, Error>;
 
 /**
+ * Stream values without an intermediate result vector. Work counts expression
+ * entries, intermediate emissions and wildcard traversal, including zero-hit work.
+ * Custom functions must cooperate with Context::step() and Result::Stop; these
+ * limits cannot preempt a blocking function or bound a single value's byte size.
+ */
+auto eval(Environment& env, const AST& ast, const ModelNode& node, const ResultFn& consumer,
+          const EvaluationOptions& options = {}, Diagnostics* diag = nullptr)
+    -> tl::expected<EvaluationSummary, Error>;
+
+/**
  * Build messages for diagnostics collected by `eval`.
  * Param:
  *   env    Environment (must be the same as the one passed to compile and eval)
@@ -215,5 +230,13 @@ auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Diagnostic
  *   node   Root node of the data model to query in
  */
 auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node, CompletionOptions const& options) -> tl::expected<std::vector<CompletionCandidate>, Error>;
+
+/**
+ * Complete a represented domain directly, without evaluating dummy model values.
+ * The environment must bind the schema and its field/enum StringIds to one local
+ * string namespace. Custom functions are never executed by this overload.
+ */
+auto complete(Environment& env, std::string_view query, size_t point, SchemaId rootSchema,
+              CompletionOptions const& options = {}) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 }

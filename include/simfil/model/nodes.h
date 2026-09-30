@@ -9,6 +9,7 @@
 
 #include "arena.h"
 #include "schema.h"
+#include "value-type.h"
 #include "string-pool.h"
 #include "simfil/byte-array.h"
 #include "simfil/error.h"
@@ -42,34 +43,6 @@ struct model_ptr;
 using ModelConstPtr = std::shared_ptr<const Model>;
 using ModelPoolConstPtr = std::shared_ptr<const ModelPool>;
 using ModelPoolPtr = std::shared_ptr<ModelPool>;
-
-/**
- * Simfil value types
- */
-enum class ValueType
-{
-    Undef,
-    Null,
-    Bool,
-    Int,
-    Float,
-    String,
-    Bytes,
-    TransientObject,
-    Object,
-    Array,
-    // End
-    LAST_
-};
-
-using ScalarValueType = std::variant<
-    std::monostate,
-    bool,
-    int64_t,
-    double,
-    std::string,
-    std::string_view,
-    ByteArray>;
 
 namespace detail
 {
@@ -451,6 +424,16 @@ public:
 
 protected:
     ModelNodeBase() = delete;
+};
+
+/** A payload-free native undefined value; its scalar storage is not JSON null. */
+struct UndefinedNode final : public ModelNodeBase
+{
+    /** Bind the trivial column address to its owning model. */
+    UndefinedNode(ModelConstPtr model, ModelNodeAddress address, detail::mp_key key)
+        : ModelNodeBase(std::move(model), address, key) {}
+    /** Preserve undefined through the ordinary runtime node protocol. */
+    [[nodiscard]] ValueType type() const override { return ValueType::Undef; }
 };
 
 /**

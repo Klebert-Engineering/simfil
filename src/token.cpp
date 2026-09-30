@@ -245,7 +245,7 @@ auto scanWord(Scanner& s) -> std::optional<Token>
     return {};
 }
 
-std::optional<Token> scanStringLiteral(Scanner& s)
+std::optional<Token> scanStringLiteral(Scanner& s, bool allowUnfinishedString)
 {
     if (s.hasError())
         return {};
@@ -284,6 +284,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
 
             if (s.match("\\", Scanner::Skip)) {
                 if (!s) {
+                    if (allowUnfinishedString && !bytes && !regexp)
+                        break;
                     s.fail("Unfinished escape sequence");
                     return {};
                 }
@@ -325,6 +327,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
             text.push_back(s.pop());
         }
 
+        if (!s && allowUnfinishedString && !bytes && !regexp)
+            return Token(Token::STRING, text, begin, s.pos());
         if (!s || s.pop() != quote) {
             s.fail("Quote mismatch");
             return {};
@@ -484,7 +488,7 @@ std::optional<Token> scanSyntax(Scanner& s)
     return {};
 }
 
-auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
+auto tokenize(std::string_view expr, bool allowUnfinishedString) -> expected<std::vector<Token>, Error>
 {
     std::vector<Token> tokens;
 
@@ -493,7 +497,7 @@ auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
         skipWhitespace(s);
         if (auto t = scanNumber(s))
             tokens.push_back(std::move(*t));
-        else if (auto t = scanStringLiteral(s))
+        else if (auto t = scanStringLiteral(s, allowUnfinishedString))
             tokens.push_back(std::move(*t));
         else if (auto t = scanWord(s))
             tokens.push_back(std::move(*t));

@@ -3,6 +3,13 @@
 namespace simfil
 {
 
+std::optional<std::string_view> OverlayNodeStorage::lookupStringId(StringId id) const
+{
+    auto node = value_.node();
+    auto owner = node ? node->owningModel() : nullptr;
+    return owner ? owner->lookupStringId(id) : std::nullopt;
+}
+
 tl::expected<void, Error> OverlayNodeStorage::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
     auto node = model_ptr<OverlayNode>::make(n);

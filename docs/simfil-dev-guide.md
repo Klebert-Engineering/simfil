@@ -31,6 +31,7 @@ flowchart LR
 | Meta types | `typed-meta-type.h`, `types.*` | Custom operator/unpack implementations on transient values; not part of the environment. | `MetaType`, `TypedMetaType`, `TransientObject`, `IRangeType`, `ReType` |
 | Parser | `parser.cpp`, `expression-patterns.h`, `token.cpp` | Pratt parser building `Expr` trees from tokens. | `Token`, `AST` |
 | Completion | `completion.cpp` | Partial parser that offers path/function suggestions. | `CompletionOptions`, `CompletionCandidate` |
+| Schema domains | `model/schema.h`, `model/schema-model.h` | Typed domain graph, conservative indexes, and lazy metadata query views. | `Schema`, `CombinedSchema`, `SchemaModel` |
 | Diagnostics | `diagnostics.*`, `error.*` | Parser/runtime errors with source spans. | `Diagnostics`, `Error`, `SourceLocation` |
 | Extensibility | `function.*`, `typed-meta-type.h`, `overlay.*` | Register new functions/meta types or overlay nodes. | `Function`, `TypedMetaType`, `OverlayNode` |
 
@@ -86,7 +87,7 @@ The main current use is object member storage. `detail::ObjectField` is defined 
 
 - Scalars: `bool`, `int64_t`, `double`, `std::string`, `std::string_view`.
 - Structured: `ModelNode` views (object/array) and `TransientObject` for meta types.
-- `ValueType` flags guard type-safe access and drive operator dispatch; conversions are explicit (e.g., `asInt`, `asString`, `isa`).
+- `ValueType` tags guard type-safe access and drive operator dispatch; conversions are explicit (e.g., `asInt`, `asString`, `isa`).
 
 ### Transient/meta types
 
@@ -278,13 +279,20 @@ env.functions.emplace("myfn", new MyFn());
 
 ## Completion engine
 
-`complete(env, query, caret, options)` returns `CompletionCandidate`s by partially parsing the query and exploring:
+`complete(env, query, caret, node, options)` returns `CompletionCandidate`s by partially parsing the query and exploring:
 
 - Known fields from the current `ModelNode` (`fieldNames` + string resolution).
 - Registered functions and upper-case constants from the string pool.
 - Smart-case filtering and limit/sort controls from `CompletionOptions`.
 
 Use this in UIs (e.g., erdblick feature search) to propose valid paths and functions while a user types; operators are not completed.
+
+For metadata-only completion, use `complete(env, query, caret, rootSchemaId, options)`.
+It walks the typed domain graph directly, without synthetic sample nodes or
+function execution. `SchemaModel` is the separate lazy descriptor view for
+ordinary schema queries. See [Schema Domains And Query Views](schema-domains.md)
+for ownership, packed kinds, extension contracts, recursion, and the bounded
+callback evaluation overloads.
 
 ```mermaid
 flowchart TD

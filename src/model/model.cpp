@@ -55,6 +55,11 @@ tl::expected<void, Error> Model::resolve(const ModelNode& n, const ResolveFn& cb
             cb(ValueNode(n, mpKey_));
             break;
         }
+        case Undefined:
+        {
+            cb(UndefinedNode(shared_from_this(), n.addr_, mpKey_));
+            break;
+        }
         default:
             return tl::unexpected<Error>(Error::RuntimeError,
                                          fmt::format("Bad column reference: col={}", (uint16_t)n.addr_.column()));
@@ -379,6 +384,11 @@ model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize
         impl_->columns_.arraySchemas_[memberArrId] = SchemaId{};
     }
     return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
+}
+
+ModelNode::Ptr Model::newUndefined()
+{
+    return resolve(ModelNodeAddress{Undefined, 1});
 }
 
 ModelNode::Ptr Model::newSmallValue(bool value)
