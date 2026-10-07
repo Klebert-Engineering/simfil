@@ -12,6 +12,9 @@ structured data.
 The syntax of simfil is case-insensitive in all cases but for symbols. This means that `any(...)`, `ANY(...)` and `Any(...)` all compile
 to the same function.
 
+<!-- mcp:
+keywords: [field paths, nested objects, recursive traversal, wildcard]
+-->
 ### Paths
 
 To traverse objects and evaluate nested nodes, simfil provides the
@@ -41,6 +44,9 @@ When schema metadata is available, the compiler may reinterpret an unquoted
 standalone token as a schema symbol. This is a schema rewrite, not a parser
 rule: without schema metadata, `ABC` is the field `ABC`.
 
+<!-- mcp:
+keywords: [schema, enums, completion, bitmask, unknown fields]
+-->
 ### Schema-Aware Field and Enum Resolution
 
 When the caller supplies a schema for the current model, simfil can use that schema while compiling, completing, and evaluating path expressions. This keeps short queries practical without changing the core path syntax.
@@ -123,6 +129,9 @@ value.
 
 Note that the current node in and after the sub-query is the same (`b` in the examples given).
 
+<!-- mcp:
+keywords: [array, collection, cardinality, length, indexing]
+-->
 ### Arrays
 
 To check the existence of the string `"hello"` inside an array `b` you could write (note: `*` returns every direct child):
@@ -172,6 +181,10 @@ Considering the following document, the function will return `true`.
 
 `all` is an alias for `each`.
 
+<!-- mcp:
+keywords: [count, cardinality, number of matches]
+hint: Counting non-false expression results differs from measuring one array with the length operator.
+-->
 ### Count
 
 Count can be used to count matching nodes. The function evaluates to the number
@@ -209,6 +222,9 @@ Byte literals are written using the `b` prefix, e.g. `b"hello"` or `b'hello'`.
 Escape sequences `\n`, `\r`, `\t`, `\\`, `\"`, and `\'` are supported.
 Bytes can also be written explicitly using `\xNN` (hex), e.g. `b"\x41\x00"`.
 
+<!-- mcp:
+keywords: [operators, comparisons, length, arithmetic, boolean]
+-->
 ## Operators
 
 <!-- --8<-- [start:operators] -->
@@ -267,6 +283,9 @@ The `!=` operator will always return `true` in such cases.
 
 <!-- --8<-- [start:functions] -->
 
+<!-- mcp:
+keywords: [trace, diagnostics, debug expression]
+-->
 #### `trace(expr, limit=<...>, name=<...>)`
 
 Counts and measures all calls to its expression under the identifier `name` or the string
