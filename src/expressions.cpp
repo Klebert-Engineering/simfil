@@ -1262,9 +1262,10 @@ auto WildcardFieldExpr::buildObjectSchemaPlan(
     plan.directField = false;
 
     std::size_t fieldCount = 0;
+    const auto canonical = schema.canonicalField(fieldId);
     schema.forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
         ++fieldCount;
-        if (field == fieldId)
+        if (field == canonical)
             plan.directField = true;
         const auto descendsToTarget = children.empty() ||
             std::ranges::any_of(children, [this, &ctx, fieldId](auto id) {

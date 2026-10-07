@@ -129,6 +129,13 @@ public:
     /** Known presence requirement for a direct field, or unknown metadata. */
     virtual auto fieldRequired(StringId) const -> std::optional<bool> { return {}; }
 
+    /** Resolve a model's lookup-only field alias without adding duplicate
+     * enumerated paths. */
+    virtual auto canonicalField(StringId field) const -> StringId
+    {
+        return field;
+    }
+
     /** Non-string enum/constant values; all string choices use directEnumSymbols in the binding's pool. */
     virtual auto enumValues() const & -> std::span<const ScalarValueType> { return {}; }
 
@@ -433,9 +440,10 @@ protected:
             return;
         visited.push_back(schemaId);
 
+        auto canonical = schema->canonicalField(field);
         schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
             current.push_back({SchemaPathSegment::Kind::Field, directField});
-            if (directField == field && paths.size() < 10000)
+            if (directField == canonical && paths.size() < 10000)
                 paths.push_back(current);
             if (childSchemas.empty())
                 complete = false;

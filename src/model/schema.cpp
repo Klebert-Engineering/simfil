@@ -66,13 +66,15 @@ auto Schema::fieldSchemas(SchemaId root, const Lookup& lookup, StringId field) -
         }
         if (!affinities(schema->kind()))
             continue;
-        schema->forEachDirectField([&](StringId name, std::span<const SchemaId> children) {
-            if (name != field)
-                return;
-            if (children.empty())
-                result.push_back(NoSchemaId);
-            result.insert(result.end(), children.begin(), children.end());
-        });
+        auto canonical = schema->canonicalField(field);
+        schema->forEachDirectField(
+            [&](StringId name, std::span<const SchemaId> children) {
+                if (name != canonical)
+                    return;
+                if (children.empty())
+                    result.push_back(NoSchemaId);
+                result.insert(result.end(), children.begin(), children.end());
+            });
         if (schema->open() || kindNameId(schema->kind()) == kindNameId(Kind::Unknown) || kindNameId(schema->kind()) == kindNameId(Kind::Any))
             result.push_back(NoSchemaId);
         if (schema->composition() == Composition::AllOf && schema->alternatives().empty())

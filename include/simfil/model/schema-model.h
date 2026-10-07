@@ -16,9 +16,9 @@ namespace simfil
 class SchemaModel : public Model
 {
 public:
-    /** Bound expansion by schema depth and lazily allocated descriptor nodes. */
+    /** Bound lazy allocation, not graph depth; cycles terminate in reference descriptors. */
     SchemaModel(std::shared_ptr<StringPool> strings, Schema::Lookup lookup,
-                std::size_t maxDepth = 32, std::size_t maxNodes = 10000);
+                std::size_t maxNodes = 10000);
     /** Release request-local views and the retained schema binding. */
     ~SchemaModel() override;
 
@@ -30,6 +30,9 @@ public:
 
     /** Number of allocated views, not the size of the underlying schema graph. */
     auto materializedNodeCount() const -> std::size_t;
+
+    /** True if any requested view exceeded the node budget, even if a query hides its marker. */
+    auto exhausted() const -> bool;
 
     using Model::resolve;
     /** Resolve a descriptor address through the same node protocol as ordinary models. */

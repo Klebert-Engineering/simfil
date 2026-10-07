@@ -11,14 +11,13 @@ namespace simfil
 class SchemaModel::Impl
 {
 public:
-    enum class View { Descriptor, Fields, Elements, Alternatives, Enum };
+    enum class View { Descriptor, Fields, Elements, Alternatives, Enum, References };
 
     /** One traversal position retains ancestry so cycles serialize as explicit references. */
     struct Entry {
         View view = View::Descriptor;
         std::vector<SchemaId> schemas;
         std::optional<std::uint32_t> parent;
-        std::size_t depth = 0;
         std::optional<bool> required;
         std::string stop;
         std::optional<std::vector<StringId>> keys;
@@ -26,8 +25,8 @@ public:
     };
 
     /** Reserve one terminal view for allocation-budget exhaustion. */
-    Impl(std::shared_ptr<StringPool> strings, Schema::Lookup lookup, std::size_t depth, std::size_t nodes)
-        : strings(std::move(strings)), lookup(std::move(lookup)), maxDepth(depth), maxNodes(nodes)
+    Impl(std::shared_ptr<StringPool> strings, Schema::Lookup lookup, std::size_t nodes)
+        : strings(std::move(strings)), lookup(std::move(lookup)), maxNodes(nodes)
     {
         if (!this->strings || !this->lookup || nodes < 2 || nodes >= (1u << 24))
             throw std::invalid_argument("SchemaModel requires strings, an owning lookup and 2..2^24-1 nodes");
@@ -46,8 +45,10 @@ public:
     /** Stop recursive expansion without disguising the definition as an empty object. */
     auto add(Entry entry) -> std::uint32_t
     {
-        if (entries.size() >= maxNodes)
+        if (entries.size() >= maxNodes) {
+            exhausted = true;
             return 0;
+        }
         if (entry.view == View::Descriptor && entry.schemas.size() == 1 && entry.schemas.front() != NoSchemaId) {
             for (auto parent = entry.parent; parent; parent = entries[*parent].parent) {
                 const auto& ancestor = entries[*parent];
@@ -56,8 +57,6 @@ public:
                     break;
                 }
             }
-            if (entry.stop.empty() && entry.depth >= maxDepth)
-                entry.stop = "depth-budget";
         }
         entries.push_back(std::move(entry));
         return entries.size() - 1;
@@ -80,9 +79,10 @@ public:
         if (entry.view != View::Descriptor)
             return keys;
         keys.push_back(StringPool::SchemaKind);
+        if (entry.schemas.size() > 1 ||
+            (entry.schemas.size() == 1 && entry.schemas.front() != NoSchemaId))
+            keys.push_back(StringPool::SchemaRef);
         if (!entry.stop.empty()) {
-            if (!entry.schemas.empty())
-                keys.push_back(StringPool::SchemaRef);
             keys.push_back(StringPool::SchemaTruncated);
             return keys;
         }
@@ -110,6 +110,8 @@ public:
     /** Array views list possible domains or enum values, not fabricated feature elements. */
     auto schemas(const Entry& entry) const -> std::vector<SchemaId>
     {
+        if (entry.view == View::References)
+            return entry.schemas;
         auto domain = schema(entry);
         if (entry.view == View::Alternatives) {
             if (entry.schemas.size() > 1)
@@ -125,7 +127,8 @@ public:
 
     std::shared_ptr<StringPool> strings;
     Schema::Lookup lookup;
-    std::size_t maxDepth, maxNodes;
+    std::size_t maxNodes;
+    bool exhausted = false;
     std::deque<Entry> entries;
 };
 
@@ -183,6 +186,8 @@ public:
         if (position < 0 || std::size_t(position) >= size())
             return {};
         auto domain = impl().schema(entry());
+        if (entry().view == Impl::View::References)
+            return scalar(int64_t(entry().schemas[position]));
         if (entry().view == Impl::View::Enum) {
             auto symbols = domain->directEnumSymbols();
             if (std::size_t(position) < symbols.size())
@@ -203,7 +208,10 @@ public:
             case StringPool::SchemaRequired: return scalar(*entry().required);
             case StringPool::SchemaNullable: return scalar(*domain->nullable());
             case StringPool::SchemaOpen: return scalar(domain->open());
-            case StringPool::SchemaRef: return scalar(int64_t(entry().schemas.front()));
+            case StringPool::SchemaRef:
+                if (entry().schemas.size() == 1)
+                    return scalar(int64_t(entry().schemas.front()));
+                break;
             case StringPool::SchemaTruncated: return scalar(entry().stop);
             default: break;
             }
@@ -213,10 +221,12 @@ public:
 
         Impl::Entry child;
         child.parent = index_;
-        child.depth = entry().depth;
         if (entry().view == Impl::View::Descriptor) {
             child.schemas = entry().schemas;
             switch (keyAt(position)) {
+            case StringPool::SchemaRef:
+                child.view = Impl::View::References;
+                break;
             case StringPool::SchemaFields: child.view = Impl::View::Fields; break;
             case StringPool::SchemaElements: child.view = Impl::View::Elements; break;
             case StringPool::SchemaAlternatives: child.view = Impl::View::Alternatives; break;
@@ -225,7 +235,6 @@ public:
             }
         }
         else {
-            ++child.depth;
             if (entry().view == Impl::View::Fields) {
                 auto field = keyAt(position);
                 domain->forEachDirectField([&](StringId name, std::span<const SchemaId> ids) {
@@ -270,8 +279,8 @@ private:
 };
 
 SchemaModel::SchemaModel(std::shared_ptr<StringPool> strings, Schema::Lookup lookup,
-                         std::size_t maxDepth, std::size_t maxNodes)
-    : impl_(std::make_unique<Impl>(std::move(strings), std::move(lookup), maxDepth, maxNodes)) {}
+                         std::size_t maxNodes)
+    : impl_(std::make_unique<Impl>(std::move(strings), std::move(lookup), maxNodes)) {}
 
 SchemaModel::~SchemaModel() = default;
 
@@ -284,6 +293,7 @@ auto SchemaModel::root(SchemaId schema) const -> ModelNode::Ptr
 
 auto SchemaModel::strings() const -> std::shared_ptr<StringPool> { return impl_->strings; }
 auto SchemaModel::materializedNodeCount() const -> std::size_t { return impl_->entries.size(); }
+auto SchemaModel::exhausted() const -> bool { return impl_->exhausted; }
 
 auto SchemaModel::resolve(const ModelNode& node, const ResolveFn& callback) const -> tl::expected<void, Error>
 {

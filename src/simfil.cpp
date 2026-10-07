@@ -617,23 +617,63 @@ static auto addReferencedPath(
     result.paths.push_back({std::move(path), location, viaWildcard, std::move(equalsStringLiteral)});
 }
 
-static auto schemaPathIsReachable(Environment& env, SchemaId rootSchema, const SchemaPath& path) -> bool
+/** Walk a concrete path, retaining canonical aliases and avoiding whole-graph
+ * enumeration. */
+static auto canonicalReferencedPath(Environment& env, SchemaId rootSchema,
+                                    SchemaPath path)
+    -> std::optional<SchemaPath>
 {
-    auto leafField = std::ranges::find_if(
-        path.rbegin(),
-        path.rend(),
-        [](auto const& segment) {
-            return segment.kind == SchemaPathSegment::Kind::Field;
-        });
-    if (leafField == path.rend()) {
-        return true;
+    auto lookup = [&env](SchemaId id) { return env.querySchema(id); };
+    std::vector<SchemaId> domains{rootSchema};
+    std::size_t visits = 0;
+    for (auto& segment : path) {
+        std::vector<SchemaId> next, visited;
+        std::optional<StringId> canonical;
+        while (!domains.empty()) {
+            if (++visits > 10000)
+                return std::nullopt;
+            auto id = domains.back();
+            domains.pop_back();
+            if (id == NoSchemaId || std::ranges::find(visited, id) != visited.end())
+                continue;
+            visited.push_back(id);
+            auto schema = lookup(id);
+            if (!schema)
+                continue;
+            if (schema->composition() != Schema::Composition::None) {
+                auto alternatives = schema->alternatives();
+                domains.insert(domains.end(), alternatives.begin(), alternatives.end());
+                continue;
+            }
+            auto field = schema->canonicalField(segment.field);
+            auto children = segment.kind == SchemaPathSegment::Kind::Field
+                                ? Schema::fieldSchemas(id, lookup, field)
+                                : Schema::itemSchemas(id, lookup);
+            if (children.empty())
+                continue;
+            // Open/unknown membership alone does not prove that the field is
+            // declared.
+            if (segment.kind == SchemaPathSegment::Kind::Field) {
+                bool declared = false;
+                schema->forEachDirectField(
+                    [&](StringId name, auto) { declared |= name == field; });
+                if (!declared)
+                    continue;
+                if (canonical && *canonical != field)
+                    return std::nullopt;
+                canonical = field;
+            }
+            next.insert(next.end(), children.begin(), children.end());
+        }
+        if (next.empty())
+            return std::nullopt;
+        if (canonical)
+            segment.field = *canonical;
+        std::ranges::sort(next);
+        next.erase(std::unique(next.begin(), next.end()), next.end());
+        domains = std::move(next);
     }
-
-    auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
-        return env.querySchema(schemaId);
-    };
-    auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field);
-    return std::ranges::find(possiblePaths, path) != possiblePaths.end();
+    return path;
 }
 
 static auto schemaPathEndsWith(const SchemaPath& path, const SchemaPath& suffix) -> bool
@@ -661,7 +701,15 @@ static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, con
     };
     auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field);
     std::erase_if(possiblePaths, [&](auto const& path) {
-        return !schemaPathEndsWith(path, suffix);
+        if (schemaPathEndsWith(path, suffix))
+            return false;
+        if (path.size() < suffix.size())
+            return true;
+        // Resolve aliases at their actual owner, not globally by field spelling.
+        auto candidate = path;
+        std::copy(suffix.begin(), suffix.end(), candidate.end() - suffix.size());
+        auto canonical = canonicalReferencedPath(env, rootSchema, std::move(candidate));
+        return !canonical || *canonical != path;
     });
     return possiblePaths;
 }
@@ -691,16 +739,21 @@ static auto collectReferencedSchemaPaths(
             }
 
             auto pathValue = std::move(**path);
-            if (schemaPathIsReachable(env, rootSchema, pathValue)) {
-                addReferencedPath(result, std::move(pathValue), maybePath.sourceLocation(), false, std::move(*literal));
-            }
-            else {
-                auto expandedPaths = schemaPathsMatchingSuffix(env, rootSchema, pathValue);
+            auto canonical = hasLeadingRecursiveWildcard(maybePath)
+                ? std::nullopt : canonicalReferencedPath(env, rootSchema, pathValue);
+            if (canonical) {
+                addReferencedPath(result, std::move(*canonical),
+                                  maybePath.sourceLocation(), false,
+                                  std::move(*literal));
+            } else {
+                auto expandedPaths =
+                    schemaPathsMatchingSuffix(env, rootSchema, pathValue);
                 if (expandedPaths.empty()) {
                     result.hasUnresolvedAccess = true;
                 }
                 for (auto& expandedPath : expandedPaths) {
-                    addReferencedPath(result, std::move(expandedPath), maybePath.sourceLocation(), false, *literal);
+                    addReferencedPath(result, std::move(expandedPath),
+                                      maybePath.sourceLocation(), false, *literal);
                 }
             }
             return true;
@@ -769,11 +822,11 @@ static auto collectReferencedSchemaPaths(
                 for (auto& expanded : paths) {
                     addReferencedPath(result, std::move(expanded), expr.sourceLocation(), true);
                 }
-            }
-            else if (schemaPathIsReachable(env, rootSchema, **path)) {
-                addReferencedPath(result, std::move(**path), expr.sourceLocation(), false);
-            }
-            else {
+            } else if (auto canonical =
+                           canonicalReferencedPath(env, rootSchema, **path)) {
+                addReferencedPath(result, std::move(*canonical),
+                                  expr.sourceLocation(), false);
+            } else {
                 result.hasUnresolvedAccess = true;
             }
             return {};

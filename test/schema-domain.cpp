@@ -120,6 +120,22 @@ public:
     }
 };
 
+/** A lookup-only alias stays out of canonical field enumeration and yields to real members. */
+class LookupAliasSchema : public ObjectSchema
+{
+public:
+    StringId alias = 0, target = 0;
+    auto canonicalField(StringId field) const -> StringId override
+    {
+        return field == alias && std::ranges::find(directFields(), field) == directFields().end()
+            ? target : field;
+    }
+    auto canHaveField(StringId field) const -> bool override
+    {
+        return ObjectSchema::canHaveField(canonicalField(field));
+    }
+};
+
 /** Runtime adapter whose declared literals intentionally are not interned in its data pool. */
 class TextEnumDomain : public ValueSchema
 {
@@ -247,13 +263,53 @@ TEST_CASE("Schema descriptors bound recursion and expansion explicitly", "[model
     d.finalize();
     auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
     auto json = model->root(1)->toJson();
+    REQUIRE(json["$ref"] == 1);
     REQUIRE(json["fields"]["next"]["$ref"] == 1);
     REQUIRE(json["fields"]["next"]["truncated"] == "cycle");
-    auto shallow = std::make_shared<SchemaModel>(d.strings, d.lookup(), 0);
-    REQUIRE(shallow->root(1)->toJson()["truncated"] == "depth-budget");
-    auto tiny = std::make_shared<SchemaModel>(d.strings, d.lookup(), 32, 2);
+    REQUIRE_FALSE(model->exhausted());
+    auto tiny = std::make_shared<SchemaModel>(d.strings, d.lookup(), 2);
     REQUIRE(tiny->root(1)->toJson()["fields"]["truncated"] == "node-budget");
     REQUIRE(tiny->materializedNodeCount() == 2);
+    REQUIRE(tiny->exhausted());
+}
+
+TEST_CASE("Implicit schema unions retain all domain references",
+          "[model.schema-domain]")
+{
+    Domains d;
+    d.add<ObjectSchema>(1).addField(d.name("choice"), {2, 3});
+    d.add<ValueSchema>(2, Schema::Kind::Int);
+    d.add<ValueSchema>(3, Schema::Kind::String);
+    d.finalize();
+    auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
+    auto json = model->root(1)->toJson();
+    REQUIRE(json["fields"]["choice"]["kind"] == "union");
+    REQUIRE(json["fields"]["choice"]["$ref"] == nlohmann::json::array({2, 3}));
+    REQUIRE(json["fields"]["choice"]["alternatives"][0]["kind"] == "integer");
+    REQUIRE(json["fields"]["choice"]["alternatives"][1]["kind"] == "string");
+}
+
+TEST_CASE("Schema projections do not hide deep matches or allocation exhaustion", "[model.schema-domain]")
+{
+    Domains d;
+    for (SchemaId id = 1; id < 80; ++id)
+        d.add<ObjectSchema>(id).addField(d.name("next"), {SchemaId(id + 1)});
+    d.add<ValueSchema>(80, Schema::Kind::String).setTypeName("DeepTarget");
+    d.finalize();
+    Environment env(d.strings);
+    auto ast = compile(env, "**.typename", false);
+    REQUIRE(ast);
+    auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
+    auto values = eval(env, **ast, *model->root(1), nullptr);
+    REQUIRE(values);
+    REQUIRE(values->size() == 1);
+    REQUIRE(values->front().as<ValueType::String>() == "DeepTarget");
+    REQUIRE_FALSE(model->exhausted());
+
+    auto tiny = std::make_shared<SchemaModel>(d.strings, d.lookup(), 10);
+    REQUIRE(eval(env, **ast, *tiny->root(1), nullptr));
+    // A scalar projection never emits the terminal marker. The caller still needs the signal.
+    REQUIRE(tiny->exhausted());
 }
 
 TEST_CASE("Domain completion follows array indices and logical alternatives", "[completion.domain]")
@@ -525,6 +581,43 @@ TEST_CASE("Registry adapters participate in sparse plans and retain incomplete m
     bool exhaustive = true;
     (void)Schema::enumSymbolPaths(4, d.lookup(), d.name("READY"), &exhaustive);
     REQUIRE_FALSE(exhaustive);
+}
+
+TEST_CASE("Lookup aliases resolve direct and recursive schema paths canonically", "[model.schema-domain]")
+{
+    Domains d;
+    auto& root = d.add<LookupAliasSchema>(1);
+    root.alias = d.name("publicName");
+    root.target = d.name("storedName");
+    root.addField(root.target, {2});
+    d.add<ObjectSchema>(2).addField(d.name("value"), {3});
+    d.add<ValueSchema>(3, Schema::Kind::Int);
+    d.add<ObjectSchema>(4).addField(d.name("wrapper"), {1});
+    d.finalize();
+    REQUIRE(Schema::fieldSchemas(1, d.lookup(), root.alias) == std::vector<SchemaId>{2});
+    REQUIRE(Schema::fieldPaths(1, d.lookup(), root.alias).front().front().field == root.target);
+    REQUIRE(std::ranges::find(root.directFields(), root.alias) == root.directFields().end());
+    REQUIRE(contains(d.complete("publicName.va"), "value"));
+    Environment env(d.strings);
+    env.querySchemaCallback = d.lookup();
+    for (auto query : {"publicName.value", "**.publicName.value", "**.publicName.value == 'x'"}) {
+        auto ast = compile(env, query, false);
+        REQUIRE(ast);
+        auto refs = referencedSchemaPaths(env, **ast, 1);
+        REQUIRE(refs);
+        REQUIRE_FALSE(refs->hasUnresolvedAccess);
+        REQUIRE(refs->paths.size() == 1);
+        REQUIRE(refs->paths.front().path.front().field == root.target);
+    }
+    auto ast = compile(env, "**.publicName.value", false);
+    REQUIRE(ast);
+    auto refs = referencedSchemaPaths(env, **ast, 4);
+    REQUIRE(refs);
+    REQUIRE_FALSE(refs->hasUnresolvedAccess);
+    REQUIRE(refs->paths.front().path[1].field == root.target);
+    root.addField(root.alias, {3});
+    d.finalize();
+    REQUIRE(Schema::fieldSchemas(1, d.lookup(), root.alias) == std::vector<SchemaId>{3});
 }
 
 TEST_CASE("Domain completion preserves alias scope and never executes custom functions", "[completion.domain]")

@@ -90,14 +90,14 @@ metadata or reuse compilation-pool IDs in another environment.
 
 // strings and lookup belong to this request's schema binding. The closure must
 // capture the graph owner by shared ownership, not a temporary Environment&.
-auto descriptors = std::make_shared<simfil::SchemaModel>(strings, lookup, 32, 10000);
+auto descriptors = std::make_shared<simfil::SchemaModel>(strings, lookup, 10000);
 auto root = descriptors->root(rootSchemaId);
 simfil::Environment env(descriptors->strings());
 auto query = simfil::compile(env, "fields.items.elements[0].kind", false);
 ```
 
 The constructor is
-`SchemaModel(shared_ptr<StringPool>, Schema::Lookup, maxDepth=32, maxNodes=10000)`.
+`SchemaModel(shared_ptr<StringPool>, Schema::Lookup, maxNodes=10000)`.
 The lookup closure and pool outlive all returned nodes through the model owner.
 The graph and namespace must not change during the view's lifetime. Views are
 request-local and not concurrently mutable. The adapter never interns strings.
@@ -107,12 +107,14 @@ Descriptors are ordinary objects, even for represented scalar/array domains:
 ```json
 {
   "kind": "Feature",
+  "$ref": 1,
   "typename": "RoadLink",
   "fields": {
     "items": {
       "kind": "array",
+      "$ref": 2,
       "required": false,
-      "elements": [{"kind": "string", "enum": ["urban", "rural"]}]
+      "elements": [{"kind": "string", "$ref": 3, "enum": ["urban", "rural"]}]
     }
   },
   "open": false
@@ -126,11 +128,17 @@ names are under `fields`, so they cannot collide with descriptor metadata names.
 of them. Descriptor `schema()` is `NoSchemaId`, not the represented domain ID.
 This prevents feature-field pruning from hiding descriptor metadata.
 
-Cycles/depth limits produce a reference such as
+Every known descriptor exposes its numeric identity as `$ref`, including
+expanded definitions. An implicit union exposes an array of IDs, such as
+`{"kind":"union","$ref":[2,3]}`; each ID can be used as a new descriptor root.
+Cycles stop expansion with a reference such as
 `{"kind":"object","$ref":1,"truncated":"cycle"}`. Allocation exhaustion
 uses `{"kind":"unknown","truncated":"node-budget"}`. A stop marker is not
-an empty definition. Limits count lazy views/schema depth, not serialized bytes;
-callers still need bounded evaluation and output serialization. Repeated metadata
+an empty definition. The model does not impose a schema-depth cutoff before query
+evaluation. `exhausted()` reports any allocation-budget stop, even when a scalar
+projection never emits its marker; callers must mark such query results incomplete.
+Limits count lazy views, not serialized bytes; callers still need bounded evaluation
+and output serialization with stack-safety guards. Repeated metadata
 access reuses child views. `materializedNodeCount()` includes the terminal budget
 marker, and `maxNodes` must be at least two.
 
@@ -152,6 +160,15 @@ independently of sample truth values. Comparisons offer the left operand's enum
 choices; unknown functions/accesses stay unknown instead of inventing fields.
 Root-owned operand alias hooks have the same precedence/scope as compilation;
 explicit paths do not reinterpret member names as aliases.
+
+Model lookup aliases are separate: an adapter can override
+`Schema::canonicalField` to resolve a member name as its runtime model does,
+without duplicating enumerated field paths. Member-domain resolution, field path
+discovery, wildcard direct-field plans and concrete/recursive `referencedSchemaPaths`
+analysis use that hook. Adapters must also keep `canHaveField` conservative for
+lookup aliases reachable in descendants; a canonical-only name index cannot
+prove an alias absent. For example, mapget features
+resolve `attributes` to `properties` unless a real `attributes` member is declared.
 
 `limit`, `timeoutMs`, `maxSchemaVisits` (default 10000), and `maxSchemaDepth`
 (AST inference depth, default 128) bound candidate/traversal work. Registry
