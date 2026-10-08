@@ -103,8 +103,9 @@ struct Token
 std::ostream& operator<<(std::ostream&, const Token&);
 
 /**
- * Split a SIMFIL expression `expr` into parser tokens
+ * Split an expression into tokens. Completion may accept an unfinished final
+ * string literal; normal compilation keeps strict quote/escape validation.
  */
-auto tokenize(std::string_view expr) -> tl::expected<std::vector<Token>, Error>;
+auto tokenize(std::string_view expr, bool allowUnfinishedString = false) -> tl::expected<std::vector<Token>, Error>;
 
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "simfil/model/string-pool.h"
+#include "simfil/model/value-type.h"
 #include <algorithm>
 #include <cassert>
 #include <compare>
@@ -12,6 +13,7 @@
 #include <ranges>
 #include <sfl/small_vector.hpp>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace simfil
@@ -57,18 +59,99 @@ concept QueryMutableSchemaFn = requires(const Fn& fn) {
     { fn(SchemaId{}) } -> std::convertible_to<Schema*>;
 };
 
-/**
- *
- */
+/** Read-only domain interface shared by schema queries, completion and pruning. */
 class Schema
 {
 public:
-    /** Schema kind */
-    enum class Kind {
-        Object,
-        Array,
-        Value,
+    /** Possible present values; absence is field metadata, not a null value. */
+    static constexpr std::uint16_t AllAffinities = (1u << unsigned(ValueType::LAST_)) - 2;
+    static constexpr std::uint16_t ScalarAffinities = (1u << unsigned(ValueType::TransientObject)) - 2;
+
+    /** Open packed kind: static name StringId above structural-affinity bits. */
+    enum class Kind : std::uint32_t {
+        Unknown = (StringPool::SchemaUnknown << 16) | AllAffinities,
+        Any = (StringPool::SchemaAny << 16) | AllAffinities,
+        Never = StringPool::SchemaNever << 16,
+        Value = (StringPool::SchemaValue << 16) | ScalarAffinities,
+        Null = (StringPool::SchemaNull << 16) | valueTypeAffinity(ValueType::Null),
+        Bool = (StringPool::SchemaBool << 16) | valueTypeAffinity(ValueType::Bool),
+        Int = (StringPool::SchemaInt << 16) | valueTypeAffinity(ValueType::Int),
+        Float = (StringPool::SchemaFloat << 16) | valueTypeAffinity(ValueType::Float),
+        String = (StringPool::SchemaString << 16) | valueTypeAffinity(ValueType::String),
+        Bytes = (StringPool::SchemaBytes << 16) | valueTypeAffinity(ValueType::Bytes),
+        Object = (StringPool::SchemaObject << 16) | valueTypeAffinity(ValueType::Object),
+        Array = (StringPool::SchemaArray << 16) | valueTypeAffinity(ValueType::Array),
+        Union = (StringPool::SchemaUnion << 16) | AllAffinities,
+        OneOf = (StringPool::SchemaOneOf << 16) | AllAffinities,
+        Intersection = (StringPool::SchemaIntersection << 16) | AllAffinities,
     };
+
+    /** Logical alternatives apply at one value position, never an array level. */
+    enum class Composition { None, AnyOf, OneOf, AllOf };
+
+    /** Bind identities to borrowed definitions whose owner outlives all traversal. */
+    using Lookup = std::function<const Schema*(SchemaId)>;
+
+    /** Construct an extension kind without registering its semantics in simfil. */
+    static constexpr auto makeKind(StringId name, std::uint16_t affinities) -> Kind
+    {
+        assert(name != StringPool::Empty && name < StringPool::FirstDynamicId);
+        return Kind((std::uint32_t(name) << 16) | affinities);
+    }
+
+    /** Return the static name id, independent of the represented structure. */
+    static constexpr auto kindNameId(Kind kind) -> StringId { return std::uint32_t(kind) >> 16; }
+
+    /** Return the coarse set of possible runtime types, not full constraints. */
+    static constexpr auto affinities(Kind kind) -> std::uint16_t { return std::uint32_t(kind) & 0xffff; }
+
+    /** Recognize generic structure even for an unfamiliar specialized kind. */
+    auto hasAffinity(ValueType type) const -> bool { return affinities(kind()) & valueTypeAffinity(type); }
+
+    /** Preserve the concrete producer type name; anonymous domains leave it empty. */
+    virtual auto typeName() const -> std::string_view { return typeName_; }
+    /** Assign a concrete producer name and invalidate metadata-derived indexes. */
+    void setTypeName(std::string name) { typeName_ = std::move(name); invalidate(); }
+
+    /** Change semantic classification while retaining the implementation's traversal. */
+    void setKind(Kind kind) { kindOverride_ = kind; invalidate(); }
+
+    /** Whether undeclared object fields are allowed by this domain. */
+    virtual auto open() const -> bool { return open_; }
+    /** Permit or forbid undeclared object members independently of known fields. */
+    void setOpen(bool open) { open_ = open; invalidate(); }
+
+    /** Known nullability is separate from a field's optional presence. */
+    virtual auto nullable() const -> std::optional<bool> { return nullable_; }
+    /** Record known nullability and update the coarse affinity summary. */
+    void setNullable(bool nullable) { nullable_ = nullable; invalidate(); }
+
+    /** Known presence requirement for a direct field, or unknown metadata. */
+    virtual auto fieldRequired(StringId) const -> std::optional<bool> { return {}; }
+
+    /** Resolve a model's lookup-only field alias without adding duplicate
+     * enumerated paths. */
+    virtual auto canonicalField(StringId field) const -> StringId
+    {
+        return field;
+    }
+
+    /** Non-string enum/constant values; all string choices use directEnumSymbols in the binding's pool. */
+    virtual auto enumValues() const & -> std::span<const ScalarValueType> { return {}; }
+
+    /** Preserve the combiner rather than merging away exclusive/intersection semantics. */
+    virtual auto composition() const -> Composition { return Composition::None; }
+    /** Domain identities combined at this value position, not child array elements. */
+    virtual auto alternatives() const & -> std::span<const SchemaId> { return {}; }
+
+    /** Cached proof that field reachability contains no unknown or open descendants. */
+    virtual auto reachabilityComplete() const -> bool { return reachabilityComplete_; }
+
+    /** Resolve the possible domains of a member, flattening only logical alternatives. */
+    static auto fieldSchemas(SchemaId root, const Lookup& lookup, StringId field) -> std::vector<SchemaId>;
+
+    /** Resolve item domains independently of a prospective runtime array index. */
+    static auto itemSchemas(SchemaId root, const Lookup& lookup) -> std::vector<SchemaId>;
 
     /** Finalization state */
     enum class State {
@@ -84,13 +167,16 @@ public:
     /**
      * Return this schemas kind.
      */
-    virtual auto kind() const -> Kind = 0;
+    virtual auto kind() const -> Kind { return domainKind(Kind::Unknown); }
 
     /**
      * Returns true if this schema or any of the schemas it refers to
      * can possibly contain the given field.
      */
-    virtual auto canHaveField(StringId fieldId) const -> bool = 0;
+    virtual auto canHaveField(StringId) const -> bool
+    {
+        return hasAffinity(ValueType::Object) || hasAffinity(ValueType::Array);
+    }
 
     /**
      * Returns true if this schema or any of the schemas it refers to
@@ -112,7 +198,7 @@ public:
     /**
      * @return All nested field names.
      */
-    virtual auto nestedFields() const & -> std::span<const StringId> = 0;
+    virtual auto nestedFields() const & -> std::span<const StringId> { return {}; }
 
     /**
      * Return field names directly available on this schema node.
@@ -144,17 +230,33 @@ public:
         return {};
     }
 
+    /** Match a direct enum by text without inserting schema-only symbols into a runtime pool. */
+    virtual auto hasDirectEnumSymbol(std::string_view symbol, StringPool const& strings) const -> bool
+    {
+        for (auto id : directEnumSymbols()) {
+            auto text = strings.resolve(id);
+            if (text && *text == symbol)
+                return true;
+        }
+        return false;
+    }
+
     /**
      * Enumerate precise paths to all fields with the requested name.
      */
     static auto fieldPaths(SchemaId root,
                            const std::function<const Schema*(SchemaId)>& queryFn,
-                           StringId field) -> std::vector<SchemaPath>
+                           StringId field,
+                           bool* complete = nullptr) -> std::vector<SchemaPath>
     {
         std::vector<SchemaPath> paths;
         SchemaIdStack visited;
         SchemaPath current;
-        collectFieldPaths(root, queryFn, field, visited, current, paths);
+        bool exhaustive = true;
+        std::size_t visits = 0;
+        collectFieldPaths(root, queryFn, field, visited, current, paths, exhaustive, visits);
+        if (complete)
+            *complete = exhaustive;
         sortUniquePaths(paths);
         return paths;
     }
@@ -164,12 +266,17 @@ public:
      */
     static auto enumSymbolPaths(SchemaId root,
                                 const std::function<const Schema*(SchemaId)>& queryFn,
-                                StringId symbol) -> std::vector<SchemaPath>
+                                StringId symbol,
+                                bool* complete = nullptr) -> std::vector<SchemaPath>
     {
         std::vector<SchemaPath> paths;
         SchemaIdStack visited;
         SchemaPath current;
-        collectEnumSymbolPaths(root, queryFn, symbol, visited, current, paths);
+        bool exhaustive = true;
+        std::size_t visits = 0;
+        collectEnumSymbolPaths(root, queryFn, symbol, visited, current, paths, exhaustive, visits);
+        if (complete)
+            *complete = exhaustive;
         sortUniquePaths(paths);
         return paths;
     }
@@ -222,10 +329,34 @@ public:
      */
     virtual auto revision() const -> std::uint64_t
     {
-        return 0;
+        return metadataRevision_;
     }
 
 protected:
+    /** Apply optional metadata without losing the kind's static symbolic name. */
+    auto domainKind(Kind fallback) const -> Kind
+    {
+        auto result = kindOverride_.value_or(fallback);
+        if (nullable_)
+            result = makeKind(kindNameId(result), *nullable_
+                ? affinities(result) | valueTypeAffinity(ValueType::Null)
+                : affinities(result) & ~valueTypeAffinity(ValueType::Null));
+        return result;
+    }
+
+    /** Derived caches must be invalidated when structural metadata changes. */
+    virtual void invalidate() { ++metadataRevision_; reachabilityComplete_ = false; }
+
+    /** Compute completeness from the graph, independently of cyclic finalization state. */
+    auto computeReachabilityComplete(const std::function<Schema*(SchemaId)>& lookup) const -> bool;
+
+    std::uint64_t metadataRevision_ = 0;
+    mutable bool reachabilityComplete_ = false;
+    std::optional<Kind> kindOverride_;
+    std::string typeName_;
+    bool open_ = false;
+    std::optional<bool> nullable_;
+
     /**
      * Append all fields reachable from this schema without relying on cached
      * finalization state. This lets cyclic schema graphs still produce an exact
@@ -233,7 +364,17 @@ protected:
      */
     virtual auto collectNestedFields(const std::function<Schema*(SchemaId)>& queryFn,
                                      SchemaIdStack& visited,
-                                     std::vector<StringId>& fields) const -> void = 0;
+                                     std::vector<StringId>& fields) const -> void
+    {
+        forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+            fields.push_back(field);
+            for (auto child : children)
+                appendSchemaFields(child, queryFn, visited, fields);
+        });
+        forEachElementSchema([&](SchemaId child) { appendSchemaFields(child, queryFn, visited, fields); });
+        for (auto child : alternatives())
+            appendSchemaFields(child, queryFn, visited, fields);
+    }
 
     /**
      * Append all enum-like string symbols reachable from this schema without
@@ -243,8 +384,18 @@ protected:
                                           SchemaIdStack& visited,
                                           std::vector<StringId>& symbols) const -> void
     {
+        auto symbolsHere = directEnumSymbols();
+        symbols.insert(symbols.end(), symbolsHere.begin(), symbolsHere.end());
+        forEachDirectField([&](StringId, std::span<const SchemaId> children) {
+            for (auto child : children)
+                appendSchemaEnumSymbols(child, queryFn, visited, symbols);
+        });
+        forEachElementSchema([&](SchemaId child) { appendSchemaEnumSymbols(child, queryFn, visited, symbols); });
+        for (auto child : alternatives())
+            appendSchemaEnumSymbols(child, queryFn, visited, symbols);
     }
 
+public:
     /**
      * Visit fields declared directly by this schema and their possible child
      * schemas. The default is empty for scalar schemas.
@@ -261,6 +412,7 @@ protected:
     {
     }
 
+protected:
     /**
      * Recursively collect schema paths to matching fields.
      */
@@ -269,32 +421,54 @@ protected:
                                   StringId field,
                                   SchemaIdStack& visited,
                                   SchemaPath& current,
-                                  std::vector<SchemaPath>& paths) -> void
+                                  std::vector<SchemaPath>& paths,
+                                  bool& complete, std::size_t& visits) -> void
     {
-        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+        if (++visits > 10000 || schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end()
+            || visited.size() >= 128 || paths.size() >= 10000) {
+            complete = false;
             return;
+        }
 
         auto const* schema = queryFn(schemaId);
-        if (!schema)
+        if (!schema) {
+            complete = false;
             return;
+        }
 
+        if (!affinities(schema->kind()))
+            return;
         visited.push_back(schemaId);
 
+        auto canonical = schema->canonicalField(field);
         schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
             current.push_back({SchemaPathSegment::Kind::Field, directField});
-            if (directField == field)
+            if (directField == canonical && paths.size() < 10000)
                 paths.push_back(current);
+            if (childSchemas.empty())
+                complete = false;
             for (auto childSchemaId : childSchemas)
-                collectFieldPaths(childSchemaId, queryFn, field, visited, current, paths);
+                collectFieldPaths(childSchemaId, queryFn, field, visited, current, paths, complete, visits);
             current.pop_back();
         });
 
+        bool hasElements = false;
         schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+            hasElements = true;
             current.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
-            collectFieldPaths(elementSchemaId, queryFn, field, visited, current, paths);
+            collectFieldPaths(elementSchemaId, queryFn, field, visited, current, paths, complete, visits);
             current.pop_back();
         });
 
+        if (schema->hasAffinity(ValueType::Array) && !hasElements && schema->composition() == Composition::None)
+            complete = false;
+        if (schema->composition() == Composition::AllOf && schema->alternatives().empty())
+            complete = false;
+
+        for (auto alternative : schema->alternatives())
+            collectFieldPaths(alternative, queryFn, field, visited, current, paths, complete, visits);
+        if (schema->open() || kindNameId(schema->kind()) == kindNameId(Kind::Unknown) || kindNameId(schema->kind()) == kindNameId(Kind::Any))
+            complete = false;
         visited.pop_back();
     }
 
@@ -307,15 +481,23 @@ protected:
                                        StringId symbol,
                                        SchemaIdStack& visited,
                                        SchemaPath& current,
-                                       std::vector<SchemaPath>& paths) -> void
+                                       std::vector<SchemaPath>& paths,
+                                  bool& complete, std::size_t& visits) -> void
     {
-        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+        if (++visits > 10000 || schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end()
+            || visited.size() >= 128 || paths.size() >= 10000) {
+            complete = false;
             return;
+        }
 
         auto const* schema = queryFn(schemaId);
-        if (!schema)
+        if (!schema) {
+            complete = false;
             return;
+        }
 
+        if (!affinities(schema->kind()))
+            return;
         visited.push_back(schemaId);
 
         for (auto directSymbol : schema->directEnumSymbols()) {
@@ -325,17 +507,30 @@ protected:
 
         schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
             current.push_back({SchemaPathSegment::Kind::Field, directField});
+            if (childSchemas.empty())
+                complete = false;
             for (auto childSchemaId : childSchemas)
-                collectEnumSymbolPaths(childSchemaId, queryFn, symbol, visited, current, paths);
+                collectEnumSymbolPaths(childSchemaId, queryFn, symbol, visited, current, paths, complete, visits);
             current.pop_back();
         });
 
+        bool hasElements = false;
         schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+            hasElements = true;
             current.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
-            collectEnumSymbolPaths(elementSchemaId, queryFn, symbol, visited, current, paths);
+            collectEnumSymbolPaths(elementSchemaId, queryFn, symbol, visited, current, paths, complete, visits);
             current.pop_back();
         });
 
+        if (schema->hasAffinity(ValueType::Array) && !hasElements && schema->composition() == Composition::None)
+            complete = false;
+        if (schema->composition() == Composition::AllOf && schema->alternatives().empty())
+            complete = false;
+
+        for (auto alternative : schema->alternatives())
+            collectEnumSymbolPaths(alternative, queryFn, symbol, visited, current, paths, complete, visits);
+        if (schema->open() || kindNameId(schema->kind()) == kindNameId(Kind::Unknown) || kindNameId(schema->kind()) == kindNameId(Kind::Any))
+            complete = false;
         visited.pop_back();
     }
 
@@ -351,15 +546,24 @@ protected:
             return std::nullopt;
 
         auto const* schema = queryFn(schemaId);
-        if (!schema)
+        if (!schema || !affinities(schema->kind()))
             return std::nullopt;
 
-        if (schema->kind() == Kind::Value)
+        if (schema->composition() == Composition::None
+            && !schema->hasAffinity(ValueType::Object) && !schema->hasAffinity(ValueType::Array)
+            && affinities(schema->kind()) != 0)
             return current;
 
         visited.push_back(schemaId);
 
-        if (schema->kind() == Kind::Object) {
+        for (auto alternative : schema->alternatives()) {
+            if (auto result = firstScalarFieldPath(alternative, queryFn, visited, current)) {
+                visited.pop_back();
+                return result;
+            }
+        }
+
+        if (schema->hasAffinity(ValueType::Object)) {
             std::optional<SchemaPath> result;
             schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
                 if (result)
@@ -428,7 +632,7 @@ protected:
 
         visited.push_back(schemaId);
 
-        if (schema->finalize(queryFn) == State::Clean) {
+        if (schema->finalize(queryFn) == State::Clean && schema->reachabilityComplete()) {
             auto childValues = std::invoke(cachedValues, *schema);
             values.insert(values.end(), childValues.begin(), childValues.end());
             return;
@@ -510,6 +714,7 @@ protected:
         schema.collectNestedEnumSymbols(queryFn, visitedEnumSymbols, flatEnumSymbols);
         sortUnique(flatEnumSymbols);
 
+        schema.reachabilityComplete_ = schema.computeReachabilityComplete(queryFn);
         state = State::Clean;
         return State::Clean;
     }
@@ -539,6 +744,7 @@ public:
     struct FieldSummary {
         StringId field = 0;
         sfl::small_vector<SchemaId, 1> schemas;
+        std::optional<bool> required;
 
         auto operator<=>(const FieldSummary& other) const
         {
@@ -548,12 +754,12 @@ public:
 
     auto kind() const -> Kind override
     {
-        return Kind::Object;
+        return domainKind(Kind::Object);
     }
 
     auto canHaveField(StringId field) const -> bool override
     {
-        return containsField(state_, flatFields_, field);
+        return !reachabilityComplete() || containsField(state_, flatFields_, field);
     }
 
     auto canHaveEnumSymbol(StringId symbol) const -> bool override
@@ -564,14 +770,17 @@ public:
     /**
      * Add a direct field and optional child schemas reachable through it.
      */
-    auto addField(StringId field, std::initializer_list<SchemaId> schemas = {}) -> void
+    auto addField(StringId field, std::initializer_list<SchemaId> schemas = {},
+                  std::optional<bool> required = {}) -> void
     {
         FieldSummary summary;
         summary.field = field;
+        summary.required = required;
         summary.schemas.insert(summary.schemas.end(), schemas.begin(), schemas.end());
         fields_.push_back(std::move(summary));
         directFields_.push_back(field);
         state_ = State::Dirty;
+        reachabilityComplete_ = false;
         ++revision_;
     }
 
@@ -582,6 +791,15 @@ public:
     auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override
     {
         return finalizeReachableMetadata(state_, flatFields_, flatEnumSymbols_, lookup, *this);
+    }
+
+    /** Presence metadata is specific to this parent-field edge. */
+    auto fieldRequired(StringId field) const -> std::optional<bool> override
+    {
+        for (const auto& item : fields_)
+            if (item.field == field)
+                return item.required;
+        return {};
     }
 
     auto fields() const & -> std::span<const FieldSummary>
@@ -618,10 +836,13 @@ public:
 
     auto revision() const -> std::uint64_t override
     {
-        return revision_;
+        return revision_ + metadataRevision_;
     }
 
 private:
+    /** Invalidate derived indexes when domain metadata changes. */
+    void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
+
     auto collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
                              SchemaIdStack& visited,
                              std::vector<StringId>& fields) const -> void override
@@ -661,14 +882,34 @@ private:
 class ValueSchema : public Schema
 {
 public:
+    /** An untyped scalar domain, or a precise builtin scalar kind. */
+    explicit ValueSchema(Kind kind = Kind::Value) { setKind(kind); }
+
+    /** Scalar domains have no descendant fields; a widened extension kind remains conservative. */
+    auto reachabilityComplete() const -> bool override
+    {
+        return !open() && !hasAffinity(ValueType::Object) && !hasAffinity(ValueType::Array);
+    }
+
+    /** Retain non-string literals. String choices must use addEnumSymbol so rewrites share the same index. */
+    void addEnumValue(ScalarValueType value)
+    {
+        if (std::holds_alternative<std::string>(value) || std::holds_alternative<std::string_view>(value))
+            throw std::invalid_argument("String enum values require addEnumSymbol in the binding's string pool");
+        enumValues_.push_back(std::move(value));
+        invalidate();
+    }
+
+    auto enumValues() const & -> std::span<const ScalarValueType> override { return enumValues_; }
+
     auto kind() const -> Kind override
     {
-        return Kind::Value;
+        return domainKind(Kind::Value);
     }
 
     auto canHaveField(StringId) const -> bool override
     {
-        return false;
+        return !reachabilityComplete();
     }
 
     auto canHaveEnumSymbol(StringId symbol) const -> bool override
@@ -683,6 +924,7 @@ public:
     {
         enumSymbols_.push_back(symbol);
         state_ = State::Dirty;
+        reachabilityComplete_ = false;
         ++revision_;
     }
 
@@ -719,10 +961,13 @@ public:
 
     auto revision() const -> std::uint64_t override
     {
-        return revision_;
+        return revision_ + metadataRevision_;
     }
 
 private:
+    /** Invalidate derived indexes when domain metadata changes. */
+    void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
+
     auto collectNestedFields(const std::function<Schema*(SchemaId)>&,
                              SchemaIdStack&,
                              std::vector<StringId>&) const -> void override
@@ -736,6 +981,7 @@ private:
         symbols.insert(symbols.end(), enumSymbols_.begin(), enumSymbols_.end());
     }
 
+    std::vector<ScalarValueType> enumValues_;
     std::vector<StringId> enumSymbols_; // Ordered after finalize().
     std::uint64_t revision_ = 0;
     State state_ = State::Dirty;
@@ -752,12 +998,12 @@ class ArraySchema : public Schema
 public:
     auto kind() const -> Kind override
     {
-        return Kind::Array;
+        return domainKind(Kind::Array);
     }
 
     auto canHaveField(StringId field) const -> bool override
     {
-        return containsField(state_, flatFields_, field);
+        return !reachabilityComplete() || containsField(state_, flatFields_, field);
     }
 
     auto canHaveEnumSymbol(StringId symbol) const -> bool override
@@ -772,6 +1018,7 @@ public:
     {
         schemas_.insert(schemas_.end(), schemas.begin(), schemas.end());
         state_ = State::Dirty;
+        reachabilityComplete_ = false;
         ++revision_;
     }
 
@@ -801,7 +1048,7 @@ public:
 
     auto revision() const -> std::uint64_t override
     {
-        return revision_;
+        return revision_ + metadataRevision_;
     }
 
     auto elementSchemas() const & -> std::span<const SchemaId>
@@ -816,6 +1063,9 @@ public:
     }
 
 private:
+    /** Invalidate derived indexes when domain metadata changes. */
+    void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
+
     auto collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
                              SchemaIdStack& visited,
                              std::vector<StringId>& fields) const -> void override
@@ -837,6 +1087,54 @@ private:
     std::vector<StringId> flatEnumSymbols_; // Ordered!
     std::uint64_t revision_ = 0;
     State state_ = State::Dirty;
+};
+
+/** Union, exclusive union or intersection of domains at the same value position. */
+class CombinedSchema : public Schema
+{
+public:
+    /** Keep the logical operator explicit; an empty intersection is unrestricted. */
+    explicit CombinedSchema(Composition mode);
+
+    /** Add an alternative by identity without copying its definition. */
+    void addAlternative(SchemaId schema);
+    /** Combine affinity summaries while preserving this domain's logical kind name. */
+    auto kind() const -> Kind override;
+    /** Report the explicit logical operator rather than a flattened approximation. */
+    auto composition() const -> Composition override { return mode_; }
+    /** Expose immutable alternative identities in declaration order. */
+    auto alternatives() const & -> std::span<const SchemaId> override { return alternatives_; }
+    /** Cached names reachable through any alternative. */
+    auto nestedFields() const & -> std::span<const StringId> override { return fields_; }
+    /** Cached string symbols reachable through any alternative. */
+    auto nestedEnumSymbols() const & -> std::span<const StringId> override { return symbols_; }
+    /** Members belong to alternatives, not to the combiner itself. */
+    auto directFields() const & -> std::span<const StringId> override { return {}; }
+    /** Indicate whether the current derived indexes are prepared. */
+    auto finalized() const -> bool override { return state_ == State::Clean; }
+    /** Invalidate environment-local plans after alternative or metadata edits. */
+    auto revision() const -> std::uint64_t override { return metadataRevision_; }
+    /** Prune only when every relevant domain supports the absence proof. */
+    auto canHaveField(StringId field) const -> bool override;
+    /** Test known symbol reachability, remaining conservative while dirty. */
+    auto canHaveEnumSymbol(StringId symbol) const -> bool override;
+    /** Derive reachability and coarse affinity without merging away alternatives. */
+    auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override;
+
+private:
+    /** Alternative mutations invalidate both affinity and reachability summaries. */
+    void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
+    /** Walk alternative edges to assemble the field index. */
+    void collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
+                             SchemaIdStack& visited, std::vector<StringId>& fields) const override;
+    /** Walk alternative edges to assemble the symbol index. */
+    void collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& lookup,
+                                  SchemaIdStack& visited, std::vector<StringId>& symbols) const override;
+    Composition mode_;
+    std::vector<SchemaId> alternatives_;
+    std::vector<StringId> fields_, symbols_;
+    State state_ = State::Dirty;
+    std::uint16_t affinities_ = AllAffinities;
 };
 
 }

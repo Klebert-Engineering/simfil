@@ -210,6 +210,14 @@ TEST_CASE("Value As", "[value.as]") {
 }
 
 TEST_CASE("Value visit() method", "[value.visit]") {
+    SECTION("The type-count sentinel retains the undefined fallback") {
+        auto val = Value(ValueType::LAST_);
+        REQUIRE(val.visit([](const auto& value) {
+            return std::is_same_v<std::decay_t<decltype(value)>, UndefinedType>;
+        }));
+        REQUIRE(valueTypeAffinity(ValueType::LAST_) == 0);
+    }
+
     SECTION("Visit UndefinedType") {
         auto val = Value::undef();
         auto result = val.visit([](const auto& v) -> std::string {

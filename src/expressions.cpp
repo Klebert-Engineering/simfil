@@ -24,8 +24,8 @@ namespace
 {
 
 /**
- * Helper for calling the result function if it has never been executed
- * at the time of destruction.
+ * Track emissions and synthesize null/undef only after successful empty traversal.
+ * finish() preserves downstream errors and short-circuit stops.
  */
 template <class InnerFn = const ResultFn&>
 struct CountedResultFn : ResultFn
@@ -57,17 +57,18 @@ struct CountedResultFn : ResultFn
         return fn(ctx, std::move(vv));
     }
 
-    /* NOTE: You _must_ call finish before destruction! */
-    auto ensureCall()
+    /** Supply the missing-value result only after successful traversal, preserving consumer errors/stops. */
+    auto finish(tl::expected<Result, Error> status = Result::Continue) -> tl::expected<Result, Error>
     {
         assert(!finished);
-        if (calls == 0 && !finished) {
-            finished = true;
+        finished = true;
+        if (status && *status == Result::Continue && calls == 0) {
             if (nonctx.phase == Context::Phase::Compilation)
-                fn(nonctx, Value::undef());
+                return fn(nonctx, Value::undef());
             else
-                fn(nonctx, Value::null());
+                return fn(nonctx, Value::null());
         }
+        return status;
     }
 };
 
@@ -83,6 +84,70 @@ auto boolify(const Value& v) -> bool
 }
 
 WildcardExpr::WildcardExpr() = default;
+
+SchemaEnumExpr::SchemaEnumExpr(SchemaId root, std::string symbol, SourceLocation location)
+    : Expr(location), root_(root), symbol_(std::move(symbol)) {}
+
+auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error>
+{
+    if (ctx.phase == Context::Compilation)
+        return result(ctx, Value::undef());
+    if (!value.nodePtr())
+        return result(ctx, Value::f());
+    auto lookup = [&](SchemaId id) { return ctx.env->querySchema(id); };
+    std::vector<std::tuple<ModelNode::Ptr, std::vector<SchemaId>, std::size_t>> pending;
+    pending.emplace_back(*value.nodePtr(), std::vector<SchemaId>{root_}, 0);
+    while (!pending.empty()) {
+        if (ctx.canceled())
+            return Result::Stop;
+        auto [node, domains, depth] = std::move(pending.back());
+        pending.pop_back();
+        if (ctx.evaluation && !ctx.step(depth))
+            return Result::Stop;
+        auto nodeValue = Value::field(*node);
+        if (nodeValue.isa(ValueType::String) && nodeValue.as<ValueType::String>() == symbol_) {
+            std::vector<SchemaId> alternatives = domains, visited;
+            while (!alternatives.empty()) {
+                if (ctx.evaluation && !ctx.step())
+                    return Result::Stop;
+                auto id = alternatives.back();
+                alternatives.pop_back();
+                if (std::ranges::find(visited, id) != visited.end())
+                    continue;
+                visited.push_back(id);
+                auto schema = lookup(id);
+                if (!schema)
+                    continue;
+                if (schema->hasDirectEnumSymbol(symbol_, *ctx.env->strings()))
+                    return result(ctx, Value::t());
+                alternatives.insert(alternatives.end(), schema->alternatives().begin(), schema->alternatives().end());
+            }
+        }
+        auto type = node->type();
+        if (type != ValueType::Object && type != ValueType::Array)
+            continue;
+        // Carry schema state along actual finite data paths, not a truncated list
+        // of schema paths. Unrelated string fields are never enum matches.
+        for (std::int64_t i = node->size(); i-- > 0;) {
+            if (ctx.evaluation && !ctx.step(depth + 1))
+                return Result::Stop;
+            std::vector<SchemaId> children;
+            for (auto domain : domains) {
+                auto next = type == ValueType::Object
+                    ? Schema::fieldSchemas(domain, lookup, node->keyAt(i))
+                    : Schema::itemSchemas(domain, lookup);
+                children.insert(children.end(), next.begin(), next.end());
+            }
+            if (!children.empty())
+                if (auto child = node->at(i))
+                    pending.emplace_back(child, std::move(children), depth + 1);
+        }
+    }
+    return result(ctx, Value::f());
+}
+
+void SchemaEnumExpr::accept(ExprVisitor& visitor) const { visitor.visit(static_cast<const Expr&>(*this)); }
+auto SchemaEnumExpr::toString() const -> std::string { return fmt::format("(schema-enum {} {})", root_, symbol_); }
 
 WildcardExpr::WildcardExpr(SourceLocation location)
     : Expr(location)
@@ -105,8 +170,10 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) co
         Context& ctx;
         ResultFn& res;
 
-        [[nodiscard]] auto iterate(ModelNode const& val) noexcept -> tl::expected<Result, Error>
+        [[nodiscard]] auto iterate(ModelNode const& val, std::size_t depth = 0) noexcept -> tl::expected<Result, Error>
         {
+            if (ctx.evaluation && !ctx.step(depth))
+                return Result::Stop;
             const auto valType = val.type();
             if (valType == ValueType::Null) [[unlikely]]
                 return Result::Continue;
@@ -118,7 +185,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) co
 
             tl::expected<Result, Error> finalResult = Result::Continue;
             val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
-                auto subResult = iterate(subNode);
+                auto subResult = iterate(subNode, depth + 1);
                 if (!subResult) {
                     finalResult = std::move(subResult);
                     return false;
@@ -137,8 +204,7 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) co
     };
 
     auto r = val.nodePtr() ? Iterate{ctx, res}.iterate(**val.nodePtr()) : tl::expected<Result, Error>(Result::Continue);
-    res.ensureCall();
-    return r;
+    return res.finish(std::move(r));
 }
 
 void WildcardExpr::accept(ExprVisitor& v) const
@@ -166,20 +232,12 @@ auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) con
     if (!val.node() || !val.node()->size())
         return res(ctx, Value::null());
 
-    std::optional<Error> error;
-    val.node()->iterate(ModelNode::IterLambda([&error, &ctx, &res](auto subNode) -> bool {
-        auto result = res(ctx, Value::field(std::move(subNode)));
-        if (!result) {
-            error = std::move(result.error());
-            return false;
-        }
-        if (*result == Result::Stop)
-            return false;
-        return true;
+    tl::expected<Result, Error> result = Result::Continue;
+    val.node()->iterate(ModelNode::IterLambda([&result, &ctx, &res](auto subNode) -> bool {
+        result = res(ctx, Value::field(std::move(subNode)));
+        return result && *result == Result::Continue;
     }));
-    if (error)
-        return tl::unexpected<Error>(std::move(*error));
-    return Result::Continue;
+    return result;
 }
 
 void AnyChildExpr::accept(ExprVisitor& v) const
@@ -384,6 +442,11 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) c
                 /* Array subscript */
                 if (ival.isa(ValueType::Int)) {
                     auto index = ival.as<ValueType::Int>();
+                    // Custom model nodes may throw for invalid indices. Keep
+                    // query bounds handling outside at(), including inside
+                    // noexcept result callbacks.
+                    if (index < 0 || static_cast<uint64_t>(index) >= lval.node()->size())
+                        return Result::Continue;
                     node = lval.node()->at(index);
                 }
                 /* String subscript */
@@ -407,8 +470,7 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) c
         }));
     }));
     TRY_EXPECTED(r);
-    res.ensureCall();
-    return r;
+    return res.finish(std::move(r));
 }
 
 void SubscriptExpr::accept(ExprVisitor& v) const
@@ -469,8 +531,7 @@ auto SubExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl:
             return Result::Continue;
         }));
     }));
-    res.ensureCall();
-    return r;
+    return res.finish(std::move(r));
 }
 
 auto SubExpr::toString() const -> std::string
@@ -746,14 +807,15 @@ auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl
 
     auto r = left_->eval(ctx, std::move(val), LambdaResultFn([this, &res](Context ctx, Value&& v) -> tl::expected<Result, Error> {
         if (v.isa(ValueType::Undef))
-            return Result::Continue;
+            return ctx.phase == Context::Compilation ? Result::Continue : res(ctx, std::move(v));
 
         if (v.isa(ValueType::Null) && !v.node())
             return Result::Continue;
 
         return right_->eval(ctx, std::move(v), LambdaResultFn([this, &res](Context ctx, Value&& vv) -> tl::expected<Result, Error> {
+            // Compilation uses undef as an unknown sentinel; native runtime undef is a value.
             if (vv.isa(ValueType::Undef))
-                return Result::Continue;
+                return ctx.phase == Context::Compilation ? Result::Continue : res(ctx, std::move(vv));
 
             if (vv.isa(ValueType::Null) && !vv.node())
                 return Result::Continue;
@@ -761,8 +823,7 @@ auto PathExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl
             return res(ctx, std::move(vv));
         }));
     }));
-    res.ensureCall();
-    return r;
+    return res.finish(std::move(r));
 };
 
 void PathExpr::accept(ExprVisitor& v) const
@@ -836,8 +897,7 @@ auto PathAlternativesExpr::ieval(Context ctx, const Value& val, const ResultFn& 
         }
     }
 
-    res.ensureCall();
-    return finalResult;
+    return res.finish(finalResult);
 }
 
 auto PathAlternativesExpr::ieval(Context ctx, Value&& val, const ResultFn& ores) const -> tl::expected<Result, Error>
@@ -888,14 +948,19 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const
     auto r = sub_->eval(ctx, val, LambdaResultFn([&res, &anyval](Context ctx, Value&& v) -> tl::expected<Result, Error> {
         if (v.isa(ValueType::TransientObject)) {
             const auto& obj = v.as<ValueType::TransientObject>();
-            auto r = Result::Continue;
-            obj.meta->unpack(obj, [&](Value vv) {
+            tl::expected<Result, Error> emitted = Result::Continue;
+            auto unpacked = obj.meta->unpack(obj, [&](Value vv) {
+                if (!emitted || *emitted == Result::Stop)
+                    return false;
                 anyval = true;
-                return res(ctx, std::move(vv)) == Result::Continue;
+                emitted = res(ctx, std::move(vv));
+                return emitted && *emitted == Result::Continue;
             });
-
-            if (r == Result::Stop)
+            // The callback can carry an error, not merely an early-stop flag.
+            TRY_EXPECTED(emitted);
+            if (*emitted == Result::Stop)
                 return Result::Stop;
+            TRY_EXPECTED(unpacked);
         } else {
             anyval = true;
             auto r = res(ctx, std::move(v));
@@ -907,7 +972,7 @@ auto UnpackExpr::ieval(Context ctx, const Value& val, const ResultFn& res) const
     }));
     TRY_EXPECTED(r);
 
-    if (!anyval)
+    if (!anyval && *r != Result::Stop)
         r = res(ctx, Value::null());
     return r;
 }
@@ -1194,30 +1259,31 @@ auto WildcardFieldExpr::childSchemaMayHaveField(
 
 auto WildcardFieldExpr::buildObjectSchemaPlan(
     const Context& ctx,
-    const ObjectSchema& schema,
+    const Schema& schema,
     StringId fieldId) const -> SchemaPlan
 {
     SchemaPlan plan;
     plan.kind = SchemaPlan::Kind::Object;
     plan.directField = false;
 
-    for (const auto& field : schema.fields()) {
-        if (field.field == fieldId)
+    std::size_t fieldCount = 0;
+    const auto canonical = schema.canonicalField(fieldId);
+    schema.forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+        ++fieldCount;
+        if (field == canonical)
             plan.directField = true;
-
-        const auto descendsToTarget = field.schemas.empty() ||
-            std::ranges::any_of(field.schemas,
-                                [this, &ctx, fieldId](auto schemaId)
-                                { return childSchemaMayHaveField(ctx, schemaId, fieldId); });
+        const auto descendsToTarget = children.empty() ||
+            std::ranges::any_of(children, [this, &ctx, fieldId](auto id) {
+                return childSchemaMayHaveField(ctx, id, fieldId);
+            });
         if (descendsToTarget)
-            plan.objectChildFields.push_back(field.field);
-    }
+            plan.objectChildFields.push_back(field);
+    });
 
     std::ranges::sort(plan.objectChildFields);
     auto duplicates = std::ranges::unique(plan.objectChildFields);
     plan.objectChildFields.erase(duplicates.begin(), duplicates.end());
 
-    const auto fieldCount = schema.fields().size();
     const auto sparseChildPlan = plan.objectChildFields.size() * 2 < fieldCount;
     const auto skipsLargeDirectLookup = !plan.directField && fieldCount > 4;
     if (!sparseChildPlan && !skipsLargeDirectLookup) {
@@ -1239,15 +1305,13 @@ auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema
         return plan;
     }
 
-    if (schema.kind() == Schema::Kind::Object) {
-        if (const auto* objectSchema = dynamic_cast<const ObjectSchema*>(&schema))
-            return buildObjectSchemaPlan(ctx, *objectSchema, fieldId);
+    // Alternatives and open objects cannot be reduced to one exhaustive field list.
+    if (schema.composition() != Schema::Composition::None || schema.open())
         return plan;
-    }
-
-    if (schema.kind() == Schema::Kind::Array) {
-        if (dynamic_cast<const ArraySchema*>(&schema))
-            plan.kind = SchemaPlan::Kind::Array;
+    if (schema.hasAffinity(ValueType::Object) && !schema.hasAffinity(ValueType::Array))
+        return buildObjectSchemaPlan(ctx, schema, fieldId);
+    if (schema.hasAffinity(ValueType::Array) && !schema.hasAffinity(ValueType::Object)) {
+        plan.kind = SchemaPlan::Kind::Array;
         plan.directField = false;
     }
 
@@ -1297,8 +1361,7 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
     if (!nameId) {
         if (diag)
             diag->evaluations++;
-        res.ensureCall();
-        return {Result::Continue};
+        return res.finish();
     }
 
     struct Iterate
@@ -1318,6 +1381,8 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
 
         [[nodiscard]] auto iterate(ModelNode const& val, size_t depth) noexcept -> tl::expected<Result, Error>
         {
+            if (ctx.evaluation && !ctx.step(depth))
+                return Result::Stop;
             if (maxDepth > 0 && depth > maxDepth) {
                 return Result::Continue;
             }
@@ -1426,6 +1491,8 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
 
             tl::expected<Result, Error> finalResult = Result::Continue;
             for (auto i = 0u; i < val.size(); ++i) {
+                if (ctx.evaluation && !ctx.step(depth))
+                    return Result::Stop;
                 if (!std::ranges::binary_search(plan.objectChildFields, val.keyAt(i)))
                     continue;
 
@@ -1470,8 +1537,7 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
         Iterate{ctx, res, *this, nameId, diag, recurse_ ? 0ul : 1ul, recurse_}
             .iterate(**val.nodePtr(), 0) :
         tl::expected<Result, Error>(Result::Continue);
-    res.ensureCall();
-    return r;
+    return res.finish(std::move(r));
 }
 
 void WildcardFieldExpr::accept(ExprVisitor& v) const

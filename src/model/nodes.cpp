@@ -89,6 +89,10 @@ bool ModelNode::iterate(const IterCallback& cb) const {
 #if defined(SIMFIL_WITH_MODEL_JSON)
 nlohmann::json ModelNode::toJson() const
 {
+    if (type() == ValueType::Undef) {
+        // Output metadata only: an application object with this key is still an object on import.
+        return nlohmann::json{{"_undefined", true}};
+    }
     if (type() == ValueType::Object) {
         auto j = nlohmann::json::object();
         auto isMultiMap = false;

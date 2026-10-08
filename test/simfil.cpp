@@ -42,6 +42,44 @@ private:
     ModelNodeAddress target_;
 };
 
+/** Exercise subscript bounds against a custom container whose accessor rejects invalid indices. */
+class CheckedArrayPool : public ModelPool
+{
+public:
+    /** Resolve the test column; its address index is the array length, not a storage offset. */
+    tl::expected<void, Error> resolve(ModelNode const& node, ResolveFn const& cb) const override
+    {
+        if (node.addr().column() == FirstCustomColumnId) {
+            cb(*model_ptr<CheckedArray>::make(node));
+            return {};
+        }
+        return ModelPool::resolve(node, cb);
+    }
+
+private:
+    /** An array with inline integer values and throwing bounds checks, like external adapters. */
+    class CheckedArray : public ModelNodeBase
+    {
+    public:
+        /** Bind the generic address to the strict array protocol. */
+        CheckedArray(ModelNode const& node, detail::mp_key key) : ModelNodeBase(node, key) {}
+
+        /** Advertise a collection rather than scalar subscript semantics. */
+        ValueType type() const override { return ValueType::Array; }
+
+        /** Allow empty and populated arrays without allocating element storage. */
+        uint32_t size() const override { return addr_.index(); }
+
+        /** Make invalid delegation observable instead of silently returning a null node. */
+        Ptr at(int64_t index) const override
+        {
+            if (index < 0 || static_cast<uint64_t>(index) >= size())
+                throw std::out_of_range("CheckedArray index");
+            return Ptr::make(model_, ModelNodeAddress{Model::UInt16, static_cast<uint32_t>(10 + index)});
+        }
+    };
+};
+
 class EnvironmentValueFn final : public Function
 {
 public:
@@ -678,6 +716,54 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
 
     REQUIRE_RESULT("typeof c.* == 'string'", "true|true|true");
     REQUIRE_RESULT("c.* != 'a'",             "false|true|true");
+}
+
+TEST_CASE("Subscripts never delegate invalid indices to custom arrays", "[yaml.array-access]")
+{
+    auto model = std::make_shared<CheckedArrayPool>();
+    Environment env(model->strings());
+    for (uint32_t size : {0, 2}) {
+        auto root = ModelNode::Ptr::make(model, ModelNodeAddress{ModelPool::FirstCustomColumnId, size});
+        REQUIRE(root->size() == size);
+        REQUIRE_THROWS_AS(root->at(-1), std::out_of_range);
+        REQUIRE_THROWS_AS(root->at(size), std::out_of_range);
+
+        for (auto query : {"_[-1]", "_[-9223372036854775807]", "_[2]", "_[2147483648]", "_[9223372036854775807]"}) {
+            INFO(query);
+            auto ast = compile(env, query, false);
+            REQUIRE(ast);
+            auto values = eval(env, **ast, *root, nullptr);
+            REQUIRE(values);
+            REQUIRE(values->size() == 1);
+            CHECK(values->front().isa(ValueType::Null));
+
+            // Streaming evaluation must also stay out of the throwing accessor.
+            size_t emitted = 0;
+            auto result = eval(env, **ast, *root, LambdaResultFn([&](Context, const Value& value) {
+                ++emitted;
+                CHECK(value.isa(ValueType::Null));
+                return Result::Continue;
+            }));
+            REQUIRE(result);
+            CHECK(result->reason == EvaluationSummary::Reason::Complete);
+            CHECK(emitted == 1);
+        }
+
+        // An invalid index must not stop the following valid indices in the same stream.
+        auto ast = compile(env, "_[arr(-1, 0, 2, 1)]", false);
+        REQUIRE(ast);
+        auto values = eval(env, **ast, *root, nullptr);
+        REQUIRE(values);
+        if (size == 0) {
+            REQUIRE(values->size() == 1);
+            CHECK(values->front().isa(ValueType::Null));
+        }
+        else {
+            REQUIRE(values->size() == 2);
+            CHECK(values->at(0).as<ValueType::Int>() == 10);
+            CHECK(values->at(1).as<ValueType::Int>() == 11);
+        }
+    }
 }
 
 TEST_CASE("Single Values", "[yaml.single-values]") {

@@ -15,6 +15,7 @@
 #include "fmt/core.h"
 
 #include "completion.h"
+#include "evaluation-control.h"
 #include "expected.h"
 #include "expression-patterns.h"
 #include "expression-runtime.h"
@@ -308,10 +309,15 @@ static auto rewriteStandaloneNameBySchema(
     }
 
     auto fieldPaths = Schema::fieldPaths(rootSchema, querySchema, *stringId);
-    if (!fieldPaths.empty())
+    const bool knownField = root && std::ranges::find(root->nestedFields(), *stringId) != root->nestedFields().end();
+    if (!fieldPaths.empty() || knownField)
         return std::make_unique<WildcardFieldExpr>(true, std::move(*name), expr->sourceLocation());
 
-    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId);
+    bool complete = true;
+    auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId, &complete);
+    const bool knownEnum = root && std::ranges::find(root->nestedEnumSymbols(), *stringId) != root->nestedEnumSymbols().end();
+    if ((!enumPaths.empty() || knownEnum) && !complete)
+        return std::make_unique<SchemaEnumExpr>(rootSchema, std::move(*name), expr->sourceLocation());
     if (!enumPaths.empty())
         return enumPathExpression(env, enumPaths, std::move(*name), expr->sourceLocation());
 
@@ -350,9 +356,11 @@ static auto rewriteOperandShorthandBySchema(
 
                     auto querySchema = schemaQuery(env);
                     auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId);
-                    if (!enumPaths.empty()) {
+                    const bool knownEnum = std::ranges::find(root->nestedEnumSymbols(), *stringId) != root->nestedEnumSymbols().end();
+                    if (!enumPaths.empty() || knownEnum) {
                         auto fieldPaths = Schema::fieldPaths(rootSchema, querySchema, *stringId);
-                        if (!fieldPaths.empty()) {
+                        if (!fieldPaths.empty()
+                            || std::ranges::find(root->nestedFields(), *stringId) != root->nestedFields().end()) {
                             return expr;
                         }
 
@@ -454,6 +462,10 @@ static auto collectReferencedQueryComparison(
 
 static auto collectReferencedQueryTermsFromExpr(const Expr& expr, ReferencedQueryTerms& terms) -> void
 {
+    if (auto predicate = dynamic_cast<const SchemaEnumExpr*>(&expr)) {
+        terms.stringLiterals.emplace(predicate->symbol());
+        return;
+    }
     if (auto const* constant = dynamic_cast<const ConstExpr*>(&expr)) {
         if (auto literal = stringConstValue(*constant)) {
             addReferencedQueryStringLiteral(terms, std::move(*literal));
@@ -605,23 +617,63 @@ static auto addReferencedPath(
     result.paths.push_back({std::move(path), location, viaWildcard, std::move(equalsStringLiteral)});
 }
 
-static auto schemaPathIsReachable(Environment& env, SchemaId rootSchema, const SchemaPath& path) -> bool
+/** Walk a concrete path, retaining canonical aliases and avoiding whole-graph
+ * enumeration. */
+static auto canonicalReferencedPath(Environment& env, SchemaId rootSchema,
+                                    SchemaPath path)
+    -> std::optional<SchemaPath>
 {
-    auto leafField = std::ranges::find_if(
-        path.rbegin(),
-        path.rend(),
-        [](auto const& segment) {
-            return segment.kind == SchemaPathSegment::Kind::Field;
-        });
-    if (leafField == path.rend()) {
-        return true;
+    auto lookup = [&env](SchemaId id) { return env.querySchema(id); };
+    std::vector<SchemaId> domains{rootSchema};
+    std::size_t visits = 0;
+    for (auto& segment : path) {
+        std::vector<SchemaId> next, visited;
+        std::optional<StringId> canonical;
+        while (!domains.empty()) {
+            if (++visits > 10000)
+                return std::nullopt;
+            auto id = domains.back();
+            domains.pop_back();
+            if (id == NoSchemaId || std::ranges::find(visited, id) != visited.end())
+                continue;
+            visited.push_back(id);
+            auto schema = lookup(id);
+            if (!schema)
+                continue;
+            if (schema->composition() != Schema::Composition::None) {
+                auto alternatives = schema->alternatives();
+                domains.insert(domains.end(), alternatives.begin(), alternatives.end());
+                continue;
+            }
+            auto field = schema->canonicalField(segment.field);
+            auto children = segment.kind == SchemaPathSegment::Kind::Field
+                                ? Schema::fieldSchemas(id, lookup, field)
+                                : Schema::itemSchemas(id, lookup);
+            if (children.empty())
+                continue;
+            // Open/unknown membership alone does not prove that the field is
+            // declared.
+            if (segment.kind == SchemaPathSegment::Kind::Field) {
+                bool declared = false;
+                schema->forEachDirectField(
+                    [&](StringId name, auto) { declared |= name == field; });
+                if (!declared)
+                    continue;
+                if (canonical && *canonical != field)
+                    return std::nullopt;
+                canonical = field;
+            }
+            next.insert(next.end(), children.begin(), children.end());
+        }
+        if (next.empty())
+            return std::nullopt;
+        if (canonical)
+            segment.field = *canonical;
+        std::ranges::sort(next);
+        next.erase(std::unique(next.begin(), next.end()), next.end());
+        domains = std::move(next);
     }
-
-    auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
-        return env.querySchema(schemaId);
-    };
-    auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field);
-    return std::ranges::find(possiblePaths, path) != possiblePaths.end();
+    return path;
 }
 
 static auto schemaPathEndsWith(const SchemaPath& path, const SchemaPath& suffix) -> bool
@@ -649,7 +701,15 @@ static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, con
     };
     auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field);
     std::erase_if(possiblePaths, [&](auto const& path) {
-        return !schemaPathEndsWith(path, suffix);
+        if (schemaPathEndsWith(path, suffix))
+            return false;
+        if (path.size() < suffix.size())
+            return true;
+        // Resolve aliases at their actual owner, not globally by field spelling.
+        auto candidate = path;
+        std::copy(suffix.begin(), suffix.end(), candidate.end() - suffix.size());
+        auto canonical = canonicalReferencedPath(env, rootSchema, std::move(candidate));
+        return !canonical || *canonical != path;
     });
     return possiblePaths;
 }
@@ -660,6 +720,11 @@ static auto collectReferencedSchemaPaths(
     SchemaId rootSchema,
     ReferencedSchemaPaths& result) -> expected<void, Error>
 {
+    if (dynamic_cast<const SchemaEnumExpr*>(&expr)) {
+        // A recursive domain predicate cannot be summarized by a finite path set.
+        result.hasUnresolvedAccess = true;
+        return {};
+    }
     if (auto const* eq = dynamic_cast<const BinaryExpr<OperatorEq>*>(&expr)) {
         auto addComparisonPath = [&](Expr const& maybePath, Expr const& maybeLiteral) -> expected<bool, Error> {
             auto literal = stringConstValue(maybeLiteral);
@@ -674,16 +739,21 @@ static auto collectReferencedSchemaPaths(
             }
 
             auto pathValue = std::move(**path);
-            if (schemaPathIsReachable(env, rootSchema, pathValue)) {
-                addReferencedPath(result, std::move(pathValue), maybePath.sourceLocation(), false, std::move(*literal));
-            }
-            else {
-                auto expandedPaths = schemaPathsMatchingSuffix(env, rootSchema, pathValue);
+            auto canonical = hasLeadingRecursiveWildcard(maybePath)
+                ? std::nullopt : canonicalReferencedPath(env, rootSchema, pathValue);
+            if (canonical) {
+                addReferencedPath(result, std::move(*canonical),
+                                  maybePath.sourceLocation(), false,
+                                  std::move(*literal));
+            } else {
+                auto expandedPaths =
+                    schemaPathsMatchingSuffix(env, rootSchema, pathValue);
                 if (expandedPaths.empty()) {
                     result.hasUnresolvedAccess = true;
                 }
                 for (auto& expandedPath : expandedPaths) {
-                    addReferencedPath(result, std::move(expandedPath), maybePath.sourceLocation(), false, *literal);
+                    addReferencedPath(result, std::move(expandedPath),
+                                      maybePath.sourceLocation(), false, *literal);
                 }
             }
             return true;
@@ -752,11 +822,11 @@ static auto collectReferencedSchemaPaths(
                 for (auto& expanded : paths) {
                     addReferencedPath(result, std::move(expanded), expr.sourceLocation(), true);
                 }
-            }
-            else if (schemaPathIsReachable(env, rootSchema, **path)) {
-                addReferencedPath(result, std::move(**path), expr.sourceLocation(), false);
-            }
-            else {
+            } else if (auto canonical =
+                           canonicalReferencedPath(env, rootSchema, **path)) {
+                addReferencedPath(result, std::move(*canonical),
+                                  expr.sourceLocation(), false);
+            } else {
                 result.hasUnresolvedAccess = true;
             }
             return {};
@@ -869,6 +939,13 @@ static auto simplifyOrForward(Environment* env, expected<ExprPtr, Error> expr) -
 }
 
 
+/** Skip all evaluation-based simplification while parsing schema completion. */
+static auto simplifyOrForward(Parser& parser, expected<ExprPtr, Error> expr) -> expected<ExprPtr, Error>
+{
+    return parser.simplify ? simplifyOrForward(parser.env, std::move(expr)) : std::move(expr);
+}
+
+
 AST::~AST() = default;
 
 auto AST::reenumerate() -> void
@@ -904,10 +981,10 @@ public:
             return right;
 
         if (t.type == Token::OP_AND)
-            return simplifyOrForward(p.env, std::make_unique<AndExpr>(std::move(left),
+            return simplifyOrForward(p, std::make_unique<AndExpr>(std::move(left),
                                                                       std::move(*right)));
         else if (t.type == Token::OP_OR)
-            return simplifyOrForward(p.env, std::make_unique<OrExpr>(std::move(left),
+            return simplifyOrForward(p, std::make_unique<OrExpr>(std::move(left),
                                                                      std::move(*right)));
         assert(0);
         return nullptr;
@@ -933,10 +1010,10 @@ public:
             return right;
 
         if (t.type == Token::OP_AND)
-            return simplifyOrForward(p.env, std::make_unique<CompletionAndExpr>(std::move(left),
+            return simplifyOrForward(p, std::make_unique<CompletionAndExpr>(std::move(left),
                                                                                 std::move(*right), comp_));
         else if (t.type == Token::OP_OR)
-            return simplifyOrForward(p.env, std::make_unique<CompletionOrExpr>(std::move(left),
+            return simplifyOrForward(p, std::make_unique<CompletionOrExpr>(std::move(left),
                                                                                std::move(*right), comp_));
         assert(0);
         return nullptr;
@@ -963,7 +1040,7 @@ public:
             return unexpected<Error>(Error::InvalidType, fmt::format("'as' expected typename got {}", type.toString()));
 
         auto name = std::get<std::string>(type.value);
-        return simplifyOrForward(p.env, [&]() -> expected<ExprPtr, Error> {
+        return simplifyOrForward(p, [&]() -> expected<ExprPtr, Error> {
             if (name == strings::TypenameNull)
                 return std::make_unique<ConstExpr>(Value::null());
             if (name == strings::TypenameBool)
@@ -1003,7 +1080,7 @@ public:
         if (!right)
             return right;
 
-        return simplifyOrForward(p.env, std::make_unique<BinaryExpr<Operator>>(t,
+        return simplifyOrForward(p, std::make_unique<BinaryExpr<Operator>>(t,
                                                                                std::move(left),
                                                                                std::move(*right)));
     }
@@ -1028,7 +1105,7 @@ class UnaryOpParser : public PrefixParselet
         if (!sub)
             return sub;
 
-        return simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(*sub)));
+        return simplifyOrForward(p, std::make_unique<UnaryExpr<Operator>>(std::move(*sub)));
     }
 };
 
@@ -1040,7 +1117,7 @@ class UnaryPostOpParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryExpr<Operator>>(std::move(left))), 0);
+        return p.parseInfix(simplifyOrForward(p, std::make_unique<UnaryExpr<Operator>>(std::move(left))), 0);
     }
 
     auto precedence() const -> int override
@@ -1056,7 +1133,7 @@ class UnpackOpParser : public InfixParselet
 {
     auto parse(Parser& p, ExprPtr left, Token t) const -> expected<ExprPtr, Error> override
     {
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnpackExpr>(std::move(left))), 0);
+        return p.parseInfix(simplifyOrForward(p, std::make_unique<UnpackExpr>(std::move(left))), 0);
     }
 
     auto precedence() const -> int override
@@ -1078,12 +1155,12 @@ class WordOpParser : public InfixParselet
             return right;
 
         if (*right)
-            return simplifyOrForward(p.env, std::make_unique<BinaryWordOpExpr>(std::get<std::string>(t.value),
+            return simplifyOrForward(p, std::make_unique<BinaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                std::move(left),
                                                                                std::move(*right)));
 
         /* Parse as unary operator */
-        return p.parseInfix(simplifyOrForward(p.env, std::make_unique<UnaryWordOpExpr>(std::get<std::string>(t.value),
+        return p.parseInfix(simplifyOrForward(p, std::make_unique<UnaryWordOpExpr>(std::get<std::string>(t.value),
                                                                                        std::move(left))), 0);
     }
 
@@ -1173,7 +1250,7 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
         if (!body)
             return body;
 
-        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::make_unique<FieldExpr>("_"),
+        return simplifyOrForward(p, std::make_unique<SubscriptExpr>(std::make_unique<FieldExpr>("_"),
                                                                         std::move(*body)));
     }
 
@@ -1184,7 +1261,7 @@ class SubscriptParser : public PrefixParselet, public InfixParselet
         if (!body)
             return body;
 
-        return simplifyOrForward(p.env, std::make_unique<SubscriptExpr>(std::move(left),
+        return simplifyOrForward(p, std::make_unique<SubscriptExpr>(std::move(left),
                                                                         std::move(*body)));
     }
 
@@ -1210,7 +1287,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
         auto body = p.parseTo(Token::RBRACE);
         TRY_EXPECTED(body);
 
-        return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
+        return simplifyOrForward(p, std::make_unique<SubExpr>(std::make_unique<FieldExpr>("_"),
                                                                   std::move(*body)));
     }
 
@@ -1219,7 +1296,7 @@ class SubSelectParser : public PrefixParselet, public InfixParselet
         auto _ = scopedNotInPath(p);
         auto body = p.parseTo(Token::RBRACE);
         TRY_EXPECTED(body);
-        return simplifyOrForward(p.env, std::make_unique<SubExpr>(std::move(left),
+        return simplifyOrForward(p, std::make_unique<SubExpr>(std::move(left),
                                                                   std::move(*body)));
     }
 
@@ -1262,11 +1339,11 @@ public:
             TRY_EXPECTED(arguments);
 
             if (word == "any") {
-                return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(*arguments)));
+                return simplifyOrForward(p, std::make_unique<AnyExpr>(std::move(*arguments)));
             } else if (word == "each" || word == "all") {
-                return simplifyOrForward(p.env, std::make_unique<EachExpr>(std::move(*arguments)));
+                return simplifyOrForward(p, std::make_unique<EachExpr>(std::move(*arguments)));
             } else {
-                return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
+                return simplifyOrForward(p, std::make_unique<CallExpression>(word, std::move(*arguments)));
             }
         } else if (!p.ctx.inPath) {
             /* Constant */
@@ -1276,7 +1353,7 @@ public:
         }
 
         /* Single field name */
-        return simplifyOrForward(p.env, std::make_unique<FieldExpr>(std::move(word), t));
+        return simplifyOrForward(p, std::make_unique<FieldExpr>(std::move(word), t));
     }
 };
 
@@ -1318,7 +1395,7 @@ public:
             auto arguments = p.parseList(Token::RPAREN);
             TRY_EXPECTED(arguments);
 
-            return simplifyOrForward(p.env, std::make_unique<CallExpression>(word, std::move(*arguments)));
+            return simplifyOrForward(p, std::make_unique<CallExpression>(word, std::move(*arguments)));
         } else if (!p.ctx.inPath) {
             /* Constant */
             if (auto constant = p.env->findConstant(word)) {
@@ -1330,12 +1407,40 @@ public:
         if (t.containsPoint(comp_->point)) {
             return std::make_unique<CompletionFieldOrWordExpr>(word.substr(0, comp_->point - t.begin), comp_, t, p.ctx.inPath);
         }
-        return simplifyOrForward(p.env, std::make_unique<FieldExpr>(std::move(word)));
+        return simplifyOrForward(p, std::make_unique<FieldExpr>(std::move(word)));
     }
 
     Completion* comp_;
 };
 ;
+
+/** Reuse tokenization to decode a cursor prefix without executing a literal expression. */
+class CompletionStringParser : public PrefixParselet
+{
+public:
+    /** Retain source text only for the duration of this completion parse. */
+    CompletionStringParser(Completion& completion, std::string_view query)
+        : completion_(completion), query_(query) {}
+
+    /** Preserve whole-token replacement ranges, including any raw-string prefix. */
+    auto parse(Parser&, Token token) const -> expected<ExprPtr, Error> override
+    {
+        if (!token.containsPoint(completion_.point))
+            return std::make_unique<ConstExpr>(Value::make(std::get<std::string>(token.value)), token);
+        auto prefix = tokenize(query_.substr(0, completion_.point), true);
+        TRY_EXPECTED(prefix);
+        std::string text;
+        if (prefix->size() > 1 && (*prefix)[prefix->size() - 2].type == Token::STRING)
+            text = std::get<std::string>((*prefix)[prefix->size() - 2].value);
+        if (token.begin > 0 && (query_[token.begin - 1] == 'r' || query_[token.begin - 1] == 'R'))
+            --token.begin;
+        return std::make_unique<CompletionWordExpr>(std::move(text), &completion_, token);
+    }
+
+private:
+    Completion& completion_;
+    std::string_view query_;
+};
 
 /**
  * Parser for parsing '.' separated paths.
@@ -1372,7 +1477,7 @@ public:
         TRY_EXPECTED(right);
 
         auto location = pathSourceLocation(*left, **right, t);
-        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right), location));
+        return simplifyOrForward(p, std::make_unique<PathExpr>(std::move(left), std::move(*right), location));
     }
 
     auto precedence() const -> int override
@@ -1407,7 +1512,7 @@ public:
         }
 
         auto location = pathSourceLocation(*left, **right, t);
-        return simplifyOrForward(p.env, std::make_unique<PathExpr>(std::move(left), std::move(*right), location));
+        return simplifyOrForward(p, std::make_unique<PathExpr>(std::move(left), std::move(*right), location));
     }
 
     Completion* comp_;
@@ -1562,7 +1667,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
         if (options.any) {
             std::vector<ExprPtr> args;
             args.emplace_back(std::move(*root));
-            return simplifyOrForward(p.env, std::make_unique<AnyExpr>(std::move(args)));
+            return simplifyOrForward(p, std::make_unique<AnyExpr>(std::move(args)));
         } else {
             return root;
         }
@@ -1583,12 +1688,34 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
     return std::make_unique<AST>(std::string(query), std::move(*expr));
 }
 
-auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node, const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>
+/** Share tokenization, relaxed parselets and candidate presentation for both completion roots. */
+static auto completeImpl(Environment& env, std::string_view query, size_t point,
+                         const ModelNode* node, SchemaId rootSchema, const CompletionOptions& options)
+    -> expected<std::vector<CompletionCandidate>, Error>
 {
-    auto tokens = tokenize(query);
+    if (point > query.size())
+        return unexpected<Error>(Error::InvalidArguments, "Completion cursor is outside the query");
+    auto tokens = tokenize(query, !node);
     TRY_EXPECTED(tokens);
 
+    if (!node) {
+        // An empty operand at the cursor still needs a completion-aware AST node.
+        // Tokenization always ends with NIL, including an otherwise empty query.
+        auto missingOperand = tokens->size() == 1;
+        if (tokens->size() > 1) {
+            auto last = (*tokens)[tokens->size() - 2].type;
+            missingOperand = last == Token::OP_EQ || last == Token::OP_NOT_EQ || last == Token::DOT
+                || last == Token::OP_LT || last == Token::OP_LTEQ || last == Token::OP_GT || last == Token::OP_GTEQ
+                || last == Token::LPAREN || last == Token::COMMA || last == Token::OP_AND || last == Token::OP_OR;
+        }
+        if (missingOperand && point == query.size()) {
+            tokens->pop_back();
+            tokens->emplace_back(Token::WORD, "", point, point);
+            tokens->emplace_back(Token::NIL, point, point);
+        }
+    }
     Parser p(&env, *tokens, Parser::Mode::Relaxed);
+    p.simplify = node != nullptr;
     setupParser(p);
 
     Completion comp(point, options);
@@ -1596,9 +1723,12 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
         comp.limit = options.limit;
 
     CompletionWordParser wordCompletionParser(&comp);
+    CompletionStringParser stringCompletionParser(comp, query);
     CompletionPathParser pathCompletionParser(&comp);
     CompletionAndOrParser andOrCompletionParser(&comp);
     p.prefixParsers[Token::WORD]  = &wordCompletionParser;
+    if (!node)
+        p.prefixParsers[Token::STRING] = &stringCompletionParser;
     p.infixParsers[Token::DOT]    = &pathCompletionParser;
     p.infixParsers[Token::OP_AND] = &andOrCompletionParser;
     p.infixParsers[Token::OP_OR]  = &andOrCompletionParser;
@@ -1631,9 +1761,14 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
     if (options.timeoutMs > 0)
         ctx.timeout = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeoutMs);
 
-    ast->eval(ctx, Value::field(node), LambdaResultFn([](Context, const Value&) {
-        return Result::Continue;
-    }));
+    if (node) {
+        ast->eval(ctx, Value::field(*node), LambdaResultFn([](Context, const Value&) {
+            return Result::Continue;
+        }));
+    }
+    else if (ast) {
+        comp.completeDomain(ctx, *ast, rootSchema);
+    }
 
     auto candidates = std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
     if (options.sorted)
@@ -1660,7 +1795,21 @@ auto complete(Environment& env, std::string_view query, size_t point, const Mode
                                 CompletionCandidate::Type::HINT,
                                 "Expand to recursive query");
 
+    if (!node && candidates.size() > comp.limit)
+        candidates.erase(candidates.begin() + comp.limit, candidates.end());
     return candidates;
+}
+
+auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node,
+              const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>
+{
+    return completeImpl(env, query, point, &node, NoSchemaId, options);
+}
+
+auto complete(Environment& env, std::string_view query, size_t point, SchemaId rootSchema,
+              const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>
+{
+    return completeImpl(env, query, point, nullptr, rootSchema, options);
 }
 
 auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> expected<ReferencedSchemaPaths, Error>
@@ -1709,7 +1858,9 @@ static auto evaluate(
     const AST& ast,
     const ModelNode& node,
     Diagnostics* diag,
-    detail::ExpressionRuntime& runtime) -> expected<std::vector<Value>, Error>
+    detail::ExpressionRuntime& runtime,
+    const ResultFn& consumer,
+    detail::EvaluationControl* control = nullptr) -> expected<Result, Error>
 {
     if (!node.owningModel())
         return unexpected<Error>(Error::NullModel, "ModelNode must have a model!");
@@ -1721,19 +1872,56 @@ static auto evaluate(
 
     Context ctx(&env, &localDiag);
     ctx.runtime = &runtime;
-
-    std::vector<Value> values;
-    auto res = ast.expr().eval(ctx, Value::field(node), LambdaResultFn([&values](const Context&, Value&& value) {
-        values.push_back(std::move(value));
-        return Result::Continue;
-    }));
-    TRY_EXPECTED(res);
+    ctx.evaluation = control;
+    auto res = ast.expr().eval(ctx, Value::field(node), consumer);
 
     // Merge diagnostics
     if (diag)
         diag->append(localDiag);
 
+    return res;
+}
+
+/** Preserve the unbounded vector convenience without duplicating context/cache setup. */
+static auto evaluate(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag,
+                     detail::ExpressionRuntime& runtime) -> expected<std::vector<Value>, Error>
+{
+    std::vector<Value> values;
+    auto result = evaluate(env, ast, node, diag, runtime, LambdaResultFn([&](Context, Value&& value) {
+        values.push_back(std::move(value));
+        return Result::Continue;
+    }));
+    TRY_EXPECTED(result);
     return values;
+}
+
+/** Stop during enumeration, keeping partial output with the caller instead of accumulating it. */
+static auto evaluate(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag,
+                     detail::ExpressionRuntime& runtime, const ResultFn& consumer,
+                     const EvaluationOptions& options) -> expected<EvaluationSummary, Error>
+{
+    detail::EvaluationControl control(options);
+    if (options.maxResults == 0)
+        control.stop(EvaluationSummary::Reason::ResultLimit);
+    auto result = evaluate(env, ast, node, diag, runtime, LambdaResultFn([&](Context ctx, auto&& value)
+        -> expected<Result, Error> {
+        if (!control.running())
+            return Result::Stop;
+        ++control.summary.results;
+        auto next = consumer(ctx, std::forward<decltype(value)>(value));
+        TRY_EXPECTED(next);
+        if (*next == Result::Stop)
+            control.stop(EvaluationSummary::Reason::ConsumerStopped);
+        else if (control.summary.results >= options.maxResults)
+            control.stop(EvaluationSummary::Reason::ResultLimit);
+        return control.running() ? Result::Continue : Result::Stop;
+    }), &control);
+    // An interrupted argument stream may look incomplete to an aggregate. The
+    // first cooperative stop reason, not a secondary argument error, is decisive.
+    if (control.summary.reason != EvaluationSummary::Reason::Complete)
+        return control.summary;
+    TRY_EXPECTED(result);
+    return control.summary;
 }
 
 class BoundExpression::Impl
@@ -1770,11 +1958,25 @@ auto BoundExpression::eval(const ModelNode& node, Diagnostics* diag)
     return impl_->eval(node, diag);
 }
 
+auto BoundExpression::eval(const ModelNode& node, const ResultFn& consumer,
+                           const EvaluationOptions& options, Diagnostics* diag)
+    -> expected<EvaluationSummary, Error>
+{
+    return evaluate(impl_->env_, *impl_->ast_, node, diag, impl_->runtime_, consumer, options);
+}
+
 auto eval(Environment& env, const AST& ast, const ModelNode& node, Diagnostics* diag)
     -> expected<std::vector<Value>, Error>
 {
     detail::ExpressionRuntime runtime(env);
     return evaluate(env, ast, node, diag, runtime);
+}
+
+auto eval(Environment& env, const AST& ast, const ModelNode& node, const ResultFn& consumer,
+          const EvaluationOptions& options, Diagnostics* diag) -> expected<EvaluationSummary, Error>
+{
+    detail::ExpressionRuntime runtime(env);
+    return evaluate(env, ast, node, diag, runtime, consumer, options);
 }
 
 auto diagnostics(const Diagnostics& diag) -> expected<std::vector<Diagnostics::Message>, Error>
