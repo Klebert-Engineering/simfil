@@ -442,6 +442,11 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) c
                 /* Array subscript */
                 if (ival.isa(ValueType::Int)) {
                     auto index = ival.as<ValueType::Int>();
+                    // Custom model nodes may throw for invalid indices. Keep
+                    // query bounds handling outside at(), including inside
+                    // noexcept result callbacks.
+                    if (index < 0 || static_cast<uint64_t>(index) >= lval.node()->size())
+                        return Result::Continue;
                     node = lval.node()->at(index);
                 }
                 /* String subscript */

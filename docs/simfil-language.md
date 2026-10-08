@@ -5,6 +5,10 @@ structured data.
 
 ## Language Basics
 
+<!-- mcp:
+title: "Simfil syntax and case"
+keywords: ["syntax", "case sensitive", "identifier", "expression"]
+-->
 ### Syntax
 
 <!-- --8<-- [start:basics] -->
@@ -35,6 +39,10 @@ The path `**` (double asterisk) represents any child (recursive) plus the curren
 If you need to access field names dynamically, you can use the subscript operator `[<expression>]`.
 Example: `*.["field name with spaces"]`.
 
+<!-- mcp:
+title: "Simfil fields and symbols"
+keywords: ["quoted string", "field name", "enum symbol", "identifier"]
+-->
 ### Symbols
 
 Simfil parses unquoted identifiers as field names. String values should be
@@ -101,6 +109,10 @@ or:
 ["WARNING_SIGN"]
 ```
 
+<!-- mcp:
+title: "Simfil subqueries"
+keywords: ["subquery", "braces", "nested predicate", "current node"]
+-->
 ### Sub-Queries
 
 Sub-queries can be written as a brace-enclosed expression. Path modifications inside
@@ -146,7 +158,9 @@ Specific array elements can be accessed using the subscript `[<expression>]` ope
 
 ### Any
 
-The default mode `any` returns the first non-false nodes value.
+`any` returns a boolean indicating whether at least one evaluated value is truthy.
+It does not return the first matching string or object. To select a value, use
+`select(values, 0)`; use `or` for a truthy fallback.
 ```
 any(a.**.b{c})
 ```
@@ -199,6 +213,10 @@ To count the items of a list you can use the following code:
 count(mylist.*)
 ```
 
+<!-- mcp:
+title: "Simfil value types"
+keywords: ["null", "missing value", "undefined", "boolean", "integer", "string"]
+-->
 ## Types
 
 Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes` and `re`.
@@ -206,8 +224,18 @@ Additionally, the `model` type represents compound object/array container nodes.
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
 
+SIMFIL truthiness differs from JavaScript: only `null` and `false` are `false`; numeric zero
+and empty strings are true. The postfix ? operator converts to boolean. Thus `not speed?`
+distinguishes missing/`null` numeric speed from an explicit numeric zero, while `not flag?`
+also matches an explicit `false` flag. Use an explicit `null` comparison when `false` must
+count as present data. Direct missing-field access returns `null`.
+
 Functions can return values of types other than the ones mentioned. See [Functions](#Functions) for details.
 
+<!-- mcp:
+title: "Simfil type conversion"
+keywords: ["cast", "integer", "float", "number", "string", "conversion"]
+-->
 ## Type Casting
 
 Types values can be cast/interpreted to a different type using the `as` operator.
@@ -361,6 +389,10 @@ select(arr('a', 'b', 'c'), 1, 2) => 'b', 'c'
 select(arr('a', 'b', 'c'), 0, 0) => 'a', 'b', 'c'
 ```
 
+<!-- mcp:
+title: "Simfil sum and reduction"
+keywords: ["sum", "aggregate", "total", "reduce", "accumulator"]
+-->
 #### `sum(values..., expr=$sum + $val, init=0)`
 
 Returns the sum of all values `values`. Uses the expression `expr` if given.
@@ -411,6 +443,10 @@ max(8, 3, 5) => 8
 max(optional.rank, 0) => 0  # when optional.rank is absent
 ```
 
+<!-- mcp:
+title: "Simfil object keys"
+keywords: ["keys", "field names", "object properties"]
+-->
 #### `keys(object)`
 
 Returns all sub-element keys of object `object`
@@ -420,6 +456,10 @@ Returns all sub-element keys of object `object`
 keys(a.b) => 'c', 'd', ...
 ```
 
+<!-- mcp:
+title: "Simfil regular expressions"
+keywords: ["regex", "regular expression", "text matching", "string pattern"]
+-->
 #### `re(str)`
 
 Compiles a regular expression string to an `re` object, which holds a compiled regular expression.
