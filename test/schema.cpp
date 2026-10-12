@@ -170,6 +170,7 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
     const auto enumA = strings->emplace("ENUM_A").value();
     const auto enumB = strings->emplace("ENUM_B").value();
     const auto missingEnum = strings->emplace("MISSING_ENUM").value();
+    ValueSchema scalar;
 
     SECTION("dirty schemas are conservative") {
         ObjectSchema schema;
@@ -181,15 +182,18 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
 
         schema.finalize([](SchemaId) { return nullptr; });
         REQUIRE(schema.canHaveField(a));
-        REQUIRE(!schema.canHaveField(missing));
+        // Finalization cannot turn an unspecified child domain into a scalar.
+        REQUIRE(schema.canHaveField(missing));
     }
 
     SECTION("acyclic schemas finalize fields") {
         std::vector<ObjectSchema> schemas(3);
         schemas[1].addField(a, {SchemaId{2}});
-        schemas[2].addField(b);
+        schemas[2].addField(b, {SchemaId{3}});
 
-        auto lookup = [&schemas](SchemaId schemaId) {
+        auto lookup = [&schemas, &scalar](SchemaId schemaId) -> Schema* {
+            if (schemaId == SchemaId{3})
+                return &scalar;
             const auto index = static_cast<std::size_t>(schemaId);
             return index < schemas.size() ? &schemas[index] : nullptr;
         };
@@ -204,10 +208,12 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
     SECTION("cyclic schemas collect reachable fields") {
         std::vector<ObjectSchema> schemas(3);
         schemas[1].addField(link, {SchemaId{2}});
-        schemas[1].addField(c);
+        schemas[1].addField(c, {SchemaId{3}});
         schemas[2].addField(back, {SchemaId{1}});
 
-        auto lookup = [&schemas](SchemaId schemaId) {
+        auto lookup = [&schemas, &scalar](SchemaId schemaId) -> Schema* {
+            if (schemaId == SchemaId{3})
+                return &scalar;
             const auto index = static_cast<std::size_t>(schemaId);
             return index < schemas.size() ? &schemas[index] : nullptr;
         };
@@ -228,20 +234,22 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
 
     SECTION("array schemas finalize element fields") {
         ObjectSchema objectA;
-        objectA.addField(a);
+        objectA.addField(a, {SchemaId{3}});
 
         ObjectSchema objectB;
-        objectB.addField(b);
+        objectB.addField(b, {SchemaId{3}});
 
         ArraySchema arraySchema;
         arraySchema.addElementSchemas({SchemaId{1}, SchemaId{2}});
 
-        auto lookup = [&objectA, &objectB](SchemaId schemaId) -> Schema* {
+        auto lookup = [&objectA, &objectB, &scalar](SchemaId schemaId) -> Schema* {
             switch (schemaId) {
             case SchemaId{1}:
                 return &objectA;
             case SchemaId{2}:
                 return &objectB;
+            case SchemaId{3}:
+                return &scalar;
             default:
                 return nullptr;
             }
@@ -351,7 +359,7 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     auto rootSchema = std::make_unique<ObjectSchema>();
     rootSchema->addField(status, {SchemaId{2}});
     rootSchema->addField(items, {SchemaId{3}});
-    rootSchema->addField(carrierField);
+    rootSchema->addField(carrierField, {SchemaId{5}});
 
     auto enumSchema = std::make_unique<ValueSchema>();
     enumSchema->addEnumSymbol(carrierEnum);
@@ -366,6 +374,7 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     registry.schemas[SchemaId{2}] = std::move(enumSchema);
     registry.schemas[SchemaId{3}] = std::move(arraySchema);
     registry.schemas[SchemaId{4}] = std::move(itemSchema);
+    registry.schemas[SchemaId{5}] = std::make_unique<ValueSchema>();
     registry.finalize();
 
     auto root = model->root(0);
@@ -752,7 +761,8 @@ TEST_CASE("WildcardFieldExpr Field Pruning", "[model.schema]")
     // Build a simple schema
     auto schemaName = strings->emplace("schema1").value();
     auto schema1 = std::make_unique<ObjectSchema>();
-    schema1->addField(fieldId, { NoSchemaId });
+    schema1->addField(fieldId, {SchemaId{1}});
+    registry.schemas[SchemaId{1}] = std::make_unique<ValueSchema>();
 
     registry.schemas[(SchemaId)schemaName] = std::move(schema1);
     registry.finalize();
@@ -809,7 +819,8 @@ TEST_CASE("WildcardFieldExpr Array Field Pruning", "[model.schema]")
     constexpr auto arraySchemaId = SchemaId{2};
 
     auto objectSchema = std::make_unique<ObjectSchema>();
-    objectSchema->addField(fieldId, { NoSchemaId });
+    objectSchema->addField(fieldId, {SchemaId{3}});
+    registry.schemas[SchemaId{3}] = std::make_unique<ValueSchema>();
     registry.schemas[objectSchemaId] = std::move(objectSchema);
 
     auto arraySchema = std::make_unique<ArraySchema>();
@@ -904,7 +915,8 @@ TEST_CASE("WildcardFieldExpr schema plan cache follows schema mutations", "[mode
     const auto rootSchemaId = SchemaId{1};
     auto rootSchema = std::make_unique<ObjectSchema>();
     auto* rootSchemaPtr = rootSchema.get();
-    rootSchema->addField(otherId);
+    rootSchema->addField(otherId, {SchemaId{2}});
+    registry.schemas[SchemaId{2}] = std::make_unique<ValueSchema>();
     registry.schemas[rootSchemaId] = std::move(rootSchema);
     registry.finalize();
 
@@ -999,12 +1011,15 @@ TEST_CASE("Schema query performance", "[perf.schema]") {
     xBSchema->addField(yId, { yBSchemaId });
     registry.schemas[xBSchemaId] = std::move(xBSchema);
 
+    constexpr SchemaId scalarSchemaId = 65000;
+    registry.schemas[scalarSchemaId] = std::make_unique<ValueSchema>();
+
     auto yASchema = std::make_unique<ObjectSchema>();
-    yASchema->addField(aId);
+    yASchema->addField(aId, {scalarSchemaId});
     registry.schemas[yASchemaId] = std::move(yASchema);
 
     auto yBSchema = std::make_unique<ObjectSchema>();
-    yBSchema->addField(bId);
+    yBSchema->addField(bId, {scalarSchemaId});
     registry.schemas[yBSchemaId] = std::move(yBSchema);
 
     auto rootObjASchema = std::make_unique<ObjectSchema>();
@@ -1136,16 +1151,19 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
         branchIds.push_back(strings->emplace(branchNames.back()).value());
     }
 
+    constexpr SchemaId scalarSchemaId = 65000;
+    registry.schemas[scalarSchemaId] = std::make_unique<ValueSchema>();
+
     auto targetBranchSchema = std::make_unique<ObjectSchema>();
     targetBranchSchema->addField(payloadId, { targetPayloadSchemaId });
     registry.schemas[targetBranchSchemaId] = std::move(targetBranchSchema);
 
     auto targetPayloadSchema = std::make_unique<ObjectSchema>();
-    targetPayloadSchema->addField(targetId);
+    targetPayloadSchema->addField(targetId, {scalarSchemaId});
     registry.schemas[targetPayloadSchemaId] = std::move(targetPayloadSchema);
 
     auto noiseBranchSchema = std::make_unique<ObjectSchema>();
-    noiseBranchSchema->addField(noiseId);
+    noiseBranchSchema->addField(noiseId, {scalarSchemaId});
     registry.schemas[noiseBranchSchemaId] = std::move(noiseBranchSchema);
 
     auto rootObjectSchema = std::make_unique<ObjectSchema>();

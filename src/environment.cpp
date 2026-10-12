@@ -1,6 +1,7 @@
 #include "simfil/environment.h"
 #include "simfil/diagnostics.h"
 #include "simfil/function.h"
+#include "evaluation-control.h"
 
 namespace simfil
 {
@@ -73,5 +74,11 @@ Context::Context(Environment* env, Diagnostics* diag, Context::Phase phase)
     , diag(diag)
     , phase(phase)
 {}
+
+auto Context::evaluationRunning() const -> bool { return evaluation->running(); }
+auto Context::step(std::size_t depth) const -> bool
+{
+    return evaluation ? evaluation->step(depth) : !canceled();
+}
 
 }

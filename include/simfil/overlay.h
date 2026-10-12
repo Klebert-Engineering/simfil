@@ -15,6 +15,9 @@ struct OverlayNodeStorage final : public Model
     explicit OverlayNodeStorage(Value const& val) : value_(val) {} // NOLINT
 
     tl::expected<void, Error> resolve(ModelNode const& n, ResolveFn const& cb) const override;
+
+    /** Overlay keys share the wrapped model's namespace, including native subtree copies. */
+    std::optional<std::string_view> lookupStringId(StringId id) const override;
 };
 
 /** Node for injecting member fields */

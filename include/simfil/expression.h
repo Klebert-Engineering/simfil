@@ -84,6 +84,8 @@ public:
 
     auto eval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
+        if (ctx.evaluation) [[unlikely]]
+            return evalBounded(ctx, val, res);
         if (ctx.canceled())
             return Result::Stop;
 
@@ -100,6 +102,8 @@ public:
 
     auto eval(Context ctx, Value&& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
+        if (ctx.evaluation) [[unlikely]]
+            return evalBounded(ctx, std::move(val), res);
         if (ctx.canceled())
             return Result::Stop;
 
@@ -120,6 +124,15 @@ public:
     }
 
 private:
+    /** Guard intermediate results and expression entry without wrapping unbounded evaluations. */
+    auto evalBounded(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error>;
+    auto evalBounded(Context ctx, Value&& value, const ResultFn& result) const -> tl::expected<Result, Error>;
+
+    /** Share bounded dispatch without copying const transient values before budget checks. */
+    template<class T>
+    auto evalBoundedImpl(Context ctx, T&& value, const ResultFn& result) const -> tl::expected<Result, Error>;
+    class BoundedResultFn;
+
     /* Abstract evaluation implementation */
     virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> = 0;
     

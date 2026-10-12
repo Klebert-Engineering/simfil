@@ -67,6 +67,25 @@ public:
     auto toString() const -> std::string override;
 };
 
+/** Match declared enum positions when recursive/incomplete schemas prevent exact-path expansion. */
+class SchemaEnumExpr : public Expr
+{
+public:
+    /** Retain portable symbol text and the represented root identity, never pool-local field IDs. */
+    SchemaEnumExpr(SchemaId root, std::string symbol, SourceLocation location);
+    /** A declared-position enum predicate produces one boolean value. */
+    auto type() const -> Type override { return Type::VALUE; }
+    /** Expose the original enum term to schema-independent static query analysis. */
+    auto symbol() const -> std::string_view { return symbol_; }
+    auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& visitor) const override;
+    auto toString() const -> std::string override;
+
+private:
+    SchemaId root_;
+    std::string symbol_;
+};
+
 /**
  * Returns every child of the current node or null.
  */
@@ -636,7 +655,7 @@ private:
     auto buildSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId) const
         -> SchemaPlan;
     auto
-    buildObjectSchemaPlan(const Context& ctx, const ObjectSchema& schema, StringId fieldId) const
+    buildObjectSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId) const
         -> SchemaPlan;
     auto childSchemaMayHaveField(const Context& ctx, SchemaId schemaId, StringId fieldId) const
         -> bool;

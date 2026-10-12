@@ -69,6 +69,7 @@ public:
         Int16,
         Bool,
         Scalar,
+        Undefined,
 
         FirstNontrivialColumnId,
     };
@@ -164,6 +165,9 @@ public:
     ModelNode::Ptr newSmallValue(bool value);
     ModelNode::Ptr newSmallValue(int16_t value);
     ModelNode::Ptr newSmallValue(uint16_t value);
+
+    /** Create a native undefined value, distinct from null in model and binary form. */
+    ModelNode::Ptr newUndefined();
 
     /**
      * Lookup a field name for a field-id.
@@ -262,6 +266,27 @@ public:
     ModelNode::Ptr newValue(simfil::ByteArray const& value);
     ModelNode::Ptr newValue(StringId handle);
 
+    /** Bounds native subtree materialization independently of evaluator work limits. */
+    struct CopyOptions {
+        size_t maxDepth = 64;
+        size_t maxNodes = 100000;
+        size_t maxBytes = 16 * 1024 * 1024;
+    };
+
+    /**
+     * Copy query-visible nodes into this pool without importing schema IDs or
+     * changing its dictionary. Field names must already exist in this pool.
+     * Errors can leave unreachable, budget-bounded allocations in this append-only pool.
+     */
+    auto copyNode(ModelNode const& source, CopyOptions const& options) -> tl::expected<ModelNode::Ptr, Error>;
+    /** Copy a subtree using the default materialization limits. */
+    auto copyNode(ModelNode const& source) -> tl::expected<ModelNode::Ptr, Error>;
+
+    /** Materialize a complete result sequence under one shared node/depth/byte budget. */
+    auto copySequence(std::span<Value const> values, CopyOptions const& options) -> tl::expected<model_ptr<Array>, Error>;
+    /** Materialize a result sequence with default limits, retaining its outer array even when empty. */
+    auto copySequence(std::span<Value const> values) -> tl::expected<model_ptr<Array>, Error>;
+
     /** Access the field name storage */
     [[nodiscard]]
     std::shared_ptr<StringPool> strings() const;
@@ -356,6 +381,9 @@ protected:
 
     Array::Storage& arrayMemberStorage();
     [[nodiscard]] Array::Storage const& arrayMemberStorage() const;
+
+private:
+    class NodeCopy;
 };
 
 }

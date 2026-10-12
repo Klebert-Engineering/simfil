@@ -9,10 +9,13 @@ add_executable(test.simfil
   common.cpp
   token.cpp
   schema.cpp
+  schema-domain.cpp
+  evaluation.cpp
   simfil.cpp
   diagnostics.cpp
   completion.cpp
   complex.cpp
+  model-copy.cpp
   performance.cpp
   arena.cpp
   error.cpp

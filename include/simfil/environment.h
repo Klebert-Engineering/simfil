@@ -22,6 +22,7 @@ namespace simfil
 namespace detail
 {
 class ExpressionRuntime;
+class EvaluationControl;
 }
 
 class Expr;
@@ -174,6 +175,9 @@ struct Context
      */
     detail::ExpressionRuntime* runtime = nullptr;
 
+    /** Optional request-local cooperative budget; never retained by an expression binding. */
+    detail::EvaluationControl* evaluation = nullptr;
+
     /* Current phase under which the evaluation
      * takes place. */
     enum Phase
@@ -183,6 +187,9 @@ struct Context
     };
     Phase phase = Evaluation;
 
+    // Keep nesting beside the phase tag to avoid padding in frequently copied contexts.
+    std::uint32_t evaluationDepth = 0;
+
     /* Timeout after which the evaluation should be canceled. */
     std::optional<std::chrono::time_point<std::chrono::steady_clock>> timeout;
 
@@ -191,10 +198,19 @@ struct Context
 
     auto canceled() const -> bool
     {
+        if (evaluation && !evaluationRunning())
+            return true;
         if (phase != Phase::Compilation && timeout)
             return *timeout < std::chrono::steady_clock::now();
         return false;
     }
+
+    /** Charge cooperative work; custom functions should call this in long non-emitting loops. */
+    auto step(std::size_t depth = 0) const -> bool;
+
+private:
+    /** Keep the execution-budget implementation out of public model headers. */
+    auto evaluationRunning() const -> bool;
 };
 
 /**
@@ -225,6 +241,11 @@ struct CompletionOptions
 
     // Sort candidates
     bool sorted = true;
+
+    /** Bound schema-only traversal even when timeoutMs is disabled. */
+    size_t maxSchemaVisits = 10000;
+    /** Bound AST inference recursion; graph cycles are deduplicated by schema ID. */
+    size_t maxSchemaDepth = 128;
 };
 
 /**
