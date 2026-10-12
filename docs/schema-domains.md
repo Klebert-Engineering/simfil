@@ -78,6 +78,15 @@ positions, not unrelated strings, and static path analysis reports unresolved
 access. Its compiled root SchemaId must refer to the same logical graph when
 the AST is rebound.
 
+Field-path enumeration prunes branches only when a finalized, complete
+reachability index proves that the requested field is absent. This prevents
+unrelated shared graphs from consuming the traversal budget repeatedly. Adapter
+`canHaveField` implementations must remain conservative for lookup aliases as
+well as canonical names, including aliases reachable through descendants.
+`referencedSchemaPaths` keeps any discovered paths but sets
+`hasUnresolvedAccess` when enumeration is incomplete; a partial path list is
+not an exhaustive ownership or scope proof.
+
 Read-only schema bindings can override `hasDirectEnumSymbol(text, pool)` when
 declared enum strings do not exist in the runtime dictionary. Recursive/open
 schema enum predicates use this textual hook; they must not intern datasource

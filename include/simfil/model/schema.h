@@ -243,6 +243,8 @@ public:
 
     /**
      * Enumerate precise paths to all fields with the requested name.
+     * Finalized reachability indexes prune unrelated branches. `complete` is
+     * false when unknown metadata, recursion or safety limits can hide matches.
      */
     static auto fieldPaths(SchemaId root,
                            const std::function<const Schema*(SchemaId)>& queryFn,
@@ -424,8 +426,7 @@ protected:
                                   std::vector<SchemaPath>& paths,
                                   bool& complete, std::size_t& visits) -> void
     {
-        if (++visits > 10000 || schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end()
-            || visited.size() >= 128 || paths.size() >= 10000) {
+        if (++visits > 10000 || schemaId == NoSchemaId || paths.size() >= 10000) {
             complete = false;
             return;
         }
@@ -438,6 +439,18 @@ protected:
 
         if (!affinities(schema->kind()))
             return;
+
+        // Repeated unrelated subgraphs must not consume the path budget. Only
+        // a complete finalized index proves absence; adapters may have partial
+        // indexes, and canHaveField must retain lookup aliases in descendants.
+        if (schema->finalized() && schema->reachabilityComplete() && !schema->canHaveField(field))
+            return;
+        // A relevant cycle may hide infinitely many paths. Keep the guard local
+        // to this path so shared siblings still contribute their distinct owners.
+        if (std::ranges::find(visited, schemaId) != visited.end() || visited.size() >= 128) {
+            complete = false;
+            return;
+        }
         visited.push_back(schemaId);
 
         auto canonical = schema->canonicalField(field);

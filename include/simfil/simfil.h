@@ -100,7 +100,9 @@ struct ReferencedSchemaPath
  *
  * The flags make the result conservative: callers can reject automatic scope
  * decisions when the query contains broad wildcards or field access that cannot
- * be tied to concrete schema paths.
+ * be tied to concrete schema paths. `hasUnresolvedAccess` also marks incomplete
+ * enumeration (unknown metadata, cycles or traversal limits), even when some
+ * concrete paths were found; those paths are not an exhaustive ownership proof.
  */
 struct ReferencedSchemaPaths
 {

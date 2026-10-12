@@ -687,6 +687,149 @@ TEST_CASE("Shared schema branches and repeated field names keep distinct enum pa
     REQUIRE(paths[1].size() == 2);
 }
 
+TEST_CASE("Field paths prune unrelated shared graphs without dropping distinct owners", "[model.schema-domain][schema.field-paths]")
+{
+    Domains d;
+    auto left = d.name("left");
+    auto right = d.name("right");
+    auto target = d.name("target");
+    auto& root = d.add<ObjectSchema>(1);
+    root.addField(d.name("conditions"), {10});
+    root.addField(left, {2});
+    root.addField(right, {2});
+    d.add<ObjectSchema>(2).addField(target, {3});
+    d.add<ValueSchema>(3, Schema::Kind::Int);
+
+    // A tiny shared graph has over 30,000 paths, none relevant to this field.
+    for (SchemaId id = 10; id < 24; ++id) {
+        auto& branch = d.add<ObjectSchema>(id);
+        branch.addField(left, {SchemaId(id + 1)});
+        branch.addField(right, {SchemaId(id + 1)});
+    }
+    d.add<ValueSchema>(24, Schema::Kind::Int);
+    SECTION("Acyclic shared graph") {}
+    SECTION("Unrelated recursive graph") {
+        d.add<ObjectSchema>(24).addField(left, {24});
+    }
+    d.finalize();
+
+    std::size_t lookups = 0;
+    auto lookup = [&](SchemaId id) {
+        ++lookups;
+        return d.lookup()(id);
+    };
+    bool exhaustive = false;
+    auto paths = Schema::fieldPaths(1, lookup, target, &exhaustive);
+    REQUIRE(exhaustive);
+    REQUIRE(paths == std::vector<SchemaPath>{
+        {{SchemaPathSegment::Kind::Field, left}, {SchemaPathSegment::Kind::Field, target}},
+        {{SchemaPathSegment::Kind::Field, right}, {SchemaPathSegment::Kind::Field, target}}});
+    REQUIRE(lookups < 16);
+
+    Environment env(d.strings);
+    env.querySchemaCallback = lookup;
+    auto ast = compile(env, "**.target", false);
+    REQUIRE(ast);
+    auto refs = referencedSchemaPaths(env, **ast, 1);
+    REQUIRE(refs);
+    REQUIRE_FALSE(refs->hasUnresolvedAccess);
+    REQUIRE(refs->paths.size() == 2);
+}
+
+TEST_CASE("Field path analysis reports partial recursive and bounded results", "[model.schema-domain][schema.field-paths]")
+{
+    Domains d;
+    auto next = d.name("next");
+    auto& root = d.add<ObjectSchema>(1);
+    root.addField(d.name("group"), {2});
+    d.add<ObjectSchema>(2).addField(d.name("target"), {3});
+    d.add<ValueSchema>(3, Schema::Kind::String);
+
+    SECTION("A recursive branch can contain further matches") {
+        root.addField(next, {1});
+    }
+    SECTION("A depth-limited branch can contain further matches") {
+        root.addField(next, {10});
+        for (SchemaId id = 10; id < 140; ++id)
+            d.add<ObjectSchema>(id).addField(next, {SchemaId(id + 1)});
+        d.add<ObjectSchema>(140).addField(d.name("group"), {2});
+    }
+    SECTION("Open metadata cannot exclude further matches") {
+        root.setOpen(true);
+    }
+    d.finalize();
+
+    bool exhaustive = true;
+    auto paths = Schema::fieldPaths(1, d.lookup(), d.name("target"), &exhaustive);
+    REQUIRE_FALSE(exhaustive);
+    REQUIRE(paths.size() == 1);
+    Environment env(d.strings);
+    env.querySchemaCallback = d.lookup();
+    for (auto query : {"**.target", "**.group.target", "**.group.target == 'x'"}) {
+        CAPTURE(query);
+        auto ast = compile(env, query, false);
+        REQUIRE(ast);
+        auto refs = referencedSchemaPaths(env, **ast, 1);
+        REQUIRE(refs);
+        REQUIRE(refs->paths.size() == 1);
+        REQUIRE(refs->hasUnresolvedAccess);
+    }
+}
+
+TEST_CASE("Field path pruning preserves aliases and unindexed adapter fields", "[model.schema-domain][schema.field-paths]")
+{
+    Domains d;
+    auto& foreign = d.add<ForeignSchema>(1);
+    foreign.definition.addField(d.name("branch"), {2});
+    auto& aliased = d.add<LookupAliasSchema>(2);
+    aliased.alias = d.name("alias");
+    aliased.target = d.name("target");
+    aliased.addField(aliased.target, {3});
+    d.add<ValueSchema>(3, Schema::Kind::Int);
+    d.finalize();
+    foreign.indexed = false;
+
+    bool exhaustive = false;
+    auto paths = Schema::fieldPaths(1, d.lookup(), aliased.alias, &exhaustive);
+    REQUIRE(exhaustive);
+    REQUIRE(paths.size() == 1);
+    REQUIRE(paths.front().back().field == aliased.target);
+
+    // A real member wins over the lookup-only alias, including after mutation.
+    aliased.addField(aliased.alias, {3});
+    paths = Schema::fieldPaths(1, d.lookup(), aliased.alias, &exhaustive);
+    REQUIRE(exhaustive);
+    REQUIRE(paths.size() == 1);
+    REQUIRE(paths.front().back().field == aliased.alias);
+}
+
+TEST_CASE("Field paths still bound shared graphs whose branches all match", "[model.schema-domain][schema.field-paths]")
+{
+    Domains d;
+    auto left = d.name("left");
+    auto right = d.name("right");
+    for (SchemaId id = 1; id < 15; ++id) {
+        auto& branch = d.add<ObjectSchema>(id);
+        branch.addField(left, {SchemaId(id + 1)});
+        branch.addField(right, {SchemaId(id + 1)});
+    }
+    d.add<ObjectSchema>(15).addField(d.name("target"), {16});
+    d.add<ValueSchema>(16, Schema::Kind::Int);
+    d.finalize();
+
+    std::size_t lookups = 0;
+    auto lookup = [&](SchemaId id) {
+        ++lookups;
+        return d.lookup()(id);
+    };
+    bool exhaustive = true;
+    auto paths = Schema::fieldPaths(1, lookup, d.name("target"), &exhaustive);
+    REQUIRE_FALSE(exhaustive);
+    REQUIRE_FALSE(paths.empty());
+    REQUIRE(paths.size() < 10000);
+    REQUIRE(lookups <= 10000);
+}
+
 TEST_CASE("Enum matches beyond the path enumeration depth limit remain queryable", "[model.schema-domain]")
 {
     Domains d;

@@ -684,7 +684,8 @@ static auto schemaPathEndsWith(const SchemaPath& path, const SchemaPath& suffix)
     return std::equal(suffix.rbegin(), suffix.rend(), path.rbegin());
 }
 
-static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, const SchemaPath& suffix) -> std::vector<SchemaPath>
+/** Expand a recursive suffix while preserving whether all possible owners were visited. */
+static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, const SchemaPath& suffix, bool& complete) -> std::vector<SchemaPath>
 {
     auto leafField = std::ranges::find_if(
         suffix.rbegin(),
@@ -693,13 +694,14 @@ static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, con
             return segment.kind == SchemaPathSegment::Kind::Field;
         });
     if (leafField == suffix.rend()) {
+        complete = false;
         return {};
     }
 
     auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
         return env.querySchema(schemaId);
     };
-    auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field);
+    auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field, &complete);
     std::erase_if(possiblePaths, [&](auto const& path) {
         if (schemaPathEndsWith(path, suffix))
             return false;
@@ -746,9 +748,10 @@ static auto collectReferencedSchemaPaths(
                                   maybePath.sourceLocation(), false,
                                   std::move(*literal));
             } else {
+                bool complete = true;
                 auto expandedPaths =
-                    schemaPathsMatchingSuffix(env, rootSchema, pathValue);
-                if (expandedPaths.empty()) {
+                    schemaPathsMatchingSuffix(env, rootSchema, pathValue, complete);
+                if (!complete || expandedPaths.empty()) {
                     result.hasUnresolvedAccess = true;
                 }
                 for (auto& expandedPath : expandedPaths) {
@@ -794,10 +797,12 @@ static auto collectReferencedSchemaPaths(
         auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
             return env.querySchema(schemaId);
         };
-        auto paths = Schema::fieldPaths(rootSchema, querySchema, fieldId);
-        if (paths.empty()) {
+        bool complete = true;
+        auto paths = Schema::fieldPaths(rootSchema, querySchema, fieldId, &complete);
+        // Known paths remain useful, but a truncated set is not proof that
+        // every reference belongs to the owners we happened to reach first.
+        if (!complete || paths.empty()) {
             result.hasUnresolvedAccess = true;
-            return {};
         }
         for (auto& path : paths) {
             addReferencedPath(result, std::move(path), wildcardField->sourceLocation(), true);
@@ -815,8 +820,9 @@ static auto collectReferencedSchemaPaths(
                 // `**.parent.child` flattens to a suffix, not a root path.
                 // Expand all matching owners, even when the suffix also exists
                 // at the root; otherwise scope inference can miss nested data.
-                auto paths = schemaPathsMatchingSuffix(env, rootSchema, **path);
-                if (paths.empty()) {
+                bool complete = true;
+                auto paths = schemaPathsMatchingSuffix(env, rootSchema, **path, complete);
+                if (!complete || paths.empty()) {
                     result.hasUnresolvedAccess = true;
                 }
                 for (auto& expanded : paths) {
