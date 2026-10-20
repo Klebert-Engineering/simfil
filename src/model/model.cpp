@@ -402,7 +402,7 @@ ModelNode::Ptr Model::newSmallValue(int16_t value)
 {
     return ModelNode::Ptr::make(
         shared_from_this(),
-        ModelNodeAddress{Int16, (uint32_t)value});
+        ModelNodeAddress{Int16, static_cast<uint16_t>(value)});
 }
 
 ModelNode::Ptr Model::newSmallValue(uint16_t value)
@@ -423,6 +423,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
         return newSmallValue((int16_t)value);
     else if (value >= 0 && value <= std::numeric_limits<uint16_t>::max())
         return newSmallValue((uint16_t)value);
+    ModelNodeAddress::checkIndex(impl_->columns_.i64_.size());
     impl_->columns_.i64_.emplace_back(value);
     return ModelNode::Ptr::make(
         shared_from_this(),
@@ -431,6 +432,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 
 ModelNode::Ptr ModelPool::newValue(double const& value)
 {
+    ModelNodeAddress::checkIndex(impl_->columns_.double_.size());
     impl_->columns_.double_.emplace_back(value);
     return ModelNode::Ptr::make(
         shared_from_this(),
@@ -439,6 +441,9 @@ ModelNode::Ptr ModelPool::newValue(double const& value)
 
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 {
+    ModelNodeAddress::checkIndex(impl_->columns_.strings_.size());
+    check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1);
+    impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.size());
     impl_->columns_.strings_.emplace_back(Impl::StringRange{
         (uint32_t)impl_->columns_.stringData_.size(),
         (uint32_t)value.size()
@@ -451,6 +456,9 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 
 ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 {
+    ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size());
+    check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1);
+    impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.bytes.size());
     impl_->columns_.byteArrays_.emplace_back(Impl::StringRange{
         (uint32_t)impl_->columns_.stringData_.size(),
         (uint32_t)value.bytes.size()

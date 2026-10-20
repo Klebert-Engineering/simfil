@@ -6,8 +6,57 @@
 
 #include "simfil/model/arena.h"
 #include "simfil/model/bitsery-traits.h"
+#include "simfil/model/nodes.h"
 
 using namespace simfil;
+
+TEST_CASE("Model addresses and truncated payloads fail before allocation", "[ModelColumn][limits]")
+{
+    REQUIRE(ModelNodeAddress(1, 0xffffff).index() == 0xffffff);
+    REQUIRE_THROWS_AS(ModelNodeAddress(1, 0x1000000), std::length_error);
+    std::vector<uint8_t> input{0};
+    bitsery::InputBufferAdapter<std::vector<uint8_t>> adapter(input.begin(), input.size());
+    ModelColumn<uint64_t> column;
+    auto const allocatedBefore = column.memory_usage().allocatedBytes;
+    REQUIRE_FALSE(column.read_payload_from_bitsery(adapter, 100000000));
+    REQUIRE(column.empty());
+    REQUIRE(column.memory_usage().allocatedBytes == allocatedBefore);
+}
+
+TEST_CASE("Model column limits reject growth before allocating or changing contents", "[ModelColumn][limits]")
+{
+    ModelColumn<uint64_t> column;
+    column.push_back(42);
+    auto const oversized = bitsery_max_column_payload_bytes / sizeof(uint64_t) + 1;
+    REQUIRE_THROWS_AS(column.reserve(oversized), std::length_error);
+    REQUIRE_THROWS_AS(column.resize(oversized), std::length_error);
+    REQUIRE(column.size() == 1);
+    REQUIRE(column[0] == 42);
+    REQUIRE_NOTHROW(check_model_column_growth(0, oversized - 1, sizeof(uint64_t)));
+    REQUIRE_THROWS_AS(check_model_column_growth(1, std::numeric_limits<size_t>::max(), 8), std::length_error);
+    ModelColumn<TwoPart<uint32_t, uint64_t>> split;
+    split.emplace_back(7, 11);
+    REQUIRE_THROWS_AS(split.resize(bitsery_max_column_payload_bytes / 12 + 1), std::length_error);
+    REQUIRE(split.size() == 1);
+    REQUIRE(split[0].first() == 7);
+    REQUIRE(split[0].second() == 11);
+}
+
+TEST_CASE("Array arena checks narrow offsets before allocation and remains usable", "[ArrayArena][limits]")
+{
+    ArrayArena<uint32_t, 8, 8> arena;
+    auto first = arena.new_array(200);
+    arena.emplace_back(first, 7);
+    auto const heads = arena.size();
+    REQUIRE_THROWS_AS(arena.new_array(uint64_t{1} << 32), std::length_error);
+    REQUIRE_THROWS_AS(arena.new_array(std::numeric_limits<size_t>::max()), std::length_error);
+    REQUIRE(arena.size() == heads);
+    REQUIRE(arena.size(first) == 1);
+    REQUIRE(arena.at(first, 0).value() == 7);
+    auto second = arena.new_array(55);
+    arena.emplace_back(second, 9);
+    REQUIRE(arena.at(second, 0).value() == 9);
+}
 
 TEST_CASE("ArrayArena basic functionality", "[ArrayArena]") {
     ArrayArena<int> arena;

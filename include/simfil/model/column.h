@@ -1,6 +1,9 @@
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 #pragma once
 
+#include <iterator>
+#include <stdexcept>
+
 #include <algorithm>
 #include <bit>
 #include <cassert>
@@ -198,6 +201,23 @@ void mark_bitsery_invalid_data(S& archive)
     }
 }
 
+/** Reject a truncated in-memory payload before allocating its declared column size. */
+template <typename Adapter>
+bool check_bitsery_payload_available(Adapter& adapter, size_t bytes)
+{
+    if (adapter.error() != bitsery::ReaderError::NoError) return false;
+    if constexpr (requires { adapter.currentReadEndPos(); adapter.currentReadPos(size_t{}); }) {
+        auto const position = adapter.currentReadPos();
+        if (bytes > std::numeric_limits<size_t>::max() - position) return false;
+        // The adapter's checked seek knows the buffer's real end even when
+        // currentReadEndPos() reports its default zero sentinel.
+        adapter.currentReadPos(position + bytes);
+        if (adapter.error() != bitsery::ReaderError::NoError) return false;
+        adapter.currentReadPos(position);
+    }
+    return true;
+}
+
 template <template <typename, std::size_t> typename T_StoragePolicy>
 concept vector_storage_policy =
     std::same_as<
@@ -246,6 +266,14 @@ using default_column_storage = segmented_column_storage<TValue, T_PageBytes>;
 #endif
 
 inline constexpr std::size_t bitsery_max_column_payload_bytes = 0x3FFFFFFFU;
+
+/** Validate representable wire storage before allocation, including checked append arithmetic. */
+inline void check_model_column_growth(std::size_t current, std::size_t added, std::size_t recordSize)
+{
+    auto const maximum = bitsery_max_column_payload_bytes / recordSize;
+    if (current > maximum || added > maximum - current)
+        throw std::length_error("Model column exceeds the serialized payload limit");
+}
 
 template <
     typename T,
@@ -310,15 +338,22 @@ public:
 
     void clear() { values_.clear(); }
 
+    /** Reject unrepresentable record counts without allocating storage. */
+    static void check_size(std::size_t count)
+    {
+        check_model_column_growth(0, count, record_size);
+    }
+
     void reserve(std::size_t count)
     {
+        check_size(count);
         if constexpr (
             requires(storage_type& storage, std::size_t n) { storage.reserve(n); }) {
             values_.reserve(count);
         }
     }
 
-    void resize(std::size_t count) { values_.resize(count); }
+    void resize(std::size_t count) { check_size(count); values_.resize(count); }
 
     void shrink_to_fit()
     {
@@ -329,6 +364,7 @@ public:
 
     ref emplace_back()
     {
+        check_model_column_growth(size(), 1, record_size);
         values_.emplace_back();
         return values_.back();
     }
@@ -337,6 +373,7 @@ public:
         requires (sizeof...(Args) > 0)
     ref emplace_back(Args&&... args)
     {
+        check_model_column_growth(size(), 1, record_size);
         values_.emplace_back(std::forward<Args>(args)...);
         return values_.back();
     }
@@ -344,12 +381,13 @@ public:
     template <typename... Args>
     ref emplace(Args&&... args)
     {
+        check_model_column_growth(size(), 1, record_size);
         values_.emplace_back(std::forward<Args>(args)...);
         return values_.back();
     }
 
-    void push_back(value_type const& value) { values_.push_back(value); }
-    void push_back(value_type&& value) { values_.push_back(std::move(value)); }
+    void push_back(value_type const& value) { emplace_back(value); }
+    void push_back(value_type&& value) { emplace_back(std::move(value)); }
 
     ref operator[](std::size_t index) { return values_[index]; }
     const_ref operator[](std::size_t index) const { return values_[index]; }
@@ -371,7 +409,19 @@ public:
     template <typename InputIt>
     iterator insert(const_iterator pos, InputIt first, InputIt last)
     {
-        return values_.insert(pos, first, last);
+        if constexpr (std::forward_iterator<InputIt>) {
+            auto const count = std::distance(first, last);
+            if (count < 0) throw std::length_error("Invalid model column insertion range");
+            check_model_column_growth(size(), static_cast<std::size_t>(count), record_size);
+            return values_.insert(pos, first, last);
+        } else {
+            std::vector<value_type> staged;
+            for (; first != last; ++first) {
+                check_model_column_growth(size(), staged.size() + 1, record_size);
+                staged.push_back(*first);
+            }
+            return values_.insert(pos, staged.begin(), staged.end());
+        }
     }
 
     template <typename Storage = storage_type>
@@ -388,6 +438,7 @@ public:
 
     std::vector<std::byte> bytes() const
     {
+        check_size(size());
         std::vector<std::byte> out(byte_size());
         if (out.empty()) {
             return out;
@@ -436,12 +487,16 @@ public:
         T_BitseryInputAdapter& adapter,
         std::size_t payload_size)
     {
+        if (payload_size > bitsery_max_column_payload_bytes)
+            throw std::length_error("Model column exceeds the serialized payload limit");
+        if (!detail::check_bitsery_payload_available(adapter, payload_size)) return false;
         if ((payload_size % sizeof(value_type)) != 0U) {
             values_.clear();
             return false;
         }
 
         const std::size_t record_count = payload_size / sizeof(value_type);
+        check_size(record_count);
         values_.resize(record_count);
         if (payload_size == 0) {
             return true;
@@ -502,6 +557,7 @@ private:
         }
 
         const std::size_t record_count = payload.size() / sizeof(value_type);
+        check_size(record_count);
         values_.resize(record_count);
         if (payload.empty()) {
             return {};
@@ -685,16 +741,30 @@ public:
         second_values_.clear();
     }
 
+    /** Reject unrepresentable record counts without allocating storage. */
+    static void check_size(std::size_t count)
+    {
+        check_model_column_growth(0, count, record_size);
+    }
+
     void reserve(std::size_t count)
     {
+        check_size(count);
         first_values_.reserve(count);
         second_values_.reserve(count);
     }
 
     void resize(std::size_t count)
     {
+        check_size(count);
+        auto const oldSize = size();
         first_values_.resize(count);
-        second_values_.resize(count);
+        try {
+            second_values_.resize(count);
+        } catch (...) {
+            first_values_.resize(oldSize);
+            throw;
+        }
     }
 
     void shrink_to_fit()
@@ -707,8 +777,15 @@ public:
     ref emplace_back(Args&&... args)
     {
         value_type value(std::forward<Args>(args)...);
+        check_model_column_growth(size(), 1, record_size);
+        auto const oldSize = size();
         first_values_.push_back(value.first_);
-        second_values_.push_back(value.second_);
+        try {
+            second_values_.push_back(value.second_);
+        } catch (...) {
+            first_values_.resize(oldSize);
+            throw;
+        }
         return back();
     }
 
@@ -720,14 +797,20 @@ public:
 
     void push_back(value_type const& value)
     {
+        check_model_column_growth(size(), 1, record_size);
+        auto const oldSize = size();
         first_values_.push_back(value.first_);
-        second_values_.push_back(value.second_);
+        try {
+            second_values_.push_back(value.second_);
+        } catch (...) {
+            first_values_.resize(oldSize);
+            throw;
+        }
     }
 
     void push_back(value_type&& value)
     {
-        first_values_.push_back(std::move(value.first_));
-        second_values_.push_back(std::move(value.second_));
+        emplace_back(std::move(value));
     }
 
     ref operator[](std::size_t index)
@@ -775,11 +858,14 @@ public:
         std::vector<first_type> first_parts;
         std::vector<second_type> second_parts;
         for (auto it = first; it != last; ++it) {
+            check_model_column_growth(size(), first_parts.size() + 1, record_size);
             value_type value(*it);
             first_parts.push_back(value.first_);
             second_parts.push_back(value.second_);
         }
 
+        // Reserve both halves before mutating either logical stream.
+        reserve(size() + first_parts.size());
         auto first_pos = first_values_.begin();
         auto second_pos = second_values_.begin();
         std::advance(first_pos, static_cast<std::ptrdiff_t>(insert_index));
@@ -791,6 +877,7 @@ public:
 
     std::vector<std::byte> bytes() const
     {
+        check_size(size());
         const auto first_payload = first_values_.bytes();
         const auto second_payload = second_values_.bytes();
 
@@ -824,6 +911,9 @@ public:
         T_BitseryInputAdapter& adapter,
         std::size_t payload_size)
     {
+        if (payload_size > bitsery_max_column_payload_bytes)
+            throw std::length_error("Model column exceeds the serialized payload limit");
+        if (!detail::check_bitsery_payload_available(adapter, payload_size)) return false;
         std::vector<std::uint8_t> payload(payload_size);
         if (payload_size > 0) {
             adapter.template readBuffer<1>(payload.data(), payload_size);
@@ -854,6 +944,7 @@ private:
         }
 
         const auto record_count = payload.size() / record_size;
+        check_size(record_count);
         const auto first_payload_size = record_count * sizeof(first_type);
         const auto second_payload_size = record_count * sizeof(second_type);
 
@@ -917,8 +1008,8 @@ void serialize(S& s, simfil::ModelColumn<T, T_RecordsPerPage, T_StoragePolicy>& 
             return;
         }
     } else {
+        Column::check_size(buffer.size());
         auto payload = buffer.bytes();
-        assert(payload.size() <= simfil::bitsery_max_column_payload_bytes);
 
         std::uint64_t payload_size_wire = payload.size();
         s.value8b(payload_size_wire);
