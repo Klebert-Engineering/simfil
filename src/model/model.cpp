@@ -423,7 +423,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
         return newSmallValue((int16_t)value);
     else if (value >= 0 && value <= std::numeric_limits<uint16_t>::max())
         return newSmallValue((uint16_t)value);
-    ModelNodeAddress::checkIndex(impl_->columns_.i64_.size());
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.i64_.size()));
     impl_->columns_.i64_.emplace_back(value);
     return ModelNode::Ptr::make(
         shared_from_this(),
@@ -432,7 +432,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 
 ModelNode::Ptr ModelPool::newValue(double const& value)
 {
-    ModelNodeAddress::checkIndex(impl_->columns_.double_.size());
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.double_.size()));
     impl_->columns_.double_.emplace_back(value);
     return ModelNode::Ptr::make(
         shared_from_this(),
@@ -441,8 +441,8 @@ ModelNode::Ptr ModelPool::newValue(double const& value)
 
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 {
-    ModelNodeAddress::checkIndex(impl_->columns_.strings_.size());
-    check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1);
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.strings_.size()));
+    assert(check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1));
     impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.size());
     impl_->columns_.strings_.emplace_back(Impl::StringRange{
         (uint32_t)impl_->columns_.stringData_.size(),
@@ -456,8 +456,8 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 
 ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 {
-    ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size());
-    check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1);
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size()));
+    assert(check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1));
     impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.bytes.size());
     impl_->columns_.byteArrays_.emplace_back(Impl::StringRange{
         (uint32_t)impl_->columns_.stringData_.size(),
@@ -473,6 +473,61 @@ ModelNode::Ptr ModelPool::newValue(StringId handle) {
     return ModelNode::Ptr::make(
         shared_from_this(),
         ModelNodeAddress{PooledString, static_cast<uint32_t>(handle)});
+}
+
+auto ModelPool::tryNewObject(size_t initialFieldCapacity, bool fixedSize)
+    -> tl::expected<model_ptr<Object>, Error>
+{
+    if (!objectMemberStorage().check_capacity(initialFieldCapacity, fixedSize))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Object capacity exceeds model storage representation");
+    return newObject(initialFieldCapacity, fixedSize);
+}
+
+auto ModelPool::tryNewArray(size_t initialFieldCapacity, bool fixedSize)
+    -> tl::expected<model_ptr<Array>, Error>
+{
+    if (!arrayMemberStorage().check_capacity(initialFieldCapacity, fixedSize))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Array capacity exceeds model storage representation");
+    return newArray(initialFieldCapacity, fixedSize);
+}
+
+auto ModelPool::tryNewValue(int64_t const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    bool const inlineValue = value >= std::numeric_limits<int16_t>::min() &&
+        value <= std::numeric_limits<uint16_t>::max();
+    if (!inlineValue && !ModelNodeAddress::checkIndex(impl_->columns_.i64_.size()))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Integer column exceeds its 24-bit index representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(double const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (!ModelNodeAddress::checkIndex(impl_->columns_.double_.size()))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Double column exceeds its 24-bit index representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(std::string_view const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (!ModelNodeAddress::checkIndex(impl_->columns_.strings_.size()) ||
+        !check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "String value exceeds model storage representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(simfil::ByteArray const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (!ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size()) ||
+        !check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Byte array exceeds model storage representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(StringId handle) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (!ModelNodeAddress::checkIndex(handle))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "String ID exceeds its 24-bit index representation");
+    return newValue(handle);
 }
 
 // Core ADL resolve hooks for base Object/Array nodes.

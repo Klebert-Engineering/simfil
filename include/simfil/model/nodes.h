@@ -163,13 +163,14 @@ struct ModelNodeAddress
 
     uint32_t value_ = 0;
 
-    static void checkIndex(size_t idx) {
-        if (idx > 0xffffffU)
-            throw std::length_error("Model node index exceeds its 24-bit representation");
+    /** Validate once at the owning column's allocation boundary. */
+    [[nodiscard]] static constexpr bool checkIndex(size_t idx) noexcept {
+        return idx <= 0xffffffU;
     }
 
+    /** Pack an already validated index; the precondition is asserted in debug builds. */
     ModelNodeAddress(uint8_t const& col, size_t idx = 0) {  // NOLINT
-        checkIndex(idx);
+        assert(checkIndex(idx));
         value_ = (static_cast<uint32_t>(idx) << 8) | col;
     }
 

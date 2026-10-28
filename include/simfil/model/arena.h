@@ -113,12 +113,37 @@ public:
         return handle & SingletonArrayHandlePayloadMask;
     }
 
+    /** Validate a bulk allocation before calling new_array; no storage is changed. */
+    [[nodiscard]] bool check_capacity(size_t added, bool fixedSize = false) const
+    {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
+        std::shared_lock guard(lock_);
+        #endif
+        if (added == 1 && fixedSize) {
+            return singletonValues_.size() < SingletonArrayHandlePayloadMask &&
+                check_model_column_growth(singletonValues_.size(), 1, DataStorage::record_size) &&
+                check_model_column_growth(singletonOccupied_.size(), 1, sizeof(uint8_t));
+        }
+        auto const headCount = heads_.empty() && compactHeads_ ? compactHeads_->size() : heads_.size();
+        return headCount < SingletonArrayHandleMask && check_data_growth(data_.size(), added);
+    }
+
+    /** Validate narrow offsets and the serialized payload size without overflowing. */
+    [[nodiscard]] static constexpr bool check_data_growth(size_t current, size_t added) noexcept
+    {
+        auto const maximum = static_cast<size_t>(std::numeric_limits<SizeType_>::max());
+        return current <= maximum && added <= maximum - current &&
+            check_model_column_growth(current, added, DataStorage::record_size);
+    }
+
     /**
      * Creates a new array with the specified initial capacity.
      *
      * @param initialCapacity The initial capacity of the new array.
      * @param fixedSize If true, `initialCapacity == 1` creates a singleton handle
      *                  instead of a growable chunk-backed array.
+     * @pre The payload fits its wire and offset representations. Use check_capacity
+     *      to validate an untrusted initial capacity before calling this builder.
      * @return The index of the new array.
      */
     ArrayIndex new_array(size_t initialCapacity, bool fixedSize = false)
@@ -133,8 +158,8 @@ public:
             if (singletonIndex >= SingletonArrayHandlePayloadMask) {
                 raise<std::out_of_range>("ArrayArena singleton pool exhausted.");
             }
-            DataStorage::check_size(singletonValues_.size() + 1);
-            singletonOccupied_.check_size(singletonOccupied_.size() + 1);
+            assert(DataStorage::check_size(singletonValues_.size() + 1));
+            assert(singletonOccupied_.check_size(singletonOccupied_.size() + 1));
             singletonValues_.emplace_back(ElementType_{});
             try {
                 singletonOccupied_.emplace_back(static_cast<uint8_t>(0));
@@ -148,12 +173,12 @@ public:
 
         ensure_regular_head_pool();
         size_t offset = data_.size();
-        check_data_growth(initialCapacity);
+        assert(check_data_growth(offset, initialCapacity));
         auto index = to_array_index(heads_.size());
         if ((index & SingletonArrayHandleMask) != 0) {
             raise<std::out_of_range>("ArrayArena regular head index exceeded handle bit range.");
         }
-        heads_.check_size(heads_.size() + 1);
+        assert(heads_.check_size(heads_.size() + 1));
         data_.resize(offset + initialCapacity);
         try {
             heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0,
@@ -823,15 +848,6 @@ private:
      * @param a The index of the array.
      * @return A reference to the last chunk of the array, after ensuring there's capacity.
      */
-    /** Check payload and narrow offset/capacity representations before changing arena storage. */
-    void check_data_growth(size_t added) const
-    {
-        auto const maximum = static_cast<size_t>(std::numeric_limits<SizeType_>::max());
-        if (data_.size() > maximum || added > maximum - data_.size())
-            raise<std::length_error>("ArrayArena payload exceeds its offset/capacity representation.");
-        DataStorage::check_size(data_.size() + added);
-    }
-
     // Caller must hold the write lock when ARRAY_ARENA_THREAD_SAFE is enabled.
     Chunk& ensure_capacity_and_get_last_chunk_unlocked(ArrayIndex a)
     {
@@ -849,13 +865,12 @@ private:
         if (last.size < last.capacity)
             return last;
         size_t offset = data_.size();
-        if (static_cast<size_t>(last.capacity) > std::numeric_limits<SizeType_>::max() / 2)
-            raise<std::length_error>("ArrayArena capacity growth overflow.");
+        assert(static_cast<size_t>(last.capacity) <= std::numeric_limits<SizeType_>::max() / 2);
         size_t newCapacity = std::max<size_t>(2, static_cast<size_t>(last.capacity) * 2);
-        check_data_growth(newCapacity);
+        assert(check_data_growth(offset, newCapacity));
         auto const newIndex = to_array_index(continuations_.size());
         if (head.capacity != 0)
-            continuations_.check_size(continuations_.size() + 1);
+            assert(continuations_.check_size(continuations_.size() + 1));
         data_.resize(offset + newCapacity);
         if (head.capacity == 0) {
             head.offset = (SizeType_)offset;

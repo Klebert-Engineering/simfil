@@ -266,6 +266,17 @@ public:
     ModelNode::Ptr newValue(simfil::ByteArray const& value);
     ModelNode::Ptr newValue(StringId handle);
 
+    /** Checked creation for untrusted inputs; size errors leave the pool unchanged. */
+    [[nodiscard]] auto tryNewObject(size_t initialFieldCapacity = 2, bool fixedSize = false)
+        -> tl::expected<model_ptr<Object>, Error>;
+    [[nodiscard]] auto tryNewArray(size_t initialFieldCapacity = 2, bool fixedSize = false)
+        -> tl::expected<model_ptr<Array>, Error>;
+    [[nodiscard]] auto tryNewValue(int64_t const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(double const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(std::string_view const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(simfil::ByteArray const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(StringId handle) -> tl::expected<ModelNode::Ptr, Error>;
+
     /** Bounds native subtree materialization independently of evaluator work limits. */
     struct CopyOptions {
         size_t maxDepth = 64;
