@@ -443,12 +443,15 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 {
     assert(ModelNodeAddress::checkIndex(impl_->columns_.strings_.size()));
     assert(check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1));
-    impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.size());
+    auto const offset = impl_->columns_.stringData_.size();
+    // Append preserves aliased input and geometric growth. Exact-size reserve
+    // here invalidates source views and causes repeated copying with libc++.
+    // Publish the range only after its bytes exist.
+    impl_->columns_.stringData_ += value;
     impl_->columns_.strings_.emplace_back(Impl::StringRange{
-        (uint32_t)impl_->columns_.stringData_.size(),
+        (uint32_t)offset,
         (uint32_t)value.size()
     });
-    impl_->columns_.stringData_ += value;
     return ModelNode::Ptr::make(
         shared_from_this(),
         ModelNodeAddress{String, (uint32_t)impl_->columns_.strings_.size()-1});
@@ -458,12 +461,12 @@ ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 {
     assert(ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size()));
     assert(check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1));
-    impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.bytes.size());
+    auto const offset = impl_->columns_.stringData_.size();
+    impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
     impl_->columns_.byteArrays_.emplace_back(Impl::StringRange{
-        (uint32_t)impl_->columns_.stringData_.size(),
+        (uint32_t)offset,
         (uint32_t)value.bytes.size()
     });
-    impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
     return ModelNode::Ptr::make(
         shared_from_this(),
         ModelNodeAddress{ByteArray, (uint32_t)impl_->columns_.byteArrays_.size()-1});

@@ -174,6 +174,24 @@ TEST_CASE("Checked model creation returns errors without changing the pool", "[m
     REQUIRE(array.value()->size() == 1);
 }
 
+TEST_CASE("Model string growth preserves source views and mixed bytes", "[model][model.growth]")
+{
+    auto model = std::make_shared<ModelPool>();
+    std::string const text(65536, 'x');
+    auto original = model->newValue(std::string_view(text));
+    auto view = std::get<std::string_view>(original->value());
+    auto copy = model->tryNewValue(view);
+    REQUIRE(copy);
+    CHECK(std::get<std::string_view>((*copy)->value()) == text);
+
+    ByteArray const bytes{std::string(262144, '\0')};
+    auto binary = model->tryNewValue(bytes);
+    REQUIRE(binary);
+    CHECK(std::get<ByteArray>((*binary)->value()) == bytes);
+    CHECK(std::get<std::string_view>(original->value()) == text);
+    CHECK(std::get<std::string_view>((*copy)->value()) == text);
+}
+
 TEST_CASE("Multimap ingestion reserves the expanded member count", "[json.serialization][limits]")
 {
     auto model = std::make_shared<ModelPool>();

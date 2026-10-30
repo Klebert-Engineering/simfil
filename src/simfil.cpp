@@ -1871,12 +1871,14 @@ static auto evaluate(
     if (!node.owningModel())
         return unexpected<Error>(Error::NullModel, "ModelNode must have a model!");
 
-    // For thread-safety we work on a local diagnostics object that gets merged
-    // into diag after query evaluation.
+    // Collect diagnostics only when requested. Preparing AST indices and
+    // recording every field/comparison is otherwise discarded on this hot path.
+    // Requested diagnostics remain local until the thread-safe merge below.
     Diagnostics localDiag;
-    localDiag.prepareIndices(ast.expr());
+    if (diag)
+        localDiag.prepareIndices(ast.expr());
 
-    Context ctx(&env, &localDiag);
+    Context ctx(&env, diag ? &localDiag : nullptr);
     ctx.runtime = &runtime;
     ctx.evaluation = control;
     auto res = ast.expr().eval(ctx, Value::field(node), consumer);
