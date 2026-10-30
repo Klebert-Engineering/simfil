@@ -10,6 +10,7 @@ add_executable(test.simfil
   token.cpp
   schema.cpp
   schema-domain.cpp
+  schema-value.cpp
   evaluation.cpp
   simfil.cpp
   diagnostics.cpp

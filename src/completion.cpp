@@ -402,6 +402,18 @@ void Completion::suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
                 add(value.isa(ValueType::String) ? escapeStringLiteral(text) : text,
                     location, CompletionCandidate::Type::CONSTANT);
         }
+        schema->forEachNamedValue([&](Schema::NamedValue const& value) {
+            if (!visitDomain(ctx) || size() >= limit || value.removed || isKnownField(value.name))
+                return;
+            // Completing inside quotes must not turn a numeric symbol into a string-valued comparison.
+            if (literalsOnly) {
+                if (auto text = std::get_if<std::string_view>(&value.value); text && startsWith(*text, prefix, caseSensitive))
+                    add(escapeStringLiteral(*text), location, CompletionCandidate::Type::CONSTANT);
+            }
+            else if (!needsEscaping(value.name) && startsWith(value.name, prefix, caseSensitive))
+                add(std::string(value.name),
+                    location, CompletionCandidate::Type::CONSTANT);
+        });
     }
     if (!literalsOnly && !ctx.canceled() && domainVisits_ < options.maxSchemaVisits)
         completeFunctions(ctx, prefix, *this, location);
@@ -555,6 +567,26 @@ auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vec
             left.push_back(NoSchemaId); // Unknown/absent operands do not license unrelated enum suggestions.
         walk(*expression.childAt(1), input, left);
         return {};
+    }
+    if (auto call = dynamic_cast<const CallExpression*>(&expression);
+        call && ctx.env->findFunction(call->name_) == &HasFlagFn::Fn && call->args_.size() == 2) {
+        auto domains = walk(*call->args_[0], input);
+        std::optional<std::string_view> prefix;
+        if (auto text = dynamic_cast<const CompletionWordExpr*>(call->args_[1].get()))
+            prefix = text->prefix_;
+        else if (auto word = dynamic_cast<const CompletionFieldOrWordExpr*>(call->args_[1].get()))
+            prefix = word->prefix_;
+        if (prefix) {
+            const bool sensitive = options.smartCase && containsUppercaseCharacter(*prefix);
+            for (auto id : expandDomains(ctx, domains, false))
+                if (auto schema = lookup(id))
+                    schema->forEachNamedValue([&](auto const& value) {
+                        if (visitDomain(ctx) && size() < limit && value.role == Schema::NamedValue::Role::Flag &&
+                            !value.removed && startsWith(value.name, *prefix, sensitive))
+                            add(escapeStringLiteral(value.name), call->args_[1]->sourceLocation(), CompletionCandidate::Type::CONSTANT);
+                    });
+        }
+        return {NoSchemaId};
     }
     // Calls and dynamic expressions have unknown results. Their arguments still
     // carry useful cursor-local contexts, but no registered function is executed.
