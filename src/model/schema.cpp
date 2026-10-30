@@ -6,6 +6,93 @@
 namespace simfil
 {
 
+SchemaBinding::SchemaBinding(std::string identity, std::shared_ptr<const void> graphOwner,
+                             Schema::Lookup lookup, std::shared_ptr<const StringPool> strings)
+    : identity_(std::move(identity)), owner_(std::move(graphOwner)),
+      lookup_(std::move(lookup)), strings_(std::move(strings))
+{
+    if (identity_.empty() || identity_.size() > 65535 || !owner_ || !lookup_ || !strings_)
+        throw std::invalid_argument("SchemaBinding requires an identity, graph owner, lookup and dictionary");
+}
+
+auto SchemaBinding::lookup(SchemaId id) const -> const Schema*
+{
+    return id == NoSchemaId ? nullptr : lookup_(id);
+}
+
+auto SchemaReference::definition() const -> const Schema*
+{
+    return binding ? binding->lookup(id) : nullptr;
+}
+
+auto SchemaReference::operator==(SchemaReference const& other) const noexcept -> bool
+{
+    if (id != other.id)
+        return false;
+    if (binding == other.binding)
+        return true;
+    return binding && other.binding && binding->identity() == other.binding->identity();
+}
+
+auto Schema::namedValue(std::string_view name) const -> std::optional<NamedValue>
+{
+    std::optional<NamedValue> result;
+    forEachNamedValue([&](NamedValue const& value) {
+        if (value.name == name)
+            result = value;
+    });
+    return result;
+}
+
+auto Schema::namedValuePaths(SchemaId root, const Lookup& lookup, std::string_view name, bool* complete)
+    -> std::vector<SchemaPath>
+{
+    std::vector<SchemaPath> result;
+    std::vector<SchemaId> active;
+    SchemaPath path;
+    std::size_t visits = 0;
+    bool exhaustive = true;
+    std::function<void(SchemaId)> visit = [&](SchemaId id) {
+        auto schema = id ? lookup(id) : nullptr;
+        if (!schema || ++visits > 10000 || active.size() >= 128 || result.size() >= 10000 ||
+            std::ranges::find(active, id) != active.end()) {
+            exhaustive = false;
+            return;
+        }
+        if (!affinities(schema->kind()))
+            return;
+        active.push_back(id);
+        if (schema->namedValue(name) && std::ranges::find(result, path) == result.end())
+            result.push_back(path);
+        schema->forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+            path.push_back({SchemaPathSegment::Kind::Field, field});
+            if (children.empty())
+                exhaustive = false;
+            for (auto child : children)
+                visit(child);
+            path.pop_back();
+        });
+        bool elements = false;
+        schema->forEachElementSchema([&](SchemaId child) {
+            elements = true;
+            path.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
+            visit(child);
+            path.pop_back();
+        });
+        for (auto child : schema->alternatives())
+            visit(child);
+        if (schema->open() || kindNameId(schema->kind()) == kindNameId(Kind::Unknown) ||
+            kindNameId(schema->kind()) == kindNameId(Kind::Any) ||
+            (schema->hasAffinity(ValueType::Array) && !elements && schema->composition() == Composition::None))
+            exhaustive = false;
+        active.pop_back();
+    };
+    visit(root);
+    if (complete)
+        *complete = exhaustive;
+    return result;
+}
+
 auto Schema::computeReachabilityComplete(const std::function<Schema*(SchemaId)>& lookup) const -> bool
 {
     std::vector<const Schema*> pending{this};
@@ -67,15 +154,19 @@ auto Schema::fieldSchemas(SchemaId root, const Lookup& lookup, StringId field) -
         if (!affinities(schema->kind()))
             continue;
         auto canonical = schema->canonicalField(field);
+        bool declared = false;
         schema->forEachDirectField(
             [&](StringId name, std::span<const SchemaId> children) {
                 if (name != canonical)
                     return;
+                declared = true;
                 if (children.empty())
                     result.push_back(NoSchemaId);
                 result.insert(result.end(), children.begin(), children.end());
             });
-        if (schema->open() || kindNameId(schema->kind()) == kindNameId(Kind::Unknown) || kindNameId(schema->kind()) == kindNameId(Kind::Any))
+        // Openness admits undeclared fields; it does not weaken an explicit field's domain.
+        // Each alternative is checked independently, so an undeclared open branch stays unknown.
+        if ((!declared && schema->open()) || kindNameId(schema->kind()) == kindNameId(Kind::Unknown) || kindNameId(schema->kind()) == kindNameId(Kind::Any))
             result.push_back(NoSchemaId);
         if (schema->composition() == Composition::AllOf && schema->alternatives().empty())
             result.push_back(NoSchemaId);

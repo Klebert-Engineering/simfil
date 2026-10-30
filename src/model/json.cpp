@@ -101,6 +101,24 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
     }
 
     if (input.is_object()) {
+        if (input.size() == 4 && input.contains("_bitmask") && input["_bitmask"] == true &&
+            input.contains("bits") && input.contains("schema") && input.contains("domain")) {
+            // Only the complete reserved shape is a tag; application objects with extra keys remain objects.
+            if (!input["bits"].is_string() || !input["schema"].is_string() || !input["domain"].is_number_integer() ||
+                input["domain"] < 1 || input["domain"] > std::numeric_limits<SchemaId>::max())
+                return tl::unexpected(Error{Error::ParserError, "Invalid tagged bitmask fields"});
+            auto bits = Bitmask::parseBits(input["bits"].get_ref<const std::string&>());
+            TRY_EXPECTED(bits);
+            auto binding = model.schemaBinding(input["schema"].get_ref<const std::string&>());
+            if (!binding)
+                return tl::unexpected(Error{Error::ParserError, "Tagged bitmask requires its exact schema graph"});
+            try {
+                return model.newBitmask(*bits, {std::move(binding), input["domain"].get<SchemaId>()});
+            }
+            catch (std::exception const& error) {
+                return tl::unexpected(Error{Error::ParserError, error.what()});
+            }
+        }
         if (auto it = input.find("_bytes"); it != input.end() && it->is_boolean() && it->get<bool>()) {
             // `_bytes` is the tagged JSON form emitted by ModelNode::toJson() for byte arrays.
             auto hex = input.find("hex");

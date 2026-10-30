@@ -163,6 +163,9 @@ struct ModelNodeAddress
 
     uint32_t value_ = 0;
 
+    /** Compare full column/index identity, not the implicit presence conversion. */
+    bool operator==(ModelNodeAddress const&) const = default;
+
     static void checkIndex(size_t idx) {
         if (idx > 0xffffffU)
             throw std::length_error("Model node index exceeds its 24-bit representation");
@@ -257,8 +260,11 @@ struct ModelNode
     /// Get an Object model's field names
     [[nodiscard]] virtual StringId keyAt(int64_t i) const;
 
-    /// Get the schema id for schema-aware container nodes, or NoSchemaId otherwise.
+    /// Get the schema id for a bound container or explicitly qualified scalar.
     [[nodiscard]] virtual SchemaId schema() const;
+
+    /** Retain the graph defining this node's explicit schema; plain leaves use their parent edge. */
+    [[nodiscard]] auto schemaReference() const -> SchemaReference;
 
     /// Get the number of children
     [[nodiscard]] virtual uint32_t size() const;

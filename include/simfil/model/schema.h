@@ -21,7 +21,6 @@ namespace simfil
 
 class Schema;
 
-using SchemaId = std::uint16_t;
 constexpr SchemaId NoSchemaId = SchemaId{0};
 constexpr SchemaId MaxSchemaId = SchemaId{std::numeric_limits<SchemaId>::max()};
 
@@ -63,6 +62,51 @@ concept QueryMutableSchemaFn = requires(const Fn& fn) {
 class Schema
 {
 public:
+    /** Exact scalar metadata; unsigned encodings must not pass through a floating-point value. */
+    using NumericValue = std::variant<std::int64_t, std::uint64_t, double>;
+
+    /** Inclusive ordinary-measurement interval, distinct from named special values. */
+    struct NumericRange {
+        NumericValue min = std::int64_t{0};
+        NumericValue max = std::int64_t{0};
+    };
+
+    /** Borrowed numeric-domain metadata whose storage belongs to the immutable schema graph. */
+    struct NumericDomain {
+        std::string_view encoding;
+        std::string_view unit;
+        std::optional<NumericValue> minimum;
+        std::optional<NumericValue> maximum;
+        std::span<const NumericRange> ordinaryRanges;
+        double scale = 1;
+        double offset = 0;
+        bool complete = false;
+    };
+
+    /** A named literal or mask, not an implicit exhaustive enum or a globally scoped constant. */
+    struct NamedValue {
+        enum class Role { Constant, Special, Flag };
+        enum class Meaning { Ordinary, Unknown, Variable, Unbounded, Saturated };
+        std::string_view name;
+        std::variant<bool, std::int64_t, std::uint64_t, double, std::string_view> value = std::int64_t{0};
+        Role role = Role::Constant;
+        Meaning meaning = Meaning::Ordinary;
+        bool deprecated = false;
+        bool removed = false;
+    };
+
+    /** Enumerate borrowed named-value views without requiring a second persistent metadata vector. */
+    virtual void forEachNamedValue(const std::function<void(NamedValue const&)>&) const {}
+    /** Resolve an exact symbol spelling in this domain only. */
+    auto namedValue(std::string_view name) const -> std::optional<NamedValue>;
+    /** Enumerate positions declaring a symbol; incomplete/cyclic paths require runtime traversal. */
+    static auto namedValuePaths(SchemaId root, const std::function<const Schema*(SchemaId)>& lookup,
+                               std::string_view name, bool* complete = nullptr) -> std::vector<SchemaPath>;
+    /** Describe physical numeric interpretation without restricting an open range to its named values. */
+    virtual auto numericDomain() const -> std::optional<NumericDomain> { return {}; }
+    /** Width of a bitmask's raw encoding, including unnamed bits. */
+    virtual auto bitWidth() const -> std::uint8_t { return 64; }
+
     /** Possible present values; absence is field metadata, not a null value. */
     static constexpr std::uint16_t AllAffinities = (1u << unsigned(ValueType::LAST_)) - 2;
     static constexpr std::uint16_t ScalarAffinities = (1u << unsigned(ValueType::TransientObject)) - 2;
@@ -79,6 +123,7 @@ public:
         Float = (StringPool::SchemaFloat << 16) | valueTypeAffinity(ValueType::Float),
         String = (StringPool::SchemaString << 16) | valueTypeAffinity(ValueType::String),
         Bytes = (StringPool::SchemaBytes << 16) | valueTypeAffinity(ValueType::Bytes),
+        Bitmask = (StringPool::SchemaBitmask << 16) | valueTypeAffinity(ValueType::Bitmask),
         Object = (StringPool::SchemaObject << 16) | valueTypeAffinity(ValueType::Object),
         Array = (StringPool::SchemaArray << 16) | valueTypeAffinity(ValueType::Array),
         Union = (StringPool::SchemaUnion << 16) | AllAffinities,
@@ -107,6 +152,13 @@ public:
 
     /** Recognize generic structure even for an unfamiliar specialized kind. */
     auto hasAffinity(ValueType type) const -> bool { return affinities(kind()) & valueTypeAffinity(type); }
+    /** A concrete mask domain, not an unknown/value/union merely capable of containing masks. */
+    auto isBitmask() const -> bool
+    {
+        auto bits = affinities(kind());
+        return composition() == Composition::None && (bits & valueTypeAffinity(ValueType::Bitmask)) &&
+            !(bits & ~(valueTypeAffinity(ValueType::Bitmask) | valueTypeAffinity(ValueType::Null)));
+    }
 
     /** Preserve the concrete producer type name; anonymous domains leave it empty. */
     virtual auto typeName() const -> std::string_view { return typeName_; }
@@ -743,6 +795,29 @@ protected:
         auto iter = std::ranges::lower_bound(flatFields, field);
         return iter != flatFields.end() && *iter == field;
     }
+};
+
+/** Immutable owning lookup over an external graph; it does not copy or maintain another registry. */
+class SchemaBinding
+{
+public:
+    using Resolver = std::function<std::shared_ptr<const SchemaBinding>(std::string_view)>;
+
+    /** The owner keeps every borrowed definition/string alive; never retain this binding in that owner. */
+    SchemaBinding(std::string identity, std::shared_ptr<const void> graphOwner,
+                  Schema::Lookup lookup, std::shared_ptr<const StringPool> strings);
+    /** Exact externally meaningful graph identity, including its numeric domain numbering. */
+    auto identity() const noexcept -> std::string_view { return identity_; }
+    /** Resolve a graph-local domain; zero and absent ids have no definition. */
+    auto lookup(SchemaId id) const -> const Schema*;
+    /** Dictionary used by the schema's field edges, independently of the data dictionary. */
+    auto strings() const noexcept -> std::shared_ptr<const StringPool> const& { return strings_; }
+
+private:
+    std::string identity_;
+    std::shared_ptr<const void> owner_;
+    Schema::Lookup lookup_;
+    std::shared_ptr<const StringPool> strings_;
 };
 
 /**

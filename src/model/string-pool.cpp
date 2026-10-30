@@ -60,6 +60,7 @@ StringPool::StringPool()
     addStaticKey(SchemaFloat, "float");
     addStaticKey(SchemaString, "string");
     addStaticKey(SchemaBytes, "bytes");
+    addStaticKey(SchemaBitmask, "bitmask");
     addStaticKey(SchemaObject, "object");
     addStaticKey(SchemaArray, "array");
     addStaticKey(SchemaUnion, "union");
@@ -76,6 +77,24 @@ StringPool::StringPool()
     addStaticKey(SchemaNullable, "nullable");
     addStaticKey(SchemaRef, "$ref");
     addStaticKey(SchemaTruncated, "truncated");
+    addStaticKey(SchemaNamedValues, "namedValues");
+    addStaticKey(SchemaNumericDomain, "numericDomain");
+    addStaticKey(SchemaBitWidth, "bitWidth");
+    addStaticKey(SchemaName, "name");
+    addStaticKey(SchemaRole, "role");
+    addStaticKey(SchemaMeaning, "meaning");
+    addStaticKey(SchemaDeprecated, "deprecated");
+    addStaticKey(SchemaRemoved, "removed");
+    addStaticKey(SchemaEncoding, "encoding");
+    addStaticKey(SchemaUnit, "unit");
+    addStaticKey(SchemaMinimum, "minimum");
+    addStaticKey(SchemaMaximum, "maximum");
+    addStaticKey(SchemaOrdinaryRanges, "ordinaryRanges");
+    addStaticKey(SchemaMin, "min");
+    addStaticKey(SchemaMax, "max");
+    addStaticKey(SchemaScale, "scale");
+    addStaticKey(SchemaOffset, "offset");
+    addStaticKey(SchemaComplete, "complete");
 }
 
 StringPool::StringPool(const StringPool& other)
@@ -143,12 +162,14 @@ auto StringPool::emplace(std::string_view const& str) -> tl::expected<StringId, 
             return it->second;
         }
 
-        // Store the string to maintain ownership.
-        auto& storedString = storedStrings_.emplace_back(str);
-        StringId id = nextId_++;
-        if (nextId_ < id) {
+        if (frozen_)
+            return tl::unexpected(Error{Error::RuntimeError, "Cannot insert into a frozen StringPool"});
+        // Exhaustion must leave both the dictionary and next-id counter unchanged.
+        if (nextId_ > std::numeric_limits<StringId>::max()) {
             return tl::unexpected<Error>(Error::StringPoolOverflow, "StringPool id overflow!");
         }
+        auto& storedString = storedStrings_.emplace_back(str);
+        auto id = static_cast<StringId>(nextId_++);
         idForString_.emplace(storedString, id);
         stringForId_.emplace(id, storedString);
         byteSize_ += static_cast<int64_t>(storedString.size());
@@ -158,7 +179,7 @@ auto StringPool::emplace(std::string_view const& str) -> tl::expected<StringId, 
     }
 }
 
-StringId StringPool::get(std::string_view const& str)
+StringId StringPool::get(std::string_view const& str) const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     auto it = idForString_.find(str);
@@ -167,6 +188,18 @@ StringId StringPool::get(std::string_view const& str)
         return it->second;
     }
     return StringPool::Empty;
+}
+
+void StringPool::freeze()
+{
+    std::unique_lock lock(stringStoreMutex_);
+    frozen_ = true;
+}
+
+auto StringPool::frozen() const -> bool
+{
+    std::shared_lock lock(stringStoreMutex_);
+    return frozen_;
 }
 
 std::optional<std::string_view> StringPool::resolve(const StringId& id) const
@@ -180,7 +213,7 @@ std::optional<std::string_view> StringPool::resolve(const StringId& id) const
 
 StringId StringPool::highest() const
 {
-    return nextId_ - 1;
+    return static_cast<StringId>(nextId_ - 1);
 }
 
 size_t StringPool::size() const
@@ -238,6 +271,8 @@ MemoryUsage StringPool::memoryUsage() const
 void StringPool::addStaticKey(StringId id, const std::string& value)
 {
     std::unique_lock lock(stringStoreMutex_);
+    if (frozen_)
+        throw std::logic_error("Cannot add a static key to a frozen StringPool");
     auto& storedString = storedStrings_.emplace_back(value);
     idForString_.emplace(storedString, id);
     stringForId_.emplace(id, storedString);
@@ -249,20 +284,24 @@ auto StringPool::write(std::ostream& outputStream, const StringId offset) const 
     bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
 
     // Calculate how many strings will be sent
-    StringId sendStrCount = 0;
+    std::uint32_t sendStrCount = 0;
     const auto high = highest();
-    for (auto strId = offset; strId <= high; ++strId) {
-        auto it = stringForId_.find(strId);
+    for (std::uint32_t strId = offset; strId <= high; ++strId) {
+        auto it = stringForId_.find(static_cast<StringId>(strId));
         if (it != stringForId_.end())
             ++sendStrCount;
     }
-    s.value2b(sendStrCount);
+    if (sendStrCount > std::numeric_limits<StringId>::max())
+        return tl::unexpected<Error>(Error::StringPoolOverflow, "StringPool stream count overflow");
+    auto count = static_cast<StringId>(sendStrCount);
+    s.value2b(count);
 
     // Send the pool's key-string pairs
-    for (auto strId = offset; strId <= high; ++strId) {
-        auto it = stringForId_.find(strId);
+    for (std::uint32_t strId = offset; strId <= high; ++strId) {
+        auto id = static_cast<StringId>(strId);
+        auto it = stringForId_.find(id);
         if (it != stringForId_.end()) {
-            s.value2b(strId);
+            s.value2b(id);
             // Don't support strings longer than 64kB.
             s.text1b(it->second, std::numeric_limits<uint16_t>::max());
         }
@@ -278,6 +317,8 @@ auto StringPool::read(const std::vector<uint8_t>& input, size_t offset) -> tl::e
     }
 
     std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
+    if (frozen_)
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot read into a frozen StringPool"});
     using Adapter = bitsery::InputBufferAdapter<std::vector<uint8_t>>;
     bitsery::Deserializer<Adapter> s(Adapter(input.begin() + static_cast<std::ptrdiff_t>(offset), input.end()));
 
@@ -300,7 +341,7 @@ auto StringPool::read(const std::vector<uint8_t>& input, size_t offset) -> tl::e
         if (insertionTookPlace) {
             stringForId_.try_emplace(stringId, stringValue);
             byteSize_ += static_cast<int64_t>(stringValue.size());
-            nextId_ = std::max<StringId>(nextId_, stringId + 1);
+            nextId_ = std::max(nextId_, std::uint32_t(stringId) + 1);
         }
     }
 

@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <ostream>
+#include <limits>
 
 namespace
 {
@@ -402,9 +403,16 @@ std::optional<Token> scanNumber(Scanner& s)
 
     if (isdigit(s.at(0)) || (s.at(0) == '.' && isdigit(s.at(1))) || base > 10) {
         int64_t n = 0;
+        double floating = 0;
+        bool overflow = false;
         while (isdigit(s.at(0)) || (base > 10 && isxdigit(s.at(0)))) {
-            n *= base;
-            n += chr2digit(s, base, s.pop());
+            auto digit = chr2digit(s, base, s.pop());
+            floating = floating * base + digit;
+            // Keep scanning so large floating literals remain valid, but never overflow signed arithmetic.
+            if (n > (std::numeric_limits<int64_t>::max() - digit) / base)
+                overflow = true;
+            if (!overflow)
+                n = n * base + digit;
         }
 
         if (s.match(".", Scanner::Skip)) {
@@ -413,7 +421,7 @@ std::optional<Token> scanNumber(Scanner& s)
                 return {};
             }
 
-            auto f = static_cast<double>(n);
+            auto f = overflow ? floating : static_cast<double>(n);
             for (auto i = 1; isdigit(s.at(0)); ++i) {
                 f += (s.pop() - '0') / std::pow(10, i);
             }
@@ -429,12 +437,16 @@ std::optional<Token> scanNumber(Scanner& s)
 
         /* SCI notation results in float if exponent != 0 (=1) */
         if (auto sci = parseSciSuffix(s); sci != 1)
-            return Token(Token::FLOAT, static_cast<double>(n) * sci, begin, s.pos());
+            return Token(Token::FLOAT, (overflow ? floating : static_cast<double>(n)) * sci, begin, s.pos());
         if (isalpha(s.at(0)) || s.at(0) == '.') {
             s.fail("Unexpected non-digit character");
             return {};
         }
 
+        if (overflow) {
+            s.fail("Integer literal exceeds signed 64-bit range; use bitmask(value, '0x...') for full-width masks");
+            return {};
+        }
         return Token(Token::INT, n, begin, s.pos());
     }
 

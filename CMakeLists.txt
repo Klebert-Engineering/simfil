@@ -70,6 +70,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/expressions.cpp
   src/simfil.cpp
   src/value.cpp
+  src/bitmask.cpp
   src/overlay.cpp
   src/exception-handler.cpp
   src/expression-visitor.cpp

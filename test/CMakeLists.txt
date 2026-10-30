@@ -16,6 +16,7 @@ add_executable(test.simfil
   completion.cpp
   complex.cpp
   model-copy.cpp
+  string-pool.cpp
   performance.cpp
   arena.cpp
   error.cpp

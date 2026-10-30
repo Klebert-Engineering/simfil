@@ -3,6 +3,7 @@
 #include "simfil/model/bitsery-traits.h"
 #include "simfil/model/nodes.h"
 #include "simfil/byte-array.h"
+#include "simfil/value.h"
 
 #include <memory>
 #include <type_traits>
@@ -84,6 +85,14 @@ struct ModelPool::Impl
 
     /// This model pool's field name store
     std::shared_ptr<StringPool> strings_;
+    bool frozen_ = false;
+
+    // Common model bindings retain graphs once, not one owner per stored result.
+    bool directSchema_ = false;
+    std::vector<std::string> schemaIdentities_;
+    std::vector<std::shared_ptr<const SchemaBinding>> schemaBindings_;
+    ModelColumn<TwoPart<std::uint16_t, SchemaId>> importedSchemas_;
+    SchemaBinding::Resolver schemaResolver_;
 
     struct {
         ModelColumn<ModelNodeAddress, detail::ColumnPageSize> roots_;
@@ -93,6 +102,8 @@ struct ModelPool::Impl
         std::string stringData_;
         ModelColumn<StringRange, detail::ColumnPageSize> strings_;
         ModelColumn<StringRange, detail::ColumnPageSize> byteArrays_;
+        ModelColumn<TwoPart<ModelNodeAddress, SchemaId>> qualifiedScalars_;
+        ModelColumn<TwoPart<std::uint64_t, SchemaId>> bitmasks_;
 
         ModelColumn<SchemaId, detail::ColumnPageSize> objectSchemas_;
         ModelColumn<SchemaId, detail::ColumnPageSize> objectSingletonSchemas_;
@@ -102,13 +113,27 @@ struct ModelPool::Impl
         Array::Storage arrayMemberArrays_;
     } columns_;
 
+    /** Bound variable-size primitive allocations by bytes remaining in the actual input buffer. */
+    template<class S>
+    static auto available(S& serializer, std::size_t maximum) -> std::size_t
+    {
+        if constexpr (requires { serializer.adapter().currentReadEndPos(); }) {
+            auto& adapter = serializer.adapter();
+            if (adapter.error() != bitsery::ReaderError::NoError)
+                return 0;
+            auto start = adapter.currentReadPos(), end = adapter.currentReadEndPos();
+            return std::min(maximum, end >= start ? end - start : 0);
+        }
+        return maximum;
+    }
+
     template<typename S>
     void readWrite(S& s) {
         constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
         s.object(columns_.roots_);
         s.object(columns_.i64_);
         s.object(columns_.double_);
-        s.text1b(columns_.stringData_, maxColumnSize);
+        s.text1b(columns_.stringData_, available(s, maxColumnSize));
         s.object(columns_.strings_);
         s.object(columns_.byteArrays_);
         s.object(columns_.objectSchemas_);
@@ -118,7 +143,49 @@ struct ModelPool::Impl
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
+        s.object(columns_.qualifiedScalars_);
+        s.object(columns_.bitmasks_);
+        s.boolValue(directSchema_);
+        s.container(schemaIdentities_, available(s, size_t(MaxSchemaId)), [](auto& serializer, auto& identity) {
+            serializer.text1b(identity, available(serializer, size_t{65535}));
+        });
+        s.object(importedSchemas_);
     }
+};
+
+/** A column-backed scalar view: qualifiers delegate primitive access, masks retain all raw bits. */
+class ModelPool::ScalarNode final : public ModelNodeBase
+{
+public:
+    /** Retain the same persistent address/owner without allocating a separate scalar object. */
+    ScalarNode(ModelPool const& owner, ModelNode const& node)
+        : ModelNodeBase(node, owner.mpKey_), owner_(owner) {}
+
+    /** Both scalar columns carry pool-local schema ids interpreted by their common bindings. */
+    auto schema() const -> SchemaId override
+    {
+        return addr().column() == Bitmask ? owner_.impl_->columns_.bitmasks_[addr().index()].second()
+            : owner_.impl_->columns_.qualifiedScalars_[addr().index()].second();
+    }
+
+    /** Owning mask values can outlive the model; ordinary scalar payloads retain their primitive form. */
+    auto value() const -> ScalarValueType override
+    {
+        if (addr().column() == Bitmask)
+            return simfil::Bitmask{owner_.impl_->columns_.bitmasks_[addr().index()].first(),
+                                  owner_.schemaReference(schema())};
+        return owner_.resolve(owner_.impl_->columns_.qualifiedScalars_[addr().index()].first())->value();
+    }
+
+    /** Qualification never invents an Enum type or changes numeric arithmetic. */
+    auto type() const -> ValueType override
+    {
+        return addr().column() == Bitmask ? ValueType::Bitmask
+            : owner_.resolve(owner_.impl_->columns_.qualifiedScalars_[addr().index()].first())->type();
+    }
+
+private:
+    ModelPool const& owner_;
 };
 
 ModelPool::ModelPool()
@@ -131,6 +198,20 @@ ModelPool::ModelPool(std::shared_ptr<StringPool> stringStore)
 
 ModelPool::~ModelPool()  // NOLINT
 {}
+
+void ModelPool::freeze()
+{
+    impl_->strings_->freeze();
+    impl_->frozen_ = true;
+}
+
+auto ModelPool::frozen() const -> bool { return impl_->frozen_; }
+
+void ModelPool::requireMutable() const
+{
+    if (frozen())
+        throw std::logic_error("Cannot mutate a frozen ModelPool");
+}
 
 std::vector<std::string> ModelPool::checkForErrors() const
 {
@@ -247,6 +328,7 @@ auto ModelPool::validate() const -> tl::expected<void, Error>
 
 void ModelPool::clear()
 {
+    requireMutable();
     auto& columns = impl_->columns_;
     auto clear_and_shrink = [](auto&& what){
         what.clear();
@@ -259,6 +341,12 @@ void ModelPool::clear()
     clear_and_shrink(columns.strings_);
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.byteArrays_);
+    clear_and_shrink(columns.qualifiedScalars_);
+    clear_and_shrink(columns.bitmasks_);
+    clear_and_shrink(impl_->importedSchemas_);
+    impl_->schemaBindings_.clear();
+    impl_->schemaIdentities_.clear();
+    impl_->directSchema_ = false;
     clear_and_shrink(columns.objectSchemas_);
     clear_and_shrink(columns.objectSingletonSchemas_);
     clear_and_shrink(columns.arraySchemas_);
@@ -334,6 +422,18 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
         cb(ValueNode(str.value_or(std::string_view{}), shared_from_this(), mpKey_));
         break;
     }
+    case QualifiedScalar: {
+        if (auto error = checkBounds(impl_->columns_.qualifiedScalars_))
+            return tl::unexpected(*error);
+        cb(ScalarNode(*this, n));
+        break;
+    }
+    case Bitmask: {
+        if (auto error = checkBounds(impl_->columns_.bitmasks_))
+            return tl::unexpected(*error);
+        cb(ScalarNode(*this, n));
+        break;
+    }
     default:
         return Model::resolve(n, cb);
     }
@@ -351,11 +451,13 @@ tl::expected<ModelNode::Ptr, Error> ModelPool::root(size_t const& i) const {
 }
 
 void ModelPool::addRoot(ModelNode::Ptr const& rootNode) {
+    requireMutable();
     impl_->columns_.roots_.emplace_back(rootNode->addr_);
 }
 
 model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSize)
 {
+    requireMutable();
     auto memberArrId = impl_->columns_.objectMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     if (Object::Storage::is_singleton_handle(memberArrId)) {
         auto singletonIndex = Object::Storage::singleton_payload(memberArrId);
@@ -372,6 +474,7 @@ model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSi
 
 model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize)
 {
+    requireMutable();
     auto memberArrId = impl_->columns_.arrayMemberArrays_.new_array(initialFieldCapacity, fixedSize);
     if (Array::Storage::is_singleton_handle(memberArrId)) {
         auto singletonIndex = Array::Storage::singleton_payload(memberArrId);
@@ -417,8 +520,157 @@ std::optional<std::string_view> Model::lookupStringId(const simfil::StringId) co
     return {};
 }
 
+auto Model::schemaReference(SchemaId) const -> SchemaReference
+{
+    return {};
+}
+
+auto Model::schemaReference(ModelNode const& node) const -> SchemaReference
+{
+    return schemaReference(node.schema());
+}
+
+void ModelPool::setSchemaBinding(std::shared_ptr<const SchemaBinding> binding)
+{
+    requireMutable();
+    if (!binding)
+        throw std::invalid_argument("A direct schema binding must be resolved");
+    if (!impl_->schemaBindings_.empty()) {
+        if (impl_->directSchema_ && impl_->schemaIdentities_.front() == binding->identity())
+            return;
+        throw std::invalid_argument("Cannot replace a populated model schema namespace");
+    }
+    impl_->directSchema_ = true;
+    impl_->schemaIdentities_.emplace_back(binding->identity());
+    impl_->schemaBindings_.push_back(std::move(binding));
+}
+
+void ModelPool::setSchemaResolver(SchemaBinding::Resolver resolver)
+{
+    requireMutable();
+    impl_->schemaResolver_ = std::move(resolver);
+}
+
+auto ModelPool::schemaBinding(std::string_view identity) const -> std::shared_ptr<const SchemaBinding>
+{
+    for (auto const& binding : impl_->schemaBindings_)
+        if (binding && binding->identity() == identity)
+            return binding;
+    auto binding = impl_->schemaResolver_ ? impl_->schemaResolver_(identity) : nullptr;
+    return binding && binding->identity() == identity ? binding : nullptr;
+}
+
+auto ModelPool::schemaReference(SchemaId id) const -> SchemaReference
+{
+    if (id == NoSchemaId || impl_->schemaBindings_.empty())
+        return {};
+    if (impl_->directSchema_)
+        return {impl_->schemaBindings_.front(), id};
+    if (size_t(id) > impl_->importedSchemas_.size())
+        return {};
+    auto entry = impl_->importedSchemas_[size_t(id) - 1];
+    if (entry.first() >= impl_->schemaBindings_.size())
+        return {};
+    return {impl_->schemaBindings_[entry.first()], entry.second()};
+}
+
+auto ModelPool::hasDirectSchemaBinding(std::string_view identity) const noexcept -> bool
+{
+    return impl_->directSchema_ && impl_->schemaIdentities_.size() == 1 && impl_->schemaBindings_.size() == 1 &&
+        impl_->schemaIdentities_.front() == identity && impl_->schemaBindings_.front() &&
+        impl_->schemaBindings_.front()->identity() == identity && impl_->importedSchemas_.empty();
+}
+
+auto ModelPool::schemaReference(ModelNode const& node) const -> SchemaReference
+{
+    if (impl_->schemaBindings_.empty())
+        return {};
+    return schemaReference(node.schema());
+}
+
+auto ModelPool::importSchema(SchemaReference const& domain) -> tl::expected<SchemaId, Error>
+{
+    if (frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot import a schema into a frozen ModelPool"});
+    if (!domain || !domain.definition())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot import an unresolved schema domain"});
+    if (impl_->directSchema_) {
+        if (domain.binding->identity() != impl_->schemaIdentities_.front())
+            return tl::unexpected(Error{Error::RuntimeError, "Foreign domain in a single-graph model"});
+        return domain.id;
+    }
+    auto identity = std::ranges::find(impl_->schemaIdentities_, domain.binding->identity());
+    auto bindingIndex = size_t(identity - impl_->schemaIdentities_.begin());
+    for (size_t i = 0; i < impl_->importedSchemas_.size(); ++i) {
+        auto entry = impl_->importedSchemas_[i];
+        if (entry.first() == bindingIndex && entry.second() == domain.id)
+            return static_cast<SchemaId>(i + 1);
+    }
+    if (impl_->importedSchemas_.size() >= MaxSchemaId || bindingIndex >= MaxSchemaId)
+        return tl::unexpected(Error{Error::RuntimeError, "Model schema namespace exhausted"});
+    if (identity == impl_->schemaIdentities_.end()) {
+        impl_->schemaIdentities_.emplace_back(domain.binding->identity());
+        impl_->schemaBindings_.push_back(domain.binding);
+    }
+    impl_->importedSchemas_.emplace_back(static_cast<std::uint16_t>(bindingIndex), domain.id);
+    return static_cast<SchemaId>(impl_->importedSchemas_.size());
+}
+
+auto ModelPool::newBitmask(std::uint64_t bits, SchemaReference const& domain) -> ModelNode::Ptr
+{
+    requireMutable();
+    auto definition = domain.definition();
+    if (!definition || !definition->isBitmask() ||
+        definition->bitWidth() == 0 || definition->bitWidth() > 64)
+        throw std::invalid_argument("Bitmask requires a compatible bound domain and width");
+    if (definition->bitWidth() < 64 && (bits >> definition->bitWidth()) != 0)
+        throw std::invalid_argument("Bitmask exceeds its declared encoding width");
+    auto imported = importSchema(domain);
+    if (!imported)
+        throw std::invalid_argument(imported.error().message);
+    auto index = impl_->columns_.bitmasks_.size();
+    ModelNodeAddress::checkIndex(index);
+    impl_->columns_.bitmasks_.emplace_back(bits, *imported);
+    return resolve(ModelNodeAddress{Bitmask, index});
+}
+
+auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaReference const& domain) -> ModelNode::Ptr
+{
+    requireMutable();
+    if (std::holds_alternative<std::monostate>(value))
+        throw std::invalid_argument("Null is not a schema-qualified primitive");
+    if (auto mask = std::get_if<simfil::Bitmask>(&value)) {
+        if (mask->domain != domain)
+            throw std::invalid_argument("Cannot rebind a bitmask to a different domain");
+        return newBitmask(mask->bits, domain);
+    }
+    if (!domain.definition() || !domain.definition()->hasAffinity(Value{ScalarValueType(value)}.type))
+        throw std::invalid_argument("Qualified scalar requires a compatible domain");
+    auto imported = importSchema(domain);
+    if (!imported)
+        throw std::invalid_argument(imported.error().message);
+    auto raw = std::visit([&](auto const& scalar) -> ModelNode::Ptr {
+        using T = std::decay_t<decltype(scalar)>;
+        if constexpr (std::is_same_v<T, std::monostate>)
+            return resolve(ModelNodeAddress{Null, 1});
+        else if constexpr (std::is_same_v<T, bool>)
+            return newSmallValue(scalar);
+        else if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>)
+            return newValue(std::string_view(scalar));
+        else if constexpr (std::is_same_v<T, simfil::Bitmask>)
+            return newBitmask(scalar.bits, scalar.domain);
+        else
+            return newValue(scalar);
+    }, value);
+    auto index = impl_->columns_.qualifiedScalars_.size();
+    ModelNodeAddress::checkIndex(index);
+    impl_->columns_.qualifiedScalars_.emplace_back(raw->addr(), *imported);
+    return resolve(ModelNodeAddress{QualifiedScalar, index});
+}
+
 ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 {
+    requireMutable();
     if (value < 0 && value >= std::numeric_limits<int16_t>::min())
         return newSmallValue((int16_t)value);
     else if (value >= 0 && value <= std::numeric_limits<uint16_t>::max())
@@ -432,6 +684,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 
 ModelNode::Ptr ModelPool::newValue(double const& value)
 {
+    requireMutable();
     ModelNodeAddress::checkIndex(impl_->columns_.double_.size());
     impl_->columns_.double_.emplace_back(value);
     return ModelNode::Ptr::make(
@@ -441,6 +694,7 @@ ModelNode::Ptr ModelPool::newValue(double const& value)
 
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 {
+    requireMutable();
     ModelNodeAddress::checkIndex(impl_->columns_.strings_.size());
     check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1);
     impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.size());
@@ -456,6 +710,7 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 
 ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 {
+    requireMutable();
     ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size());
     check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1);
     impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.bytes.size());
@@ -470,6 +725,7 @@ ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 }
 
 ModelNode::Ptr ModelPool::newValue(StringId handle) {
+    requireMutable();
     return ModelNode::Ptr::make(
         shared_from_this(),
         ModelNodeAddress{PooledString, static_cast<uint32_t>(handle)});
@@ -499,6 +755,8 @@ std::shared_ptr<StringPool> ModelPool::strings() const
 
 auto ModelPool::setStrings(std::shared_ptr<StringPool> const& strings) -> tl::expected<void, Error>
 {
+    if (frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot rebind a frozen ModelPool dictionary"});
     if (!strings)
         return tl::unexpected<Error>(Error::RuntimeError, "Attempt to call ModelPool::setStrings(nullptr)!");
 
@@ -536,6 +794,11 @@ ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
     stats.arrayMemberBytes = impl_->columns_.arrayMemberArrays_.byte_size();
     stats.arraySchemaBytes = impl_->columns_.arraySchemas_.byte_size()
         + impl_->columns_.arraySingletonSchemas_.byte_size();
+    stats.qualifiedScalarBytes = impl_->columns_.qualifiedScalars_.byte_size();
+    stats.bitmaskBytes = impl_->columns_.bitmasks_.byte_size();
+    stats.schemaBindingBytes = impl_->importedSchemas_.byte_size();
+    for (auto const& identity : impl_->schemaIdentities_)
+        stats.schemaBindingBytes += identity.size();
     return stats;
 }
 
@@ -560,6 +823,15 @@ ModelPool::MemoryUsageStats ModelPool::memoryUsageStats() const
     stats.arraySchemas =
         impl_->columns_.arraySchemas_.memory_usage() +
         impl_->columns_.arraySingletonSchemas_.memory_usage();
+    stats.qualifiedScalars = impl_->columns_.qualifiedScalars_.memory_usage();
+    stats.bitmasks = impl_->columns_.bitmasks_.memory_usage();
+    stats.schemaBindings = impl_->importedSchemas_.memory_usage();
+    stats.schemaBindings.allocatedBytes += impl_->schemaBindings_.capacity() * sizeof(std::shared_ptr<const SchemaBinding>)
+        + impl_->schemaIdentities_.capacity() * sizeof(std::string);
+    for (auto const& identity : impl_->schemaIdentities_) {
+        stats.schemaBindings.logicalBytes += identity.size();
+        stats.schemaBindings.allocatedBytes += identity.capacity();
+    }
     return stats;
 }
 
@@ -587,6 +859,8 @@ SchemaId ModelPool::objectSchemaId(ArrayIndex members) const
 
 auto ModelPool::setObjectSchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
 {
+    if (frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot change a frozen object's schema"});
     if (!impl_->columns_.objectMemberArrays_.valid(members))
         return tl::unexpected<Error>(Error::RuntimeError, "Object schema index out of range.");
 
@@ -619,6 +893,8 @@ SchemaId ModelPool::arraySchemaId(ArrayIndex members) const
 
 auto ModelPool::setArraySchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
 {
+    if (frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot change a frozen array's schema"});
     if (!impl_->columns_.arrayMemberArrays_.valid(members))
         return tl::unexpected<Error>(Error::RuntimeError, "Array schema index out of range.");
 
@@ -657,17 +933,116 @@ tl::expected<void, Error> ModelPool::write(std::ostream& outputStream) {
 }
 
 tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, const size_t offset) {
+    if (frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot read into a frozen ModelPool"});
     if (offset > input.size()) {
         return tl::unexpected<Error>(Error::EncodeDecodeError, "Failed to read ModelPool: invalid input offset.");
     }
 
     using Adapter = bitsery::InputBufferAdapter<std::vector<uint8_t>>;
     bitsery::Deserializer<Adapter> s(Adapter(input.begin() + static_cast<std::ptrdiff_t>(offset), input.end()));
+    // Bitsery otherwise reports zero as an unbounded-end sentinel, not the buffer's physical size.
+    s.adapter().currentReadEndPos(input.size() - offset);
     impl_->readWrite(s);
     if (s.adapter().error() != bitsery::ReaderError::NoError) {
         return tl::unexpected<Error>(Error::EncodeDecodeError, fmt::format(
             "Failed to read ModelPool: Error {}",
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
+    }
+
+    // Hydrate all identities before making any schema-bearing value available to callers.
+    if ((impl_->directSchema_ && (impl_->schemaIdentities_.size() != 1 || !impl_->importedSchemas_.empty())) ||
+        impl_->importedSchemas_.size() > MaxSchemaId)
+        return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid model schema namespace"});
+    std::vector<std::shared_ptr<const SchemaBinding>> bindings;
+    for (auto const& identity : impl_->schemaIdentities_) {
+        auto binding = schemaBinding(identity);
+        if (identity.empty() || !binding)
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Missing or mismatched schema binding: " + identity});
+        if (std::ranges::any_of(bindings, [&](auto const& previous) { return previous->identity() == identity; }))
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Duplicate model schema identity"});
+        bindings.push_back(std::move(binding));
+    }
+    impl_->schemaBindings_ = std::move(bindings);
+    for (size_t i = 0; i < impl_->importedSchemas_.size(); ++i) {
+        auto domain = schemaReference(static_cast<SchemaId>(i + 1));
+        if (!domain.definition())
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid imported schema domain"});
+    }
+
+    auto validDomain = [&](SchemaId id, ValueType type) {
+        auto definition = schemaReference(id).definition();
+        return id == NoSchemaId || (definition && definition->hasAffinity(type));
+    };
+    if (!impl_->schemaBindings_.empty()) {
+        for (auto const* column : {&impl_->columns_.objectSchemas_, &impl_->columns_.objectSingletonSchemas_,
+                                  &impl_->columns_.arraySchemas_, &impl_->columns_.arraySingletonSchemas_})
+            for (size_t i = 0; i < column->size(); ++i)
+                if (!validDomain((*column)[i], column == &impl_->columns_.objectSchemas_ ||
+                    column == &impl_->columns_.objectSingletonSchemas_ ? ValueType::Object : ValueType::Array))
+                    return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid container schema domain"});
+    }
+    for (auto const* column : {&impl_->columns_.strings_, &impl_->columns_.byteArrays_})
+        for (size_t i = 0; i < column->size(); ++i) {
+            auto const& range = (*column)[i];
+            if (range.offset_ > impl_->columns_.stringData_.size() ||
+                range.length_ > impl_->columns_.stringData_.size() - range.offset_)
+                return tl::unexpected(Error{Error::EncodeDecodeError, "Scalar string/byte range exceeds model storage"});
+        }
+    for (size_t i = 0; i < impl_->columns_.qualifiedScalars_.size(); ++i) {
+        auto entry = impl_->columns_.qualifiedScalars_[i];
+        auto raw = entry.first();
+        auto type = ValueType::Undef;
+        bool inBounds = false;
+        // Reads also run inside derived pool constructors, before shared_from_this is available.
+        // Inspect primitive storage directly; resolving an owning node here would throw bad_weak_ptr.
+        switch (raw.column()) {
+        case UInt16:
+        case Int16:
+            type = ValueType::Int;
+            inBounds = raw.index() <= std::numeric_limits<uint16_t>::max();
+            break;
+        case Bool:
+            type = ValueType::Bool;
+            inBounds = raw.index() <= 1;
+            break;
+        case Int64:
+            type = ValueType::Int;
+            inBounds = raw.index() < impl_->columns_.i64_.size();
+            break;
+        case Double:
+            type = ValueType::Float;
+            inBounds = raw.index() < impl_->columns_.double_.size();
+            break;
+        case String:
+            type = ValueType::String;
+            inBounds = raw.index() < impl_->columns_.strings_.size();
+            break;
+        case PooledString:
+            type = ValueType::String;
+            // The separately transported dictionary need not have been restored yet.
+            inBounds = raw.index() <= std::numeric_limits<StringId>::max();
+            break;
+        case ByteArray:
+            type = ValueType::Bytes;
+            inBounds = raw.index() < impl_->columns_.byteArrays_.size();
+            break;
+        default:
+            break;
+        }
+        auto definition = schemaReference(entry.second()).definition();
+        if (!inBounds || !definition)
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid qualified scalar reference"});
+        if (!definition->hasAffinity(type))
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Qualified scalar has an incompatible domain"});
+    }
+    for (size_t i = 0; i < impl_->columns_.bitmasks_.size(); ++i) {
+        auto entry = impl_->columns_.bitmasks_[i];
+        auto definition = schemaReference(entry.second()).definition();
+        if (!definition || !definition->isBitmask() ||
+            definition->bitWidth() == 0 || definition->bitWidth() > 64 ||
+            (definition->bitWidth() < 64 && (entry.first() >> definition->bitWidth()) != 0))
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid bitmask domain or width"});
     }
 
     return {};

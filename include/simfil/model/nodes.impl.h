@@ -76,6 +76,7 @@ template <class ModelType, class ModelNodeType>
 BaseArray<ModelType, ModelNodeType>&
 BaseArray<ModelType, ModelNodeType>::appendInternal(ModelNode::Ptr const& value)
 {
+    model().requireMutable();
     storage_->push_back(members_, value->addr());
     return *this;
 }
@@ -183,6 +184,8 @@ tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error
     std::string_view const& name,
     ModelNode::Ptr const& value)
 {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     if (!fieldId)
         return tl::unexpected<Error>(std::move(fieldId.error()));
