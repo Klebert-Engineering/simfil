@@ -625,11 +625,13 @@ auto ModelPool::newBitmask(std::uint64_t bits, SchemaReference const& domain) ->
         throw std::invalid_argument("Bitmask requires a compatible bound domain and width");
     if (definition->bitWidth() < 64 && (bits >> definition->bitWidth()) != 0)
         throw std::invalid_argument("Bitmask exceeds its declared encoding width");
+    auto index = impl_->columns_.bitmasks_.size();
+    // These typed factories are input boundaries, unlike the trusted primitive builders.
+    if (!ModelNodeAddress::checkIndex(index))
+        throw std::length_error("Bitmask column exceeds its 24-bit index representation");
     auto imported = importSchema(domain);
     if (!imported)
         throw std::invalid_argument(imported.error().message);
-    auto index = impl_->columns_.bitmasks_.size();
-    ModelNodeAddress::checkIndex(index);
     impl_->columns_.bitmasks_.emplace_back(bits, *imported);
     return resolve(ModelNodeAddress{Bitmask, index});
 }
@@ -644,27 +646,33 @@ auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaReference const& 
             throw std::invalid_argument("Cannot rebind a bitmask to a different domain");
         return newBitmask(mask->bits, domain);
     }
-    if (!domain.definition() || !domain.definition()->hasAffinity(Value{ScalarValueType(value)}.type))
+    auto type = std::visit([](auto const& scalar) {
+        return ValueType4CType<std::decay_t<decltype(scalar)>>::Type;
+    }, value);
+    if (!domain.definition() || !domain.definition()->hasAffinity(type))
         throw std::invalid_argument("Qualified scalar requires a compatible domain");
+    auto index = impl_->columns_.qualifiedScalars_.size();
+    if (!ModelNodeAddress::checkIndex(index))
+        throw std::length_error("Qualified scalar column exceeds its 24-bit index representation");
     auto imported = importSchema(domain);
     if (!imported)
         throw std::invalid_argument(imported.error().message);
-    auto raw = std::visit([&](auto const& scalar) -> ModelNode::Ptr {
+    auto raw = std::visit([&](auto const& scalar) -> tl::expected<ModelNode::Ptr, Error> {
         using T = std::decay_t<decltype(scalar)>;
         if constexpr (std::is_same_v<T, std::monostate>)
             return resolve(ModelNodeAddress{Null, 1});
         else if constexpr (std::is_same_v<T, bool>)
             return newSmallValue(scalar);
         else if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>)
-            return newValue(std::string_view(scalar));
+            return tryNewValue(std::string_view(scalar));
         else if constexpr (std::is_same_v<T, simfil::Bitmask>)
             return newBitmask(scalar.bits, scalar.domain);
         else
-            return newValue(scalar);
+            return tryNewValue(scalar);
     }, value);
-    auto index = impl_->columns_.qualifiedScalars_.size();
-    ModelNodeAddress::checkIndex(index);
-    impl_->columns_.qualifiedScalars_.emplace_back(raw->addr(), *imported);
+    if (!raw)
+        throw std::length_error(raw.error().message);
+    impl_->columns_.qualifiedScalars_.emplace_back((*raw)->addr(), *imported);
     return resolve(ModelNodeAddress{QualifiedScalar, index});
 }
 
@@ -675,7 +683,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
         return newSmallValue((int16_t)value);
     else if (value >= 0 && value <= std::numeric_limits<uint16_t>::max())
         return newSmallValue((uint16_t)value);
-    ModelNodeAddress::checkIndex(impl_->columns_.i64_.size());
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.i64_.size()));
     impl_->columns_.i64_.emplace_back(value);
     return ModelNode::Ptr::make(
         shared_from_this(),
@@ -685,7 +693,7 @@ ModelNode::Ptr ModelPool::newValue(int64_t const& value)
 ModelNode::Ptr ModelPool::newValue(double const& value)
 {
     requireMutable();
-    ModelNodeAddress::checkIndex(impl_->columns_.double_.size());
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.double_.size()));
     impl_->columns_.double_.emplace_back(value);
     return ModelNode::Ptr::make(
         shared_from_this(),
@@ -695,14 +703,17 @@ ModelNode::Ptr ModelPool::newValue(double const& value)
 ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 {
     requireMutable();
-    ModelNodeAddress::checkIndex(impl_->columns_.strings_.size());
-    check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1);
-    impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.size());
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.strings_.size()));
+    assert(check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1));
+    auto const offset = impl_->columns_.stringData_.size();
+    // Append preserves aliased input and geometric growth. Exact-size reserve
+    // here invalidates source views and causes repeated copying with libc++.
+    // Publish the range only after its bytes exist.
+    impl_->columns_.stringData_ += value;
     impl_->columns_.strings_.emplace_back(Impl::StringRange{
-        (uint32_t)impl_->columns_.stringData_.size(),
+        (uint32_t)offset,
         (uint32_t)value.size()
     });
-    impl_->columns_.stringData_ += value;
     return ModelNode::Ptr::make(
         shared_from_this(),
         ModelNodeAddress{String, (uint32_t)impl_->columns_.strings_.size()-1});
@@ -711,14 +722,14 @@ ModelNode::Ptr ModelPool::newValue(std::string_view const& value)
 ModelNode::Ptr ModelPool::newValue(simfil::ByteArray const& value)
 {
     requireMutable();
-    ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size());
-    check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1);
-    impl_->columns_.stringData_.reserve(impl_->columns_.stringData_.size() + value.bytes.size());
+    assert(ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size()));
+    assert(check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1));
+    auto const offset = impl_->columns_.stringData_.size();
+    impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
     impl_->columns_.byteArrays_.emplace_back(Impl::StringRange{
-        (uint32_t)impl_->columns_.stringData_.size(),
+        (uint32_t)offset,
         (uint32_t)value.bytes.size()
     });
-    impl_->columns_.stringData_.append(value.bytes.data(), value.bytes.size());
     return ModelNode::Ptr::make(
         shared_from_this(),
         ModelNodeAddress{ByteArray, (uint32_t)impl_->columns_.byteArrays_.size()-1});
@@ -729,6 +740,75 @@ ModelNode::Ptr ModelPool::newValue(StringId handle) {
     return ModelNode::Ptr::make(
         shared_from_this(),
         ModelNodeAddress{PooledString, static_cast<uint32_t>(handle)});
+}
+
+auto ModelPool::tryNewObject(size_t initialFieldCapacity, bool fixedSize)
+    -> tl::expected<model_ptr<Object>, Error>
+{
+    if (frozen())
+        return tl::unexpected<Error>(Error::RuntimeError, "Cannot mutate a frozen ModelPool");
+    if (!objectMemberStorage().check_capacity(initialFieldCapacity, fixedSize))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Object capacity exceeds model storage representation");
+    return newObject(initialFieldCapacity, fixedSize);
+}
+
+auto ModelPool::tryNewArray(size_t initialFieldCapacity, bool fixedSize)
+    -> tl::expected<model_ptr<Array>, Error>
+{
+    if (frozen())
+        return tl::unexpected<Error>(Error::RuntimeError, "Cannot mutate a frozen ModelPool");
+    if (!arrayMemberStorage().check_capacity(initialFieldCapacity, fixedSize))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Array capacity exceeds model storage representation");
+    return newArray(initialFieldCapacity, fixedSize);
+}
+
+auto ModelPool::tryNewValue(int64_t const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (frozen())
+        return tl::unexpected<Error>(Error::RuntimeError, "Cannot mutate a frozen ModelPool");
+    bool const inlineValue = value >= std::numeric_limits<int16_t>::min() &&
+        value <= std::numeric_limits<uint16_t>::max();
+    if (!inlineValue && !ModelNodeAddress::checkIndex(impl_->columns_.i64_.size()))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Integer column exceeds its 24-bit index representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(double const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (frozen())
+        return tl::unexpected<Error>(Error::RuntimeError, "Cannot mutate a frozen ModelPool");
+    if (!ModelNodeAddress::checkIndex(impl_->columns_.double_.size()))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Double column exceeds its 24-bit index representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(std::string_view const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (frozen())
+        return tl::unexpected<Error>(Error::RuntimeError, "Cannot mutate a frozen ModelPool");
+    if (!ModelNodeAddress::checkIndex(impl_->columns_.strings_.size()) ||
+        !check_model_column_growth(impl_->columns_.stringData_.size(), value.size(), 1))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "String value exceeds model storage representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(simfil::ByteArray const& value) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (frozen())
+        return tl::unexpected<Error>(Error::RuntimeError, "Cannot mutate a frozen ModelPool");
+    if (!ModelNodeAddress::checkIndex(impl_->columns_.byteArrays_.size()) ||
+        !check_model_column_growth(impl_->columns_.stringData_.size(), value.bytes.size(), 1))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "Byte array exceeds model storage representation");
+    return newValue(value);
+}
+
+auto ModelPool::tryNewValue(StringId handle) -> tl::expected<ModelNode::Ptr, Error>
+{
+    if (frozen())
+        return tl::unexpected<Error>(Error::RuntimeError, "Cannot mutate a frozen ModelPool");
+    if (!ModelNodeAddress::checkIndex(handle))
+        return tl::unexpected<Error>(Error::IndexOutOfRange, "String ID exceeds its 24-bit index representation");
+    return newValue(handle);
 }
 
 // Core ADL resolve hooks for base Object/Array nodes.

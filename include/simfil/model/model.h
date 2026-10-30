@@ -283,9 +283,9 @@ public:
     ModelNode::Ptr newValue(simfil::ByteArray const& value);
     ModelNode::Ptr newValue(StringId handle);
 
-    /** Persist one scalar's existing domain without qualifying ordinary parent-described leaves. */
+    /** Persist an existing scalar domain; validate storage bounds and throw on invalid input. */
     auto newQualifiedValue(ScalarValueType value, SchemaReference const& domain) -> ModelNode::Ptr;
-    /** Persist full-width bits and their intrinsic domain; no string rendering is stored. */
+    /** Persist full-width bits and their intrinsic domain; reject invalid width, binding or storage size. */
     auto newBitmask(std::uint64_t bits, SchemaReference const& domain) -> ModelNode::Ptr;
     /** Bind a single graph directly, preserving its numeric ids; incompatible rebinding is rejected. */
     void setSchemaBinding(std::shared_ptr<const SchemaBinding> binding);
@@ -301,6 +301,17 @@ public:
     auto schemaReference(ModelNode const& node) const -> SchemaReference override;
     /** Import an exact domain into this pool's common binding namespace, retaining its graph once. */
     auto importSchema(SchemaReference const& domain) -> tl::expected<SchemaId, Error>;
+
+    /** Checked creation for untrusted inputs; size errors and frozen pools return errors without mutation. */
+    [[nodiscard]] auto tryNewObject(size_t initialFieldCapacity = 2, bool fixedSize = false)
+        -> tl::expected<model_ptr<Object>, Error>;
+    [[nodiscard]] auto tryNewArray(size_t initialFieldCapacity = 2, bool fixedSize = false)
+        -> tl::expected<model_ptr<Array>, Error>;
+    [[nodiscard]] auto tryNewValue(int64_t const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(double const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(std::string_view const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(simfil::ByteArray const& value) -> tl::expected<ModelNode::Ptr, Error>;
+    [[nodiscard]] auto tryNewValue(StringId handle) -> tl::expected<ModelNode::Ptr, Error>;
 
     /** Bounds native subtree materialization independently of evaluator work limits. */
     struct CopyOptions {

@@ -40,7 +40,10 @@ public:
             return failure("Result sequence copy budget exceeded");
         ++nodes_;
         // The exact count is known: singleton slots use compact arena storage.
-        auto result = target_.newArray(std::max(size_t{1}, values.size()), true);
+        auto created = target_.tryNewArray(std::max(size_t{1}, values.size()), true);
+        if (!created)
+            return tl::unexpected(created.error());
+        auto result = *created;
         for (auto const& value : values) {
             tl::expected<ModelNode::Ptr, Error> copied;
             if (auto node = value.node()) {
@@ -88,11 +91,11 @@ private:
         case ValueType::Int:
             if (!charge(sizeof(int64_t)))
                 return failure("Node copy byte budget exceeded");
-            return target_.newValue(std::get<int64_t>(source.value()));
+            return target_.tryNewValue(std::get<int64_t>(source.value()));
         case ValueType::Float:
             if (!charge(sizeof(double)))
                 return failure("Node copy byte budget exceeded");
-            return target_.newValue(std::get<double>(source.value()));
+            return target_.tryNewValue(std::get<double>(source.value()));
         case ValueType::String: {
             auto value = source.value();
             auto view = std::holds_alternative<std::string>(value)
@@ -100,13 +103,13 @@ private:
             if (!charge(view.size()) || !charge(2 * sizeof(uint32_t)))
                 return failure("Node copy byte budget exceeded");
             // newValue owns bytes, even when the source uses a pooled or borrowed string.
-            return target_.newValue(view);
+            return target_.tryNewValue(view);
         }
         case ValueType::Bytes: {
             auto value = std::get<simfil::ByteArray>(source.value());
             if (!charge(value.bytes.size()) || !charge(2 * sizeof(uint32_t)))
                 return failure("Node copy byte budget exceeded");
-            return target_.newValue(value);
+            return target_.tryNewValue(value);
         }
         case ValueType::Bitmask:
             return failure("Bitmask has no resolved schema binding");
@@ -160,8 +163,19 @@ private:
 
         active_.push_back(identity);
         auto capacity = std::max(uint32_t{1}, count);
-        auto array = source.type() == ValueType::Array ? target_.newArray(capacity, true) : model_ptr<Array>{};
-        auto object = source.type() == ValueType::Object ? target_.newObject(capacity, true) : model_ptr<Object>{};
+        model_ptr<Array> array;
+        model_ptr<Object> object;
+        if (source.type() == ValueType::Array) {
+            auto created = target_.tryNewArray(capacity, true);
+            if (!created)
+                return tl::unexpected(created.error());
+            array = *created;
+        } else {
+            auto created = target_.tryNewObject(capacity, true);
+            if (!created)
+                return tl::unexpected(created.error());
+            object = *created;
+        }
         if (auto domain = source.schemaReference()) {
             if (!charge(domain.binding->identity().size() + sizeof(SchemaId)))
                 return failure("Node copy byte budget exceeded");

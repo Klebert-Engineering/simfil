@@ -296,6 +296,18 @@ TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", 
     REQUIRE_THROWS(f.model->newValue(std::string_view("new-string")));
     REQUIRE_THROWS(f.model->newValue(int64_t{3}));
     REQUIRE_THROWS(f.model->newObject());
+    REQUIRE_FALSE(f.model->tryNewObject());
+    REQUIRE_FALSE(f.model->tryNewArray());
+    REQUIRE_FALSE(f.model->tryNewValue(int64_t{3}));
+    REQUIRE_FALSE(f.model->tryNewValue(2.5));
+    REQUIRE_FALSE(f.model->tryNewValue(std::string_view("new-string")));
+    REQUIRE_FALSE(f.model->tryNewValue(ByteArray{"new-bytes"}));
+    REQUIRE_FALSE(f.model->tryNewValue(f.model->strings()->get("speed")));
+    REQUIRE_THROWS(f.model->newQualifiedValue(int64_t{3}, {f.binding, 2}));
+    REQUIRE_THROWS(f.model->newBitmask(3, {f.binding, 4}));
+    REQUIRE_FALSE(f.model->copyNode(*f.root));
+    REQUIRE_FALSE(json::buildModelNode(nlohmann::json(2.5), *f.model));
+    REQUIRE_FALSE(json::buildModelNode(f.root->at(2)->toJson(), *f.model));
     REQUIRE_THROWS(f.model->addRoot(f.root));
     REQUIRE_THROWS(f.model->clear());
     REQUIRE_THROWS(f.model->setSchemaBinding(f.binding));
@@ -315,6 +327,42 @@ TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", 
     auto completionStrings = std::make_shared<StringPool>(*f.model->strings());
     REQUIRE_FALSE(completionStrings->frozen());
     REQUIRE(completionStrings->emplace("completion-only"));
+}
+
+TEST_CASE("Qualified string copying preserves aliased storage and exact domains", "[model.schema-value][model.growth]")
+{
+    TypedFixture f;
+    (*f.graph)[6] = std::make_unique<ValueSchema>(Schema::Kind::String);
+    std::string text(65536, 'x');
+    text.front() = 'a';
+    text.back() = 'z';
+    auto original = f.model->tryNewValue(std::string_view(text));
+    REQUIRE(original);
+    // Qualification appends into the same byte buffer that owns this borrowed view.
+    auto qualified = f.model->newQualifiedValue(std::get<std::string_view>((*original)->value()), {f.binding, 6});
+    auto copied = f.model->copyNode(*qualified);
+    REQUIRE(copied);
+    REQUIRE((*copied)->schemaReference() == SchemaReference{f.binding, 6});
+    REQUIRE(std::get<std::string_view>((*original)->value()) == text);
+    REQUIRE(std::get<std::string_view>(qualified->value()) == text);
+    REQUIRE(std::get<std::string_view>((*copied)->value()) == text);
+
+    auto target = std::make_shared<ModelPool>();
+    auto detached = target->copyNode(**copied);
+    REQUIRE(detached);
+    target->addRoot(*detached);
+    auto restored = std::make_shared<ConstructorReadPool>(TypedFixture::bytes(*target), f.binding, target->strings());
+    REQUIRE(restored->loaded);
+    auto node = restored->root(0).value();
+    REQUIRE(node->schemaReference() == SchemaReference{f.binding, 6});
+    REQUIRE(std::get<std::string_view>(node->value()) == text);
+    REQUIRE(restored->validate());
+
+    auto before = TypedFixture::bytes(*target);
+    REQUIRE_THROWS_AS(target->newQualifiedValue(std::string_view(text), {f.binding, 2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(target->newQualifiedValue(ScalarValueType{}, {f.binding, 6}), std::invalid_argument);
+    REQUIRE_THROWS_AS(target->newBitmask(1, {f.binding, 6}), std::invalid_argument);
+    REQUIRE(TypedFixture::bytes(*target) == before);
 }
 
 TEST_CASE("Unbound copied schemas and overflowing integer literals fail explicitly", "[model.schema-value]")

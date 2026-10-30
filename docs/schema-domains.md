@@ -417,7 +417,10 @@ about 50 us on this machine.
 
 On 2026-10-30, a quiet Release run (GCC 13, 40 samples, 2000 resamples)
 measured the owning-binding/scalar-provenance implementation on the same
-sparse-wide fixture. The earlier same-day `e324358` baseline used 20 samples
+sparse-wide fixture, before merging the subsequent `size-checks` optimizations
+through `77fe792`. In particular, that merge makes diagnostics collection
+optional on the evaluation hot path; the following numbers do not measure the
+merged implementation. The earlier same-day `e324358` baseline used 20 samples
 and 1000 resamples, with appreciable noise in its field-plan result. These are
 not freshly interleaved before/after runs or a statistical regression threshold.
 
