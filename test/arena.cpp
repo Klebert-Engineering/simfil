@@ -6,8 +6,91 @@
 
 #include "simfil/model/arena.h"
 #include "simfil/model/bitsery-traits.h"
+#include "simfil/model/nodes.h"
 
 using namespace simfil;
+
+TEST_CASE("Model size checks are non-throwing predicates", "[ModelColumn][limits]")
+{
+    STATIC_REQUIRE(noexcept(ModelNodeAddress::checkIndex(0)));
+    STATIC_REQUIRE(noexcept(ModelColumn<uint64_t>::check_size(0)));
+    REQUIRE(ModelNodeAddress::checkIndex(0xffffff));
+    REQUIRE_FALSE(ModelNodeAddress::checkIndex(0x1000000));
+    REQUIRE_FALSE(ModelNodeAddress::checkIndex(std::numeric_limits<size_t>::max()));
+    REQUIRE(ModelNodeAddress(1, 0xffffff).index() == 0xffffff);
+
+    auto const maximum = bitsery_max_column_payload_bytes / sizeof(uint64_t);
+    REQUIRE(ModelColumn<uint64_t>::check_size(maximum));
+    REQUIRE_FALSE(ModelColumn<uint64_t>::check_size(maximum + 1));
+    REQUIRE(check_model_column_growth(maximum - 1, 1, sizeof(uint64_t)));
+    REQUIRE_FALSE(check_model_column_growth(maximum, 1, sizeof(uint64_t)));
+    REQUIRE_FALSE(check_model_column_growth(1, std::numeric_limits<size_t>::max(), 8));
+    REQUIRE_FALSE(check_model_column_growth(std::numeric_limits<size_t>::max(), 1, 8));
+    REQUIRE_FALSE(check_model_column_growth(0, 1, 0));
+    using Split = ModelColumn<TwoPart<uint32_t, uint64_t>>;
+    REQUIRE(Split::check_size(bitsery_max_column_payload_bytes / 12));
+    REQUIRE_FALSE(Split::check_size(bitsery_max_column_payload_bytes / 12 + 1));
+}
+
+TEST_CASE("Column readers reject invalid payloads before allocation", "[ModelColumn][limits]")
+{
+    auto checkReader = []<typename Column>() {
+        std::vector<uint8_t> input(Column::record_size, 0);
+        for (auto const declaredSize : {size_t{100000008}, size_t{1},
+                 bitsery_max_column_payload_bytes + size_t{1}, std::numeric_limits<size_t>::max()}) {
+            Column column;
+            column.resize(1);
+            auto const allocatedBefore = column.memory_usage().allocatedBytes;
+            bitsery::InputBufferAdapter<std::vector<uint8_t>> adapter(input.begin(), input.size());
+            REQUIRE_FALSE(column.read_payload_from_bitsery(adapter, declaredSize));
+            REQUIRE(adapter.error() != bitsery::ReaderError::NoError);
+            REQUIRE(column.empty());
+            REQUIRE(column.memory_usage().allocatedBytes <= allocatedBefore);
+
+            // A rejected read does not poison the column for the next input.
+            bitsery::InputBufferAdapter<std::vector<uint8_t>> valid(input.begin(), input.size());
+            REQUIRE(column.read_payload_from_bitsery(valid, input.size()));
+            REQUIRE(column.size() == 1);
+            REQUIRE(valid.error() == bitsery::ReaderError::NoError);
+        }
+        Column column;
+        column.resize(1);
+        auto const invalid = column.assign_bytes(std::span<const uint8_t>(input).first(1));
+        REQUIRE_FALSE(invalid);
+        REQUIRE(invalid.error() == model_column_io_error::payload_size_mismatch);
+        REQUIRE(column.size() == 1);
+    };
+    checkReader.template operator()<ModelColumn<uint64_t>>();
+    checkReader.template operator()<ModelColumn<uint64_t, 256, vector_column_storage>>();
+    checkReader.template operator()<ModelColumn<TwoPart<uint32_t, uint64_t>>>();
+}
+
+TEST_CASE("Array arena capacity preflight does not allocate or mutate storage", "[ArrayArena][limits]")
+{
+    ArrayArena<uint32_t, 8, 8> arena;
+    auto first = arena.new_array(200);
+    arena.emplace_back(first, 7);
+    auto const heads = arena.size();
+    auto const allocatedBefore = arena.memory_usage().allocatedBytes;
+    REQUIRE_FALSE(arena.check_capacity(size_t{0xffffffffU}));
+    REQUIRE_FALSE(arena.check_capacity(std::numeric_limits<size_t>::max()));
+    REQUIRE(arena.size() == heads);
+    REQUIRE(arena.memory_usage().allocatedBytes == allocatedBefore);
+    REQUIRE(arena.size(first) == 1);
+    REQUIRE(arena.at(first, 0).value() == 7);
+    REQUIRE(arena.check_capacity(55));
+    auto second = arena.new_array(55);
+    arena.emplace_back(second, 9);
+    REQUIRE(arena.at(second, 0).value() == 9);
+
+    using Arena = ArrayArena<uint32_t, 8, 8>;
+    STATIC_REQUIRE(noexcept(Arena::check_data_growth(0, 0)));
+    auto const maximum = bitsery_max_column_payload_bytes / sizeof(uint32_t);
+    REQUIRE(Arena::check_data_growth(maximum - 55, 55));
+    REQUIRE_FALSE(Arena::check_data_growth(maximum - 55, 56));
+    REQUIRE_FALSE(Arena::check_data_growth(std::numeric_limits<uint32_t>::max(), 1));
+    REQUIRE_FALSE(Arena::check_data_growth(std::numeric_limits<size_t>::max(), 1));
+}
 
 TEST_CASE("ArrayArena basic functionality", "[ArrayArena]") {
     ArrayArena<int> arena;

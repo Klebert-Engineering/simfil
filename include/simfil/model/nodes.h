@@ -148,7 +148,7 @@ private:
 /**
  * Unique address of a ModelNode within a Pool.
  * Consists of an 8b column id and 24b index within a column.
- * No column may grow beyond 2^25-1 (33.5M) entries.
+ * An addressed column supports at most 2^24 (16.8M) entries.
  *
  * Some special cases apply for small scalar types:
  * - String: The index is interpreted directly as a string ID.
@@ -163,8 +163,15 @@ struct ModelNodeAddress
 
     uint32_t value_ = 0;
 
-    ModelNodeAddress(uint8_t const& col, uint32_t const& idx = 0) {  // NOLINT
-        value_ = (idx << 8) | col;
+    /** Validate once at the owning column's allocation boundary. */
+    [[nodiscard]] static constexpr bool checkIndex(size_t idx) noexcept {
+        return idx <= 0xffffffU;
+    }
+
+    /** Pack an already validated index; the precondition is asserted in debug builds. */
+    ModelNodeAddress(uint8_t const& col, size_t idx = 0) {  // NOLINT
+        assert(checkIndex(idx));
+        value_ = (static_cast<uint32_t>(idx) << 8) | col;
     }
 
     [[nodiscard]] uint8_t column() const {

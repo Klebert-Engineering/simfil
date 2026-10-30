@@ -113,12 +113,37 @@ public:
         return handle & SingletonArrayHandlePayloadMask;
     }
 
+    /** Validate a bulk allocation before calling new_array; no storage is changed. */
+    [[nodiscard]] bool check_capacity(size_t added, bool fixedSize = false) const
+    {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
+        std::shared_lock guard(lock_);
+        #endif
+        if (added == 1 && fixedSize) {
+            return singletonValues_.size() < SingletonArrayHandlePayloadMask &&
+                check_model_column_growth(singletonValues_.size(), 1, DataStorage::record_size) &&
+                check_model_column_growth(singletonOccupied_.size(), 1, sizeof(uint8_t));
+        }
+        auto const headCount = heads_.empty() && compactHeads_ ? compactHeads_->size() : heads_.size();
+        return headCount < SingletonArrayHandleMask && check_data_growth(data_.size(), added);
+    }
+
+    /** Validate narrow offsets and the serialized payload size without overflowing. */
+    [[nodiscard]] static constexpr bool check_data_growth(size_t current, size_t added) noexcept
+    {
+        auto const maximum = static_cast<size_t>(std::numeric_limits<SizeType_>::max());
+        return current <= maximum && added <= maximum - current &&
+            check_model_column_growth(current, added, DataStorage::record_size);
+    }
+
     /**
      * Creates a new array with the specified initial capacity.
      *
      * @param initialCapacity The initial capacity of the new array.
      * @param fixedSize If true, `initialCapacity == 1` creates a singleton handle
      *                  instead of a growable chunk-backed array.
+     * @pre The payload fits its wire and offset representations. Use check_capacity
+     *      to validate an untrusted initial capacity before calling this builder.
      * @return The index of the new array.
      */
     ArrayIndex new_array(size_t initialCapacity, bool fixedSize = false)
@@ -130,25 +155,38 @@ public:
 
         if (initialCapacity == 1U && fixedSize) {
             auto singletonIndex = to_array_index(singletonValues_.size());
-            if (singletonIndex > SingletonArrayHandlePayloadMask) {
+            if (singletonIndex >= SingletonArrayHandlePayloadMask) {
                 raise<std::out_of_range>("ArrayArena singleton pool exhausted.");
             }
+            assert(DataStorage::check_size(singletonValues_.size() + 1));
+            assert(singletonOccupied_.check_size(singletonOccupied_.size() + 1));
             singletonValues_.emplace_back(ElementType_{});
-            singletonOccupied_.emplace_back(static_cast<uint8_t>(0));
+            try {
+                singletonOccupied_.emplace_back(static_cast<uint8_t>(0));
+            } catch (...) {
+                singletonValues_.resize(singletonIndex);
+                throw;
+            }
             compactHeads_.reset();
             return SingletonArrayHandleMask | singletonIndex;
         }
 
         ensure_regular_head_pool();
         size_t offset = data_.size();
-        data_.resize(offset + initialCapacity);
+        assert(check_data_growth(offset, initialCapacity));
         auto index = to_array_index(heads_.size());
         if ((index & SingletonArrayHandleMask) != 0) {
             raise<std::out_of_range>("ArrayArena regular head index exceeded handle bit range.");
         }
-        heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0,
-             InvalidArrayIndex,
-             InvalidArrayIndex});
+        assert(heads_.check_size(heads_.size() + 1));
+        data_.resize(offset + initialCapacity);
+        try {
+            heads_.push_back({(SizeType_)offset, (SizeType_)initialCapacity, 0,
+                 InvalidArrayIndex, InvalidArrayIndex});
+        } catch (...) {
+            data_.resize(offset);
+            throw;
+        }
         compactHeads_.reset();
         return index;
     }
@@ -827,16 +865,26 @@ private:
         if (last.size < last.capacity)
             return last;
         size_t offset = data_.size();
-        size_t newCapacity = std::max((SizeType_)2, (SizeType_)last.capacity * 2);
+        assert(static_cast<size_t>(last.capacity) <= std::numeric_limits<SizeType_>::max() / 2);
+        size_t newCapacity = std::max<size_t>(2, static_cast<size_t>(last.capacity) * 2);
+        assert(check_data_growth(offset, newCapacity));
+        auto const newIndex = to_array_index(continuations_.size());
+        if (head.capacity != 0)
+            assert(continuations_.check_size(continuations_.size() + 1));
         data_.resize(offset + newCapacity);
         if (head.capacity == 0) {
             head.offset = (SizeType_)offset;
             head.capacity = static_cast<SizeType_>(newCapacity);
             return head;
         }
-        auto newIndex = to_array_index(continuations_.size());
-        continuations_.push_back({(SizeType_)offset, (SizeType_)newCapacity, 0, InvalidArrayIndex, InvalidArrayIndex});
-        last.next = newIndex;
+        try {
+            continuations_.push_back({(SizeType_)offset, (SizeType_)newCapacity, 0, InvalidArrayIndex, InvalidArrayIndex});
+        } catch (...) {
+            data_.resize(offset);
+            throw;
+        }
+        // Appending a continuation can invalidate vector-backed references.
+        (head.last == InvalidArrayIndex ? head : continuations_[head.last]).next = newIndex;
         head.last = newIndex;
         return continuations_[newIndex];
     }
