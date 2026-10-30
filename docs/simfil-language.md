@@ -219,7 +219,7 @@ keywords: ["null", "missing value", "undefined", "boolean", "integer", "string"]
 -->
 ## Types
 
-Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes` and `re`.
+Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes`, `bitmask` and `re`.
 Additionally, the `model` type represents compound object/array container nodes.
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
@@ -231,6 +231,26 @@ also matches an explicit `false` flag. Use an explicit `null` comparison when `f
 count as present data. Direct missing-field access returns `null`.
 
 Functions can return values of types other than the ones mentioned. See [Functions](#Functions) for details.
+
+### Named Values And Bitmasks
+
+With schema mode enabled, `speed = SPEED_UNLIMITED` compares against the named
+value in that particular speed domain. The same name may mean different raw
+numbers in different domains. Quoted `'SPEED_UNLIMITED'` stays a string, and an
+unknown numeric code stays numeric. Standalone numeric symbols search declared
+positions; standalone flag symbols search for membership, not exact equality.
+
+`hasFlag(flags, 'TRUCK')` checks all bits of the declared flag. Composite flags,
+overlaps, aliases and unknown active bits are supported. A named zero flag matches
+exactly zero; an unknown flag name is an error. `flags = 3` tests exact bits,
+whereas `flags & 3` returns another bitmask. Zero masks, like integer zero, are
+truthy: do not use bitwise-result truthiness as a membership test.
+
+Use `bitmask(flags, '0x8000000000000000')` to construct full-width bits in an
+existing mask's domain. Decimal strings also work. Bitwise `&`, `|`, `^`, `~`,
+`<<`, and `>>` preserve the mask domain; complement and shifts honor its declared
+width. Mixing incompatible domains, negative integers or floats is rejected.
+Arithmetic and numeric casts are not implicit mask conversions.
 
 <!-- mcp:
 title: "Simfil type conversion"
