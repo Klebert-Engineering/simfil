@@ -313,6 +313,24 @@ static auto rewriteStandaloneNameBySchema(
     if (!fieldPaths.empty() || knownField)
         return std::make_unique<WildcardFieldExpr>(true, std::move(*name), expr->sourceLocation());
 
+    bool namedComplete = true;
+    auto namedPaths = Schema::namedValuePaths(rootSchema, querySchema, *name, &namedComplete);
+    if (!namedPaths.empty()) {
+        if (!namedComplete)
+            return std::make_unique<SchemaEnumExpr>(rootSchema, std::move(*name), expr->sourceLocation(), true);
+        ExprPtr result;
+        for (auto const& path : namedPaths) {
+            auto selected = pathExpressionFromSchemaPath(env, path, expr->sourceLocation());
+            TRY_EXPECTED(selected);
+            ExprPtr predicate = std::make_unique<SchemaSymbolExpr>(std::move(*selected), *name, "member", false, expr->sourceLocation());
+            if (result)
+                result = std::make_unique<OrExpr>(std::move(result), std::move(predicate));
+            else
+                result = std::move(predicate);
+        }
+        return result;
+    }
+
     bool complete = true;
     auto enumPaths = Schema::enumSymbolPaths(rootSchema, querySchema, *stringId, &complete);
     const bool knownEnum = root && std::ranges::find(root->nestedEnumSymbols(), *stringId) != root->nestedEnumSymbols().end();
@@ -337,6 +355,36 @@ static auto rewriteOperandShorthandBySchema(
     }
 
     auto const entersPath = insidePath || dynamic_cast<const PathExpr*>(expr.get()) != nullptr;
+    if (auto comparison = dynamic_cast<ComparisonExprBase*>(expr.get())) {
+        auto lookup = schemaQuery(env);
+        for (auto side : {1u, 0u}) {
+            auto name = schemaOperandShorthandName(env, *comparison->childAt(side), query);
+            if (!name)
+                continue;
+            auto field = stringIdForSchemaLookup(env, *name);
+            auto root = lookup(rootSchema);
+            // Real fields and model-specific scalar aliases retain their existing precedence.
+            if (!field || !root || !Schema::fieldPaths(rootSchema, lookup, *field).empty() ||
+                !root->scalarFieldPathsForSymbol(*field, lookup).empty() ||
+                std::ranges::find(root->nestedFields(), *field) != root->nestedFields().end())
+                continue;
+            if (Schema::namedValuePaths(rootSchema, lookup, *name).empty())
+                continue;
+            std::string operation;
+            if (dynamic_cast<BinaryExpr<OperatorEq>*>(comparison)) operation = "==";
+            else if (dynamic_cast<BinaryExpr<OperatorNeq>*>(comparison)) operation = "!=";
+            else if (dynamic_cast<BinaryExpr<OperatorLt>*>(comparison)) operation = "<";
+            else if (dynamic_cast<BinaryExpr<OperatorLtEq>*>(comparison)) operation = "<=";
+            else if (dynamic_cast<BinaryExpr<OperatorGt>*>(comparison)) operation = ">";
+            else if (dynamic_cast<BinaryExpr<OperatorGtEq>*>(comparison)) operation = ">=";
+            else continue;
+            auto input = rewriteOperandShorthandBySchema(env, query, std::move(comparison->childAt(1u - side)),
+                rootSchema, false, insidePath);
+            TRY_EXPECTED(input);
+            return std::make_unique<SchemaSymbolExpr>(std::move(*input), std::move(*name), std::move(operation),
+                side == 0, expr->sourceLocation());
+        }
+    }
     if (!isRoot && !insidePath) {
         if (auto name = schemaOperandShorthandName(env, *expr, query)) {
             if (auto stringId = stringIdForSchemaLookup(env, *name)) {

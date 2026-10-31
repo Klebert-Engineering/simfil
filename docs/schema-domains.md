@@ -14,7 +14,7 @@ Use `Schema::makeKind`, `kindNameId`, `affinities`, `hasAffinity`, and
 `ValueType` itself remains an ordinary enum.
 
 Core kinds include unknown, any, never, untyped scalar (`Value`), null, boolean,
-integer, float, string, bytes, object, array, union, exclusive union, and
+integer, float, string, bytes, bitmask, object, array, union, exclusive union, and
 intersection. An external kind such as `Feature` can have object affinity and
 provide fields through the same typed interface. Generic consumers do not
 require inheritance from `ObjectSchema` or knowledge of that name.
@@ -32,7 +32,9 @@ The distinctions are intentional:
   Neither proves a descendant field absent. `Never` means no possible value.
 - An empty `ObjectSchema` is a known closed object. Use `setOpen(true)` for
   undeclared members. A field with no child schema, `NoSchemaId`, or an unresolved
-  schema reference is unknown, **not** an implicitly scalar leaf.
+  schema reference is unknown, **not** an implicitly scalar leaf. Openness does
+  not weaken explicitly declared fields; an undeclared open alternative still
+  prevents guessing one exact domain for an ambiguous union.
 - An array's element alternatives describe possible types, not length or tuple
   positions. An unspecified element domain is unknown.
 - `CombinedSchema` retains `AnyOf`, `OneOf`, or `AllOf` at the same value position.
@@ -44,7 +46,8 @@ The distinctions are intentional:
   binding's pool. `enumValues` / `addEnumValue` are for non-string scalar literals;
   the concrete builder rejects both string and string_view values there. This
   keeps descriptor output, completion, and symbol rewrites on one string index.
-  Numeric bitmask semantics are not implemented by these APIs.
+  Named numeric constants and flags use the separate metadata interface below;
+  a few named sentinels do not make a numeric range an exhaustive enum.
 
 This is not a JSON Schema validator. In particular, following an intersection's
 fields returns a conservative set of candidate domains, not the complete logical
@@ -68,6 +71,64 @@ Sparse wildcard plans use this generic interface, not concrete builder RTTI.
 Treat a published graph as immutable. Mutations update a concrete schema's local
 revision, but cannot automatically invalidate caches on all referring schemas.
 Owners must rebuild/invalidate dependent bindings and indexes after graph edits.
+
+`SchemaBinding` retains the immutable graph owner, exact content identity, lookup
+and schema dictionary. `SchemaReference` combines that binding with a local
+16-bit `SchemaId`. Different graphs may reuse the same local IDs. Runtime field
+dictionaries may differ from the schema dictionary: scalar extraction and bound
+wildcard plans translate names rather than interpreting foreign IDs as local ones.
+Wildcard plan caches retain each graph independently.
+
+`ModelPool::freeze()` seals the pool and its shared `StringPool`. Factories,
+binary reads, rebinding and mutations through retained Object/Array nodes then
+fail. Derived schema owners must also guard their own columns. Freeze before
+publication, without concurrent writes or outstanding low-level mutable storage
+borrows; it does not revoke arbitrary C++ references. Copying a frozen StringPool
+creates a mutable private dictionary suitable for compilation/completion.
+
+## Named Scalar Metadata
+
+Adapters implement `forEachNamedValue`, `numericDomain`, and `bitWidth` directly
+over their owning graph. Views borrow storage from that graph; they must not
+reference callback-local strings or ranges. Names have exact spelling and may
+have aliases. A named value includes its raw boolean/integer/unsigned/float/string
+literal, role (`constant`, `special`, `flag`), meaning (`ordinary`, `unknown`,
+`variable`, `unbounded`, `saturated`), and deprecated/removed status. Numeric
+metadata separately describes encoding, bounds, ordinary ranges, unit, scale,
+offset and completeness. Unknown numeric codes remain ordinary raw numbers.
+
+Schema mode rewrites standalone named values to predicates on declared paths.
+Numeric names use equality; flags use all-bits membership. Contextual comparisons
+such as `speed = SPEED_UNLIMITED` resolve the name against the **selected value's
+actual domain**, not a global symbol table or a union of possible raw codes.
+Missing or ambiguous domain provenance is an error rather than a guessed profile.
+Quoted strings remain strings; fields and environment constants retain precedence.
+Incomplete/cyclic path sets use bounded runtime schema traversal, retaining the
+owning dictionary even through descendants with no unique domain. Completion uses
+the same metadata and scopes named suggestions to the other comparison operand.
+
+Values extracted from a concrete parent field or array-element edge retain an
+optional `SchemaReference`. Int/Float/String categories do not change. Identity
+and selection operations, traces, and the first min/max winner on a tie retain
+the reference. Arithmetic, casts, comparisons, new literals and ordinary numeric
+sum/count construct unannotated values, including `+ 0`. A custom selecting fold
+preserves whichever Value it returns. Null and undefined never acquire a domain
+from their parent. Ordinary stored leaves remain compact and unannotated.
+
+`ValueType::Bitmask` instead carries intrinsic uint64 bits and exact domain
+identity. Persistent mask rows contain only uint64 bits and a local SchemaId;
+the common binding table owns the graph. `hasFlag(mask, 'NAME')` tests all
+declared bits; a named zero matches exactly zero. Unknown flags, incompatible
+domains, negative/float coercions and invalid shifts are errors. Unknown active
+bits are retained. Complement and shifts respect the declared width. Use
+`bitmask(existingMask, '0x8000000000000000')` for lossless full-width construction;
+ordinary signed integer literals reject overflow.
+
+The exact JSON tag is
+`{"_bitmask":true,"bits":"0x8000000000000000","schema":"exact-graph-token","domain":4}`.
+Import requires that exact graph through the model binding/resolver. Objects with
+additional keys remain application objects. Mask JSON never uses floating-point
+numbers or labels as a substitute for raw bits.
 
 Exact path enumeration accepts an optional `bool* complete` output. Active-path
 SchemaIds detect cycles; reused definitions in sibling branches and repeated
@@ -136,6 +197,14 @@ names are under `fields`, so they cannot collide with descriptor metadata names.
 `get`, `at`, `keyAt`, `iterate`, and `toJson` agree; `kind` is a string through all
 of them. Descriptor `schema()` is `NoSchemaId`, not the represented domain ID.
 This prevents feature-field pruning from hiding descriptor metadata.
+
+Scalar descriptors additionally expose `namedValues`, `numericDomain`, and
+`bitWidth` when applicable. Named entries have `name`, `value`, `role`, `meaning`,
+`deprecated`, and `removed`. Numeric metadata has `encoding`, `unit`, optional
+`minimum`/`maximum`, `ordinaryRanges` (`min`/`max`), `scale`, `offset`, and
+`complete`. Flag values are hexadecimal strings; unsigned numbers outside the
+signed scalar range are decimal strings. These are lazy views of the same graph,
+not a second registry or JSON model.
 
 Every known descriptor exposes its numeric identity as `$ref`, including
 expanded definitions. An implicit union exposes an array of IDs, such as
@@ -230,10 +299,26 @@ evaluation overload remains unbounded and unchanged for existing callers.
 `ModelPool::copyNode(node, options)` copies a query-visible subtree through its
 native node protocol. `copySequence(span<Value const>, options)` returns an outer
 array and shares one budget across every result and descendant. Neither operation
-calls `toJson`, imports foreign schema IDs, or inserts dictionary names. A source
+calls `toJson`, copies bare foreign schema IDs, or inserts dictionary names. A source
 field name must already exist in the destination pool; IDs are remapped by name.
 Strings and bytes become destination-owned payloads. The source owner is retained
-during copying, but not by the result.
+during copying, but not by the result. Exact schema graph owners are retained in
+the destination's common binding table and schema IDs are remapped. A direct
+single-graph pool rejects foreign domains; an unbound result pool can import
+several graphs. Unbound nonzero source schema IDs are errors, not silently erased.
+
+Copying an existing compound preserves its schema and ordinary scalar leaves.
+An independently selected scalar Value with provenance becomes a qualified node
+holding a same-pool primitive address and local domain ID. Unannotated values
+remain ordinary storage. There is no destination-schema inference, generated
+result schema, or per-result parallel metadata table. Bitmasks always use their
+dedicated column. Numeric/string JSON export remains plain and intentionally
+does not preserve qualification; native binary results do.
+
+Binary readers require every stored graph identity to resolve exactly before
+returning success. Install bindings or `setSchemaResolver` first.
+`hasDirectSchemaBinding(identity)` checks a payload's single-graph contract
+without consulting the resolver. Dictionary restoration remains separate.
 Copied containers use exact-size storage; singleton and empty results use compact
 singleton handles rather than growable arena chunks. These materialized containers
 are intended for read-only results, not subsequent incremental appends.
@@ -257,9 +342,9 @@ Shared acyclic children are copied independently. Failed copies can leave bounde
 unreachable allocations in the append-only destination; no partial root is
 returned. Evaluator work/result limits remain a separate responsibility.
 
-The native undefined column shifts the core ModelPool column tags; dependent
-binary protocols must version that break rather than read older columns using the
-new mapping. Mapget coordinates this in TileLayerStream 5.3.
+The mask/qualifier columns and common graph bindings change the native ModelPool
+wire layout and static dictionary assignments. Dependent binary protocols must
+version this break; there is no implicit legacy conversion.
 
 ## Validation
 
@@ -268,6 +353,10 @@ completion, custom bindings, recursive rewrites, and namespace ownership.
 `test/evaluation.cpp` covers streaming limits, interruption, compound ownership,
 callback errors, and streaming builtins. `test/model-copy.cpp` covers native
 undefined, sequence cardinality, ownership, dictionary remapping and copy limits.
+`test/schema-value.cpp` covers exact scalar provenance, named predicates, mask
+operators/roundtrips, mixed result graphs, freeze boundaries and malformed reads.
+Its constructor-time reader regression checks qualified scalar storage without
+requiring `shared_from_this()` before a derived model has finished construction.
 Existing language/model tests continue to cover the unbounded APIs. Descriptors,
 direct completion, bounded evaluation and native copying are also available with
 `SIMFIL_WITH_MODEL_JSON=OFF`; JSON serialization is not their storage backend.
@@ -280,7 +369,10 @@ build-release/test/test.simfil '[perf.schema],[perf.completion]' \
 ```
 
 The sparse-wide fixture compares no schema, basic pruning, generic field plans,
-and an exact-path ceiling on identical data. Scalar leaves now have explicit
+and an exact-path ceiling on identical data. It also repeats basic pruning,
+field plans and the exact path with an owning schema binding and runtime scalar
+provenance; these costs must not be hidden behind the legacy callback benchmark.
+Scalar leaves now have explicit
 ValueSchemas: unknown child metadata no longer silently means scalar. Completion
 benchmarks compare real-model/schema root suggestions with direct root-domain
 suggestions and a nested array/union index. Setup and finalization are outside
@@ -320,3 +412,36 @@ noise; they establish comparable latency, not a statistically significant orderi
 The direct path needs no synthetic model construction. Removing duplicate field
 enumeration reduced its earlier nested-domain measurement from about 83 us to
 about 50 us on this machine.
+
+### Bound Domain Measurements
+
+On 2026-10-30, a quiet Release run (GCC 13, 40 samples, 2000 resamples)
+measured the owning-binding/scalar-provenance implementation on the same
+sparse-wide fixture, before merging the subsequent `size-checks` optimizations
+through `77fe792`. In particular, that merge makes diagnostics collection
+optional on the evaluation hot path; the following numbers do not measure the
+merged implementation. The earlier same-day `e324358` baseline used 20 samples
+and 1000 resamples, with appreciable noise in its field-plan result. These are
+not freshly interleaved before/after runs or a statistical regression threshold.
+
+| Query | Earlier Baseline | Current Callback | Current Bound Graph |
+| --- | ---: | ---: | ---: |
+| No schema | 6.814 ms | 7.070 ms | - |
+| Basic pruning | 3.222 ms | 3.549 ms | 5.532 ms |
+| Field plans | 1.560 ms | 1.606 ms | 2.098 ms |
+| Exact path | 0.786 ms | 0.927 ms | 1.419 ms |
+
+Bound field plans are 2.64x faster than bound basic pruning, and take 1.48x
+the bound exact-path time. Binding/provenance is not free: relative to the
+current callback cases, bound plans cost about 31% more and bound exact access
+about 53% more. Persisted scalar leaves remain compact in both variants; the
+bound queries derive and retain their domain while emitting runtime values.
+This benchmark does not isolate binding lookup, dictionary translation and
+qualification costs, so attributing the difference requires profiling.
+
+Nor is the legacy path uniformly unchanged: its no-schema/basic/plan/exact
+means increased by approximately 4%/10%/3%/18% over the earlier baseline.
+Retain these controls when optimizing instead of reporting only the relative
+pruning speedup. In the same quiet run, model-root, direct-root and nested
+array/union completion measured 47.9, 50.0 and 50.6 us respectively, comparable
+to the earlier roughly 50 us measurements.

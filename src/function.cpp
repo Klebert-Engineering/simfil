@@ -276,7 +276,7 @@ auto TraceFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
             // Do not allow string view to leak into the trace result.
             auto copy = vv;
             if (auto sv = vv.stringViewValue())
-                copy = Value::make(std::string(*sv));
+                copy = Value::make(std::string(*sv)).withSchema(vv.schemaReference());
             values.emplace_back(std::move(copy));
         }
         return res(ctx, std::move(vv));
@@ -555,7 +555,9 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
             TRY_EXPECTED(subRes);
         } else {
             if (sum.isa(ValueType::Null)) {
-                sum = std::move(vv);
+                // Arithmetic sum constructs a number even when null makes this the first candidate.
+                sum = vv.type == ValueType::Int || vv.type == ValueType::Float
+                    ? Value(vv.getScalar()) : std::move(vv);
             } else {
                 auto newSum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv);
                 TRY_EXPECTED(newSum);
@@ -568,6 +570,61 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
     TRY_EXPECTED(argRes);
 
     return res(ctx, sum);
+}
+
+HasFlagFn HasFlagFn::Fn;
+
+auto HasFlagFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{"hasFlag", "Tests all bits of a declared flag; a zero flag means exactly zero.",
+        "hasFlag(mask, name) -> bool"};
+    return info;
+}
+
+auto HasFlagFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const
+    -> tl::expected<Result, Error>
+{
+    if (args.size() != 2)
+        return tl::unexpected(Error{Error::InvalidArguments, "hasFlag expects a mask and a flag name"});
+    Value mask = Value::undef(), name = Value::undef();
+    auto ok = ArgParser("hasFlag", ctx, val, args).arg("mask", ValueType::Bitmask, mask)
+        .arg("name", ValueType::String, name).ok();
+    TRY_EXPECTED(ok);
+    if (!*ok)
+        return res(ctx, Value::undef());
+    auto result = mask.as<ValueType::Bitmask>().hasFlag(name.stringView());
+    TRY_EXPECTED(result);
+    return res(ctx, Value::make(*result));
+}
+
+BitmaskFn BitmaskFn::Fn;
+
+auto BitmaskFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{"bitmask", "Constructs raw bits in an existing mask's domain.",
+        "bitmask(mask, unsignedDecimalOrHexString) -> bitmask"};
+    return info;
+}
+
+auto BitmaskFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const
+    -> tl::expected<Result, Error>
+{
+    if (args.size() != 2)
+        return tl::unexpected(Error{Error::InvalidArguments, "bitmask expects a domain-bearing mask and a bits string"});
+    Value mask = Value::undef(), text = Value::undef();
+    auto ok = ArgParser("bitmask", ctx, val, args).arg("mask", ValueType::Bitmask, mask)
+        .arg("bits", ValueType::String, text).ok();
+    TRY_EXPECTED(ok);
+    if (!*ok)
+        return res(ctx, Value::undef());
+    auto bits = Bitmask::parseBits(text.stringView());
+    TRY_EXPECTED(bits);
+    auto domain = mask.schemaReference();
+    auto definition = domain.definition();
+    if (!definition || !definition->isBitmask() || !definition->bitWidth() || definition->bitWidth() > 64 ||
+        (definition->bitWidth() < 64 && (*bits >> definition->bitWidth())))
+        return tl::unexpected(Error{Error::InvalidArguments, "Bits exceed the mask domain encoding width"});
+    return res(ctx, Value::make(Bitmask{*bits, std::move(domain)}));
 }
 
 MinFn MinFn::Fn;

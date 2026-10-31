@@ -25,6 +25,8 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
     functions["keys"]   = &KeysFn::Fn;
     functions["trace"]  = &TraceFn::Fn;
     functions["re"]     = &ReFn::Fn;
+    functions["hasflag"] = &HasFlagFn::Fn;
+    functions["bitmask"] = &BitmaskFn::Fn;
 }
 
 Environment::Environment(NewStringCache_)

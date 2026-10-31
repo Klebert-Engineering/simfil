@@ -3,6 +3,7 @@
 #include <deque>
 #include <map>
 #include <stdexcept>
+#include <fmt/format.h>
 
 namespace simfil
 {
@@ -11,7 +12,8 @@ namespace simfil
 class SchemaModel::Impl
 {
 public:
-    enum class View { Descriptor, Fields, Elements, Alternatives, Enum, References };
+    enum class View { Descriptor, Fields, Elements, Alternatives, Enum, References,
+                      NamedValues, NamedValue, NumericDomain, Ranges, Range };
 
     /** One traversal position retains ancestry so cycles serialize as explicit references. */
     struct Entry {
@@ -20,6 +22,7 @@ public:
         std::optional<std::uint32_t> parent;
         std::optional<bool> required;
         std::string stop;
+        std::size_t position = 0;
         std::optional<std::vector<StringId>> keys;
         std::map<std::size_t, std::uint32_t> children;
     };
@@ -71,6 +74,28 @@ public:
         entry.keys.emplace();
         auto& keys = *entry.keys;
         auto domain = schema(entry);
+        if (entry.view == View::NamedValue) {
+            keys = {StringPool::SchemaName, StringPool::SchemaValue, StringPool::SchemaRole,
+                StringPool::SchemaMeaning, StringPool::SchemaDeprecated, StringPool::SchemaRemoved};
+            return keys;
+        }
+        if (entry.view == View::Range) {
+            keys = {StringPool::SchemaMin, StringPool::SchemaMax};
+            return keys;
+        }
+        if (entry.view == View::NumericDomain) {
+            auto numeric = domain ? domain->numericDomain() : std::nullopt;
+            if (!numeric)
+                return keys;
+            keys = {StringPool::SchemaEncoding, StringPool::SchemaUnit};
+            if (numeric->minimum)
+                keys.push_back(StringPool::SchemaMinimum);
+            if (numeric->maximum)
+                keys.push_back(StringPool::SchemaMaximum);
+            keys.insert(keys.end(), {StringPool::SchemaOrdinaryRanges, StringPool::SchemaScale,
+                StringPool::SchemaOffset, StringPool::SchemaComplete});
+            return keys;
+        }
         if (entry.view == View::Fields) {
             if (domain)
                 domain->forEachDirectField([&](StringId name, auto) { keys.push_back(name); });
@@ -104,6 +129,16 @@ public:
         }
         if (domain && (!domain->enumValues().empty() || !domain->directEnumSymbols().empty()))
             keys.push_back(StringPool::SchemaEnum);
+        if (domain) {
+            bool named = false;
+            domain->forEachNamedValue([&](auto const&) { named = true; });
+            if (named)
+                keys.push_back(StringPool::SchemaNamedValues);
+            if (domain->numericDomain())
+                keys.push_back(StringPool::SchemaNumericDomain);
+            if (domain->isBitmask())
+                keys.push_back(StringPool::SchemaBitWidth);
+        }
         return keys;
     }
 
@@ -144,7 +179,8 @@ public:
     auto type() const -> ValueType override
     {
         auto view = entry().view;
-        return view == Impl::View::Descriptor || view == Impl::View::Fields ? ValueType::Object : ValueType::Array;
+        return view == Impl::View::Descriptor || view == Impl::View::Fields || view == Impl::View::NamedValue ||
+            view == Impl::View::NumericDomain || view == Impl::View::Range ? ValueType::Object : ValueType::Array;
     }
 
     /** Descriptor objects have no feature-domain schema attached. */
@@ -158,6 +194,17 @@ public:
         if (entry().view == Impl::View::Enum) {
             auto domain = impl().schema(entry());
             return domain ? domain->directEnumSymbols().size() + domain->enumValues().size() : 0;
+        }
+        if (entry().view == Impl::View::NamedValues) {
+            std::uint32_t count = 0;
+            if (auto domain = impl().schema(entry()))
+                domain->forEachNamedValue([&](auto const&) { ++count; });
+            return count;
+        }
+        if (entry().view == Impl::View::Ranges) {
+            auto domain = impl().schema(entry());
+            auto numeric = domain ? domain->numericDomain() : std::nullopt;
+            return numeric ? numeric->ordinaryRanges.size() : 0;
         }
         return impl().schemas(entry()).size();
     }
@@ -186,6 +233,57 @@ public:
         if (position < 0 || std::size_t(position) >= size())
             return {};
         auto domain = impl().schema(entry());
+        if (entry().view == Impl::View::NamedValue) {
+            std::optional<Schema::NamedValue> named;
+            std::size_t ordinal = 0;
+            domain->forEachNamedValue([&](auto const& value) {
+                if (ordinal++ == entry().position)
+                    named = value;
+            });
+            if (!named)
+                return {};
+            switch (keyAt(position)) {
+            case StringPool::SchemaName: return scalar(std::string(named->name));
+            case StringPool::SchemaValue:
+                return std::visit([&](auto value) { return metadataScalar(value, named->role == Schema::NamedValue::Role::Flag); }, named->value);
+            case StringPool::SchemaRole:
+                return scalar(std::string(named->role == Schema::NamedValue::Role::Flag ? "flag" :
+                    named->role == Schema::NamedValue::Role::Special ? "special" : "constant"));
+            case StringPool::SchemaMeaning: {
+                switch (named->meaning) {
+                case Schema::NamedValue::Meaning::Unknown: return scalar(std::string("unknown"));
+                case Schema::NamedValue::Meaning::Variable: return scalar(std::string("variable"));
+                case Schema::NamedValue::Meaning::Unbounded: return scalar(std::string("unbounded"));
+                case Schema::NamedValue::Meaning::Saturated: return scalar(std::string("saturated"));
+                default: return scalar(std::string("ordinary"));
+                }
+            }
+            case StringPool::SchemaDeprecated: return scalar(named->deprecated);
+            case StringPool::SchemaRemoved: return scalar(named->removed);
+            default: return {};
+            }
+        }
+        if (entry().view == Impl::View::Range) {
+            auto numeric = domain->numericDomain();
+            if (!numeric || entry().position >= numeric->ordinaryRanges.size())
+                return {};
+            auto const& range = numeric->ordinaryRanges[entry().position];
+            return std::visit([&](auto value) { return metadataScalar(value); },
+                keyAt(position) == StringPool::SchemaMin ? range.min : range.max);
+        }
+        if (entry().view == Impl::View::NumericDomain) {
+            auto numeric = domain->numericDomain();
+            switch (keyAt(position)) {
+            case StringPool::SchemaEncoding: return scalar(std::string(numeric->encoding));
+            case StringPool::SchemaUnit: return scalar(std::string(numeric->unit));
+            case StringPool::SchemaMinimum: return std::visit([&](auto v) { return metadataScalar(v); }, *numeric->minimum);
+            case StringPool::SchemaMaximum: return std::visit([&](auto v) { return metadataScalar(v); }, *numeric->maximum);
+            case StringPool::SchemaScale: return scalar(numeric->scale);
+            case StringPool::SchemaOffset: return scalar(numeric->offset);
+            case StringPool::SchemaComplete: return scalar(numeric->complete);
+            default: break;
+            }
+        }
         if (entry().view == Impl::View::References)
             return scalar(int64_t(entry().schemas[position]));
         if (entry().view == Impl::View::Enum) {
@@ -208,6 +306,7 @@ public:
             case StringPool::SchemaRequired: return scalar(*entry().required);
             case StringPool::SchemaNullable: return scalar(*domain->nullable());
             case StringPool::SchemaOpen: return scalar(domain->open());
+            case StringPool::SchemaBitWidth: return scalar(std::int64_t(domain->bitWidth()));
             case StringPool::SchemaRef:
                 if (entry().schemas.size() == 1)
                     return scalar(int64_t(entry().schemas.front()));
@@ -221,7 +320,14 @@ public:
 
         Impl::Entry child;
         child.parent = index_;
-        if (entry().view == Impl::View::Descriptor) {
+        if (entry().view == Impl::View::NamedValues || entry().view == Impl::View::Ranges ||
+            entry().view == Impl::View::NumericDomain) {
+            child.schemas = entry().schemas;
+            child.position = position;
+            child.view = entry().view == Impl::View::NamedValues ? Impl::View::NamedValue :
+                entry().view == Impl::View::Ranges ? Impl::View::Range : Impl::View::Ranges;
+        }
+        else if (entry().view == Impl::View::Descriptor) {
             child.schemas = entry().schemas;
             switch (keyAt(position)) {
             case StringPool::SchemaRef:
@@ -231,6 +337,8 @@ public:
             case StringPool::SchemaElements: child.view = Impl::View::Elements; break;
             case StringPool::SchemaAlternatives: child.view = Impl::View::Alternatives; break;
             case StringPool::SchemaEnum: child.view = Impl::View::Enum; break;
+            case StringPool::SchemaNamedValues: child.view = Impl::View::NamedValues; break;
+            case StringPool::SchemaNumericDomain: child.view = Impl::View::NumericDomain; break;
             default: return {};
             }
         }
@@ -265,6 +373,23 @@ public:
     static constexpr uint8_t FirstColumn = Model::FirstNontrivialColumnId;
 
 private:
+    /** Keep large unsigned declarations and all masks exact across JSON/JavaScript boundaries. */
+    template<class T>
+    auto metadataScalar(T value, bool flag = false) const -> Ptr
+    {
+        if constexpr (std::is_same_v<T, std::uint64_t> || std::is_same_v<T, std::int64_t>) {
+            if (flag)
+                return scalar(fmt::format("0x{:016x}", static_cast<std::uint64_t>(value)));
+            if constexpr (std::is_same_v<T, std::uint64_t>)
+                if (value > std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+                    return scalar(std::to_string(value));
+            return scalar(static_cast<std::int64_t>(value));
+        }
+        else if constexpr (std::is_same_v<T, std::string_view>)
+            return scalar(std::string(value));
+        else
+            return scalar(value);
+    }
     /** Scalar payloads keep the descriptor owner alive without a temporary ModelPool. */
     auto scalar(ScalarValueType value) const -> Ptr
     {

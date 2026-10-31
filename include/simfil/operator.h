@@ -147,6 +147,8 @@ struct OperatorTypeof
 {
     NAME("typeof")
 
+    auto operator()(const Bitmask&) const -> std::string_view { return "bitmask"sv; }
+
     auto operator()(NullType) const -> std::string_view
     {
         static auto n = "null"sv;
@@ -276,6 +278,8 @@ struct OperatorAsFloat
 struct OperatorAsString
 {
     NAME("string")
+
+    auto operator()(const Bitmask& value) const -> std::string { return impl::ValueToString{}(value); }
 
     auto operator()(bool v) const -> const std::string&
     {
@@ -780,6 +784,11 @@ struct OperatorShr
 namespace impl
 {
 
+/** Apply intrinsic flag semantics without widening ordinary signed integer operations. */
+auto bitmaskUnary(std::string_view operation, Bitmask const& value) -> tl::expected<Value, Error>;
+/** Preserve domain identity for bitwise results and reject incompatible typed operands. */
+auto bitmaskBinary(std::string_view operation, Value const& left, Value const& right) -> tl::expected<Value, Error>;
+
 template <class Operator_, class CType_>
 inline auto makeOperatorResult(CType_&& value) -> tl::expected<Value, Error>
 {
@@ -813,6 +822,8 @@ struct UnaryOperatorDispatcher
 {
     static auto dispatch(const Value& value) -> tl::expected<Value, Error>
     {
+        if (value.isa(ValueType::Bitmask))
+            return impl::bitmaskUnary(Operator_::name(), value.as<ValueType::Bitmask>());
         if (value.isa(ValueType::TransientObject)) {
             const auto& obj = value.as<ValueType::TransientObject>();
             return obj.meta->unaryOp(Operator_::name(), obj);
@@ -861,6 +872,8 @@ struct BinaryOperatorDispatcher
     static auto dispatch(const Value& lhs, const Value& rhs) -> tl::expected<Value, Error>
     {
         auto result = ([&]() -> tl::expected<Value, Error> {
+            if (lhs.isa(ValueType::Bitmask) || rhs.isa(ValueType::Bitmask))
+                return impl::bitmaskBinary(Operator::name(), lhs, rhs);
             if (lhs.isa(ValueType::TransientObject)) {
                 if (rhs.isa(ValueType::Undef)) {
                     return Value::undef();

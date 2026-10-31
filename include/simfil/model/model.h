@@ -179,6 +179,11 @@ public:
      */
     virtual std::optional<std::string_view> lookupStringId(StringId id) const;
 
+    /** Resolve a model-local schema id into an owning graph-qualified domain. */
+    virtual auto schemaReference(SchemaId id) const -> SchemaReference;
+    /** Custom/overlay models may resolve an occurrence without inventing persistent local ids. */
+    virtual auto schemaReference(ModelNode const& node) const -> SchemaReference;
+
 protected:
     // Shared passkey for direct node construction in Model/ModelPool implementations.
     detail::mp_key mpKey_{detail::mp_key{0}};
@@ -196,6 +201,7 @@ class ModelPool : public Model
 public:
     // Keep Model::resolve<T> overloads visible alongside the virtual resolve override.
     using Model::resolve;
+    using Model::schemaReference;
     /**
      * The pool consists of multiple ModelNode columns,
      * each for a different data type. Each column
@@ -209,6 +215,8 @@ public:
         String,
         PooledString,
         ByteArray,
+        QualifiedScalar,
+        Bitmask,
 
         FirstCustomColumnId = 128,
     };
@@ -219,6 +227,15 @@ public:
 
     /** Ctor with shared string storage */
     explicit ModelPool(std::shared_ptr<StringPool> stringStore);
+
+    /**
+     * Seal model storage and its shared dictionary before immutable publication.
+     * No concurrent mutation or derived low-level mutable borrow may survive this boundary.
+     * Derived owners must also seal their own columns; there is no unfreeze operation.
+     */
+    void freeze();
+    /** Whether supported pool and retained-node mutation operations are disabled. */
+    auto frozen() const -> bool;
 
     /**
      * Validate that all internal string/node references are valid
@@ -266,7 +283,26 @@ public:
     ModelNode::Ptr newValue(simfil::ByteArray const& value);
     ModelNode::Ptr newValue(StringId handle);
 
-    /** Checked creation for untrusted inputs; size errors leave the pool unchanged. */
+    /** Persist an existing scalar domain; validate storage bounds and throw on invalid input. */
+    auto newQualifiedValue(ScalarValueType value, SchemaReference const& domain) -> ModelNode::Ptr;
+    /** Persist full-width bits and their intrinsic domain; reject invalid width, binding or storage size. */
+    auto newBitmask(std::uint64_t bits, SchemaReference const& domain) -> ModelNode::Ptr;
+    /** Bind a single graph directly, preserving its numeric ids; incompatible rebinding is rejected. */
+    void setSchemaBinding(std::shared_ptr<const SchemaBinding> binding);
+    /** Install the external lookup required to hydrate every identity in a binary model. */
+    void setSchemaResolver(SchemaBinding::Resolver resolver);
+    /** Find an installed or externally supplied binding, accepting only the exact requested identity. */
+    auto schemaBinding(std::string_view identity) const -> std::shared_ptr<const SchemaBinding>;
+    /** Check a native single-graph payload binding without invoking its external resolver. */
+    auto hasDirectSchemaBinding(std::string_view identity) const noexcept -> bool;
+    /** Resolve a single-graph id or a result pool's common remapped domain id. */
+    auto schemaReference(SchemaId id) const -> SchemaReference override;
+    /** Avoid resolving node schemas when this model has no semantic graph binding. */
+    auto schemaReference(ModelNode const& node) const -> SchemaReference override;
+    /** Import an exact domain into this pool's common binding namespace, retaining its graph once. */
+    auto importSchema(SchemaReference const& domain) -> tl::expected<SchemaId, Error>;
+
+    /** Checked creation for untrusted inputs; size errors and frozen pools return errors without mutation. */
     [[nodiscard]] auto tryNewObject(size_t initialFieldCapacity = 2, bool fixedSize = false)
         -> tl::expected<model_ptr<Object>, Error>;
     [[nodiscard]] auto tryNewArray(size_t initialFieldCapacity = 2, bool fixedSize = false)
@@ -285,7 +321,7 @@ public:
     };
 
     /**
-     * Copy query-visible nodes into this pool without importing schema IDs or
+     * Copy query-visible nodes, preserving/remapping bound schema IDs without
      * changing its dictionary. Field names must already exist in this pool.
      * Errors can leave unreachable, budget-bounded allocations in this append-only pool.
      */
@@ -325,6 +361,9 @@ public:
         size_t objectSchemaBytes = 0;
         size_t arrayMemberBytes = 0;
         size_t arraySchemaBytes = 0;
+        size_t qualifiedScalarBytes = 0;
+        size_t bitmaskBytes = 0;
+        size_t schemaBindingBytes = 0;
 
         [[nodiscard]] size_t totalBytes() const
         {
@@ -336,7 +375,7 @@ public:
                 + objectMemberBytes
                 + objectSchemaBytes
                 + arrayMemberBytes
-                + arraySchemaBytes;
+                + arraySchemaBytes + qualifiedScalarBytes + bitmaskBytes + schemaBindingBytes;
         }
     };
 
@@ -356,13 +395,16 @@ public:
         MemoryUsage objectSchemas;
         MemoryUsage arrayMembers;
         MemoryUsage arraySchemas;
+        MemoryUsage qualifiedScalars;
+        MemoryUsage bitmasks;
+        MemoryUsage schemaBindings;
 
         /** Sum all independently owned model-pool storage. */
         [[nodiscard]] MemoryUsage total() const
         {
             return implementation + roots + int64Values + doubleValues + stringData +
                 stringRanges + byteArrayRanges + objectMembers + objectSchemas +
-                arrayMembers + arraySchemas;
+                arrayMembers + arraySchemas + qualifiedScalars + bitmasks + schemaBindings;
         }
     };
 
@@ -375,6 +417,8 @@ public:
 #endif
 
 protected:
+    /** Fail before mutation through factories or retained nodes of a published immutable pool. */
+    void requireMutable() const;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
@@ -395,6 +439,7 @@ protected:
 
 private:
     class NodeCopy;
+    class ScalarNode;
 };
 
 }

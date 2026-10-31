@@ -81,6 +81,8 @@ Byte-input APIs always validate their input, including in release builds. `assig
 
 For untrusted model construction, use `ModelPool::tryNewValue`, `tryNewObject`, and `tryNewArray`. These return `tl::expected` and check the pool's private column indices and cumulative storage before mutation. JSON ingestion and model copying use these checked entry points; tagged multimaps reserve their expanded member count. The original `newValue`, `newObject`, and `newArray` remain trusted builders. Container checks cover the initial reservation; callers must validate any subsequent growth beyond it.
 
+The schema-qualified `newQualifiedValue` and `newBitmask` factories always check their scalar-column bounds and domain compatibility. Qualified primitives also use checked storage creation. These factories throw on invalid input; native copying and tagged JSON ingestion translate these failures to `tl::expected` errors. Checked primitive/container factories return errors on frozen pools rather than throwing from the trusted builder.
+
 `RecordsPerPage` defines the number of records stored per page, not the page size in bytes. The effective page size is `RecordsPerPage * sizeof(T)`, and segmented storage requires that value to be a multiple of the record size. This keeps page boundaries aligned with record boundaries and lets callers reason about capacity in record counts instead of byte counts.
 
 ### Split pair columns with `TwoPart`

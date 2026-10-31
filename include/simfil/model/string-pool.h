@@ -44,6 +44,7 @@ struct StringPool
         SchemaFloat,
         SchemaString,
         SchemaBytes,
+        SchemaBitmask,
         SchemaObject,
         SchemaArray,
         SchemaUnion,
@@ -61,6 +62,24 @@ struct StringPool
         SchemaNullable,
         SchemaRef,
         SchemaTruncated,
+        SchemaNamedValues,
+        SchemaNumericDomain,
+        SchemaBitWidth,
+        SchemaName,
+        SchemaRole,
+        SchemaMeaning,
+        SchemaDeprecated,
+        SchemaRemoved,
+        SchemaEncoding,
+        SchemaUnit,
+        SchemaMinimum,
+        SchemaMaximum,
+        SchemaOrdinaryRanges,
+        SchemaMin,
+        SchemaMax,
+        SchemaScale,
+        SchemaOffset,
+        SchemaComplete,
 
         NextStaticId,
         FirstDynamicId = 256
@@ -75,13 +94,18 @@ struct StringPool
     /// Virtual destructor to allow polymorphism
     virtual ~StringPool() = default;
 
+    /** Seal the dictionary before sharing immutable schema metadata; existing lookups remain valid. */
+    void freeze();
+    /** A copied dictionary is mutable, even when its source has been frozen. */
+    auto frozen() const -> bool;
+
     /// Use this function to lookup a stored string, or insert it
     /// if it doesn't exist yet.
     auto emplace(std::string_view const& str) -> tl::expected<StringId, Error>;
 
     /// Returns the ID of the given string, or `Empty` if
     /// no such string was ever inserted.
-    StringId get(std::string_view const& str);
+    StringId get(std::string_view const& str) const;
 
     /// Get the actual string for the given ID, or
     ///  nullopt if the given ID is invalid.
@@ -116,6 +140,7 @@ struct StringPool
     const std::deque<std::string>& strings() const;
 
 private:
+    bool frozen_ = false;
     mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<
         std::string_view,
@@ -123,10 +148,11 @@ private:
         idForString_;
     std::unordered_map<StringId, std::string_view> stringForId_;
     std::deque<std::string> storedStrings_;
-    StringId nextId_ = FirstDynamicId;
+    // The counter must represent one past the final valid id without wrapping.
+    std::uint32_t nextId_ = FirstDynamicId;
     std::atomic_int64_t byteSize_{0};
-    std::atomic_int64_t cacheHits_{0};
-    std::atomic_int64_t cacheMisses_{0};
+    mutable std::atomic_int64_t cacheHits_{0};
+    mutable std::atomic_int64_t cacheMisses_{0};
 };
 
 }  // namespace simfil

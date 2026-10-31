@@ -71,7 +71,7 @@ TEST_CASE("Native copying preserves types and remaps existing field names", "[mo
 {
     auto target = std::make_shared<ModelPool>();
     REQUIRE(target->strings()->emplace("padding"));
-    REQUIRE(target->strings()->emplace("name"));
+    REQUIRE(target->strings()->emplace("copiedName"));
     REQUIRE(target->strings()->emplace("data"));
     auto before = target->strings()->size();
     ModelNode::Ptr copied;
@@ -80,11 +80,9 @@ TEST_CASE("Native copying preserves types and remaps existing field names", "[mo
         auto source = std::make_shared<ModelPool>();
         lifetime = source;
         auto root = source->newObject();
-        REQUIRE(root->setSchema(42));
-        REQUIRE(root->addField("name", std::string_view("first")));
-        REQUIRE(root->addField("name", std::string_view("second")));
+        REQUIRE(root->addField("copiedName", std::string_view("first")));
+        REQUIRE(root->addField("copiedName", std::string_view("second")));
         auto array = source->newArray();
-        REQUIRE(array->setSchema(43));
         array->append(source->newUndefined());
         array->append(source->resolve(ModelNodeAddress{Model::Null, 1}));
         array->append(source->newValue(ByteArray{std::string("\0\xff", 2)}));

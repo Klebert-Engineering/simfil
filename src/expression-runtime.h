@@ -8,6 +8,7 @@
 #include "simfil/model/schema.h"
 
 #include <memory>
+#include <map>
 #include <string_view>
 #include <vector>
 
@@ -66,12 +67,14 @@ public:
         Expr::ExprId expressionId,
         SchemaId schemaId,
         const Schema& schema,
-        BuildFn&& build) -> const WildcardSchemaPlan*
+        BuildFn&& build, std::shared_ptr<const SchemaBinding> const& binding = {}) -> const WildcardSchemaPlan*
     {
         if (schemaId == NoSchemaId || !schema.finalized())
             return nullptr;
 
-        auto& plans = stateFor(expressionId).wildcardSchemaPlans;
+        auto& state = stateFor(expressionId);
+        // Keep domains from different immutable graphs distinct even when their local ids coincide.
+        auto& plans = binding ? state.boundWildcardPlans[binding] : state.wildcardSchemaPlans;
         const auto planIndex = static_cast<std::size_t>(schemaId);
         const auto schemaRevision = schema.revision();
         if (planIndex < plans.size()) {
@@ -114,6 +117,7 @@ private:
         StringId fieldId = StringPool::StaticStringIds::Empty;
         const Function* function = nullptr;
         std::vector<std::unique_ptr<CachedWildcardSchemaPlan>> wildcardSchemaPlans;
+        std::map<std::shared_ptr<const SchemaBinding>, std::vector<std::unique_ptr<CachedWildcardSchemaPlan>>> boundWildcardPlans;
     };
 
     /** Materialize the cache slot assigned by AST::reenumerate(). */

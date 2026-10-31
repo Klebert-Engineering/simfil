@@ -57,6 +57,13 @@ public:
                 value.type == ValueType::TransientObject || value.type == ValueType::LAST_) {
                 return failure("Unsupported result value in native copy");
             }
+            else if (auto domain = value.schemaReference()) {
+                if (options_.maxDepth < 1 || nodes_ >= options_.maxNodes || !charge(sizeof(ModelNodeAddress)))
+                    return failure("Node copy node/depth/byte budget exceeded");
+                ++nodes_;
+                // Qualification follows captured Value provenance, never destination-schema inference.
+                copied = copyQualified(value.getScalar(), domain);
+            }
             else {
                 auto scalar = model_ptr<ValueNode>::make(value.getScalar(), target_.shared_from_this());
                 copied = copy(*scalar, 1);
@@ -74,6 +81,9 @@ private:
     {
         if (!charge(sizeof(ModelNodeAddress)))
             return failure("Node copy byte budget exceeded");
+        if (source.type() != ValueType::Object && source.type() != ValueType::Array)
+            if (auto domain = source.schemaReference())
+                return copyQualified(source.value(), domain);
         switch (source.type()) {
         case ValueType::Undef: return target_.newUndefined();
         case ValueType::Null: return target_.resolve(ModelNodeAddress{Model::Null, 1});
@@ -101,6 +111,8 @@ private:
                 return failure("Node copy byte budget exceeded");
             return target_.tryNewValue(value);
         }
+        case ValueType::Bitmask:
+            return failure("Bitmask has no resolved schema binding");
         case ValueType::Array:
         case ValueType::Object:
             return copyCollection(source, depth);
@@ -109,6 +121,32 @@ private:
             return failure("Unsupported node type in native copy");
         }
         return failure("Invalid node type in native copy");
+    }
+
+    /** Persist one already-typed scalar; raw numeric leaves copied inside compounds stay compact. */
+    auto copyQualified(ScalarValueType const& value, SchemaReference const& domain)
+        -> tl::expected<ModelNode::Ptr, Error>
+    {
+        if (!domain.definition())
+            return failure("Scalar has no resolved schema definition");
+        // Charge conservatively for raw storage, qualifier and common binding metadata.
+        size_t bytes = sizeof(std::uint64_t) + sizeof(SchemaId) + sizeof(ModelNodeAddress);
+        if (auto text = std::get_if<std::string>(&value))
+            bytes += text->size() + 2 * sizeof(std::uint32_t);
+        else if (auto view = std::get_if<std::string_view>(&value))
+            bytes += view->size() + 2 * sizeof(std::uint32_t);
+        else if (auto data = std::get_if<simfil::ByteArray>(&value))
+            bytes += data->bytes.size() + 2 * sizeof(std::uint32_t);
+        if (!charge(bytes) || !charge(domain.binding->identity().size()))
+            return failure("Node copy byte budget exceeded");
+        try {
+            if (auto mask = std::get_if<simfil::Bitmask>(&value))
+                return target_.newBitmask(mask->bits, domain);
+            return target_.newQualifiedValue(value, domain);
+        }
+        catch (std::exception const& error) {
+            return failure(error.what());
+        }
     }
 
     /** Copy repeated keys and shared children without conflating shared subtrees with cycles. */
@@ -138,6 +176,18 @@ private:
                 return tl::unexpected(created.error());
             object = *created;
         }
+        if (auto domain = source.schemaReference()) {
+            if (!charge(domain.binding->identity().size() + sizeof(SchemaId)))
+                return failure("Node copy byte budget exceeded");
+            auto imported = target_.importSchema(domain);
+            if (!imported)
+                return tl::unexpected(imported.error());
+            auto attached = array ? array->setSchema(*imported) : object->setSchema(*imported);
+            if (!attached)
+                return tl::unexpected(attached.error());
+        }
+        else if (source.schema() != NoSchemaId)
+            return failure("Cannot copy an unbound source schema id");
         for (uint32_t i = 0; i < count; ++i) {
             std::optional<std::string_view> name;
             if (object) {

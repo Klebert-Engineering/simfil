@@ -10,12 +10,14 @@ add_executable(test.simfil
   token.cpp
   schema.cpp
   schema-domain.cpp
+  schema-value.cpp
   evaluation.cpp
   simfil.cpp
   diagnostics.cpp
   completion.cpp
   complex.cpp
   model-copy.cpp
+  string-pool.cpp
   performance.cpp
   arena.cpp
   error.cpp

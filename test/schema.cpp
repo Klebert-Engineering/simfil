@@ -1136,7 +1136,8 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
 
     auto strings = std::make_shared<StringPool>();
     auto model = std::make_shared<ModelPool>(strings);
-    auto registry = SchemaRegistry{};
+    auto registryOwner = std::make_shared<SchemaRegistry>();
+    auto& registry = *registryOwner;
 
     const auto targetId = strings->emplace("target").value();
     const auto payloadId = strings->emplace("payload").value();
@@ -1256,6 +1257,38 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    // Binding-aware traversal and scalar provenance are real costs, separate from the legacy callback path.
+    registry.enabled = true;
+    model->setSchemaBinding(std::make_shared<SchemaBinding>("sparse-wide-benchmark", registryOwner,
+        [registryOwner](SchemaId id) { return registryOwner->get(id); }, strings));
+    BENCHMARK("Query sparse wide field 'target' recursive with bound basic pruning") {
+        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    env.enableWildcardFieldPlans = true;
+    BENCHMARK("Query sparse wide field 'target' recursive with bound field plans") {
+        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    BENCHMARK("Query sparse wide field 'target' via exact path with bound provenance") {
+        auto res = eval(env, **exactPathAst, **modelRoot, nullptr);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
         auto count = res->front().template as<ValueType::Int>();
         REQUIRE(count == int64_t(objectCount));
         return count;
