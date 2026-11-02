@@ -6,6 +6,7 @@
 #include "simfil/value.h"
 
 #include <memory>
+#include <new>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -89,6 +90,32 @@ struct ModelPool::Impl
         uint32_t length_;
     };
 
+    // Keep both the binding handle and its control block away from other models' hot counters.
+    // Libraries without the interference-size constant use a 64-byte cache line.
+#if defined(__cpp_lib_hardware_interference_size)
+    static constexpr auto BindingAlignment = std::hardware_destructive_interference_size;
+#else
+    static constexpr auto BindingAlignment = size_t{64};
+#endif
+
+    /** Isolate an owning binding handle, both in the model table and as a local counter's deleter. */
+    struct alignas(BindingAlignment) BindingOwner {
+        std::shared_ptr<const SchemaBinding> owner;
+
+        /** Release the graph with the last strong reference, even if weak observers remain. */
+        void operator()(SchemaBinding const*) noexcept { owner.reset(); }
+    };
+
+    /** Isolate hot Value ownership from other models sharing the same immutable graph. */
+    static auto localBinding(std::shared_ptr<const SchemaBinding> const& binding)
+        -> std::shared_ptr<const SchemaBinding>
+    {
+        // Imports/readers may receive another model's group. Retain its original
+        // owner directly, not a chain of per-model counters. Preserve alias pointers.
+        auto* previous = std::get_deleter<BindingOwner>(binding);
+        return {binding.get(), BindingOwner{previous ? previous->owner : binding}};
+    }
+
     /// This model pool's field name store
     std::shared_ptr<StringPool> strings_;
     bool frozen_ = false;
@@ -96,7 +123,7 @@ struct ModelPool::Impl
     // Common model bindings retain graphs once, not one owner per stored result.
     bool directSchema_ = false;
     std::vector<std::string> schemaIdentities_;
-    std::vector<std::shared_ptr<const SchemaBinding>> schemaBindings_;
+    std::vector<BindingOwner> schemaBindings_;
     ModelColumn<TwoPart<std::uint16_t, SchemaId>> importedSchemas_;
     SchemaBinding::Resolver schemaResolver_;
 
@@ -567,9 +594,10 @@ void ModelPool::setSchemaBinding(std::shared_ptr<const SchemaBinding> binding)
             return;
         throw std::invalid_argument("Cannot replace a populated model schema namespace");
     }
+    auto local = Impl::localBinding(binding);
     impl_->directSchema_ = true;
     impl_->schemaIdentities_.emplace_back(binding->identity());
-    impl_->schemaBindings_.push_back(std::move(binding));
+    impl_->schemaBindings_.push_back({std::move(local)});
 }
 
 void ModelPool::setSchemaResolver(SchemaBinding::Resolver resolver)
@@ -581,8 +609,8 @@ void ModelPool::setSchemaResolver(SchemaBinding::Resolver resolver)
 auto ModelPool::schemaBinding(std::string_view identity) const -> std::shared_ptr<const SchemaBinding>
 {
     for (auto const& binding : impl_->schemaBindings_)
-        if (binding && binding->identity() == identity)
-            return binding;
+        if (binding.owner && binding.owner->identity() == identity)
+            return binding.owner;
     auto binding = impl_->schemaResolver_ ? impl_->schemaResolver_(identity) : nullptr;
     return binding && binding->identity() == identity ? binding : nullptr;
 }
@@ -592,20 +620,20 @@ auto ModelPool::schemaReference(SchemaId id) const -> SchemaReference
     if (id == NoSchemaId || impl_->schemaBindings_.empty())
         return {};
     if (impl_->directSchema_)
-        return {impl_->schemaBindings_.front(), id};
+        return {impl_->schemaBindings_.front().owner, id};
     if (size_t(id) > impl_->importedSchemas_.size())
         return {};
     auto entry = impl_->importedSchemas_[size_t(id) - 1];
     if (entry.first() >= impl_->schemaBindings_.size())
         return {};
-    return {impl_->schemaBindings_[entry.first()], entry.second()};
+    return {impl_->schemaBindings_[entry.first()].owner, entry.second()};
 }
 
 auto ModelPool::hasDirectSchemaBinding(std::string_view identity) const noexcept -> bool
 {
     return impl_->directSchema_ && impl_->schemaIdentities_.size() == 1 && impl_->schemaBindings_.size() == 1 &&
-        impl_->schemaIdentities_.front() == identity && impl_->schemaBindings_.front() &&
-        impl_->schemaBindings_.front()->identity() == identity && impl_->importedSchemas_.empty();
+        impl_->schemaIdentities_.front() == identity && impl_->schemaBindings_.front().owner &&
+        impl_->schemaBindings_.front().owner->identity() == identity && impl_->importedSchemas_.empty();
 }
 
 auto ModelPool::schemaReference(ModelNode const& node) const -> SchemaReference
@@ -689,8 +717,9 @@ auto ModelPool::importSchema(SchemaReference const& domain) -> tl::expected<Sche
     if (impl_->importedSchemas_.size() >= MaxSchemaId || bindingIndex >= MaxSchemaId)
         return tl::unexpected(Error{Error::RuntimeError, "Model schema namespace exhausted"});
     if (identity == impl_->schemaIdentities_.end()) {
+        auto local = Impl::localBinding(domain.binding);
         impl_->schemaIdentities_.emplace_back(domain.binding->identity());
-        impl_->schemaBindings_.push_back(domain.binding);
+        impl_->schemaBindings_.push_back({std::move(local)});
     }
     impl_->importedSchemas_.emplace_back(static_cast<std::uint16_t>(bindingIndex), domain.id);
     return static_cast<SchemaId>(impl_->importedSchemas_.size());
@@ -986,8 +1015,10 @@ ModelPool::MemoryUsageStats ModelPool::memoryUsageStats() const
     stats.qualifiedScalars = impl_->columns_.qualifiedScalars_.memory_usage();
     stats.bitmasks = impl_->columns_.bitmasks_.memory_usage();
     stats.schemaBindings = impl_->importedSchemas_.memory_usage();
-    stats.schemaBindings.allocatedBytes += impl_->schemaBindings_.capacity() * sizeof(std::shared_ptr<const SchemaBinding>)
-        + impl_->schemaIdentities_.capacity() * sizeof(std::string);
+    // Include padded handles/deleters, but not implementation-specific control-block bookkeeping.
+    stats.schemaBindings.allocatedBytes += impl_->schemaBindings_.capacity() * sizeof(Impl::BindingOwner)
+        + impl_->schemaIdentities_.capacity() * sizeof(std::string)
+        + impl_->schemaBindings_.size() * sizeof(Impl::BindingOwner);
     for (auto const& identity : impl_->schemaIdentities_) {
         stats.schemaBindings.logicalBytes += identity.size();
         stats.schemaBindings.allocatedBytes += identity.capacity();
@@ -1114,14 +1145,14 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
     if ((impl_->directSchema_ && (impl_->schemaIdentities_.size() != 1 || !impl_->importedSchemas_.empty())) ||
         impl_->importedSchemas_.size() > MaxSchemaId)
         return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid model schema namespace"});
-    std::vector<std::shared_ptr<const SchemaBinding>> bindings;
+    std::vector<Impl::BindingOwner> bindings;
     for (auto const& identity : impl_->schemaIdentities_) {
         auto binding = schemaBinding(identity);
         if (identity.empty() || !binding)
             return tl::unexpected(Error{Error::EncodeDecodeError, "Missing or mismatched schema binding: " + identity});
-        if (std::ranges::any_of(bindings, [&](auto const& previous) { return previous->identity() == identity; }))
+        if (std::ranges::any_of(bindings, [&](auto const& previous) { return previous.owner->identity() == identity; }))
             return tl::unexpected(Error{Error::EncodeDecodeError, "Duplicate model schema identity"});
-        bindings.push_back(std::move(binding));
+        bindings.push_back({Impl::localBinding(binding)});
     }
     impl_->schemaBindings_ = std::move(bindings);
     for (size_t i = 0; i < impl_->importedSchemas_.size(); ++i) {

@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1336,4 +1337,39 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
         REQUIRE(count == int64_t(objectCount));
         return count;
     };
+
+    // Separate tiles share one graph, not one model. Restore identical native
+    // layouts outside timing so this also exercises imported ownership groups.
+    std::ostringstream serialized;
+    REQUIRE(model->write(serialized));
+    auto data = serialized.str();
+    std::vector<uint8_t> bytes(data.begin(), data.end());
+    std::array<std::shared_ptr<ModelPool>, 4> workerModels;
+    auto binding = model->schemaReference(arraySchemaId).binding;
+    for (auto& workerModel : workerModels) {
+        workerModel = std::make_shared<ModelPool>(runtimeStrings);
+        workerModel->setSchemaBinding(binding);
+        REQUIRE(workerModel->read(bytes));
+        workerModel->freeze();
+    }
+    for (auto mode : {"basic", "plans", "exact"}) {
+        BENCHMARK(fmt::format("Sparse wide, 4 workers, {}, 16 queries each", mode)) {
+            // Batch timing includes worker/binding startup. Keep the binding for
+            // all 16 queries; pinned steady-state A/B measurements are separate.
+            auto passed = RunConcurrentWorkers<4>([&](size_t worker) {
+                Environment workerEnv(workerModels[worker]->strings());
+                workerEnv.enableWildcardFieldPlans = std::string_view(mode) == "plans";
+                BoundExpression query(std::string_view(mode) == "exact" ? exactExpression : targetExpression, workerEnv);
+                auto workerRoot = workerModels[worker]->root(0).value();
+                for (size_t i = 0; i < 16; ++i) {
+                    auto result = query.eval(*workerRoot);
+                    if (!result || result->size() != 1 || result->front().as<ValueType::Int>() != int64_t(objectCount))
+                        return false;
+                }
+                return true;
+            });
+            REQUIRE(std::ranges::all_of(passed, [](bool success) { return success; }));
+            return passed;
+        };
+    }
 }

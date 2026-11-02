@@ -244,6 +244,156 @@ TEST_CASE("Native copies keep compact compounds and qualify detached occurrences
     REQUIRE(restored->validate());
 }
 
+TEST_CASE("Models isolate schema reference counts without duplicating graph identity", "[model.schema-value]")
+{
+    TypedFixture f;
+    auto source = f.model->schemaReference(1).binding;
+    auto target = std::make_shared<ModelPool>();
+    target->setSchemaBinding(source);
+    auto other = target->schemaReference(1).binding;
+    REQUIRE(source.get() == f.binding.get());
+    REQUIRE(other.get() == source.get());
+    REQUIRE(source.owner_before(other) != other.owner_before(source));
+    REQUIRE(source.owner_before(f.binding) != f.binding.owner_before(source));
+
+    auto canonicalCount = f.binding.use_count();
+    auto otherCount = other.use_count();
+    auto sourceCount = source.use_count();
+    auto result = f.query("speed");
+    REQUIRE(result);
+    std::vector<Value> retained(256, result->front());
+    CHECK(f.binding.use_count() == canonicalCount);
+    CHECK(other.use_count() == otherCount);
+    CHECK(source.use_count() == sourceCount + 257);
+    REQUIRE(retained.front().schemaReference() == SchemaReference{f.binding, 2});
+}
+
+TEST_CASE("Imported schema owners outlive their sources without retaining ownership chains", "[model.schema-value]")
+{
+    std::weak_ptr<const SchemaBinding> sourceGroup;
+    std::weak_ptr<const SchemaBinding> targetGroup;
+    std::weak_ptr<const SchemaBinding> canonical;
+    std::weak_ptr<TypedFixture::Graph> graph;
+    std::vector<Value> retained;
+    {
+        TypedFixture f;
+        auto local = f.model->schemaReference(1).binding;
+        sourceGroup = local;
+        canonical = f.binding;
+        graph = f.graph;
+        auto target = std::make_shared<ModelPool>(f.model->strings());
+        SECTION("Direct binding")
+        {
+            target->setSchemaBinding(local);
+            target->addRoot(target->newQualifiedValue(std::int64_t{255}, {local, 2}));
+        }
+        SECTION("Copied scalar imports")
+        {
+            auto values = f.query("speed");
+            REQUIRE(values);
+            auto copied = target->copySequence(*values);
+            REQUIRE(copied);
+            target->addRoot((*copied)->at(0));
+        }
+        SECTION("Native reader resolver")
+        {
+            auto serialized = std::make_shared<ModelPool>();
+            serialized->addRoot(serialized->newQualifiedValue(std::int64_t{255}, {local, 2}));
+            target->setSchemaResolver([local](auto) { return local; });
+            REQUIRE(target->read(TypedFixture::bytes(*serialized)));
+            // The resolver's explicit capture must not mask a retained import chain.
+            target->setSchemaResolver({});
+        }
+        auto node = target->root(0).value();
+        auto domain = node->schemaReference();
+        REQUIRE(domain == SchemaReference{f.binding, 2});
+        REQUIRE(domain.binding.get() == local.get());
+        targetGroup = domain.binding;
+        retained.push_back(Value::field(*node));
+    }
+    CHECK(sourceGroup.expired());
+    CHECK_FALSE(targetGroup.expired());
+    CHECK_FALSE(canonical.expired());
+    CHECK_FALSE(graph.expired());
+    CHECK(retained.front().as<ValueType::Int>() == 255);
+    REQUIRE(retained.front().schemaReference().definition()->namedValue("SPEED_UNLIMITED"));
+    retained.clear();
+    CHECK(targetGroup.expired());
+    // Weak observers retain control blocks, never the graph hidden in their deleter.
+    CHECK(canonical.expired());
+    CHECK(graph.expired());
+}
+
+TEST_CASE("Model-local owners preserve alias pointers when flattening imports", "[model.schema-value]")
+{
+    std::shared_ptr<ModelPool> target = std::make_shared<ModelPool>();
+    std::weak_ptr<const SchemaBinding> sourceGroup;
+    std::weak_ptr<const SchemaBinding> targetGraph;
+    {
+        TypedFixture first("first-graph");
+        TypedFixture second("second-graph");
+        auto keeper = std::make_shared<std::array<std::shared_ptr<const SchemaBinding>, 2>>(
+            std::array{first.binding, second.binding});
+        auto source = std::make_shared<ModelPool>();
+        source->setSchemaBinding({keeper, first.binding.get()});
+        auto local = source->schemaReference(1).binding;
+        sourceGroup = local;
+        targetGraph = second.binding;
+        // A valid external alias can point at a different binding held by the same owner.
+        target->setSchemaBinding({local, second.binding.get()});
+        REQUIRE(target->schemaReference(2).binding.get() == second.binding.get());
+    }
+    CHECK(sourceGroup.expired());
+    CHECK_FALSE(targetGraph.expired());
+    REQUIRE(target->schemaReference(2).binding->identity() == "second-graph");
+    REQUIRE(target->schemaReference(2).definition()->namedValue("SPEED_UNLIMITED"));
+    target.reset();
+    CHECK(targetGraph.expired());
+}
+
+TEST_CASE("Concurrent models share schema definitions but retain independent query results", "[model.schema-value][evaluation.binding]")
+{
+    std::array<Value, 4> retained{Value::undef(), Value::undef(), Value::undef(), Value::undef()};
+    {
+        TypedFixture f;
+        Environment compiler(f.model->strings());
+        auto compiled = compile(compiler, "**.speed", false);
+        REQUIRE(compiled);
+        SharedAST shared(std::move(*compiled));
+        std::array<std::shared_ptr<ModelPool>, 4> models;
+        for (size_t worker = 0; worker < models.size(); ++worker) {
+            auto& model = models[worker];
+            model = std::make_shared<ModelPool>();
+            REQUIRE(model->strings()->emplace("worker-" + std::to_string(worker)));
+            model->setSchemaBinding(f.binding);
+            auto object = model->newObject();
+            REQUIRE(object->setSchema(1));
+            REQUIRE(object->addField("speed", int64_t{255} + static_cast<int64_t>(worker)));
+            model->addRoot(object);
+            model->freeze();
+        }
+        const auto results = RunConcurrentWorkers<4>([&](size_t worker) {
+            Environment env(models[worker]->strings());
+            BoundExpression expression(shared, env);
+            for (size_t iteration = 0; iteration < 40; ++iteration) {
+                // Exercise both traversals against one graph and independently owned data dictionaries.
+                env.enableWildcardFieldPlans = iteration % 2 == 0;
+                auto result = expression.eval(*models[worker]->root(0).value());
+                if (!result || result->size() != 1 || result->front().as<ValueType::Int>() != int64_t{255} + worker ||
+                    result->front().schemaReference() != SchemaReference{f.binding, 2})
+                    return false;
+                retained[worker] = result->front();
+            }
+            return true;
+        });
+        REQUIRE(std::ranges::all_of(results, [](bool passed) { return passed; }));
+    }
+    for (size_t worker = 0; worker < retained.size(); ++worker) {
+        CHECK(retained[worker].as<ValueType::Int>() == int64_t{255} + worker);
+        REQUIRE(retained[worker].schemaReference().definition()->namedValue("SPEED_UNLIMITED"));
+    }
+}
+
 TEST_CASE("Open objects retain declared scalar domains without guessing unknown alternatives", "[model.schema-value]")
 {
     TypedFixture f;

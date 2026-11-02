@@ -99,6 +99,19 @@ Dictionary translation for a wildcard plan happens only when building the plan,
 not on a cache hit. Parent-field scalar extraction still translates the requested
 name when the runtime and schema dictionaries are independent.
 
+Each `ModelPool` installs a model-local shared-ownership group for each bound
+graph. The actual `SchemaBinding` pointer, definitions, identity and dictionary
+remain shared; no graph is copied. This prevents independent tile workers from
+contending on one graph-wide reference counter during scalar extraction and
+pruning. Imports and readers flatten existing local groups to the original
+owner, preserving alias pointers rather than retaining chains of source models'
+groups. The final strong reference releases the graph even when weak observers
+remain. Both the stored handle and the new control block are cache-line isolated
+to avoid allocator-dependent false sharing with another model's hot counter.
+This adds storage/allocation once per installed graph, not per lookup or Value.
+Memory statistics include known padded handle/deleter storage, but exclude
+implementation-specific shared-pointer bookkeeping and allocator overhead.
+
 `ModelPool::freeze()` seals the pool and its shared `StringPool`. Factories,
 binary reads, rebinding and mutations through retained Object/Array nodes then
 fail. Derived schema owners must also guard their own columns. Freeze before
@@ -582,3 +595,93 @@ and benchmarks all three independent-dictionary variants. Focused tests cover
 core/custom/foreign metadata dispatch, graph-local ID collisions, dictionary
 translation, late declarations, replacement definitions, dynamic subscripts,
 and result ownership after both the environment and source models are gone.
+
+
+### Parallel Ownership Follow-Up
+
+The single-worker result above did not establish parallel scalability. A
+four-worker diagnostic with distinct models sharing one binding exposed a 52%
+regression in basic pruning against `77fe792`: each transient schema reference
+contended on the same graph-wide atomic counter. Splitting ownership counters
+without copying the graph removed most of it. That alone was insufficient:
+`perf c2c` then identified false sharing between a model's stored binding handle
+and another model's reference counter. Isolating both the handle and the new
+counter fixes that allocator-placement effect; padding unrelated model nodes
+or Values is not part of the change.
+
+The following complete matrix uses GCC 13.3 Release on an AMD Ryzen 7 PRO 7840U.
+Each worker has its own model, environment and retained `BoundExpression`, but
+shares the same schema graph and AST. Seven interleaved rounds each time 200
+queries per worker after three warmups. The statistic is the median of the
+slowest worker's mean query latency in each round, not aggregate throughput.
+Construction and compilation are excluded. Models are either built on the main
+thread or by their querying worker to check allocator-placement sensitivity.
+CPUs 4/5 and 6/7 share cores; CPUs 4/6/8/10 are distinct physical cores. The
+reference is always the original corresponding callback/exact query at
+`77fe792`, not the regressed Schema 2 implementation. `separate-*` additionally
+pays for an independent runtime dictionary; its reference still shares the
+schema dictionary. Negative change means faster.
+
+| Workers / Placement | Construction | Query | Original | Local Owners | Change |
+| --- | --- | --- | ---: | ---: | ---: |
+| 1 | main | bound-basic | 3.654 ms | 3.255 ms | -10.90% |
+| 1 | main | bound-plans | 1.646 ms | 1.327 ms | -19.40% |
+| 1 | main | bound-exact | 0.871 ms | 0.681 ms | -21.80% |
+| 1 | main | separate-basic | 3.622 ms | 3.298 ms | -8.95% |
+| 1 | main | separate-plans | 1.628 ms | 1.321 ms | -18.86% |
+| 1 | main | separate-exact | 0.861 ms | 0.688 ms | -20.13% |
+| 4 / 2 cores (SMT) | main | bound-basic | 5.573 ms | 5.831 ms | +4.63% |
+| 4 / 2 cores (SMT) | main | bound-plans | 2.570 ms | 2.477 ms | -3.61% |
+| 4 / 2 cores (SMT) | main | bound-exact | 1.211 ms | 1.151 ms | -4.97% |
+| 4 / 2 cores (SMT) | main | separate-basic | 5.592 ms | 5.792 ms | +3.57% |
+| 4 / 2 cores (SMT) | main | separate-plans | 2.581 ms | 2.473 ms | -4.20% |
+| 4 / 2 cores (SMT) | main | separate-exact | 1.204 ms | 1.155 ms | -4.05% |
+| 4 / 4 cores | main | bound-basic | 3.863 ms | 3.594 ms | -6.98% |
+| 4 / 4 cores | main | bound-plans | 1.711 ms | 1.382 ms | -19.22% |
+| 4 / 4 cores | main | bound-exact | 0.912 ms | 0.721 ms | -20.97% |
+| 4 / 4 cores | main | separate-basic | 3.869 ms | 3.515 ms | -9.15% |
+| 4 / 4 cores | main | separate-plans | 1.723 ms | 1.412 ms | -18.06% |
+| 4 / 4 cores | main | separate-exact | 0.948 ms | 0.713 ms | -24.83% |
+| 4 / 2 cores (SMT) | worker | bound-basic | 5.635 ms | 5.920 ms | +5.05% |
+| 4 / 2 cores (SMT) | worker | bound-plans | 2.590 ms | 2.518 ms | -2.76% |
+| 4 / 2 cores (SMT) | worker | bound-exact | 1.218 ms | 1.182 ms | -2.97% |
+| 4 / 2 cores (SMT) | worker | separate-basic | 5.612 ms | 5.933 ms | +5.72% |
+| 4 / 2 cores (SMT) | worker | separate-plans | 2.593 ms | 2.485 ms | -4.17% |
+| 4 / 2 cores (SMT) | worker | separate-exact | 1.205 ms | 1.197 ms | -0.66% |
+| 4 / 4 cores | worker | bound-basic | 3.891 ms | 3.562 ms | -8.45% |
+| 4 / 4 cores | worker | bound-plans | 1.779 ms | 1.414 ms | -20.50% |
+| 4 / 4 cores | worker | bound-exact | 0.927 ms | 0.763 ms | -17.70% |
+| 4 / 4 cores | worker | separate-basic | 3.912 ms | 3.616 ms | -7.57% |
+| 4 / 4 cores | worker | separate-plans | 1.735 ms | 1.435 ms | -17.31% |
+| 4 / 4 cores | worker | separate-exact | 0.939 ms | 0.763 ms | -18.68% |
+
+All single-worker and four-distinct-core medians improve. The strict <=1%
+regression target is nevertheless **not fully met**: basic pruning with four
+workers sharing two physical cores remains 3.57--5.72% slower. That is not an
+approved 5% exception, and the remaining target stays open. Field plans and
+exact paths improve in those SMT runs too, but do not erase the basic-pruning
+result. This is a bounded fixture comparison, not an end-to-end MapViewer,
+same-model concurrent-query, or cross-platform performance guarantee.
+
+All per-worker samples, CPU placement and source identifiers are retained in
+[`performance/schema-runtime-2026-11-02.json`](performance/schema-runtime-2026-11-02.json).
+The repository's sparse-wide benchmark also runs four-model batches for basic
+pruning, plans and exact paths. Its batch timings include thread/binding setup
+amortized over 16 queries per worker; they are not the pinned steady-state
+measurements reported above and should not become noisy CI timing assertions.
+
+A separate nine-round lifecycle probe installed one binding in each of 10,000
+empty models, then destroyed the models. Relative to `c217e0d` (which already
+supports bindings), median installation rises from 117 to 265 ns/model, and
+whole-model destruction from 7.713 to 8.031 us/model. Installation adds one heap
+allocation and 240 requested bytes per model/graph on this libstdc++ build
+(3 allocations / 68 bytes before, 4 / 308 after). The retained-capacity lower
+bound increases by 112 bytes; it deliberately does not claim the omitted
+control-block bookkeeping/padding. These are installation/teardown costs, not
+per-query allocations, and other standard libraries may use different layouts.
+
+Regression tests cover independent counters with unchanged graph pointers,
+direct/imported/read bindings, alias pointers differing from their owner,
+weak-reference release, detached scalar lifetimes, and concurrent workers
+using one schema with independent model dictionaries. No borrowed Value API,
+public node-layout change, or stream-format change is introduced.
