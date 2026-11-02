@@ -63,6 +63,11 @@ Objects and arrays do not embed child nodes directly. Instead, they maintain `Mo
 
 `StringPool` maintains the mapping between strings and the `StringId` integers stored in object fields. The base `Model` interface exposes `lookupStringId` so that serialization code such as `ModelNode::toJson` can recover human-readable field names. `ModelPool::setStrings` allows a pool to adopt a different `StringPool`, populating any missing field names along the way. This operation is used by higher-level components that need to merge data from several pools into a unified string namespace.
 
+Serialized dictionary updates are decoded completely before any entries are
+published. Malformed or truncated input leaves the existing IDs, highest offset
+and stored strings unchanged, allowing a transport to retry from its last valid
+offset without acknowledging part of a rejected update.
+
 ### ModelColumn
 
 The primitive storage building block below `ModelPool` and `ArrayArena` is `ModelColumn<T, RecordsPerPage, StoragePolicy>`. A model column stores a single fixed-width record stream and exposes bulk byte operations for serialization and deserialization. The generic implementation accepts three families of types:

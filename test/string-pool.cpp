@@ -46,3 +46,33 @@ TEST_CASE("StringPool exhaustion does not mutate or reuse reserved ids", "[model
     REQUIRE(pool.write(tail, 65535));
     CHECK_FALSE(tail.str().empty());
 }
+
+TEST_CASE("Truncated dictionary updates leave acknowledged IDs unchanged", "[model.string-pool]")
+{
+    auto sender = std::make_unique<StringPool>();
+    auto receiver = std::make_unique<StringPool>();
+    REQUIRE(sender->emplace("existing"));
+    REQUIRE(receiver->emplace("existing"));
+    auto const offset = receiver->highest();
+    REQUIRE(sender->emplace("new-first"));
+    REQUIRE(sender->emplace("new-second"));
+    std::ostringstream output;
+    REQUIRE(sender->write(output, offset + 1));
+    auto encoded = output.str();
+    std::vector<uint8_t> bytes(encoded.begin(), encoded.end());
+    auto const size = receiver->size();
+    auto const stored = receiver->strings().size();
+    auto const memory = receiver->bytes();
+    // Every possible truncation, including after one complete entry, must
+    // reject the entire delta. A retry then starts from the original offset.
+    for (size_t length = 0; length < bytes.size(); ++length) {
+        CAPTURE(length);
+        REQUIRE_FALSE(receiver->read(std::vector<uint8_t>(bytes.begin(), bytes.begin() + length)));
+        CHECK(receiver->highest() == offset);
+        CHECK(receiver->size() == size);
+        CHECK(receiver->strings().size() == stored);
+        CHECK(receiver->bytes() == memory);
+    }
+    REQUIRE(receiver->read(bytes));
+    CHECK(*receiver == *sender);
+}

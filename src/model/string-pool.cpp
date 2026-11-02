@@ -326,30 +326,32 @@ auto StringPool::read(const std::vector<uint8_t>& input, size_t offset) -> tl::e
     StringId rcvStringCount{};
     s.value2b(rcvStringCount);
 
-    // Read strings
+    // Validate the complete update before publishing any new IDs. A truncated
+    // transport frame must not advance the offset acknowledged on reconnect.
+    std::vector<std::pair<StringId, std::string>> entries;
+    entries.reserve(rcvStringCount);
     for (auto i = 0; i < rcvStringCount; ++i) {
-        // Read string key
-        StringId stringId{};
+        auto& [stringId, value] = entries.emplace_back();
         s.value2b(stringId);
+        s.text1b(value, std::numeric_limits<uint16_t>::max());
+        if (s.adapter().error() != bitsery::ReaderError::NoError)
+            break;
+    }
+    if (s.adapter().error() != bitsery::ReaderError::NoError) {
+        return tl::unexpected<Error>(
+            Error::EncodeDecodeError,
+            fmt::format("Failed to read StringPool: Error {}",
+                        static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
+    }
 
-        // Don't support strings longer than 64kB.
-        auto& stringValue = storedStrings_.emplace_back();
-        s.text1b(stringValue, std::numeric_limits<uint16_t>::max());
-
-        // Insert string into the pool
+    for (auto& [stringId, value] : entries) {
+        auto& stringValue = storedStrings_.emplace_back(std::move(value));
         auto [it, insertionTookPlace] = idForString_.try_emplace(stringValue, stringId);
         if (insertionTookPlace) {
             stringForId_.try_emplace(stringId, stringValue);
             byteSize_ += static_cast<int64_t>(stringValue.size());
             nextId_ = std::max(nextId_, std::uint32_t(stringId) + 1);
         }
-    }
-
-    if (s.adapter().error() != bitsery::ReaderError::NoError) {
-      return tl::unexpected<Error>(
-          Error::EncodeDecodeError,
-          fmt::format("Failed to read StringPool: Error {}",
-                      static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
 
     return {};
