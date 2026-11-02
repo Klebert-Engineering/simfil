@@ -83,6 +83,7 @@ public:
         return indexed ? definition.nestedFields() : std::span<const StringId>{};
     }
     auto directFields() const & -> std::span<const StringId> override { return definition.directFields(); }
+    auto fieldSchema(StringId field) const -> SchemaId override { return definition.fieldSchema(field); }
     auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override { return definition.finalize(lookup); }
     void forEachDirectField(const std::function<void(StringId, std::span<const SchemaId>)>& fn) const override
     {

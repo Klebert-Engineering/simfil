@@ -6,6 +6,7 @@
 #include <cassert>
 #include <bitset>
 #include <type_traits>
+#include <stdexcept>
 
 #include "model/nodes.h"
 #include "simfil/byte-array.h"
@@ -324,7 +325,23 @@ public:
     /** Attach known primitive provenance; null/undefined never inherit a caller's domain. */
     auto withSchema(SchemaReference domain) const -> Value;
     /** Extract a child using the actual parent's schema field edge before scalarization. */
-    static auto field(ModelNode const& parent, ModelNode const& child, StringId field) -> Value;
+    static auto field(ModelNode const& parent, ModelNode const& child, StringId field) -> Value
+    {
+        return Value::field(child, [&] { return fieldDomain(parent, field); });
+    }
+    /** Extract a child, inferring a domain only for primitives without intrinsic provenance. */
+    template <class DomainFn>
+    static auto field(ModelNode const& child, DomainFn&& domain) -> Value
+    {
+        const auto type = child.type();
+        if (type == ValueType::Undef)
+            return Value::undef();
+        // Compound values already retain their model and its schema. No scalar
+        // qualification or owning domain lookup is needed while following paths.
+        if (type == ValueType::Object || type == ValueType::Array)
+            return {type, model_ptr<ModelNode>(child)};
+        return scalarNode(child, std::forward<DomainFn>(domain));
+    }
     /** Extract an indexed child; object indexes use their actual key, arrays use the element domain. */
     static auto at(ModelNode const& parent, ModelNode const& child, std::int64_t index) -> Value;
     static auto t() -> Value
@@ -365,19 +382,7 @@ public:
 
     static auto field(const ModelNode& node) -> Value
     {
-        const auto type = node.type();
-        if (type == ValueType::Undef)
-            return Value::undef();
-        if (type == ValueType::Object || type == ValueType::Array) {
-            return Value{type, model_ptr<ModelNode>(node)};
-        }
-        auto scalar = node.value();
-        if (auto view = std::get_if<std::string_view>(&scalar))
-            scalar = std::string(*view);
-        auto result = Value{std::move(scalar)};
-        if (auto domain = node.schemaReference())
-            return result.withSchema(std::move(domain));
-        return result;
+        return field(node, [] { return SchemaReference{}; });
     }
 
     static auto field(ModelNode&& node) -> Value
@@ -388,7 +393,7 @@ public:
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(std::move(node))};
         } else {
-            return field(static_cast<ModelNode const&>(node));
+            return scalarNode(node, [] { return SchemaReference{}; });
         }
     }
 
@@ -401,7 +406,7 @@ public:
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(node)};
         } else {
-            return field(*node);
+            return scalarNode(*node, [] { return SchemaReference{}; });
         }
     }
 
@@ -573,6 +578,41 @@ public:
         TransientObject,
         ModelNode::Ptr,
         QualifiedScalar> value;
+
+private:
+    /** Construct a primitive once, retaining its domain and any borrowed string bytes. */
+    static auto fromScalar(ScalarValueType scalar, SchemaReference domain) -> Value
+    {
+        if (auto view = std::get_if<std::string_view>(&scalar))
+            scalar = std::string(*view);
+        if (auto mask = std::get_if<Bitmask>(&scalar)) {
+            if (domain && domain != mask->domain)
+                throw std::invalid_argument("Cannot rebind a bitmask to a different domain");
+        }
+        else if (domain && !std::holds_alternative<std::monostate>(scalar)) {
+            auto type = std::visit([](auto const& raw) {
+                return ValueType4CType<std::decay_t<decltype(raw)>>::Type;
+            }, scalar);
+            return {type, QualifiedScalar{std::move(scalar), std::move(domain)}};
+        }
+        return Value{std::move(scalar)};
+    }
+
+    /** Scalarize a known primitive without repeating its virtual type lookup. */
+    template <class DomainFn>
+    static auto scalarNode(ModelNode const& node, DomainFn&& inferDomain) -> Value
+    {
+        auto scalar = node.value();
+        auto domain = node.schemaReference();
+        if (auto mask = std::get_if<Bitmask>(&scalar); mask && !domain)
+            domain = mask->domain;
+        if (!domain && !std::holds_alternative<std::monostate>(scalar))
+            domain = inferDomain();
+        return fromScalar(std::move(scalar), std::move(domain));
+    }
+
+    /** Resolve a parent's declared field domain without constructing an intermediate Value. */
+    static auto fieldDomain(ModelNode const& parent, StringId field) -> SchemaReference;
 };
 
 template <typename ResultT, typename ValueT>

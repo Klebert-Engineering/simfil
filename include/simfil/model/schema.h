@@ -205,6 +205,14 @@ public:
     /** Resolve item domains independently of a prospective runtime array index. */
     static auto itemSchemas(SchemaId root, const Lookup& lookup) -> std::vector<SchemaId>;
 
+    /** Look up a declared member domain without allocation or graph traversal.
+     * Unknown or conflicting declarations return NoSchemaId; a declared union
+     * remains that union's domain. Field IDs belong to this schema's dictionary. */
+    virtual auto fieldSchema(StringId field) const -> SchemaId;
+
+    /** Look up the declared array element domain without allocation or traversal. */
+    virtual auto itemSchema() const -> SchemaId { return itemSchema_; }
+
     /** Finalization state */
     enum class State {
         Dirty,
@@ -242,10 +250,7 @@ public:
     /**
      * Finalize this schema and all schemas it refers to.
      */
-    virtual auto finalize(const std::function<Schema*(SchemaId)>& queryFn) -> State
-    {
-        return State::Clean;
-    }
+    virtual auto finalize(const std::function<Schema*(SchemaId)>& queryFn) -> State;
 
     /**
      * @return All nested field names.
@@ -399,7 +404,27 @@ protected:
     }
 
     /** Derived caches must be invalidated when structural metadata changes. */
-    virtual void invalidate() { ++metadataRevision_; reachabilityComplete_ = false; }
+    virtual void invalidate()
+    {
+        ++metadataRevision_;
+        reachabilityComplete_ = false;
+        fieldSchemas_.clear();
+        itemSchema_ = NoSchemaId;
+    }
+
+    /** Reduce repeated declarations of one domain without guessing among distinct domains. */
+    static auto uniqueSchema(std::span<const SchemaId> schemas) -> SchemaId
+    {
+        if (schemas.empty())
+            return NoSchemaId;
+        auto id = schemas.front();
+        return std::ranges::all_of(schemas, [id](auto other) { return other == id; }) ? id : NoSchemaId;
+    }
+
+    // Adapters and combiners prepare effective members once. Objects/arrays can
+    // instead implement point lookup directly over their existing edge storage.
+    std::vector<std::pair<StringId, SchemaId>> fieldSchemas_;
+    SchemaId itemSchema_ = NoSchemaId;
 
     /** Compute completeness from the graph, independently of cyclic finalization state. */
     auto computeReachabilityComplete(const std::function<Schema*(SchemaId)>& lookup) const -> bool;
@@ -895,6 +920,22 @@ public:
         return {fields_.begin(), fields_.end()};
     }
 
+    /** Read the existing field edges, including aliases and repeated declarations. */
+    auto fieldSchema(StringId field) const -> SchemaId override
+    {
+        field = canonicalField(field);
+        std::optional<SchemaId> result;
+        for (auto const& item : fields_) {
+            if (item.field != field)
+                continue;
+            auto child = uniqueSchema({item.schemas.data(), item.schemas.size()});
+            if (result && *result != child)
+                return NoSchemaId;
+            result = child;
+        }
+        return result.value_or(NoSchemaId);
+    }
+
     auto forEachDirectField(
         const std::function<void(StringId, std::span<const SchemaId>)>& fn) const -> void override
     {
@@ -1142,6 +1183,12 @@ public:
     auto elementSchemas() const & -> std::span<const SchemaId>
     {
         return {schemas_.begin(), schemas_.end()};
+    }
+
+    /** Read the existing element declarations without materializing a result vector. */
+    auto itemSchema() const -> SchemaId override
+    {
+        return uniqueSchema({schemas_.data(), schemas_.size()});
     }
 
     auto forEachElementSchema(const std::function<void(SchemaId)>& fn) const -> void override

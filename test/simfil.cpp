@@ -307,15 +307,18 @@ TEST_CASE(
     const auto results = RunConcurrentWorkers<8>(
         [ast](std::size_t worker)
         {
-            auto model = simfil::json::parse(
-                fmt::format(R"({{"padding{}": 0, "target": {}}})", worker, worker));
-            if (!model)
+            // Keep concurrent evaluation independent of localeconv() in JSON fixture parsing.
+            auto model = std::make_shared<ModelPool>();
+            auto root = model->newObject();
+            if (!root->addField(fmt::format("padding{}", worker), int64_t{0}) ||
+                !root->addField("target", static_cast<int64_t>(worker)))
                 return false;
+            model->addRoot(root);
 
-            Environment env(model.value()->strings());
+            Environment env(model->strings());
             BoundExpression expression(ast, env);
             for (auto iteration = 0; iteration < 100; ++iteration) {
-                auto result = expression.eval(**model.value()->root(0));
+                auto result = expression.eval(*root);
                 if (!result || result->size() != 1 ||
                     result->front().toString() != std::to_string(worker))
                     return false;

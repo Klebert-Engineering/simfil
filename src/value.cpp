@@ -44,11 +44,7 @@ auto Value::withSchema(SchemaReference domain) const -> Value
     if (!domain || type == ValueType::Null || type == ValueType::Undef ||
         type == ValueType::Object || type == ValueType::Array || type == ValueType::TransientObject)
         return *this;
-    auto scalar = getScalar();
-    // Returned values must not borrow bytes from the source model's string column.
-    if (auto view = std::get_if<std::string_view>(&scalar))
-        scalar = std::string(*view);
-    return {type, QualifiedScalar{std::move(scalar), std::move(domain)}};
+    return fromScalar(getScalar(), std::move(domain));
 }
 
 auto Value::namedValue(std::string_view name) const -> tl::expected<Value, Error>
@@ -84,48 +80,33 @@ auto Value::namedValue(std::string_view name) const -> tl::expected<Value, Error
     }, named->value);
 }
 
-auto Value::field(ModelNode const& parent, ModelNode const& child, StringId field) -> Value
+auto Value::fieldDomain(ModelNode const& parent, StringId field) -> SchemaReference
 {
-    auto result = Value::field(child);
-    if (result.type == ValueType::Object || result.type == ValueType::Array ||
-        result.type == ValueType::Null || result.type == ValueType::Undef || result.schemaReference())
-        return result;
     auto parentDomain = parent.schemaReference();
-    if (!parentDomain || !parent.owningModel())
-        return result;
-    auto name = parent.owningModel()->lookupStringId(field);
-    auto schema = parentDomain.definition();
-    if (!name || !schema)
-        return result;
-    auto const& strings = parentDomain.binding->strings();
-    auto id = strings->get(*name);
-    if (id == StringPool::Empty && !name->empty())
-        return result;
-    auto fields = Schema::fieldSchemas(parentDomain.id,
-        [&](SchemaId childId) { return parentDomain.binding->lookup(childId); }, id);
-    // A concrete parent must identify one effective domain; never guess among alternatives.
-    if (fields.size() == 1 && fields.front() != NoSchemaId)
-        return result.withSchema({parentDomain.binding, fields.front()});
-    return result;
+    if (parentDomain) {
+        auto owner = parent.owningModel();
+        auto name = owner ? owner->lookupStringId(field) : std::nullopt;
+        auto schema = parentDomain.definition();
+        if (name && schema) {
+            auto id = parentDomain.binding->strings()->get(*name);
+            // Missing names must not alias a declared empty field.
+            if (id != StringPool::Empty || name->empty())
+                return {std::move(parentDomain.binding), schema->fieldSchema(id)};
+        }
+    }
+    return {};
 }
 
 auto Value::at(ModelNode const& parent, ModelNode const& child, std::int64_t index) -> Value
 {
-    auto result = Value::field(child);
-    if (result.type == ValueType::Object || result.type == ValueType::Array ||
-        result.type == ValueType::Null || result.type == ValueType::Undef || result.schemaReference())
-        return result;
-    auto parentDomain = parent.schemaReference();
-    auto schema = parentDomain.definition();
-    if (!schema)
-        return result;
+    // Object indexes have actual keys; avoid scalarizing the child twice.
     if (parent.type() == ValueType::Object)
         return field(parent, child, parent.keyAt(index));
-    auto elements = Schema::itemSchemas(parentDomain.id,
-        [&](SchemaId childId) { return parentDomain.binding->lookup(childId); });
-    if (elements.size() == 1 && elements.front() != NoSchemaId)
-        return result.withSchema({parentDomain.binding, elements.front()});
-    return result;
+    return field(child, [&]() -> SchemaReference {
+        auto parentDomain = parent.schemaReference();
+        auto schema = parentDomain.definition();
+        return schema ? SchemaReference{std::move(parentDomain.binding), schema->itemSchema()} : SchemaReference{};
+    });
 }
 
 auto TypeFlags::types() const -> std::vector<ValueType>

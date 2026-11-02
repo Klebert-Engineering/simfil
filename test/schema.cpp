@@ -82,11 +82,14 @@ public:
 /** Evaluate a shared wildcard AST against one worker-local model and schema. */
 auto evaluateSharedSchemaExpression(const SharedAST& shared, std::size_t worker) -> bool
 {
-    auto model = json::parse(fmt::format(R"({{"target": {}}})", worker));
-    if (!model)
+    // Exercise independent schema bindings, not the JSON parser's process-global locale state.
+    auto model = std::make_shared<ModelPool>();
+    auto object = model->newObject();
+    if (!object->addField("target", static_cast<int64_t>(worker)) || !object->setSchema(SchemaId{1}))
         return false;
+    model->addRoot(object);
 
-    auto strings = model.value()->strings();
+    auto strings = model->strings();
     auto targetId = strings->get("target");
     SchemaRegistry registry;
     auto rootSchema = std::make_unique<ObjectSchema>();
@@ -94,18 +97,11 @@ auto evaluateSharedSchemaExpression(const SharedAST& shared, std::size_t worker)
     registry.schemas[SchemaId{1}] = std::move(rootSchema);
     registry.finalize();
 
-    auto root = model.value()->root(0);
-    if (!root)
-        return false;
-    auto object = model.value()->resolve<Object>(**root);
-    if (!object || !object->setSchema(SchemaId{1}))
-        return false;
-
     Environment environment(strings);
     environment.querySchemaCallback = registry.asFunction();
     BoundExpression expression(shared, environment);
     for (auto iteration = 0; iteration < 100; ++iteration) {
-        auto result = expression.eval(**root);
+        auto result = expression.eval(*object);
         if (!result || result->size() != 1 ||
             result->front().toString() != std::to_string(worker))
             return false;
@@ -1125,6 +1121,10 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
         SKIP("Skipping benchmarks when running under valgrind");
     }
 
+    // Match worker processes: some C++ libraries skip shared_ptr atomics until
+    // the process has started a thread. Thread setup is outside timed evaluation.
+    std::thread([] {}).join();
+
     constexpr auto objectCount = std::size_t{2'000};
     constexpr auto branchCount = std::size_t{32};
 
@@ -1216,9 +1216,15 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     auto exactPathAst = compile(env, "count(*." + branchNames.front() + ".payload.target == 1)", false, false);
     REQUIRE(exactPathAst);
 
+    // Match hot query users: the immutable AST and environment binding survive each evaluation.
+    SharedAST targetExpression(std::move(*targetAst));
+    SharedAST exactExpression(std::move(*exactPathAst));
+    BoundExpression targetQuery(targetExpression, env);
+    BoundExpression exactQuery(exactExpression, env);
+
     registry.enabled = false;
     BENCHMARK("Query sparse wide field 'target' recursive without schema") {
-        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        auto res = targetQuery.eval(**modelRoot);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
@@ -1230,7 +1236,7 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     registry.enabled = true;
     env.enableWildcardFieldPlans = false;
     BENCHMARK("Query sparse wide field 'target' recursive with basic schema pruning") {
-        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        auto res = targetQuery.eval(**modelRoot);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
@@ -1241,7 +1247,7 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
 
     env.enableWildcardFieldPlans = true;
     BENCHMARK("Query sparse wide field 'target' recursive with schema field plans") {
-        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        auto res = targetQuery.eval(**modelRoot);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
@@ -1253,7 +1259,7 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     registry.enabled = false;
     env.enableWildcardFieldPlans = false;
     BENCHMARK("Query sparse wide field 'target' via exact path without schema") {
-        auto res = eval(env, **exactPathAst, **modelRoot, nullptr);
+        auto res = exactQuery.eval(**modelRoot);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
 
@@ -1267,7 +1273,7 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     model->setSchemaBinding(std::make_shared<SchemaBinding>("sparse-wide-benchmark", registryOwner,
         [registryOwner](SchemaId id) { return registryOwner->get(id); }, strings));
     BENCHMARK("Query sparse wide field 'target' recursive with bound basic pruning") {
-        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        auto res = targetQuery.eval(**modelRoot);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
         auto count = res->front().template as<ValueType::Int>();
@@ -1277,7 +1283,7 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
 
     env.enableWildcardFieldPlans = true;
     BENCHMARK("Query sparse wide field 'target' recursive with bound field plans") {
-        auto res = eval(env, **targetAst, **modelRoot, nullptr);
+        auto res = targetQuery.eval(**modelRoot);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
         auto count = res->front().template as<ValueType::Int>();
@@ -1286,7 +1292,44 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     };
 
     BENCHMARK("Query sparse wide field 'target' via exact path with bound provenance") {
-        auto res = eval(env, **exactPathAst, **modelRoot, nullptr);
+        auto res = exactQuery.eval(**modelRoot);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    // Datasources normally use a different field namespace than the immutable schema.
+    auto runtimeStrings = std::make_shared<StringPool>();
+    REQUIRE(runtimeStrings->emplace("runtime-padding"));
+    REQUIRE(model->setStrings(runtimeStrings));
+    REQUIRE(runtimeStrings->get("target") != targetId);
+    Environment translatedEnv(runtimeStrings);
+    BoundExpression translatedQuery(targetExpression, translatedEnv);
+    BoundExpression translatedExact(exactExpression, translatedEnv);
+    translatedEnv.enableWildcardFieldPlans = false;
+    BENCHMARK("Query sparse wide field 'target' with separate dictionaries and basic pruning") {
+        auto res = translatedQuery.eval(**modelRoot);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    translatedEnv.enableWildcardFieldPlans = true;
+    BENCHMARK("Query sparse wide field 'target' with separate dictionaries and field plans") {
+        auto res = translatedQuery.eval(**modelRoot);
+        REQUIRE(res);
+        REQUIRE(res->size() == 1);
+        auto count = res->front().template as<ValueType::Int>();
+        REQUIRE(count == int64_t(objectCount));
+        return count;
+    };
+
+    BENCHMARK("Query sparse wide field 'target' with separate dictionaries via exact path") {
+        auto res = translatedExact.eval(**modelRoot);
         REQUIRE(res);
         REQUIRE(res->size() == 1);
         auto count = res->front().template as<ValueType::Int>();

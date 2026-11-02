@@ -52,8 +52,10 @@ struct TypedFixture
     model_ptr<Object> root;
 
     /** Use a deliberately different runtime dictionary; both fields share one inline address. */
-    explicit TypedFixture(std::string identity = "test-graph-v1")
+    explicit TypedFixture(std::string identity = "test-graph-v1", unsigned schemaPadding = 0)
     {
+        for (unsigned i = 0; i < schemaPadding; ++i)
+            REQUIRE(strings->emplace("schema-padding-" + std::to_string(i)));
         auto object = std::make_unique<ObjectSchema>();
         for (auto [name, id] : {std::pair{"speed", 2}, {"count", 3}, {"flags", 4}, {"items", 5}})
             object->addField(strings->emplace(name).value(), {SchemaId(id)});
@@ -152,6 +154,60 @@ TEST_CASE("Scalar domains survive selection but not numerical construction", "[m
     REQUIRE(f.query("min(count, speed)")->front().schemaReference() == SchemaReference{f.binding, 3});
 }
 
+TEST_CASE("Retained expressions bind field domains per graph and observe later declarations", "[model.schema-value][evaluation.binding]")
+{
+    std::vector<Value> retained;
+    {
+        TypedFixture a, b("other-graph", 7);
+        REQUIRE(a.strings->get("speed") != b.strings->get("speed"));
+        REQUIRE(a.model->strings()->get("speed") != a.strings->get("speed"));
+        REQUIRE(b.model->setStrings(a.model->strings()));
+        Environment env(a.model->strings());
+        for (auto plans : {false, true}) {
+            env.enableWildcardFieldPlans = plans;
+            for (auto text : {"speed", "**.speed", "_['speed']", "items[0]"}) {
+                auto ast = compile(env, text, false);
+                REQUIRE(ast);
+                BoundExpression expression(SharedAST(std::move(*ast)), env);
+                // Equal graph-local ids must never reuse another graph's dictionary or owner.
+                for (auto* fixture : {&a, &b, &a, &b}) {
+                    auto values = expression.eval(*fixture->root);
+                    REQUIRE(values);
+                    REQUIRE(values->size() == 1);
+                    CHECK(values->front().schemaReference() == SchemaReference{fixture->binding, 2});
+                    retained.push_back(values->front());
+                }
+            }
+        }
+
+        auto dynamic = a.query("_[arr('speed', 'count')]");
+        REQUIRE(dynamic);
+        REQUIRE(dynamic->size() == 2);
+        CHECK((*dynamic)[0].schemaReference() == SchemaReference{a.binding, 2});
+        CHECK((*dynamic)[1].schemaReference() == SchemaReference{a.binding, 3});
+
+        REQUIRE(a.root->addField("late", int64_t{255}));
+        auto ast = compile(env, "late", false);
+        REQUIRE(ast);
+        BoundExpression expression(SharedAST(std::move(*ast)), env);
+        CHECK_FALSE(expression.eval(*a.root)->front().schemaReference());
+        // Missing translations are not cached forever while an unpublished graph is growing.
+        auto& parent = static_cast<ObjectSchema&>(*a.graph->at(1));
+        parent.addField(a.strings->emplace("late").value(), {2});
+        CHECK(expression.eval(*a.root)->front().schemaReference() == SchemaReference{a.binding, 2});
+        auto replacement = std::make_unique<ObjectSchema>();
+        replacement->addField(a.strings->get("late"), {3});
+        (*a.graph)[1] = std::move(replacement);
+        CHECK(expression.eval(*a.root)->front().schemaReference() == SchemaReference{a.binding, 3});
+    }
+    // Neither the runtime cache, environment nor source model owns these results now.
+    for (auto const& value : retained) {
+        CHECK(value.as<ValueType::Int>() == 255);
+        REQUIRE(value.schemaReference().definition());
+        CHECK(value.schemaReference().definition()->namedValue("SPEED_UNLIMITED"));
+    }
+}
+
 TEST_CASE("Native copies keep compact compounds and qualify detached occurrences", "[model.schema-value]")
 {
     TypedFixture a;
@@ -219,21 +275,28 @@ TEST_CASE("Open objects retain declared scalar domains without guessing unknown 
     auto other = std::make_unique<ObjectSchema>();
     other->setOpen(true);
     (*f.graph)[6] = std::move(other);
-    auto alternatives = std::make_unique<CombinedSchema>(Schema::Composition::AnyOf);
-    alternatives->addAlternative(1);
-    alternatives->addAlternative(6);
-    (*f.graph)[7] = std::move(alternatives);
+    auto finalize = [&] {
+        // Publish a fresh combiner after changing a branch's declarations.
+        auto alternatives = std::make_unique<CombinedSchema>(Schema::Composition::AnyOf);
+        alternatives->addAlternative(1);
+        alternatives->addAlternative(6);
+        alternatives->finalize([&](SchemaId id) { return f.graph->at(id).get(); });
+        (*f.graph)[7] = std::move(alternatives);
+    };
+    finalize();
     REQUIRE(f.root->setSchema(7));
     REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<SchemaId>{NoSchemaId, 2});
     REQUIRE_FALSE(f.query("speed")->front().schemaReference());
     // Differently declared alternatives are still ambiguous, even with identical raw values.
     static_cast<ObjectSchema&>(*f.graph->at(6)).addField(speed, {3});
+    finalize();
     REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<SchemaId>{2, 3});
     REQUIRE_FALSE(f.query("speed")->front().schemaReference());
     auto matching = std::make_unique<ObjectSchema>();
     matching->setOpen(true);
     matching->addField(speed, {2});
     (*f.graph)[6] = std::move(matching);
+    finalize();
     REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<SchemaId>{2});
     REQUIRE(f.query("speed")->front().schemaReference() == SchemaReference{f.binding, 2});
 }

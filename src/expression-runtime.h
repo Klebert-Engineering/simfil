@@ -50,6 +50,32 @@ public:
         return state.fieldId;
     }
 
+    /** Translate this expression's field once per graph, also for basic pruning without plans. */
+    auto schemaFieldId(Expr::ExprId expressionId, std::string_view name,
+                       std::shared_ptr<const SchemaBinding> const& binding) -> StringId
+    {
+        auto& state = stateFor(expressionId).forBinding(binding);
+        if (state.fieldId == StringPool::Empty)
+            state.fieldId = binding->strings()->get(name);
+        return state.fieldId;
+    }
+
+    /** Extract a static member with the already-bound query name, not a per-value dictionary roundtrip. */
+    auto fieldValue(Expr::ExprId expressionId, std::string_view name,
+                    ModelNode const& parent, ModelNode const& child) -> Value
+    {
+        return Value::field(child, [&]() -> SchemaReference {
+            auto domain = parent.schemaReference();
+            auto schema = domain.definition();
+            if (!schema)
+                return {};
+            auto field = schemaFieldId(expressionId, name, domain.binding);
+            if (field == StringPool::Empty && !name.empty())
+                return {};
+            return {std::move(domain.binding), schema->fieldSchema(field)};
+        });
+    }
+
     /** Resolve a function against this binding's environment, caching successful lookups. */
     auto function(Expr::ExprId expressionId, const std::string& name) -> const Function*
     {
@@ -74,7 +100,7 @@ public:
 
         auto& state = stateFor(expressionId);
         // Keep domains from different immutable graphs distinct even when their local ids coincide.
-        auto& plans = binding ? state.boundWildcardPlans[binding] : state.wildcardSchemaPlans;
+        auto& plans = binding ? state.forBinding(binding).plans : state.wildcardSchemaPlans;
         const auto planIndex = static_cast<std::size_t>(schemaId);
         const auto schemaRevision = schema.revision();
         if (planIndex < plans.size()) {
@@ -112,12 +138,46 @@ private:
         WildcardSchemaPlan plan;
     };
 
+    /** A retained graph namespace shared by this expression's translation and traversal plans. */
+    struct BoundSchemaState
+    {
+        StringId fieldId = StringPool::Empty;
+        std::vector<std::unique_ptr<CachedWildcardSchemaPlan>> plans;
+    };
+
+    /** One movable, noncopyable cache slot; its map may have an allocating move on some libraries. */
     struct ExpressionState
     {
+        /** Start an empty environment-local slot. */
+        ExpressionState() = default;
+        /** Transfer graph-owned entries when the expression slot vector grows. */
+        ExpressionState(ExpressionState&&) = default;
+        /** Transfer cache ownership when replacing a slot. */
+        auto operator=(ExpressionState&&) -> ExpressionState& = default;
+        // Explicit deletion prevents vector relocation from selecting a map copy
+        // whose nested unique_ptr entries cannot be copied (notably with MSVC).
+        ExpressionState(ExpressionState const&) = delete;
+        auto operator=(ExpressionState const&) -> ExpressionState& = delete;
+
         StringId fieldId = StringPool::StaticStringIds::Empty;
         const Function* function = nullptr;
         std::vector<std::unique_ptr<CachedWildcardSchemaPlan>> wildcardSchemaPlans;
-        std::map<std::shared_ptr<const SchemaBinding>, std::vector<std::unique_ptr<CachedWildcardSchemaPlan>>> boundWildcardPlans;
+        std::map<std::shared_ptr<const SchemaBinding>, BoundSchemaState> boundSchemas;
+
+        /** Repeated nodes normally share one graph; keep other graphs in the owning map. */
+        auto forBinding(std::shared_ptr<const SchemaBinding> const& binding) -> BoundSchemaState&
+        {
+            if (lastBinding != binding.get()) {
+                lastSchemaState = &boundSchemas[binding];
+                lastBinding = binding.get();
+            }
+            return *lastSchemaState;
+        }
+
+    private:
+        // Map entries pin the graph and remain stable when expression slots move.
+        SchemaBinding const* lastBinding = nullptr;
+        BoundSchemaState* lastSchemaState = nullptr;
     };
 
     /** Materialize the cache slot assigned by AST::reenumerate(). */

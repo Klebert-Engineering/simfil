@@ -18,8 +18,9 @@ auto ModelNode::schemaReference() const -> SchemaReference
 
 /// Create a ModelNode from a model pool which serves as its
 /// VFT, and a TreeNodeAddress.
-ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key key)
-    : ModelNode(std::move(pool), addr, ScalarValueType{}, key)
+ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key)
+    // Address-only wrappers need the default null payload, not a moved scalar variant.
+    : model_(std::move(pool)), addr_(addr)
 {}
 
 ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data, detail::mp_key)
@@ -36,10 +37,7 @@ ScalarValueType ModelNode::value() const {
 
 /// Get the node's abstract model type
 ValueType ModelNode::type() const {
-    ValueType result = ValueType::Null;
-    if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.type(); }));
-    return result;
+    return model_ ? model_->type(*this) : ValueType::Null;
 }
 
 /// Get a child by name
@@ -69,10 +67,7 @@ StringId ModelNode::keyAt(int64_t i) const {
 }
 
 SchemaId ModelNode::schema() const {
-    SchemaId result = NoSchemaId;
-    if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.schema(); }));
-    return result;
+    return model_ ? model_->schema(*this) : NoSchemaId;
 }
 
 /// Get the number of children

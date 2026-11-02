@@ -68,6 +68,23 @@ Custom adapters expose fields/elements through the public enumeration methods;
 an adapter with an incomplete cached index must not claim completeness.
 Sparse wildcard plans use this generic interface, not concrete builder RTTI.
 
+Runtime scalar extraction uses the allocation-free `fieldSchema(fieldId)` and
+`itemSchema()` point lookups, not the allocating `fieldSchemas` / `itemSchemas`
+analysis helpers. Objects and arrays read their existing member edges directly.
+Combiners prepare an effective member index during finalization: a named union
+member has a declared domain just like an object member, regardless of which
+member is currently present. This does not flatten `OneOf` descriptors or infer
+a narrower domain from the scalar's raw value. A field declared as one union
+domain retains that domain; unresolved or conflicting declarations return
+`NoSchemaId`.
+
+Custom adapters can override these point lookups over their own edge storage,
+or call `Schema::finalize(lookup)` to prepare the default member index from their
+enumeration interface. An overridden finalizer must explicitly invoke the base
+implementation if it uses that index. Preparation follows logical alternatives,
+not child-field recursion; repeated reads do not traverse the graph or enumerate
+fields. Lookup-only aliases are resolved by `canonicalField` on the parent.
+
 Treat a published graph as immutable. Mutations update a concrete schema's local
 revision, but cannot automatically invalidate caches on all referring schemas.
 Owners must rebuild/invalidate dependent bindings and indexes after graph edits.
@@ -78,6 +95,9 @@ and schema dictionary. `SchemaReference` combines that binding with a local
 dictionaries may differ from the schema dictionary: scalar extraction and bound
 wildcard plans translate names rather than interpreting foreign IDs as local ones.
 Wildcard plan caches retain each graph independently.
+Dictionary translation for a wildcard plan happens only when building the plan,
+not on a cache hit. Parent-field scalar extraction still translates the requested
+name when the runtime and schema dictionaries are independent.
 
 `ModelPool::freeze()` seals the pool and its shared `StringPool`. Factories,
 binary reads, rebinding and mutations through retained Object/Array nodes then
@@ -357,6 +377,9 @@ undefined, sequence cardinality, ownership, dictionary remapping and copy limits
 operators/roundtrips, mixed result graphs, freeze boundaries and malformed reads.
 Its constructor-time reader regression checks qualified scalar storage without
 requiring `shared_from_this()` before a derived model has finished construction.
+`test/schema-lookup.cpp` covers direct members, named unions, aliases, duplicate
+declarations, incomplete/cyclic metadata and prepared adapter indexes. Its
+publication guard rejects schema enumeration during runtime scalar extraction.
 Existing language/model tests continue to cover the unbounded APIs. Descriptors,
 direct completion, bounded evaluation and native copying are also available with
 `SIMFIL_WITH_MODEL_JSON=OFF`; JSON serialization is not their storage backend.
@@ -413,7 +436,7 @@ The direct path needs no synthetic model construction. Removing duplicate field
 enumeration reduced its earlier nested-domain measurement from about 83 us to
 about 50 us on this machine.
 
-### Bound Domain Measurements
+### Earlier Bound Domain Measurements
 
 On 2026-10-30, a quiet Release run (GCC 13, 40 samples, 2000 resamples)
 measured the owning-binding/scalar-provenance implementation on the same
@@ -424,7 +447,7 @@ merged implementation. The earlier same-day `e324358` baseline used 20 samples
 and 1000 resamples, with appreciable noise in its field-plan result. These are
 not freshly interleaved before/after runs or a statistical regression threshold.
 
-| Query | Earlier Baseline | Current Callback | Current Bound Graph |
+| Query | Earlier Baseline | Callback At That Revision | Bound Graph At That Revision |
 | --- | ---: | ---: | ---: |
 | No schema | 6.814 ms | 7.070 ms | - |
 | Basic pruning | 3.222 ms | 3.549 ms | 5.532 ms |
@@ -433,7 +456,7 @@ not freshly interleaved before/after runs or a statistical regression threshold.
 
 Bound field plans are 2.64x faster than bound basic pruning, and take 1.48x
 the bound exact-path time. Binding/provenance is not free: relative to the
-current callback cases, bound plans cost about 31% more and bound exact access
+callback cases at that revision, bound plans cost about 31% more and bound exact access
 about 53% more. Persisted scalar leaves remain compact in both variants; the
 bound queries derive and retain their domain while emitting runtime values.
 This benchmark does not isolate binding lookup, dictionary translation and
@@ -445,3 +468,117 @@ Retain these controls when optimizing instead of reporting only the relative
 pruning speedup. In the same quiet run, model-root, direct-root and nested
 array/union completion measured 47.9, 50.0 and 50.6 us respectively, comparable
 to the earlier roughly 50 us measurements.
+
+### Allocation-Free Member Lookup
+
+On 2026-11-02, paired Release measurements compared `a67e654` with direct
+`fieldSchema` / `itemSchema` lookup and cached wildcard dictionary translation.
+Both executables used GCC 13, `-O3 -DNDEBUG`, the same sparse-wide fixture
+(2,000 objects, 32 branches), and CPU affinity to one core of a Ryzen 7 PRO
+7840U. The following are medians of seven interleaved rounds, each evaluating
+150 queries after three warmups, with a retained `BoundExpression`. Setup,
+schema finalization and compilation are outside the measurements.
+
+| Query | Before | Point Lookup |
+| --- | ---: | ---: |
+| No schema | 6.948 ms | 7.042 ms |
+| Callback basic pruning | 3.628 ms | 3.490 ms |
+| Callback field plans | 1.624 ms | 1.594 ms |
+| Unbound exact path | 0.918 ms | 0.897 ms |
+| Bound basic pruning | 5.552 ms | 5.216 ms |
+| Bound field plans | 2.079 ms | 1.781 ms |
+| Bound exact path | 1.404 ms | 1.167 ms |
+
+Bound field-plan latency falls about 14%, and bound exact-path latency about
+17%. The unbound controls vary by -3.8% to +1.3%; these local timings are not
+regression thresholds. Separate Callgrind runs show approximately 11% fewer
+instructions for both bound cases, unchanged no-schema/exact-path instruction
+counts, and about 1% fewer callback field-plan instructions.
+
+Counting `operator new` calls only around warmed evaluation gives **8,001 to 1
+allocations per bound query**, for all three bound variants. The remaining
+allocation holds the final result vector; deriving the 2,000 numeric leaf
+domains no longer allocates. This is not a promise that arbitrary queries or
+owning string results allocate nothing. Bound field plans also reduce successful
+schema-dictionary `get` calls from 8,001 to 2,000 per query. Exact graph ownership,
+scalar qualification and independent-dictionary translation still have a cost.
+
+The existing Catch2 schema/completion benchmarks were also rerun three times
+with 40 samples and 2,000 resamples. Median completion means were 47.5 us for
+model-root, 53.3 us for direct-root and 50.3 us for nested array/union completion.
+One run had substantial timing outliers; neither these measurements nor the
+earlier ones establish an end-to-end application speedup.
+
+### Runtime Cost Recovery Against The Original Baseline
+
+The allocation-free lookup result above compared against an already regressed
+implementation. It did **not** meet the performance budget against `77fe792`.
+The subsequent runtime pass removes redundant work rather than dropping domains:
+
+- `ModelPool::type` and `ModelPool::schema` read core column metadata directly;
+  custom columns still use virtual resolution, and typed nodes retain their
+  overrides. Generic nodes no longer construct owning wrappers just to read
+  these two properties.
+- Scalar extraction constructs the qualified `Value` once. Compound children
+  need no inferred scalar domain, while intrinsic scalar provenance takes
+  precedence over the parent edge.
+- `ExpressionRuntime` binds static field names to each exact schema dictionary.
+  Successful translations and wildcard plans share a graph-owned cache, with a
+  last-graph fast path. Missing names remain retryable; definitions are looked
+  up again, so schema replacement does not leave dangling definition pointers.
+  Dynamic subscripts still resolve the actual key for each access.
+- Resolution reuses the node's existing strong owner instead of acquiring an
+  extra dispatch reference and locking `enable_shared_from_this` for each
+  temporary wrapper. Wrappers and independently retained results still own
+  their model/graph; no borrowed-value lifetime protocol was introduced.
+- Address-only node construction initializes its default null payload directly,
+  rather than moving and destroying an otherwise unused scalar variant.
+
+The final comparison uses the same explicit-leaf sparse-wide fixture and
+compiler settings as above, but both executables first start and join a thread.
+This activates the ordinary threaded-process shared-pointer synchronization
+path before timing, rather than benefiting from a single-threaded-process
+library shortcut. Evaluation itself remains single-worker, pinned to CPU 4.
+Seven interleaved rounds evaluate 200 queries each after three warmups, retaining
+the `BoundExpression`; setup, dictionary migration and compilation are excluded.
+The original `77fe792` executable is the reference, not `a67e654`.
+
+| Query | Original Median | Final Median | Latency Change |
+| --- | ---: | ---: | ---: |
+| No schema | 7.483 ms | 5.646 ms | -24.5% |
+| Callback basic pruning | 3.569 ms | 2.751 ms | -22.9% |
+| Callback field plans | 1.604 ms | 1.245 ms | -22.4% |
+| Unbound exact path | 0.814 ms | 0.564 ms | -30.7% |
+| Bound basic pruning | 3.559 ms | 3.282 ms | -7.8% |
+| Bound field plans | 1.607 ms | 1.305 ms | -18.8% |
+| Bound exact path | 0.826 ms | 0.641 ms | -22.4% |
+| Separate dictionaries, bound basic | 3.495 ms | 3.272 ms | -6.4% |
+| Separate dictionaries, bound plans | 1.624 ms | 1.306 ms | -19.6% |
+| Separate dictionaries, bound exact | 0.820 ms | 0.636 ms | -22.4% |
+
+Each bound variant is compared with the original corresponding callback/exact
+query, which did not preserve scalar provenance. The separate-dictionary
+candidate additionally pays translation into an independent runtime namespace;
+its reference still uses the original shared dictionary. Repeated reference
+medians differ because each variant has its own interleaved reference samples.
+
+All candidate sample ranges were below their respective reference ranges. For
+the narrowest margin, separate-dictionary basic pruning, the seven candidate
+means span 3.181--3.350 ms versus 3.460--3.661 ms for the reference. This fixture
+meets the at-most-1% regression budget without using a 5% exception; it is not
+an end-to-end MapViewer or cross-platform performance guarantee. Exact-domain
+handling still has a measurable cost relative to the faster unbound candidate.
+Separate Callgrind runs count 3.8% more instructions for bound basic pruning,
+but 5.8% fewer for bound plans and 8.2% fewer for bound exact paths versus the
+original corresponding query. Instruction counts are not latency: the basic
+path still performs extra domain bookkeeping while avoiding costlier ownership
+operations and wrapper construction.
+
+Warmed evaluation in every mode performs one 88-byte allocation for the result
+vector, with no successful dictionary `get` calls. `Value`, `ModelNode` and
+`ScalarValueType` remain 88, 72 and 40 bytes on this platform, respectively.
+`test/schema.cpp` now retains bindings, activates threaded-process refcounts,
+and benchmarks all three independent-dictionary variants. Focused tests cover
+core/custom/foreign metadata dispatch, graph-local ID collisions, dictionary
+translation, late declarations, replacement definitions, dynamic subscripts,
+and result ownership after both the environment and source models are gone.

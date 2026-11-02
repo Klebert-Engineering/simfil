@@ -388,7 +388,8 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl
     if (auto sub = val.node()->get(nameId)) {
         if (diag)
             diag->hits++;
-        return res(ctx, Value::field(*val.node(), *sub, nameId));
+        return res(ctx, ctx.runtime ? ctx.runtime->fieldValue(id(), name_, *val.node(), *sub)
+            : Value::field(*val.node(), *sub, nameId));
     }
 
     if (ctx.phase == Context::Phase::Compilation)
@@ -1418,13 +1419,16 @@ auto WildcardFieldExpr::schemaPlan(const Context& ctx, SchemaId schemaId, const 
     if (!ctx.runtime)
         return nullptr;
 
-    const auto fieldId = binding ? binding->strings()->get(name_)
-        : ctx.runtime->fieldId(id(), name_);
     return ctx.runtime->wildcardSchemaPlan(
         id(),
         schemaId,
         schema,
-        [this, &ctx, &schema, fieldId, &binding] { return buildSchemaPlan(ctx, schema, fieldId, binding.get()); }, binding);
+        [this, &ctx, &schema, &binding] {
+            // A cached plan already includes its dictionary translation.
+            const auto fieldId = binding ? ctx.runtime->schemaFieldId(id(), name_, binding)
+                : ctx.runtime->fieldId(id(), name_);
+            return buildSchemaPlan(ctx, schema, fieldId, binding.get());
+        }, binding);
 }
 
 auto WildcardFieldExpr::type() const -> Type
@@ -1533,7 +1537,9 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
 
             // This is the original schema-pruning path: the current node can be
             // rejected, but child iteration is still generic when it may match.
-            auto schemaField = concrete ? concrete.binding->strings()->get(expr.name_) : field;
+            auto schemaField = concrete ? (ctx.runtime
+                ? ctx.runtime->schemaFieldId(expr.id(), expr.name_, concrete.binding)
+                : concrete.binding->strings()->get(expr.name_)) : field;
             if (schema->canHaveField(schemaField))
                 return {};
 
@@ -1570,7 +1576,8 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
             if (diag)
                 diag->hits++;
 
-            auto result = res(ctx, Value::field(val, *sub, field));
+            auto result = res(ctx, ctx.runtime ? ctx.runtime->fieldValue(expr.id(), expr.name_, val, *sub)
+                : Value::field(val, *sub, field));
             TRY_EXPECTED(result);
             return *result;
         }

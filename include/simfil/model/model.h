@@ -142,8 +142,9 @@ public:
                 // Merged views may expose nodes owned by another model, e.g.
                 // overlay feature references returned through a base tile. The
                 // node address must be interpreted by the model that created it.
-                if (auto owner = node.owningModel(); owner && owner.get() != this) {
-                    if (auto typedOwner = dynamic_cast<ModelType const*>(owner.get())) {
+                // The node pins its owner; dispatch needs no additional shared reference.
+                if (auto* owner = node.model_.get(); owner && owner != this) {
+                    if (auto typedOwner = dynamic_cast<ModelType const*>(owner)) {
                         return resolveInternal(res::tag<Target>{}, *typedOwner, node);
                     }
                 }
@@ -179,6 +180,10 @@ public:
      */
     virtual std::optional<std::string_view> lookupStringId(StringId id) const;
 
+    /** Read a node's type; the default preserves custom models' resolution protocol. */
+    virtual auto type(ModelNode const& node) const -> ValueType;
+    /** Read a node's stored schema id; custom models may use their normal resolution protocol. */
+    virtual auto schema(ModelNode const& node) const -> SchemaId;
     /** Resolve a model-local schema id into an owning graph-qualified domain. */
     virtual auto schemaReference(SchemaId id) const -> SchemaReference;
     /** Custom/overlay models may resolve an occurrence without inventing persistent local ids. */
@@ -297,6 +302,10 @@ public:
     auto hasDirectSchemaBinding(std::string_view identity) const noexcept -> bool;
     /** Resolve a single-graph id or a result pool's common remapped domain id. */
     auto schemaReference(SchemaId id) const -> SchemaReference override;
+    /** Read core schema columns directly, retaining custom-node and foreign-owner dispatch. */
+    auto schema(ModelNode const& node) const -> SchemaId override;
+    /** Classify core columns without materializing wrappers; custom columns still resolve normally. */
+    auto type(ModelNode const& node) const -> ValueType override;
     /** Avoid resolving node schemas when this model has no semantic graph binding. */
     auto schemaReference(ModelNode const& node) const -> SchemaReference override;
     /** Import an exact domain into this pool's common binding namespace, retaining its graph once. */

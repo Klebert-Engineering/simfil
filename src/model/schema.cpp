@@ -1,5 +1,6 @@
 #include "simfil/model/schema.h"
 
+#include <map>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -208,6 +209,76 @@ auto Schema::itemSchemas(SchemaId root, const Lookup& lookup) -> std::vector<Sch
     return result;
 }
 
+auto Schema::fieldSchema(StringId field) const -> SchemaId
+{
+    field = canonicalField(field);
+    auto found = std::ranges::lower_bound(fieldSchemas_, field, {}, [](auto const& entry) { return entry.first; });
+    return found != fieldSchemas_.end() && found->first == field ? found->second : NoSchemaId;
+}
+
+auto Schema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
+{
+    // This is a member index, not descendant reachability: a recursive object's
+    // child edges are never followed. Logical alternatives share this position.
+    std::vector<const Schema*> pending{this};
+    std::unordered_set<const Schema*> visited;
+    std::map<StringId, std::pair<SchemaId, size_t>> fields;
+    std::vector<StringId> declared;
+    size_t openBranches = 0;
+    bool unknownFields = false;
+    std::optional<SchemaId> item;
+    auto mergeItem = [&](SchemaId child) { item = item && *item != child ? NoSchemaId : child; };
+    while (!pending.empty()) {
+        auto schema = pending.back();
+        pending.pop_back();
+        if (!schema) {
+            unknownFields = true;
+            mergeItem(NoSchemaId);
+            continue;
+        }
+        if (!visited.insert(schema).second || !affinities(schema->kind()))
+            continue;
+        declared.clear();
+        schema->forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+            auto child = uniqueSchema(children);
+            auto [entry, inserted] = fields.try_emplace(field, child, size_t{0});
+            if (!inserted && entry->second.first != child)
+                entry->second.first = NoSchemaId;
+            if (schema->open())
+                declared.push_back(field);
+        });
+        // An open branch contributes unknown metadata only for undeclared fields.
+        // Count declarations once per branch even when an adapter repeats a key.
+        if (schema->open()) {
+            ++openBranches;
+            sortUnique(declared);
+            for (auto field : declared)
+                ++fields.at(field).second;
+        }
+        bool hasItems = false;
+        schema->forEachElementSchema([&](SchemaId child) { hasItems = true; mergeItem(child); });
+        if (!hasItems && schema->hasAffinity(ValueType::Array) && schema->composition() == Composition::None)
+            mergeItem(NoSchemaId);
+        auto name = kindNameId(schema->kind());
+        if (name == kindNameId(Kind::Any) || name == kindNameId(Kind::Unknown))
+            unknownFields = true;
+        if (schema->composition() == Composition::AllOf && schema->alternatives().empty()) {
+            unknownFields = true;
+            mergeItem(NoSchemaId);
+        }
+        for (auto child : schema->alternatives())
+            pending.push_back(child == NoSchemaId ? nullptr : lookup(child));
+    }
+    fieldSchemas_.clear();
+    if (!unknownFields) {
+        for (auto const& [field, entry] : fields)
+            if (entry.first != NoSchemaId && entry.second == openBranches)
+                fieldSchemas_.emplace_back(field, entry.first);
+    }
+    itemSchema_ = item.value_or(NoSchemaId);
+    return State::Clean;
+}
+
 CombinedSchema::CombinedSchema(Composition mode) : mode_(mode)
 {
     if (mode == Composition::None)
@@ -251,6 +322,7 @@ auto CombinedSchema::finalize(const std::function<Schema*(SchemaId)>& lookup) ->
         else
             affinities_ |= bits;
     }
+    Schema::finalize(lookup);
     return result;
 }
 

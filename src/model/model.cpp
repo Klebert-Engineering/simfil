@@ -30,25 +30,31 @@ namespace simfil
 
 tl::expected<void, Error> Model::resolve(const ModelNode& n, const ResolveFn& cb) const
 {
+    // Reuse the node's strong owner instead of locking enable_shared_from_this
+    // for every temporary wrapper. Returned wrappers still own the model.
+    auto retainOwner = [this, &n] {
+        return n.model_.get() == this ? n.model_ : shared_from_this();
+    };
+
     switch (n.addr_.column()) {
         case Null:
         {
-            cb(ModelNodeBase(shared_from_this(), ModelNodeAddress{}, mpKey_));
+            cb(ModelNodeBase(retainOwner(), ModelNodeAddress{}, mpKey_));
             break;
         }
         case UInt16:
         {
-            cb(SmallValueNode<uint16_t>(shared_from_this(), n.addr_, mpKey_));
+            cb(SmallValueNode<uint16_t>(retainOwner(), n.addr_, mpKey_));
             break;
         }
         case Int16:
         {
-            cb(SmallValueNode<int16_t>(shared_from_this(), n.addr_, mpKey_));
+            cb(SmallValueNode<int16_t>(retainOwner(), n.addr_, mpKey_));
             break;
         }
         case Bool:
         {
-            cb(SmallValueNode<bool>(shared_from_this(), n.addr_, mpKey_));
+            cb(SmallValueNode<bool>(retainOwner(), n.addr_, mpKey_));
             break;
         }
         case Scalar:
@@ -58,7 +64,7 @@ tl::expected<void, Error> Model::resolve(const ModelNode& n, const ResolveFn& cb
         }
         case Undefined:
         {
-            cb(UndefinedNode(shared_from_this(), n.addr_, mpKey_));
+            cb(UndefinedNode(retainOwner(), n.addr_, mpKey_));
             break;
         }
         default:
@@ -357,9 +363,16 @@ void ModelPool::clear()
 
 tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const& cb) const
 {
+    // Reuse the node's strong owner instead of locking enable_shared_from_this
+    // for every temporary wrapper. Returned wrappers still own the model.
+    auto retainOwner = [this, &n] {
+        return n.model_.get() == this ? n.model_ : shared_from_this();
+    };
+
     // Merged/container views can surface child nodes from another model. Always
     // let the owning model interpret its own column/index address.
-    if (auto owner = n.owningModel(); owner && owner.get() != this) {
+    // The input node already retains this owner throughout resolution.
+    if (auto* owner = n.model_.get(); owner && owner != this) {
         return owner->resolve(n, cb);
     }
 
@@ -373,11 +386,11 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
 
     switch (n.addr_.column()) {
     case Objects: {
-        cb(Object(shared_from_this(), n.addr_, mpKey_));
+        cb(Object(retainOwner(), n.addr_, mpKey_));
         break;
     }
     case Arrays: {
-        cb(Array(shared_from_this(), n.addr_, mpKey_));
+        cb(Array(retainOwner(), n.addr_, mpKey_));
         break;
     }
     case Int64: {
@@ -385,7 +398,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto idx = n.addr().index();
         auto& val = impl_->columns_.i64_[idx];
-        cb(ValueNode(val, shared_from_this(), mpKey_));
+        cb(ValueNode(val, retainOwner(), mpKey_));
         break;
     }
     case Double: {
@@ -393,7 +406,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto idx = n.addr().index();
         auto& val = impl_->columns_.double_[idx];
-        cb(ValueNode(val, shared_from_this(), mpKey_));
+        cb(ValueNode(val, retainOwner(), mpKey_));
         break;
     }
     case String: {
@@ -404,7 +417,7 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
         cb(ValueNode(
             // TODO: Make sure that the string view is not turned into a string here.
             std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_),
-            shared_from_this(),
+            retainOwner(),
             mpKey_));
         break;
     }
@@ -414,12 +427,12 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
             return tl::unexpected<Error>(*err);
         auto& val = impl_->columns_.byteArrays_[idx];
         auto view = std::string_view(impl_->columns_.stringData_).substr(val.offset_, val.length_);
-        cb(ValueNode(simfil::ByteArray{view}, shared_from_this(), mpKey_));
+        cb(ValueNode(simfil::ByteArray{view}, retainOwner(), mpKey_));
         break;
     }
     case PooledString: {
         auto str = lookupStringId(static_cast<StringId>(n.addr().index()));
-        cb(ValueNode(str.value_or(std::string_view{}), shared_from_this(), mpKey_));
+        cb(ValueNode(str.value_or(std::string_view{}), retainOwner(), mpKey_));
         break;
     }
     case QualifiedScalar: {
@@ -525,6 +538,20 @@ auto Model::schemaReference(SchemaId) const -> SchemaReference
     return {};
 }
 
+auto Model::schema(ModelNode const& node) const -> SchemaId
+{
+    SchemaId result = NoSchemaId;
+    resolve(node, Lambda([&](auto const& resolved) { result = resolved.schema(); }));
+    return result;
+}
+
+auto Model::type(ModelNode const& node) const -> ValueType
+{
+    auto result = ValueType::Null;
+    resolve(node, Lambda([&](auto const& resolved) { result = resolved.type(); }));
+    return result;
+}
+
 auto Model::schemaReference(ModelNode const& node) const -> SchemaReference
 {
     return schemaReference(node.schema());
@@ -586,6 +613,59 @@ auto ModelPool::schemaReference(ModelNode const& node) const -> SchemaReference
     if (impl_->schemaBindings_.empty())
         return {};
     return schemaReference(node.schema());
+}
+
+auto ModelPool::schema(ModelNode const& node) const -> SchemaId
+{
+    if (auto* owner = node.model_.get(); owner && owner != this)
+        return owner->schema(node);
+    // Core column ids already identify where the schema is stored. Resolving a
+    // temporary node wrapper here would retain the model just to read this id.
+    auto address = node.addr();
+    switch (address.column()) {
+    case Objects:
+        return objectSchemaId(address.index());
+    case Arrays:
+        return arraySchemaId(address.index());
+    case QualifiedScalar:
+        return address.index() < impl_->columns_.qualifiedScalars_.size()
+            ? SchemaId(impl_->columns_.qualifiedScalars_[address.index()].second()) : NoSchemaId;
+    case Bitmask:
+        return address.index() < impl_->columns_.bitmasks_.size()
+            ? SchemaId(impl_->columns_.bitmasks_[address.index()].second()) : NoSchemaId;
+    default:
+        // Custom columns keep their model-specific schema protocol. Plain core
+        // primitives have no occurrence-specific domain outside their parent.
+        return address.column() >= FirstCustomColumnId ? Model::schema(node) : NoSchemaId;
+    }
+}
+
+auto ModelPool::type(ModelNode const& node) const -> ValueType
+{
+    if (auto* owner = node.model_.get(); owner && owner != this)
+        return owner->type(node);
+    auto address = node.addr();
+    auto index = address.index();
+    switch (address.column()) {
+    case Null: return ValueType::Null;
+    case Undefined: return ValueType::Undef;
+    case Bool: return ValueType::Bool;
+    case UInt16:
+    case Int16: return ValueType::Int;
+    case Objects: return ValueType::Object;
+    case Arrays: return ValueType::Array;
+    // Match resolve()'s invalid-reference fallback without reading the payload.
+    case Int64: return index < impl_->columns_.i64_.size() ? ValueType::Int : ValueType::Null;
+    case Double: return index < impl_->columns_.double_.size() ? ValueType::Float : ValueType::Null;
+    case String: return index < impl_->columns_.strings_.size() ? ValueType::String : ValueType::Null;
+    case PooledString: return ValueType::String;
+    case ByteArray: return index < impl_->columns_.byteArrays_.size() ? ValueType::Bytes : ValueType::Null;
+    case Bitmask: return index < impl_->columns_.bitmasks_.size() ? ValueType::Bitmask : ValueType::Null;
+    default:
+        // Qualified values and custom columns can define their own primitive
+        // representation; their node protocol remains the authority.
+        return Model::type(node);
+    }
 }
 
 auto ModelPool::importSchema(SchemaReference const& domain) -> tl::expected<SchemaId, Error>
