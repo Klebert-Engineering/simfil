@@ -670,6 +670,11 @@ pruning, plans and exact paths. Its batch timings include thread/binding setup
 amortized over 16 queries per worker; they are not the pinned steady-state
 measurements reported above and should not become noisy CI timing assertions.
 
+CTest in coverage builds runs every benchmark with one measured sample and no
+statistical analysis. Fixture setup, calibration, benchmark bodies and their assertions
+still execute; ordinary builds retain full sampling. Instrumented timings, especially
+with shared atomic gcov counters, are not performance evidence.
+
 A separate nine-round lifecycle probe installed one binding in each of 10,000
 empty models, then destroyed the models. Relative to `c217e0d` (which already
 supports bindings), median installation rises from 117 to 265 ns/model, and

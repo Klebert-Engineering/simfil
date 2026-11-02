@@ -41,4 +41,10 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")
 include(Catch)
 include(CTest)
-catch_discover_tests(test.simfil)
+if (SIMFIL_WITH_COVERAGE)
+  # Exercise every benchmark body and assertion without statistical sampling:
+  # instrumented timings are not meaningful, especially with shared gcov counters.
+  catch_discover_tests(test.simfil EXTRA_ARGS --benchmark-samples 1 --benchmark-no-analysis)
+else()
+  catch_discover_tests(test.simfil)
+endif()
