@@ -76,6 +76,22 @@ public:
     }
 
 private:
+    /** Apply an explicitly requested graph migration without discarding known provenance. */
+    auto remapSchema(SchemaReference const& source) const -> tl::expected<SchemaReference, Error>
+    {
+        if (!options_.schemaRemap)
+            return source;
+        try {
+            auto mapped = options_.schemaRemap(source);
+            if (!mapped || !mapped.definition())
+                return failure("Schema remapping returned an unresolved domain");
+            return mapped;
+        }
+        catch (std::exception const& error) {
+            return failure(error.what());
+        }
+    }
+
     /** Copy scalars directly; collections use protocol order, not a JSON serialization override. */
     auto copyResolved(ModelNode const& source, size_t depth) -> tl::expected<ModelNode::Ptr, Error>
     {
@@ -124,11 +140,15 @@ private:
     }
 
     /** Persist one already-typed scalar; raw numeric leaves copied inside compounds stay compact. */
-    auto copyQualified(ScalarValueType const& value, SchemaReference const& domain)
+    auto copyQualified(ScalarValueType const& value, SchemaReference const& sourceDomain)
         -> tl::expected<ModelNode::Ptr, Error>
     {
-        if (!domain.definition())
+        if (!sourceDomain.definition())
             return failure("Scalar has no resolved schema definition");
+        auto mapped = remapSchema(sourceDomain);
+        if (!mapped)
+            return tl::unexpected(mapped.error());
+        auto const& domain = *mapped;
         // Charge conservatively for raw storage, qualifier and common binding metadata.
         size_t bytes = sizeof(std::uint64_t) + sizeof(SchemaId) + sizeof(ModelNodeAddress);
         if (auto text = std::get_if<std::string>(&value))
@@ -176,7 +196,14 @@ private:
                 return tl::unexpected(created.error());
             object = *created;
         }
-        if (auto domain = source.schemaReference()) {
+        if (auto sourceDomain = source.schemaReference()) {
+            auto mapped = remapSchema(sourceDomain);
+            if (!mapped)
+                return tl::unexpected(mapped.error());
+            auto const& domain = *mapped;
+            // Graph composition may widen a container, but must not turn it into a scalar.
+            if (options_.schemaRemap && !domain.definition()->hasAffinity(source.type()))
+                return failure("Remapped schema is incompatible with the copied container");
             if (!charge(domain.binding->identity().size() + sizeof(SchemaId)))
                 return failure("Node copy byte budget exceeded");
             auto imported = target_.importSchema(domain);

@@ -594,6 +594,128 @@ TEST_CASE("Unbound copied schemas and overflowing integer literals fail explicit
     REQUIRE(compile(env, "18446744073709551616.0", false));
 }
 
+TEST_CASE("Native copies explicitly remap exact domains without qualifying ordinary leaves", "[model.copy][model.schema-value]")
+{
+    TypedFixture source;
+    auto graph = std::make_shared<TypedFixture::Graph>();
+    auto object = std::make_unique<ObjectSchema>();
+    for (auto [name, id] : {std::pair{"speed", 12}, {"count", 13}, {"flags", 14}, {"items", 15}})
+        object->addField(source.strings->get(name), {SchemaId(id)});
+    (*graph)[11] = std::move(object);
+    (*graph)[12] = std::make_unique<ValueSchema>(Schema::Kind::Int);
+    (*graph)[13] = std::make_unique<ValueSchema>(Schema::Kind::Int);
+    (*graph)[14] = std::make_unique<ScalarDomain>(Schema::Kind::Bitmask);
+    auto array = std::make_unique<ArraySchema>();
+    array->addElementSchemas({12});
+    (*graph)[15] = std::move(array);
+    auto lookup = [graph](SchemaId id) { return graph->contains(id) ? graph->at(id).get() : nullptr; };
+    for (auto& [_, schema] : *graph)
+        schema->finalize(lookup);
+    auto binding = std::make_shared<SchemaBinding>("composed-graph", graph, lookup, source.strings);
+    auto destination = std::make_shared<ModelPool>(std::make_shared<StringPool>(*source.model->strings()));
+    std::vector<SchemaId> mapped;
+    ModelPool::CopyOptions options;
+    options.schemaRemap = [&](SchemaReference const& domain) {
+        REQUIRE(domain.binding->identity() == source.binding->identity());
+        mapped.push_back(domain.id);
+        return SchemaReference{binding, SchemaId(domain.id + 10)};
+    };
+    auto copied = destination->copyNode(*source.root, options);
+    REQUIRE(copied);
+    REQUIRE((*copied)->schemaReference() == SchemaReference{binding, 11});
+    REQUIRE((*copied)->at(2)->schemaReference() == SchemaReference{binding, 14});
+    REQUIRE((*copied)->at(3)->schemaReference() == SchemaReference{binding, 15});
+    REQUIRE(mapped == std::vector<SchemaId>{1, 4, 5});
+    REQUIRE((*copied)->at(0)->schema() == NoSchemaId);
+    REQUIRE((*copied)->at(3)->at(0)->schema() == NoSchemaId);
+    Environment env(destination->strings());
+    auto expression = compile(env, "speed", false);
+    REQUIRE(expression);
+    auto value = eval(env, **expression, **copied, nullptr);
+    REQUIRE(value);
+    REQUIRE(value->front().schemaReference() == SchemaReference{binding, 12});
+
+    auto selected = source.query("speed");
+    REQUIRE(selected);
+    auto sequence = destination->copySequence(*selected, options);
+    REQUIRE(sequence);
+    REQUIRE((*sequence)->at(0)->schemaReference() == SchemaReference{binding, 12});
+    REQUIRE(mapped == std::vector<SchemaId>{1, 4, 5, 2});
+    destination->addRoot(*copied);
+    destination->addRoot(*sequence);
+    REQUIRE(destination->validate());
+
+    SECTION("In-place remapping preserves payload addresses and detached old values") {
+        auto address = source.root->addr();
+        auto scalar = source.model->newQualifiedValue(std::int64_t{255}, {source.binding, 2});
+        source.model->addRoot(scalar);
+        mapped.clear();
+        source.model->remapSchemas(binding, options.schemaRemap);
+        REQUIRE(source.model->hasDirectSchemaBinding(binding->identity()));
+        REQUIRE(source.root->addr() == address);
+        REQUIRE(source.root->schemaReference() == SchemaReference{binding, 11});
+        REQUIRE(source.root->at(2)->schemaReference() == SchemaReference{binding, 14});
+        REQUIRE(source.root->at(3)->schemaReference() == SchemaReference{binding, 15});
+        REQUIRE(source.root->at(0)->schema() == NoSchemaId);
+        REQUIRE(scalar->schemaReference() == SchemaReference{binding, 12});
+        REQUIRE(selected->front().schemaReference() == SchemaReference{source.binding, 2});
+        REQUIRE(source.query("speed")->front().schemaReference() == SchemaReference{binding, 12});
+        REQUIRE(mapped.size() == 4);
+        auto restored = std::make_shared<ModelPool>(source.model->strings());
+        restored->setSchemaResolver([binding](std::string_view id) {
+            return id == binding->identity() ? binding : nullptr;
+        });
+        REQUIRE(restored->read(TypedFixture::bytes(*source.model)));
+        REQUIRE(restored->hasDirectSchemaBinding(binding->identity()));
+        REQUIRE(restored->validate());
+    }
+    SECTION("In-place validation failure leaves all bytes and bindings unchanged") {
+        auto before = TypedFixture::bytes(*source.model);
+        auto fail = [&](SchemaReference const& domain) {
+            return SchemaReference{binding, SchemaId(domain.id == 4 ? 12 : domain.id + 10)};
+        };
+        REQUIRE_THROWS_AS(source.model->remapSchemas(binding, fail), std::invalid_argument);
+        REQUIRE(TypedFixture::bytes(*source.model) == before);
+        REQUIRE(source.model->hasDirectSchemaBinding(source.binding->identity()));
+        REQUIRE_THROWS_AS(source.model->remapSchemas(binding, [](auto const& domain) { return domain; }),
+                          std::invalid_argument);
+        REQUIRE(TypedFixture::bytes(*source.model) == before);
+    }
+    SECTION("An unqualified or empty pool still installs the effective artifact") {
+        auto empty = std::make_shared<ModelPool>();
+        empty->addRoot(empty->newValue(std::int64_t{42}));
+        empty->remapSchemas(binding, [](auto const&) -> SchemaReference {
+            FAIL("Unqualified leaves must not invoke schema remapping");
+            return {};
+        });
+        REQUIRE(empty->hasDirectSchemaBinding(binding->identity()));
+        REQUIRE(empty->root(0).value()->schema() == NoSchemaId);
+        empty->freeze();
+        REQUIRE_THROWS_AS(empty->remapSchemas(binding, options.schemaRemap), std::logic_error);
+    }
+    SECTION("Missing or invalid replacement domains fail instead of dropping provenance") {
+        options.schemaRemap = [](auto const&) { return SchemaReference{}; };
+        REQUIRE_FALSE(destination->copyNode(*source.root, options));
+        REQUIRE_FALSE(destination->copySequence(*selected, options));
+        options.schemaRemap = [binding](auto const&) { return SchemaReference{binding, 60000}; };
+        REQUIRE_FALSE(destination->copyNode(*source.root, options));
+    }
+    SECTION("Callback failures become copy errors") {
+        options.schemaRemap = [](auto const&) -> SchemaReference {
+            throw std::invalid_argument("incompatible contribution");
+        };
+        auto failed = destination->copyNode(*source.root, options);
+        REQUIRE_FALSE(failed);
+        REQUIRE(failed.error().message == "incompatible contribution");
+    }
+    SECTION("A replacement cannot change the physical payload type") {
+        options.schemaRemap = [binding](auto const&) { return SchemaReference{binding, 12}; };
+        REQUIRE_FALSE(destination->copyNode(*source.root, options));
+        options.schemaRemap = [binding](auto const&) { return SchemaReference{binding, 11}; };
+        REQUIRE_FALSE(destination->copySequence(*selected, options));
+    }
+}
+
 TEST_CASE("Named queries use the actual numeric or flag domain rather than common raw codes", "[model.schema-value][schema.symbol]")
 {
     TypedFixture f;

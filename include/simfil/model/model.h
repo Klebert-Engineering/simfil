@@ -294,6 +294,11 @@ public:
     auto newBitmask(std::uint64_t bits, SchemaReference const& domain) -> ModelNode::Ptr;
     /** Bind a single graph directly, preserving its numeric ids; incompatible rebinding is rejected. */
     void setSchemaBinding(std::shared_ptr<const SchemaBinding> binding);
+    /** Rebind core schema columns transactionally to one exact graph without copying payloads.
+     * Unknown leaves stay unqualified. Reject unresolved/incompatible mappings before mutation;
+     * derived pools must separately prevalidate and update their custom schema columns. */
+    void remapSchemas(std::shared_ptr<const SchemaBinding> target,
+                      std::function<SchemaReference(SchemaReference const&)> const& remap);
     /** Install the external lookup required to hydrate every identity in a binary model. */
     void setSchemaResolver(SchemaBinding::Resolver resolver);
     /** Find an installed or externally supplied binding, accepting only the exact requested identity. */
@@ -327,6 +332,11 @@ public:
         size_t maxDepth = 64;
         size_t maxNodes = 100000;
         size_t maxBytes = 16 * 1024 * 1024;
+        /** Rebind known domains during copying, for example into a composed graph.
+         * An absent callback preserves source bindings. A callback must return a
+         * resolved domain; removing provenance or coercing the payload is not allowed.
+         * Ordinary unqualified scalar leaves do not invoke it. */
+        std::function<SchemaReference(SchemaReference const&)> schemaRemap;
     };
 
     /**

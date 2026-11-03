@@ -280,21 +280,21 @@ std::vector<std::string> ModelPool::checkForErrors() const
             errors.push_back(fmt::format("Bad string ID: {}", str));
     };
 
-    std::function<void(ModelNode::Ptr)> validateModelNode = [&](ModelNode::Ptr node)
+    std::function<void(ModelNode::Ptr, bool)> validateModelNode = [&](ModelNode::Ptr node, bool requireCoreSchema)
     {
         if (node->type() == ValueType::Object) {
             // Custom object columns own their schema storage; their indices are not ours.
             if (node->addr().column() == Objects) {
                 if (!validateArrayIndex(node->addr().index(), "object", impl_->columns_.objectMemberArrays_))
                     return;
-                if (!objectHasSchema(node->addr().index())) {
+                if (requireCoreSchema && !objectHasSchema(node->addr().index())) {
                     errors.emplace_back(fmt::format("Missing object schema index {}.", node->addr().index()));
                     return;
                 }
             }
             for (auto const& [fieldName, fieldValue] : node->fields()) {
                 validatePooledString(fieldName);
-                validateModelNode(fieldValue);
+                validateModelNode(fieldValue, true);
             }
         }
         else if (node->type() == ValueType::Array) {
@@ -302,13 +302,13 @@ std::vector<std::string> ModelPool::checkForErrors() const
             if (node->addr().column() == Arrays) {
                 if (!validateArrayIndex(node->addr().index(), "arrays", impl_->columns_.arrayMemberArrays_))
                     return;
-                if (!arrayHasSchema(node->addr().index())) {
+                if (requireCoreSchema && !arrayHasSchema(node->addr().index())) {
                     errors.emplace_back(fmt::format("Missing array schema index {}.", node->addr().index()));
                     return;
                 }
             }
             for (auto const& member : *node)
-                validateModelNode(member);
+                validateModelNode(member, true);
         }
         else if (node->addr().column() == PooledString) {
             validatePooledString(static_cast<StringId>(node->addr().index()));
@@ -318,34 +318,36 @@ std::vector<std::string> ModelPool::checkForErrors() const
             errors.emplace_back(res.error().message);
     };
 
-    // Validate objects
+    // Shared arenas also back custom columns without core schema sidecars.
+    // Synthetic sweep nodes validate storage/members, not their invented core identity;
+    // actual core child/root references still require metadata before following children.
     for (auto i = FirstRegularArrayIndex; i < impl_->columns_.objectMemberArrays_.size(); ++i)
         validateModelNode(ModelNode::Ptr::make(
             shared_from_this(),
-            ModelNodeAddress{Objects, (uint32_t)i}));
+            ModelNodeAddress{Objects, (uint32_t)i}), false);
     for (auto i = 0u; i < impl_->columns_.objectMemberArrays_.singleton_handle_count(); ++i)
         validateModelNode(ModelNode::Ptr::make(
             shared_from_this(),
             ModelNodeAddress{
                 Objects,
-                SingletonArrayHandleMask | static_cast<uint32_t>(i)}));
+                SingletonArrayHandleMask | static_cast<uint32_t>(i)}), false);
 
     // Validate arrays
     for (auto i = FirstRegularArrayIndex; i < impl_->columns_.arrayMemberArrays_.size(); ++i)
         validateModelNode(ModelNode::Ptr::make(
             shared_from_this(),
-            ModelNodeAddress{Arrays, (uint32_t)i}));
+            ModelNodeAddress{Arrays, (uint32_t)i}), false);
     for (auto i = 0u; i < impl_->columns_.arrayMemberArrays_.singleton_handle_count(); ++i)
         validateModelNode(ModelNode::Ptr::make(
             shared_from_this(),
             ModelNodeAddress{
                 Arrays,
-                SingletonArrayHandleMask | static_cast<uint32_t>(i)}));
+                SingletonArrayHandleMask | static_cast<uint32_t>(i)}), false);
 
     // Validate roots
     for (auto i = 0; i < numRoots(); ++i)
         if (auto node = root(i))
-            validateModelNode(*node);
+            validateModelNode(*node, true);
 
     return errors;
 }
@@ -604,6 +606,70 @@ void ModelPool::setSchemaResolver(SchemaBinding::Resolver resolver)
 {
     requireMutable();
     impl_->schemaResolver_ = std::move(resolver);
+}
+
+void ModelPool::remapSchemas(std::shared_ptr<const SchemaBinding> target,
+                            std::function<SchemaReference(SchemaReference const&)> const& remap)
+{
+    requireMutable();
+    if (!target || !remap)
+        throw std::invalid_argument("Schema remapping requires a target binding and callback");
+
+    // The table is bounded by the 16-bit local namespace, not the number of values.
+    std::vector<SchemaId> mapped(size_t(MaxSchemaId) + 1, NoSchemaId);
+    auto validate = [&](SchemaId id, ValueType type) -> const Schema* {
+        if (id == NoSchemaId)
+            return nullptr;
+        if (mapped[id] == NoSchemaId) {
+            auto source = schemaReference(id);
+            if (!source.definition())
+                throw std::invalid_argument("Cannot remap an unresolved source domain");
+            auto replacement = remap(source);
+            if (!replacement.binding || replacement.binding->identity() != target->identity() ||
+                !replacement.id || !target->lookup(replacement.id))
+                throw std::invalid_argument("Schema remapping must resolve into the target graph");
+            mapped[id] = replacement.id;
+        }
+        auto definition = target->lookup(mapped[id]);
+        if (!definition->hasAffinity(type))
+            throw std::invalid_argument("Remapped schema is incompatible with the stored value");
+        return definition;
+    };
+    auto& columns = impl_->columns_;
+    for (auto* column : {&columns.objectSchemas_, &columns.objectSingletonSchemas_,
+                         &columns.arraySchemas_, &columns.arraySingletonSchemas_})
+        for (size_t i = 0; i < column->size(); ++i)
+            validate((*column)[i], column == &columns.objectSchemas_ ||
+                column == &columns.objectSingletonSchemas_ ? ValueType::Object : ValueType::Array);
+    for (size_t i = 0; i < columns.qualifiedScalars_.size(); ++i) {
+        auto value = columns.qualifiedScalars_[i];
+        if (!validate(value.second(), type(ModelNode(shared_from_this(), value.first(), mpKey_))))
+            throw std::invalid_argument("A qualified scalar must retain its domain");
+    }
+    for (size_t i = 0; i < columns.bitmasks_.size(); ++i) {
+        auto value = columns.bitmasks_[i];
+        auto definition = validate(value.second(), ValueType::Bitmask);
+        if (!definition || !definition->isBitmask() || !definition->bitWidth() ||
+            definition->bitWidth() > 64 ||
+            (definition->bitWidth() < 64 && (value.first() >> definition->bitWidth())))
+            throw std::invalid_argument("Remapped bitmask domain does not preserve its width");
+    }
+
+    // Allocate the new owners before changing any column. The commit below cannot throw.
+    std::vector<std::string> identities{std::string(target->identity())};
+    std::vector<Impl::BindingOwner> bindings{{Impl::localBinding(target)}};
+    for (auto* column : {&columns.objectSchemas_, &columns.objectSingletonSchemas_,
+                         &columns.arraySchemas_, &columns.arraySingletonSchemas_})
+        for (size_t i = 0; i < column->size(); ++i)
+            (*column)[i] = mapped[(*column)[i]];
+    for (size_t i = 0; i < columns.qualifiedScalars_.size(); ++i)
+        columns.qualifiedScalars_[i].second() = mapped[columns.qualifiedScalars_[i].second()];
+    for (size_t i = 0; i < columns.bitmasks_.size(); ++i)
+        columns.bitmasks_[i].second() = mapped[columns.bitmasks_[i].second()];
+    impl_->schemaIdentities_.swap(identities);
+    impl_->schemaBindings_.swap(bindings);
+    impl_->importedSchemas_.clear();
+    impl_->directSchema_ = true;
 }
 
 auto ModelPool::schemaBinding(std::string_view identity) const -> std::shared_ptr<const SchemaBinding>
