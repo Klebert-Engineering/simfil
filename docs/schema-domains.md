@@ -56,7 +56,7 @@ intersection of every scalar constraint.
 ## Ownership And Indexes
 
 The producer owns schema definitions; `Environment::querySchemaCallback` supplies
-the binding. There is no additional registry in Simfil. Use the same namespace
+the binding. There is no implicit global registry in Simfil. Use the same namespace
 for a schema binding, its query environment, and its descriptor model. For
 completion/schema inspection, construct a request-local namespace and return
 owning candidate strings. Do not modify a datasource's authoritative pool.
@@ -88,6 +88,75 @@ fields. Lookup-only aliases are resolved by `canonicalField` on the parent.
 Treat a published graph as immutable. Mutations update a concrete schema's local
 revision, but cannot automatically invalidate caches on all referring schemas.
 Owners must rebuild/invalidate dependent bindings and indexes after graph edits.
+
+### Compact Owning Pools
+
+`SchemaPool : ModelPool` is the reusable owning implementation. It stores fields,
+elements, alternatives, named values and numeric metadata in compact canonical
+columns. `domain(id)` borrows a `Schema` view over those columns; `domainNode(id)`
+creates a lazy descriptor view, not another domain graph. Applications such as
+mapget derive their artifact owner to add format, layer and feature metadata.
+The independent `ObjectSchema`/`ArraySchema` builders and custom adapters remain
+supported; a consumer need not use `SchemaPool` to participate in queries.
+
+```cpp
+auto schema = std::make_shared<simfil::SchemaPool>();
+auto record = schema->addSchema(simfil::Schema::Kind::Object);
+auto count = schema->addSchema(simfil::Schema::Kind::Int);
+schema->addFieldSchema(record, "count", count);
+schema->setFieldRequired(record, "count", true);
+schema->finalize();
+auto binding = schema->binding("application-owned-exact-artifact-id");
+```
+
+Construction copies borrowed metadata. Finalization discards mutable drafts,
+builds cycle-aware reachability and member indexes, then freezes the pool and
+dictionary. Failure during packing makes that unpublished builder unusable;
+retry with a new owner. Published field/element lookups allocate nothing and do
+not follow descendant graphs. Direct name lists preserve declaration order;
+recursive string views are lexical, independently of dictionary ID ordering.
+Empty field names and empty string enum symbols remain valid.
+
+`setBaseSchema` inherits object members without storing a second copy; local
+members take precedence. Inheritance is bounded and acyclic, unlike ordinary
+field/element graph edges, which may be recursive. Lookup aliases and `Context`
+edge roles remain explicit; a combiner can expose both its alternatives and its
+own context fields in the descriptor model.
+
+`importGraph(source, reuse)` copies native declarations while preserving sharing
+and cycles. Its temporary source-ID table translates only graph-local domain
+IDs. Nonzero entries in an optional reuse table refer to existing destination
+domains; the application must establish their semantic compatibility. Generic
+import does not guess whether same-named application types may be merged.
+
+The bounded native codec includes the private dictionary and ModelPool payload.
+Derived owners embed this payload in their own versioned, content-identified
+envelopes. The generic codec deliberately bypasses application dictionary stream
+prefixes. Bindings pin the exact owner; the application supplies and validates
+their artifact identity. No ingestion remap table, per-leaf tag or second JSON
+schema tree is retained by this generic graph.
+
+`schemaStatistics()` is prepared once. `schemaMemoryUsage()` reports retained
+generic graph storage, excluding the dictionary and ModelPool payload so derived
+owners can account for those exactly once. These are allocation lower bounds,
+not allocator/RSS estimates. The extraction does not by itself establish a
+performance improvement; the unresolved baseline gate below still applies.
+
+Extraction validation on 2026-11-03 rebuilt the standalone Release library and
+ran all 210 test cases successfully, including every benchmark body with one
+sample (3,377,177 assertions; calibration affects the assertion count). The focused
+pool/context/copy/domain selection passed 57 cases and 7,970 assertions. Full
+Memcheck and Helgrind runs each passed 205 cases with the five benchmark cases
+intentionally skipped; both reported zero errors, and Memcheck retained zero
+bytes at exit. A separate JSON-disabled Release library also compiled. These checks include
+unknown alternatives, inherited overrides, context combiners, numeric setter
+replacement and invalid flag declarations. They establish correctness/memory
+checks for this cut, not the runtime performance gate or downstream validation.
+The final cut also fixes generic validation of raw shared-arena storage owned by
+custom columns: synthetic arena sweeps validate members without requiring a core
+schema sidecar, while real core root/child references still require one. Tests
+cover ordinary/singleton objects and arrays, native roundtrips, forged core
+references and a malformed core self-cycle rejected before recursion.
 
 `SchemaBinding` retains the immutable graph owner, exact content identity, lookup
 and schema dictionary. `SchemaReference` combines that binding with a local
@@ -255,6 +324,21 @@ marker, and `maxNodes` must be at least two.
 
 ## Direct Completion
 
+Field edges distinguish enumerable `Schema::FieldRole::Data` from lookup-only
+`Context`. `forEachDirectField` and `directFields` still describe every declared
+member; `forEachEnumerableField` omits context edges. Explicit lookup, including
+completion after `context.`, follows either role. Recursive discovery, enum
+shorthand and wildcard child plans do not descend through context links.
+Classification is independent of spelling: a `$`-prefixed data field is still
+enumerable, and an ordinary-named context field is not. Lazy field descriptors
+mark lookup-only links with `role: "context"` without hiding their target `$ref`.
+
+Unknown context targets do not make the data reachability index incomplete.
+Repeated/alternative declarations with conflicting roles stay conservative;
+they cannot establish a context-only absence proof. The runtime model must
+implement the same enumeration contract, as `OverlayNode` does for injected
+members; schema metadata does not remove real children from arbitrary models.
+
 ```cpp
 auto candidates = simfil::complete(env, "items[17].na", 12, rootSchemaId, options);
 ```
@@ -328,6 +412,20 @@ budgets and policies for expensive primitives. The original vector-returning
 evaluation overload remains unbounded and unchanged for existing callers.
 
 ## Native Result Materialization
+
+`CopyOptions::schemaRemap` optionally translates each known source domain while
+copying into another exact graph. Unqualified leaves remain unqualified and do
+not invoke the callback. Missing or physically incompatible target definitions
+are errors, not permission to drop provenance.
+
+`ModelPool::remapSchemas(target, callback)` performs the equivalent operation on
+stored core schema columns without copying payloads or changing node addresses.
+It validates all replacements before committing one direct target namespace;
+failed validation leaves the model unchanged. Derived models must prevalidate
+their own custom schema columns and update them after the core operation.
+Use this only on unpublished, exclusively owned models: existing node handles
+observe the new binding, while already detached Values retain their old exact
+domain. Translation tables are temporary ingestion work, not query-path state.
 
 `ModelPool::copyNode(node, options)` copies a query-visible subtree through its
 native node protocol. `copySequence(span<Value const>, options)` returns an outer
@@ -669,6 +767,39 @@ The repository's sparse-wide benchmark also runs four-model batches for basic
 pruning, plans and exact paths. Its batch timings include thread/binding setup
 amortized over 16 queries per worker; they are not the pinned steady-state
 measurements reported above and should not become noisy CI timing assertions.
+
+The same fixture now compares compact `SchemaPool` against the independent
+`ObjectSchema` registry for basic pruning, field plans and exact paths, with
+both shared and separate dictionaries. Payloads and container IDs are unchanged;
+native schema rebinding is outside timing. These additional benchmark variants
+are coverage for the extraction, not yet a new accepted baseline measurement.
+
+The persistent [paired runtime harness](performance/README.md) compiles the same
+fixture against the original revision and the candidate, records build identities
+and all worker samples, and includes compact-pool variants. Its smoke mode is
+strictly correctness coverage; it never reports performance acceptance. Retain
+the historical raw evidence rather than replacing it with an intermediate-base
+comparison or an unpinned one-sample benchmark.
+Both harness versions compile, and a 60-row tiny smoke matrix passes all 120
+reference/candidate subprocesses, including untimed exact-binding/leaf-domain
+checks. Nine runner tests cover evidence preservation, paired ordering and
+rejection of mismatched builds/workloads. These are harness-correctness results,
+not a new latency comparison.
+
+Untimed capacity checks on the full 2,000-object/32-branch fixture report
+1,967,654 bytes of model-column backing capacity at `77fe792`, versus 1,973,457
+bytes with the candidate's registry binding (+5,803 bytes, +0.295%) and 1,973,456
+bytes with compact-pool binding. These exclude dictionaries and shared graph
+storage. The candidate schema dictionary reports 8,752 bytes; each separate
+runtime dictionary adds 8,832 bytes. Compact graph domain/index storage reports
+25,746 bytes plus 1,088,538 bytes of primitive ModelPool capacity, shared across
+workers. These are existing API lower bounds, not allocator/RSS totals. The
+independent registry lacks a complete retained-size API, so **whole-schema memory
+comparison against the pre-cutover representation remains open**. Raw capacity
+evidence is retained in
+[`performance/schema-memory-2026-11-03.json`](performance/schema-memory-2026-11-03.json).
+Timings from this loaded-host capacity probe were discarded. The prepared paired
+runtime matrix has not been run; the historical SMT regression gate remains open.
 
 CTest in coverage builds runs every benchmark with one measured sample and no
 statistical analysis. Fixture setup, calibration, benchmark bodies and their assertions
