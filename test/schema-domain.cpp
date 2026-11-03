@@ -590,6 +590,46 @@ TEST_CASE("SchemaPool owns one compact graph across native transport and imports
         REQUIRE_THROWS(SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), length)));
 }
 
+TEST_CASE("SchemaPool preserves null enum literals across transport and imports", "[model.schema-pool]")
+{
+    std::vector<ScalarValueType> expected{std::monostate{}};
+    SECTION("Null-only enum") {}
+    SECTION("Nulls mixed with other primitive values") {
+        expected.insert(expected.end(), {false, true, int64_t{0}, int64_t{-17},
+            int64_t{1} << 40, 0.5, ByteArray(std::string(1024, 'x')), std::monostate{}});
+    }
+    auto pool = std::make_shared<SchemaPool>();
+    auto id = pool->addSchema(Schema::Kind::Value);
+    for (auto const& value : expected)
+        pool->addEnumValue(id, value);
+    pool->addEnumSymbol(id, "");
+    pool->finalize();
+
+    std::ostringstream encoded;
+    REQUIRE(pool->write(encoded));
+    auto bytes = encoded.str();
+    auto decoded = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
+    for (auto const& current : {SchemaPool::ConstPtr(pool), decoded}) {
+        REQUIRE(std::ranges::equal(current->domain(id)->enumValues(), expected));
+        REQUIRE(std::ranges::equal(current->enumNames(id), std::vector<std::string_view>{""}));
+        auto descriptor = current->domainNode(id)->toJson();
+        REQUIRE(descriptor["enum"].size() == expected.size() + 1);
+        REQUIRE(std::ranges::count(descriptor["enum"], nlohmann::json(nullptr)) ==
+            std::ranges::count(expected, ScalarValueType{std::monostate{}}));
+    }
+    std::ostringstream reencoded;
+    REQUIRE(decoded->write(reencoded));
+    REQUIRE(reencoded.str() == bytes);
+
+    auto imported = std::make_shared<SchemaPool>();
+    imported->addSchema(Schema::Kind::Bool);
+    auto remap = imported->importGraph(*decoded);
+    imported->finalize();
+    REQUIRE(remap.at(id) != id);
+    REQUIRE(std::ranges::equal(imported->domain(remap.at(id))->enumValues(), expected));
+    REQUIRE(std::ranges::equal(imported->enumNames(remap.at(id)), std::vector<std::string_view>{""}));
+}
+
 TEST_CASE("SchemaPool rejects dangling domains and inherited cycles before publication", "[model.schema-pool]")
 {
     auto pool = std::make_shared<SchemaPool>();

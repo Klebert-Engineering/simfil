@@ -201,12 +201,14 @@ struct SchemaPool::Impl
             return *text;
         throw std::invalid_argument("Schema text is not a borrowed string-buffer value");
     }
-    /** Validate addresses through core resolution before reading primitive metadata. */
+    /** Decode primitive metadata, validating stored-node addresses through core resolution. */
     auto primitive(ModelNodeAddress address) const -> ScalarValueType
     {
         switch (address.column())
         {
         case Model::Null:
+            // Null literals use the zero-address sentinel, not a dereferenceable pool node.
+            return std::monostate{};
         case Model::Bool:
         case Model::UInt16:
         case Model::Int16:
