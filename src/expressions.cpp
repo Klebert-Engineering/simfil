@@ -1359,6 +1359,10 @@ auto WildcardFieldExpr::buildObjectSchemaPlan(
         ++fieldCount;
         if (field == canonical)
             plan.directField = true;
+        // Context members are addressable explicitly, but are absent from the
+        // runtime child's enumerated stream (for example an OverlayNode).
+        if (schema.fieldRole(field) == Schema::FieldRole::Context)
+            return;
         const auto descendsToTarget = children.empty() ||
             std::ranges::any_of(children, [this, &ctx, fieldId, binding](auto id) {
                 return childSchemaMayHaveField(ctx, id, fieldId, binding);

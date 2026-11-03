@@ -3,6 +3,7 @@
 #include "simfil/simfil.h"
 #include "simfil/environment.h"
 #include "simfil/model/schema.h"
+#include "simfil/model/schema-pool.h"
 #include "simfil/model/model.h"
 #include "simfil/model/json.h"
 #include "common.hpp"
@@ -1371,5 +1372,45 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
             REQUIRE(std::ranges::all_of(passed, [](bool success) { return success; }));
             return passed;
         };
+    }
+
+    // Exercise the compact owner used by mapget as well as the independent
+    // ObjectSchema registry. Keep the actual payload and container IDs identical.
+    auto compact = std::make_shared<SchemaPool>(std::make_shared<StringPool>(*strings));
+    REQUIRE(compact->addSchema(Schema::Kind::Object) == targetBranchSchemaId);
+    REQUIRE(compact->addSchema(Schema::Kind::Object) == targetPayloadSchemaId);
+    REQUIRE(compact->addSchema(Schema::Kind::Object) == noiseBranchSchemaId);
+    REQUIRE(compact->addSchema(Schema::Kind::Object) == rootObjectSchemaId);
+    REQUIRE(compact->addSchema(Schema::Kind::Array) == arraySchemaId);
+    auto compactScalar = compact->addSchema(Schema::Kind::Value);
+    compact->addFieldSchema(targetBranchSchemaId, "payload", targetPayloadSchemaId);
+    compact->addFieldSchema(targetPayloadSchemaId, "target", compactScalar);
+    compact->addFieldSchema(noiseBranchSchemaId, "noise", compactScalar);
+    for (size_t i = 0; i < branchNames.size(); ++i)
+        compact->addFieldSchema(rootObjectSchemaId, branchNames[i],
+            i == 0 ? targetBranchSchemaId : noiseBranchSchemaId);
+    compact->addElementSchema(arraySchemaId, rootObjectSchemaId);
+    compact->finalize();
+    auto compactBinding = compact->binding("compact-sparse-wide-benchmark");
+    model->remapSchemas(compactBinding, [&](SchemaReference const& reference) {
+        return SchemaReference{compactBinding, reference.id == scalarSchemaId ? compactScalar : reference.id};
+    });
+    for (auto sharedDictionary : {false, true}) {
+        if (sharedDictionary)
+            REQUIRE(model->setStrings(compact->strings()));
+        Environment compactEnv(model->strings());
+        for (auto mode : {"basic", "plans", "exact"}) {
+            compactEnv.enableWildcardFieldPlans = std::string_view(mode) == "plans";
+            BoundExpression query(std::string_view(mode) == "exact" ? exactExpression : targetExpression, compactEnv);
+            BENCHMARK(fmt::format("Sparse wide, SchemaPool, {} dictionary, {}",
+                                 sharedDictionary ? "shared" : "separate", mode)) {
+                auto result = query.eval(**modelRoot);
+                REQUIRE(result);
+                REQUIRE(result->size() == 1);
+                auto count = result->front().as<ValueType::Int>();
+                REQUIRE(count == int64_t(objectCount));
+                return count;
+            };
+        }
     }
 }

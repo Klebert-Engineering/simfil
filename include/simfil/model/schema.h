@@ -181,6 +181,12 @@ public:
     /** Known presence requirement for a direct field, or unknown metadata. */
     virtual auto fieldRequired(StringId) const -> std::optional<bool> { return {}; }
 
+    /** Data edges participate in enumeration; context edges require explicit lookup.
+     * The role belongs to the parent-field edge, never to a name spelling or target domain. */
+    enum class FieldRole : uint8_t { Data, Context };
+    /** Unknown or conflicting declarations remain enumerable conservatively. */
+    virtual auto fieldRole(StringId field) const -> FieldRole;
+
     /** Resolve a model's lookup-only field alias without adding duplicate
      * enumerated paths. */
     virtual auto canonicalField(StringId field) const -> StringId
@@ -409,6 +415,7 @@ protected:
         ++metadataRevision_;
         reachabilityComplete_ = false;
         fieldSchemas_.clear();
+        contextFields_.clear();
         itemSchema_ = NoSchemaId;
     }
 
@@ -424,6 +431,7 @@ protected:
     // Adapters and combiners prepare effective members once. Objects/arrays can
     // instead implement point lookup directly over their existing edge storage.
     std::vector<std::pair<StringId, SchemaId>> fieldSchemas_;
+    std::vector<StringId> contextFields_;
     SchemaId itemSchema_ = NoSchemaId;
 
     /** Compute completeness from the graph, independently of cyclic finalization state. */
@@ -447,6 +455,8 @@ protected:
     {
         forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
             fields.push_back(field);
+            if (fieldRole(field) == FieldRole::Context)
+                return;
             for (auto child : children)
                 appendSchemaFields(child, queryFn, visited, fields);
         });
@@ -465,7 +475,7 @@ protected:
     {
         auto symbolsHere = directEnumSymbols();
         symbols.insert(symbols.end(), symbolsHere.begin(), symbolsHere.end());
-        forEachDirectField([&](StringId, std::span<const SchemaId> children) {
+        forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
             for (auto child : children)
                 appendSchemaEnumSymbols(child, queryFn, visited, symbols);
         });
@@ -482,6 +492,16 @@ public:
     virtual auto forEachDirectField(
         const std::function<void(StringId, std::span<const SchemaId>)>&) const -> void
     {
+    }
+
+    /** Enumerate data edges without following lookup-only query-context links. */
+    virtual auto forEachEnumerableField(
+        const std::function<void(StringId, std::span<const SchemaId>)>& fn) const -> void
+    {
+        forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+            if (fieldRole(field) == FieldRole::Data)
+                fn(field, children);
+        });
     }
 
     /**
@@ -535,6 +555,12 @@ protected:
             current.push_back({SchemaPathSegment::Kind::Field, directField});
             if (directField == canonical && paths.size() < 10000)
                 paths.push_back(current);
+            // A named wildcard lookup may select the context itself, but never
+            // discover its descendants through implicit enumeration.
+            if (schema->fieldRole(directField) == FieldRole::Context) {
+                current.pop_back();
+                return;
+            }
             if (childSchemas.empty())
                 complete = false;
             for (auto childSchemaId : childSchemas)
@@ -595,7 +621,7 @@ protected:
                 paths.push_back(current);
         }
 
-        schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+        schema->forEachEnumerableField([&](StringId directField, std::span<const SchemaId> childSchemas) {
             current.push_back({SchemaPathSegment::Kind::Field, directField});
             if (childSchemas.empty())
                 complete = false;
@@ -655,7 +681,7 @@ protected:
 
         if (schema->hasAffinity(ValueType::Object)) {
             std::optional<SchemaPath> result;
-            schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+            schema->forEachEnumerableField([&](StringId directField, std::span<const SchemaId> childSchemas) {
                 if (result)
                     return;
 
@@ -858,6 +884,7 @@ public:
         StringId field = 0;
         sfl::small_vector<SchemaId, 1> schemas;
         std::optional<bool> required;
+        FieldRole role = FieldRole::Data;
 
         auto operator<=>(const FieldSummary& other) const
         {
@@ -884,11 +911,13 @@ public:
      * Add a direct field and optional child schemas reachable through it.
      */
     auto addField(StringId field, std::initializer_list<SchemaId> schemas = {},
-                  std::optional<bool> required = {}) -> void
+                  std::optional<bool> required = {}, FieldRole role = FieldRole::Data) -> void
     {
         FieldSummary summary;
         summary.field = field;
         summary.required = required;
+        summary.role = role;
+        hasContextFields_ |= role == FieldRole::Context;
         summary.schemas.insert(summary.schemas.end(), schemas.begin(), schemas.end());
         fields_.push_back(std::move(summary));
         directFields_.push_back(field);
@@ -920,6 +949,23 @@ public:
         return {fields_.begin(), fields_.end()};
     }
 
+    /** All declarations must agree before a repeated field becomes lookup-only. */
+    auto fieldRole(StringId field) const -> FieldRole override
+    {
+        if (!hasContextFields_)
+            return FieldRole::Data;
+        field = canonicalField(field);
+        bool context = false;
+        for (auto const& item : fields_) {
+            if (item.field != field)
+                continue;
+            if (item.role == FieldRole::Data)
+                return FieldRole::Data;
+            context = true;
+        }
+        return context ? FieldRole::Context : FieldRole::Data;
+    }
+
     /** Read the existing field edges, including aliases and repeated declarations. */
     auto fieldSchema(StringId field) const -> SchemaId override
     {
@@ -941,6 +987,15 @@ public:
     {
         for (auto const& field : fields_)
             fn(field.field, {field.schemas.begin(), field.schemas.end()});
+    }
+
+    /** The usual all-data object keeps a single linear enumeration pass. */
+    auto forEachEnumerableField(
+        const std::function<void(StringId, std::span<const SchemaId>)>& fn) const -> void override
+    {
+        for (auto const& field : fields_)
+            if (field.role == FieldRole::Data || fieldRole(field.field) == FieldRole::Data)
+                fn(field.field, {field.schemas.begin(), field.schemas.end()});
     }
 
     auto nestedFields() const & -> std::span<const StringId> override
@@ -978,6 +1033,8 @@ private:
     {
         for (const auto& field : fields_) {
             fields.push_back(field.field);
+            if (field.role == FieldRole::Context && fieldRole(field.field) == FieldRole::Context)
+                continue;
             for (const auto& fieldSchemaId : field.schemas)
                 appendSchemaFields(fieldSchemaId, lookup, visited, fields);
         }
@@ -988,12 +1045,15 @@ private:
                                   std::vector<StringId>& symbols) const -> void override
     {
         for (const auto& field : fields_) {
+            if (field.role == FieldRole::Context && fieldRole(field.field) == FieldRole::Context)
+                continue;
             for (const auto& fieldSchemaId : field.schemas)
                 appendSchemaEnumSymbols(fieldSchemaId, lookup, visited, symbols);
         }
     }
 
     sfl::small_vector<FieldSummary, 4> fields_;
+    bool hasContextFields_ = false;
 
     std::vector<StringId> directFields_;
     std::vector<StringId> flatFields_; // Ordered!

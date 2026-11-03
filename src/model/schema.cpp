@@ -65,7 +65,7 @@ auto Schema::namedValuePaths(SchemaId root, const Lookup& lookup, std::string_vi
         active.push_back(id);
         if (schema->namedValue(name) && std::ranges::find(result, path) == result.end())
             result.push_back(path);
-        schema->forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+        schema->forEachEnumerableField([&](StringId field, std::span<const SchemaId> children) {
             path.push_back({SchemaPathSegment::Kind::Field, field});
             if (children.empty())
                 exhaustive = false;
@@ -120,7 +120,7 @@ auto Schema::computeReachabilityComplete(const std::function<Schema*(SchemaId)>&
             else
                 pending.push_back(child);
         };
-        schema->forEachDirectField([&](StringId, std::span<const SchemaId> children) {
+        schema->forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
             if (children.empty())
                 complete = false;
             for (auto child : children)
@@ -216,6 +216,12 @@ auto Schema::fieldSchema(StringId field) const -> SchemaId
     return found != fieldSchemas_.end() && found->first == field ? found->second : NoSchemaId;
 }
 
+auto Schema::fieldRole(StringId field) const -> FieldRole
+{
+    return std::ranges::binary_search(contextFields_, canonicalField(field))
+        ? FieldRole::Context : FieldRole::Data;
+}
+
 auto Schema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
 {
     // This is a member index, not descendant reachability: a recursive object's
@@ -223,6 +229,7 @@ auto Schema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
     std::vector<const Schema*> pending{this};
     std::unordered_set<const Schema*> visited;
     std::map<StringId, std::pair<SchemaId, size_t>> fields;
+    std::map<StringId, bool> contexts;
     std::vector<StringId> declared;
     size_t openBranches = 0;
     bool unknownFields = false;
@@ -244,6 +251,10 @@ auto Schema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
             auto [entry, inserted] = fields.try_emplace(field, child, size_t{0});
             if (!inserted && entry->second.first != child)
                 entry->second.first = NoSchemaId;
+            auto context = schema->fieldRole(field) == FieldRole::Context;
+            auto [role, first] = contexts.try_emplace(field, context);
+            if (!first)
+                role->second = role->second && context;
             if (schema->open())
                 declared.push_back(field);
         });
@@ -270,10 +281,14 @@ auto Schema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
             pending.push_back(child == NoSchemaId ? nullptr : lookup(child));
     }
     fieldSchemas_.clear();
+    contextFields_.clear();
     if (!unknownFields) {
-        for (auto const& [field, entry] : fields)
+        for (auto const& [field, entry] : fields) {
             if (entry.first != NoSchemaId && entry.second == openBranches)
                 fieldSchemas_.emplace_back(field, entry.first);
+            if (contexts.at(field) && entry.second == openBranches)
+                contextFields_.push_back(field);
+        }
     }
     itemSchema_ = item.value_or(NoSchemaId);
     return State::Clean;

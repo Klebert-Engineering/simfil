@@ -79,6 +79,7 @@ add_library(simfil ${LIBRARY_TYPE}
   src/model/schema.cpp
   src/evaluation.cpp
   src/model/schema-model.cpp
+  src/model/schema-pool.cpp
   src/model/nodes.cpp
   src/model/string-pool.cpp)
 
@@ -110,6 +111,7 @@ target_sources(simfil PUBLIC
       include/simfil/model/value-type.h
       include/simfil/model/schema.h
       include/simfil/model/schema-model.h
+      include/simfil/model/schema-pool.h
       include/simfil/evaluation.h
       include/simfil/model/model.h
       include/simfil/model/nodes.h

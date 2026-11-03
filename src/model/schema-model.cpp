@@ -21,6 +21,7 @@ public:
         std::vector<SchemaId> schemas;
         std::optional<std::uint32_t> parent;
         std::optional<bool> required;
+        Schema::FieldRole role = Schema::FieldRole::Data;
         std::string stop;
         std::size_t position = 0;
         std::optional<std::vector<StringId>> keys;
@@ -107,6 +108,8 @@ public:
         if (entry.schemas.size() > 1 ||
             (entry.schemas.size() == 1 && entry.schemas.front() != NoSchemaId))
             keys.push_back(StringPool::SchemaRef);
+        if (entry.role == Schema::FieldRole::Context)
+            keys.push_back(StringPool::SchemaRole);
         if (!entry.stop.empty()) {
             keys.push_back(StringPool::SchemaTruncated);
             return keys;
@@ -119,12 +122,15 @@ public:
             keys.push_back(StringPool::SchemaNullable);
         if (entry.schemas.size() > 1 || (domain && domain->composition() != Schema::Composition::None))
             keys.push_back(StringPool::SchemaAlternatives);
-        else if (domain) {
-            if (domain->hasAffinity(ValueType::Object) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Any)) {
+        if (domain) {
+            // Combiners may declare their own lookup context in addition to the
+            // physical alternatives. Do not hide those independently named edges.
+            if ((domain->composition() == Schema::Composition::None || !domain->directFields().empty()) &&
+                domain->hasAffinity(ValueType::Object) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Any)) {
                 keys.push_back(StringPool::SchemaFields);
                 keys.push_back(StringPool::SchemaOpen);
             }
-            if (domain->hasAffinity(ValueType::Array) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Any))
+            if (domain->composition() == Schema::Composition::None && domain->hasAffinity(ValueType::Array) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Any))
                 keys.push_back(StringPool::SchemaElements);
         }
         if (domain && (!domain->enumValues().empty() || !domain->directEnumSymbols().empty()))
@@ -304,6 +310,7 @@ public:
             }
             case StringPool::SchemaTypeName: return scalar(std::string(domain->typeName()));
             case StringPool::SchemaRequired: return scalar(*entry().required);
+            case StringPool::SchemaRole: return scalar(std::string("context"));
             case StringPool::SchemaNullable: return scalar(*domain->nullable());
             case StringPool::SchemaOpen: return scalar(domain->open());
             case StringPool::SchemaBitWidth: return scalar(std::int64_t(domain->bitWidth()));
@@ -345,6 +352,7 @@ public:
         else {
             if (entry().view == Impl::View::Fields) {
                 auto field = keyAt(position);
+                child.role = domain->fieldRole(field);
                 domain->forEachDirectField([&](StringId name, std::span<const SchemaId> ids) {
                     if (name == field)
                         child.schemas.insert(child.schemas.end(), ids.begin(), ids.end());

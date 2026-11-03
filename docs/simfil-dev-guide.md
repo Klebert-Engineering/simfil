@@ -31,7 +31,7 @@ flowchart LR
 | Meta types | `typed-meta-type.h`, `types.*` | Custom operator/unpack implementations on transient values; not part of the environment. | `MetaType`, `TypedMetaType`, `TransientObject`, `IRangeType`, `ReType` |
 | Parser | `parser.cpp`, `expression-patterns.h`, `token.cpp` | Pratt parser building `Expr` trees from tokens. | `Token`, `AST` |
 | Completion | `completion.cpp` | Partial parser that offers path/function suggestions. | `CompletionOptions`, `CompletionCandidate` |
-| Schema domains | `model/schema.h`, `model/schema-model.h` | Typed domain graph, conservative indexes, and lazy metadata query views. | `Schema`, `CombinedSchema`, `SchemaModel` |
+| Schema domains | `model/schema.h`, `model/schema-pool.h`, `model/schema-model.h` | Typed domain graph, optional compact ownership/codec, conservative indexes, and lazy metadata query views. | `Schema`, `SchemaPool`, `CombinedSchema`, `SchemaModel` |
 | Diagnostics | `diagnostics.*`, `error.*` | Parser/runtime errors with source spans. | `Diagnostics`, `Error`, `SourceLocation` |
 | Extensibility | `function.*`, `typed-meta-type.h`, `overlay.*` | Register new functions/meta types or overlay nodes. | `Function`, `TypedMetaType`, `OverlayNode` |
 

@@ -324,7 +324,7 @@ auto Completion::expandDomains(Context& ctx, const std::vector<SchemaId>& input,
         for (auto child = alternatives.rbegin(); child != alternatives.rend(); ++child)
             append(*child);
         if (recursive) {
-            schema->forEachDirectField([&](StringId, std::span<const SchemaId> children) {
+            schema->forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
                 for (auto child = children.rbegin(); child != children.rend(); ++child)
                     append(*child);
             });
@@ -529,7 +529,7 @@ auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vec
         std::vector<SchemaId> result;
         for (auto id : expandDomains(ctx, input, false)) {
             if (auto schema = lookup(id)) {
-                schema->forEachDirectField([&](StringId, std::span<const SchemaId> children) {
+                schema->forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
                     for (auto child : children)
                         if (visitDomain(ctx))
                             result.push_back(child);

@@ -1,6 +1,8 @@
 #include "common.hpp"
 #include "simfil/model/schema-model.h"
+#include "simfil/model/schema-pool.h"
 #include "simfil/function.h"
+#include "simfil/overlay.h"
 
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <map>
@@ -516,6 +518,300 @@ TEST_CASE("Domain completion preserves source ranges escaping and literal enums"
     REQUIRE(field->location.size == 4);
     REQUIRE(d.strings->size() == stringsBefore);
     REQUIRE_FALSE(compile(env, "mode == 'a", false));
+}
+
+TEST_CASE("SchemaPool owns one compact graph across native transport and imports", "[model.schema-pool]")
+{
+    auto pool = std::make_shared<SchemaPool>();
+    auto object = pool->addSchema(Schema::Kind::Object);
+    auto array = pool->addSchema(Schema::Kind::Array);
+    auto number = pool->addSchema(Schema::Kind::Int);
+    auto mask = pool->addSchema(Schema::Kind::Bitmask);
+    auto context = pool->addSchema(Schema::Kind::Object);
+    pool->setTypeName(object, "Measurement");
+    pool->addFieldSchema(object, "samples", array);
+    pool->addFieldSchema(object, "flags", mask);
+    pool->addFieldSchema(object, "context", context);
+    pool->setFieldRole(object, "context", Schema::FieldRole::Context);
+    pool->setFieldRequired(object, "samples", true);
+    pool->addFieldAlias(object, "values", "samples");
+    pool->addElementSchema(array, number);
+    pool->addFieldSchema(context, "parent", object);
+    pool->addFieldSchema(context, "secret", number);
+    pool->setOpen(context, true);
+    std::vector<Schema::NumericRange> intervals{{int64_t{0}, int64_t{254}}};
+    pool->setNumericDomain(number, {.encoding="uint8", .unit="km/h", .minimum=int64_t{0},
+        .maximum=int64_t{255}, .ordinaryRanges=intervals, .complete=true});
+    pool->addNamedValue(number, {"UNLIMITED", int64_t{255}, Schema::NamedValue::Role::Special,
+        Schema::NamedValue::Meaning::Unbounded});
+    pool->addNamedValue(mask, {"HIGH", uint64_t{1} << 63, Schema::NamedValue::Role::Flag});
+    pool->setBitWidth(mask, 64);
+    pool->finalize();
+    REQUIRE(pool->domainCount() == 5);
+    REQUIRE(pool->frozen());
+    REQUIRE(pool->strings()->frozen());
+    REQUIRE_THROWS_AS(pool->addSchema(Schema::Kind::Null), std::logic_error);
+    std::ostringstream stream;
+    REQUIRE(pool->write(stream));
+    auto bytes = stream.str();
+    auto decoded = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
+    auto imported = std::make_shared<SchemaPool>();
+    REQUIRE(imported->addSchema(Schema::Kind::Bool) == 1);
+    auto remap = imported->importGraph(*decoded);
+    imported->finalize();
+    REQUIRE(remap == std::vector<SchemaId>{0, 2, 3, 4, 5, 6});
+    for (auto const& owner : {SchemaPool::ConstPtr(pool), decoded}) {
+        auto const* root = owner->domain(object);
+        REQUIRE(root->typeName() == "Measurement");
+        REQUIRE(root->fieldSchema(owner->strings()->get("values")) == array);
+        REQUIRE(root->reachabilityComplete());
+        REQUIRE_FALSE(root->canHaveField(owner->strings()->get("secret")));
+        REQUIRE(root->fieldRole(owner->strings()->get("context")) == Schema::FieldRole::Context);
+        REQUIRE(root->fieldRequired(owner->strings()->get("samples")) == true);
+        REQUIRE(owner->domain(array)->itemSchema() == number);
+        REQUIRE(owner->domain(mask)->bitWidth() == 64);
+        REQUIRE(std::get<uint64_t>(owner->domain(mask)->namedValue("HIGH")->value) == uint64_t{1} << 63);
+        REQUIRE(owner->domain(number)->numericDomain()->unit == "km/h");
+        REQUIRE(owner->domain(number)->numericDomain()->ordinaryRanges.size() == 1);
+        REQUIRE(owner->schemaMemoryUsage().allocatedBytes >= owner->schemaMemoryUsage().logicalBytes);
+    }
+    REQUIRE(imported->domain(remap[object])->fieldSchema(imported->strings()->get("samples")) == remap[array]);
+    REQUIRE(imported->domain(remap[context])->fieldSchema(imported->strings()->get("parent")) == remap[object]);
+    auto binding = pool->binding("test-schema-pool");
+    auto descriptor = pool->domainNode(object);
+    std::weak_ptr<SchemaPool> weak = pool;
+    pool.reset();
+    REQUIRE_FALSE(weak.expired());
+    REQUIRE(binding->lookup(object)->typeName() == "Measurement");
+    REQUIRE(descriptor->get(StringPool::SchemaTypeName)->value() == ScalarValueType{std::string("Measurement")});
+    descriptor = {}; binding.reset();
+    REQUIRE(weak.expired());
+    for (auto length : {size_t{0}, size_t{3}, bytes.size() - 1})
+        REQUIRE_THROWS(SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), length)));
+}
+
+TEST_CASE("SchemaPool rejects dangling domains and inherited cycles before publication", "[model.schema-pool]")
+{
+    auto pool = std::make_shared<SchemaPool>();
+    auto root = pool->addSchema(Schema::Kind::Object);
+    SECTION("Dangling edge") { pool->addFieldSchema(root, "bad", 42); }
+    SECTION("Inheritance cycle") { pool->setBaseSchema(root, root); }
+    REQUIRE_THROWS_AS(pool->finalize(), std::invalid_argument);
+    REQUIRE_FALSE(pool->finalized());
+    REQUIRE_THROWS_AS(pool->addSchema(Schema::Kind::Int), std::logic_error);
+}
+
+TEST_CASE("SchemaPool preserves empty names unknown alternatives and local combiner context", "[model.schema-pool]")
+{
+    auto pool = std::make_shared<SchemaPool>();
+    auto object = pool->addSchema(Schema::Kind::Object);
+    auto text = pool->addSchema(Schema::Kind::String);
+    auto choice = pool->addSchema(Schema::Kind::Union);
+    pool->addFieldSchema(object, "z", text);
+    pool->addFieldSchema(object, "a", text);
+    pool->addFieldSchema(object, "", text);
+    pool->addFieldSchema(object, "partial", text);
+    pool->addFieldSchema(object, "partial", NoSchemaId);
+    pool->addEnumSymbol(text, "Z"); pool->addEnumSymbol(text, "A"); pool->addEnumSymbol(text, "");
+    pool->setComposition(choice, Schema::Composition::AnyOf);
+    pool->addAlternative(choice, object);
+    pool->addFieldSchema(choice, "context", object);
+    pool->setFieldRole(choice, "context", Schema::FieldRole::Context);
+    pool->finalize();
+    std::ostringstream encoded;
+    REQUIRE(pool->write(encoded));
+    auto bytes = encoded.str();
+    auto decoded = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
+    auto imported = std::make_shared<SchemaPool>();
+    auto remap = imported->importGraph(*decoded);
+    REQUIRE(remap == std::vector<SchemaId>{0, 1, 2, 3});
+    imported->finalize();
+    for (auto const& current : {SchemaPool::ConstPtr(pool), decoded, SchemaPool::ConstPtr(imported)}) {
+        REQUIRE(current->domain(object)->fieldSchema(StringPool::Empty) == text);
+        REQUIRE(current->domain(object)->fieldSchema(current->strings()->get("partial")) == NoSchemaId);
+        REQUIRE(current->domain(choice)->fieldRole(current->strings()->get("context")) == Schema::FieldRole::Context);
+        REQUIRE_FALSE(current->domain(object)->reachabilityComplete());
+        REQUIRE(std::ranges::equal(current->fieldNames(object), std::vector<std::string_view>{"z", "a", "", "partial"}));
+        REQUIRE(std::ranges::equal(current->fieldNames(object, true), std::vector<std::string_view>{"", "a", "partial", "z"}));
+        REQUIRE(std::ranges::equal(current->enumNames(text), std::vector<std::string_view>{"Z", "A", ""}));
+        REQUIRE(std::ranges::equal(current->enumNames(text, true), std::vector<std::string_view>{"", "A", "Z"}));
+        auto descriptor = current->domainNode(choice);
+        REQUIRE(descriptor->get(StringPool::SchemaAlternatives));
+        auto fields = descriptor->get(StringPool::SchemaFields);
+        REQUIRE(fields);
+        auto context = fields->get(current->strings()->get("context"));
+        REQUIRE(context);
+        REQUIRE(context->get(StringPool::SchemaRole)->value() == ScalarValueType{std::string("context")});
+        REQUIRE(current->schemaStatistics().contextFields == 1);
+        REQUIRE(current->schemaStatistics().domains == 3);
+    }
+}
+
+TEST_CASE("SchemaPool numeric replacements remain canonical and flags respect their encoding", "[model.schema-pool]")
+{
+    auto pool = std::make_shared<SchemaPool>();
+    auto first = pool->addSchema(Schema::Kind::Int);
+    auto second = pool->addSchema(Schema::Kind::Int);
+    std::vector<Schema::NumericRange> oldRanges{{int64_t{0}, int64_t{100}}};
+    std::vector<Schema::NumericRange> ranges{{int64_t{1}, int64_t{5}}, {int64_t{10}, int64_t{15}}};
+    // Setter order does not dictate wire ownership, and overwritten ranges are discarded.
+    pool->setNumericDomain(second, {.unit="old", .ordinaryRanges=oldRanges});
+    pool->setNumericDomain(first, {.unit="count", .ordinaryRanges=ranges});
+    pool->setNumericDomain(second, {.unit="m", .ordinaryRanges=ranges});
+    pool->finalize();
+    REQUIRE(pool->schemaStatistics().numericDomains == 2);
+    std::ostringstream encoded;
+    REQUIRE(pool->write(encoded));
+    auto bytes = encoded.str();
+    auto restored = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
+    REQUIRE(restored->domain(second)->numericDomain()->unit == "m");
+    REQUIRE(restored->domain(second)->numericDomain()->ordinaryRanges.size() == 2);
+    std::ostringstream roundtrip;
+    REQUIRE(restored->write(roundtrip));
+    REQUIRE(roundtrip.str() == bytes);
+
+    Schema::NamedValue flag{"FLAG", uint64_t{1}, Schema::NamedValue::Role::Flag};
+    SECTION("String mask") { flag.value = std::string_view("not-a-mask"); }
+    SECTION("Boolean mask") { flag.value = true; }
+    SECTION("Negative mask") { flag.value = int64_t{-1}; }
+    SECTION("Floating mask") { flag.value = 1.; }
+    SECTION("Out-of-width mask") { flag.value = uint64_t{256}; }
+    auto invalid = std::make_shared<SchemaPool>();
+    auto mask = invalid->addSchema(Schema::Kind::Bitmask);
+    invalid->setBitWidth(mask, 8);
+    invalid->addNamedValue(mask, flag);
+    REQUIRE_THROWS_AS(invalid->finalize(), std::invalid_argument);
+}
+
+TEST_CASE("SchemaPool inherited shadows preserve declaration order and member metadata", "[model.schema-pool]")
+{
+    auto pool = std::make_shared<SchemaPool>();
+    auto base = pool->addSchema(Schema::Kind::Object);
+    auto derived = pool->addSchema(Schema::Kind::Object);
+    auto integer = pool->addSchema(Schema::Kind::Int);
+    auto text = pool->addSchema(Schema::Kind::String);
+    pool->setBaseSchema(derived, base);
+    for (size_t i = 0; i < 2048; ++i)
+        pool->addFieldSchema(base, "field" + std::to_string(i), integer);
+    for (size_t i = 2048; i-- > 0;)
+        pool->addFieldSchema(derived, "field" + std::to_string(i), text);
+    pool->setFieldRole(derived, "field0", Schema::FieldRole::Context);
+    pool->finalize();
+    auto view = pool->domain(derived);
+    REQUIRE(view->directFields().size() == 2048);
+    REQUIRE(pool->fieldNames(derived).front() == "field2047");
+    REQUIRE(pool->fieldNames(derived).back() == "field0");
+    REQUIRE(view->fieldSchema(pool->strings()->get("field0")) == text);
+    size_t enumerable = 0;
+    view->forEachEnumerableField([&](StringId name, auto children) {
+        REQUIRE(name != pool->strings()->get("field0"));
+        REQUIRE(children.size() == 1);
+        REQUIRE(children.front() == text);
+        ++enumerable;
+    });
+    REQUIRE(enumerable == 2047);
+}
+
+TEST_CASE("Context edges support explicit access without implicit discovery", "[model.schema-domain][schema.context]")
+{
+    Domains d;
+    auto& root = d.add<ObjectSchema>(1);
+    root.addField(d.name("$payload"), {2});
+    root.addField(d.name("context"), {3}, true, Schema::FieldRole::Context);
+    root.addField(d.name("$feature"), {3}, true, Schema::FieldRole::Context);
+    d.add<ValueSchema>(2, Schema::Kind::Int);
+    auto& context = d.add<ObjectSchema>(3);
+    context.addField(d.name("secret"), {2});
+    context.addField(d.name("hiddenSymbol"), {4});
+    d.add<ValueSchema>(4, Schema::Kind::String).addEnumSymbol(d.name("CONTEXT_ONLY"));
+    // Unknown metadata behind a context link cannot make the data index incomplete.
+    context.setOpen(true);
+    d.finalize();
+    REQUIRE(root.reachabilityComplete());
+    REQUIRE_FALSE(root.canHaveField(d.name("secret")));
+    REQUIRE(root.canHaveField(d.name("context")));
+    REQUIRE(root.fieldSchema(d.name("context")) == 3);
+    REQUIRE(root.fieldRole(d.name("context")) == Schema::FieldRole::Context);
+    REQUIRE(root.fieldRole(d.name("$payload")) == Schema::FieldRole::Data);
+    bool complete = false;
+    REQUIRE(Schema::fieldPaths(1, d.lookup(), d.name("secret"), &complete).empty());
+    REQUIRE(complete);
+    REQUIRE(Schema::fieldPaths(1, d.lookup(), d.name("context")).size() == 1);
+    REQUIRE(Schema::enumSymbolPaths(1, d.lookup(), d.name("CONTEXT_ONLY"), &complete).empty());
+    REQUIRE(complete);
+    std::vector<StringId> enumerable;
+    root.forEachEnumerableField([&](StringId field, auto) { enumerable.push_back(field); });
+    REQUIRE(enumerable == std::vector<StringId>{d.name("$payload")});
+    REQUIRE_FALSE(contains(d.complete("sec"), "secret"));
+    REQUIRE_FALSE(contains(d.complete("CONTEXT_"), "CONTEXT_ONLY"));
+    REQUIRE(contains(d.complete("context.sec"), "secret"));
+    REQUIRE(contains(d.complete("$feature.sec"), "secret"));
+    REQUIRE_FALSE(contains(d.complete("*.sec"), "secret"));
+
+    auto descriptors = std::make_shared<SchemaModel>(d.strings, d.lookup());
+    auto edge = descriptors->root(1)->get(d.name("fields"))->get(d.name("context"));
+    REQUIRE(edge->get(d.name("role"))->value() == ScalarValueType{std::string("context")});
+    REQUIRE(edge->get(d.name("$ref"))->value() == ScalarValueType{int64_t{3}});
+
+    auto model = std::make_shared<ModelPool>(d.strings);
+    auto binding = std::make_shared<SchemaBinding>("context-test", d.graph, d.lookup(), d.strings);
+    model->setSchemaBinding(binding);
+    auto payload = model->newObject();
+    REQUIRE(payload->setSchema(1));
+    REQUIRE(payload->addField("$payload", int64_t{7}));
+    auto hidden = model->newObject();
+    REQUIRE(hidden->setSchema(3));
+    REQUIRE(hidden->addField("secret", int64_t{42}));
+    auto overlay = model_ptr<OverlayNode>::make(Value::field(payload));
+    overlay->set(d.name("context"), Value::field(hidden));
+    overlay->set(d.name("$feature"), Value::field(hidden));
+    for (bool planned : {false, true}) {
+        Environment env(d.strings);
+        env.enableWildcardFieldPlans = planned;
+        env.querySchemaCallback = d.lookup();
+        for (auto query : {"context.secret", "**.context.secret", "$feature.secret"}) {
+            INFO(query);
+            auto expression = compile(env, query, false);
+            REQUIRE(expression);
+            auto values = eval(env, **expression, *overlay, nullptr);
+            REQUIRE(values);
+            REQUIRE(values->size() == 1);
+            REQUIRE(values->front().as<ValueType::Int>() == 42);
+        }
+        auto expression = compile(env, "count(**.secret)", false);
+        REQUIRE(expression);
+        auto values = eval(env, **expression, *overlay, nullptr);
+        REQUIRE(values);
+        REQUIRE(values->front().as<ValueType::Int>() == 0);
+    }
+}
+
+TEST_CASE("Context classification is conservative across repeated and alternative edges", "[model.schema-domain][schema.context]")
+{
+    Domains d;
+    auto field = d.name("parent");
+    auto& context = d.add<ObjectSchema>(1);
+    context.addField(field, {3}, {}, Schema::FieldRole::Context);
+    auto& data = d.add<ObjectSchema>(2);
+    data.addField(field, {3});
+    d.add<ValueSchema>(3, Schema::Kind::Int);
+    auto& allContext = d.add<CombinedSchema>(4, Schema::Composition::AnyOf);
+    allContext.addAlternative(1);
+    auto& mixed = d.add<CombinedSchema>(5, Schema::Composition::AnyOf);
+    mixed.addAlternative(1);
+    mixed.addAlternative(2);
+    auto& unknown = d.add<CombinedSchema>(6, Schema::Composition::AnyOf);
+    unknown.addAlternative(1);
+    unknown.addAlternative(NoSchemaId);
+    d.finalize();
+    REQUIRE(allContext.fieldRole(field) == Schema::FieldRole::Context);
+    REQUIRE(mixed.fieldRole(field) == Schema::FieldRole::Data);
+    REQUIRE(unknown.fieldRole(field) == Schema::FieldRole::Data);
+    context.addField(field, {3});
+    REQUIRE(context.fieldRole(field) == Schema::FieldRole::Data);
+    std::vector<StringId> fields;
+    context.forEachEnumerableField([&](StringId name, auto) { fields.push_back(name); });
+    REQUIRE(fields.size() == 2);
 }
 
 TEST_CASE("Static schema names agree across isolated pools", "[model.schema-domain]")
