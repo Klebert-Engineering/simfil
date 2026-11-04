@@ -85,6 +85,7 @@ StringPool::StringPool()
     addStaticKey(SchemaMeaning, "meaning");
     addStaticKey(SchemaDeprecated, "deprecated");
     addStaticKey(SchemaRemoved, "removed");
+    addStaticKey(SchemaRawValue, "rawValue");
     addStaticKey(SchemaEncoding, "encoding");
     addStaticKey(SchemaUnit, "unit");
     addStaticKey(SchemaMinimum, "minimum");

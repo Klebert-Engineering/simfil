@@ -262,7 +262,7 @@ struct ModelNode
     [[nodiscard]] virtual StringId keyAt(int64_t i) const;
 
     /// Get the schema id for a bound container or explicitly qualified scalar.
-    [[nodiscard]] virtual SchemaId schema() const;
+    [[nodiscard]] virtual TypeId schema() const;
 
     /** Retain the graph defining this node's explicit schema; plain leaves use their parent edge. */
     [[nodiscard]] auto schemaReference() const -> SchemaReference;
@@ -425,7 +425,7 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] ModelNode::Ptr get(const StringId&) const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
-    [[nodiscard]] SchemaId schema() const override;
+    [[nodiscard]] TypeId schema() const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
 
@@ -552,8 +552,8 @@ public:
 
     bool forEach(std::function<bool(ModelNodeType const&)> const& callback) const;
 
-    [[nodiscard]] SchemaId schema() const override;
-    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId schema() const override;
+    auto setSchema(TypeId schemaId) -> tl::expected<void, Error>;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -618,8 +618,8 @@ public:
         return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
     }
 
-    [[nodiscard]] SchemaId schema() const override;
-    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId schema() const override;
+    auto setSchema(TypeId schemaId) -> tl::expected<void, Error>;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;

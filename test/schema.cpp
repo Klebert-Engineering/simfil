@@ -26,7 +26,7 @@ namespace
 class SchemaRegistry
 {
 public:
-    std::map<SchemaId, std::unique_ptr<Schema>> schemas;
+    std::map<TypeId, std::unique_ptr<Schema>> schemas;
 
     // Enable schema lookup.
     //
@@ -35,7 +35,7 @@ public:
     // of setting the environments query pointer to null.
     bool enabled = true;
 
-    auto get(SchemaId id) const -> const Schema*
+    auto get(TypeId id) const -> const Schema*
     {
         if (!enabled)
             return nullptr;
@@ -45,7 +45,7 @@ public:
         return nullptr;
     }
 
-    auto get(SchemaId id) -> Schema*
+    auto get(TypeId id) -> Schema*
     {
         if (!enabled)
             return nullptr;
@@ -63,19 +63,19 @@ public:
         }
     }
 
-    auto operator()(SchemaId id) -> Schema*
+    auto operator()(TypeId id) -> Schema*
     {
         return get(id);
     }
 
-    auto operator()(SchemaId id) const -> const Schema*
+    auto operator()(TypeId id) const -> const Schema*
     {
         return get(id);
     }
 
-    auto asFunction() const & -> std::function<const Schema*(SchemaId)>
+    auto asFunction() const & -> std::function<const Schema*(TypeId)>
     {
-        return [this](SchemaId id) {
+        return [this](TypeId id) {
             return (*this)(id);
         };
     }
@@ -87,7 +87,7 @@ auto evaluateSharedSchemaExpression(const SharedAST& shared, std::size_t worker)
     // Exercise independent schema bindings, not the JSON parser's process-global locale state.
     auto model = std::make_shared<ModelPool>();
     auto object = model->newObject();
-    if (!object->addField("target", static_cast<int64_t>(worker)) || !object->setSchema(SchemaId{1}))
+    if (!object->addField("target", static_cast<int64_t>(worker)) || !object->setSchema(TypeId{1}))
         return false;
     model->addRoot(object);
 
@@ -96,7 +96,7 @@ auto evaluateSharedSchemaExpression(const SharedAST& shared, std::size_t worker)
     SchemaRegistry registry;
     auto rootSchema = std::make_unique<ObjectSchema>();
     rootSchema->addField(targetId);
-    registry.schemas[SchemaId{1}] = std::move(rootSchema);
+    registry.schemas[TypeId{1}] = std::move(rootSchema);
     registry.finalize();
 
     Environment environment(strings);
@@ -117,21 +117,21 @@ TEST_CASE("Object schema id assignment", "[model.schema]") {
     auto model = std::make_shared<ModelPool>();
 
     auto obj = model->newObject(0);
-    REQUIRE(obj->schema() == NoSchemaId);
+    REQUIRE(obj->schema() == NoTypeId);
 
-    obj->setSchema(SchemaId{1});
-    REQUIRE(obj->schema() == SchemaId{1});
+    obj->setSchema(TypeId{1});
+    REQUIRE(obj->schema() == TypeId{1});
 }
 
 TEST_CASE("Singleton object schema id assignment", "[model.schema]") {
     auto model = std::make_shared<ModelPool>();
 
     auto obj = model->newObject(1, true);
-    REQUIRE(obj->schema() == NoSchemaId);
+    REQUIRE(obj->schema() == NoTypeId);
 
     REQUIRE(obj->addField("field", int64_t{1}));
-    obj->setSchema(SchemaId{1});
-    REQUIRE(obj->schema() == SchemaId{1});
+    obj->setSchema(TypeId{1});
+    REQUIRE(obj->schema() == TypeId{1});
     REQUIRE(model->validate());
 }
 
@@ -139,21 +139,21 @@ TEST_CASE("Array schema id assignment", "[model.schema]") {
     auto model = std::make_shared<ModelPool>();
 
     auto arr = model->newArray(0);
-    REQUIRE(arr->schema() == NoSchemaId);
+    REQUIRE(arr->schema() == NoTypeId);
 
-    arr->setSchema(SchemaId{1});
-    REQUIRE(arr->schema() == SchemaId{1});
+    arr->setSchema(TypeId{1});
+    REQUIRE(arr->schema() == TypeId{1});
 }
 
 TEST_CASE("Singleton array schema id assignment", "[model.schema]") {
     auto model = std::make_shared<ModelPool>();
 
     auto arr = model->newArray(1, true);
-    REQUIRE(arr->schema() == NoSchemaId);
+    REQUIRE(arr->schema() == NoTypeId);
 
     arr->append(int64_t(1));
-    arr->setSchema(SchemaId{1});
-    REQUIRE(arr->schema() == SchemaId{1});
+    arr->setSchema(TypeId{1});
+    REQUIRE(arr->schema() == TypeId{1});
     REQUIRE(model->validate());
 }
 
@@ -178,19 +178,19 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
         REQUIRE(schema.canHaveField(a));
         REQUIRE(schema.canHaveField(missing));
 
-        schema.finalize([](SchemaId) { return nullptr; });
+        schema.finalize([](TypeId) { return nullptr; });
         REQUIRE(schema.canHaveField(a));
-        // Finalization cannot turn an unspecified child domain into a scalar.
+        // Finalization cannot turn an unspecified child type into a scalar.
         REQUIRE(schema.canHaveField(missing));
     }
 
     SECTION("acyclic schemas finalize fields") {
         std::vector<ObjectSchema> schemas(3);
-        schemas[1].addField(a, {SchemaId{2}});
-        schemas[2].addField(b, {SchemaId{3}});
+        schemas[1].addField(a, {TypeId{2}});
+        schemas[2].addField(b, {TypeId{3}});
 
-        auto lookup = [&schemas, &scalar](SchemaId schemaId) -> Schema* {
-            if (schemaId == SchemaId{3})
+        auto lookup = [&schemas, &scalar](TypeId schemaId) -> Schema* {
+            if (schemaId == TypeId{3})
                 return &scalar;
             const auto index = static_cast<std::size_t>(schemaId);
             return index < schemas.size() ? &schemas[index] : nullptr;
@@ -205,12 +205,12 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
 
     SECTION("cyclic schemas collect reachable fields") {
         std::vector<ObjectSchema> schemas(3);
-        schemas[1].addField(link, {SchemaId{2}});
-        schemas[1].addField(c, {SchemaId{3}});
-        schemas[2].addField(back, {SchemaId{1}});
+        schemas[1].addField(link, {TypeId{2}});
+        schemas[1].addField(c, {TypeId{3}});
+        schemas[2].addField(back, {TypeId{1}});
 
-        auto lookup = [&schemas, &scalar](SchemaId schemaId) -> Schema* {
-            if (schemaId == SchemaId{3})
+        auto lookup = [&schemas, &scalar](TypeId schemaId) -> Schema* {
+            if (schemaId == TypeId{3})
                 return &scalar;
             const auto index = static_cast<std::size_t>(schemaId);
             return index < schemas.size() ? &schemas[index] : nullptr;
@@ -232,21 +232,21 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
 
     SECTION("array schemas finalize element fields") {
         ObjectSchema objectA;
-        objectA.addField(a, {SchemaId{3}});
+        objectA.addField(a, {TypeId{3}});
 
         ObjectSchema objectB;
-        objectB.addField(b, {SchemaId{3}});
+        objectB.addField(b, {TypeId{3}});
 
         ArraySchema arraySchema;
-        arraySchema.addElementSchemas({SchemaId{1}, SchemaId{2}});
+        arraySchema.addElementSchemas({TypeId{1}, TypeId{2}});
 
-        auto lookup = [&objectA, &objectB, &scalar](SchemaId schemaId) -> Schema* {
+        auto lookup = [&objectA, &objectB, &scalar](TypeId schemaId) -> Schema* {
             switch (schemaId) {
-            case SchemaId{1}:
+            case TypeId{1}:
                 return &objectA;
-            case SchemaId{2}:
+            case TypeId{2}:
                 return &objectB;
-            case SchemaId{3}:
+            case TypeId{3}:
                 return &scalar;
             default:
                 return nullptr;
@@ -269,7 +269,7 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
         // Dirty value schemas are conservative until finalized.
         REQUIRE(schema.canHaveEnumSymbol(missingEnum));
 
-        schema.finalize([](SchemaId) { return nullptr; });
+        schema.finalize([](TypeId) { return nullptr; });
         REQUIRE(schema.canHaveEnumSymbol(enumA));
         REQUIRE(schema.canHaveEnumSymbol(enumB));
         REQUIRE_FALSE(schema.canHaveEnumSymbol(missingEnum));
@@ -278,20 +278,20 @@ TEST_CASE("Object schema finalization", "[model.schema]") {
 
     SECTION("object and array schemas collect reachable enum symbols") {
         ObjectSchema objectSchema;
-        objectSchema.addField(a, {SchemaId{1}});
+        objectSchema.addField(a, {TypeId{1}});
 
         ArraySchema arraySchema;
-        arraySchema.addElementSchemas({SchemaId{2}});
+        arraySchema.addElementSchemas({TypeId{2}});
 
         ValueSchema enumSchema;
         enumSchema.addEnumSymbol(enumA);
         enumSchema.addEnumSymbol(enumB);
 
-        auto lookup = [&](SchemaId schemaId) -> Schema* {
+        auto lookup = [&](TypeId schemaId) -> Schema* {
             switch (schemaId) {
-            case SchemaId{1}:
+            case TypeId{1}:
                 return &enumSchema;
-            case SchemaId{2}:
+            case TypeId{2}:
                 return &objectSchema;
             default:
                 return nullptr;
@@ -315,7 +315,7 @@ TEST_CASE("Array schema serialization", "[model.schema]") {
     auto model = std::make_shared<ModelPool>();
     auto arr = model->newArray(1);
     arr->append(int64_t(42));
-    REQUIRE(arr->setSchema(SchemaId{7}));
+    REQUIRE(arr->setSchema(TypeId{7}));
     model->addRoot(arr);
 
     std::stringstream stream;
@@ -328,7 +328,7 @@ TEST_CASE("Array schema serialization", "[model.schema]") {
     auto recoveredRoot = recoveredModel->root(0);
     REQUIRE(recoveredRoot);
     REQUIRE((*recoveredRoot)->type() == ValueType::Array);
-    REQUIRE((*recoveredRoot)->schema() == SchemaId{7});
+    REQUIRE((*recoveredRoot)->schema() == TypeId{7});
 }
 
 TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
@@ -355,31 +355,31 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     auto carrierEnum = strings->get("Carrier");
 
     auto rootSchema = std::make_unique<ObjectSchema>();
-    rootSchema->addField(status, {SchemaId{2}});
-    rootSchema->addField(items, {SchemaId{3}});
-    rootSchema->addField(carrierField, {SchemaId{5}});
+    rootSchema->addField(status, {TypeId{2}});
+    rootSchema->addField(items, {TypeId{3}});
+    rootSchema->addField(carrierField, {TypeId{5}});
 
     auto enumSchema = std::make_unique<ValueSchema>();
     enumSchema->addEnumSymbol(carrierEnum);
 
     auto arraySchema = std::make_unique<ArraySchema>();
-    arraySchema->addElementSchemas({SchemaId{4}});
+    arraySchema->addElementSchemas({TypeId{4}});
 
     auto itemSchema = std::make_unique<ObjectSchema>();
-    itemSchema->addField(kind, {SchemaId{2}});
+    itemSchema->addField(kind, {TypeId{2}});
 
-    registry.schemas[SchemaId{1}] = std::move(rootSchema);
-    registry.schemas[SchemaId{2}] = std::move(enumSchema);
-    registry.schemas[SchemaId{3}] = std::move(arraySchema);
-    registry.schemas[SchemaId{4}] = std::move(itemSchema);
-    registry.schemas[SchemaId{5}] = std::make_unique<ValueSchema>();
+    registry.schemas[TypeId{1}] = std::move(rootSchema);
+    registry.schemas[TypeId{2}] = std::move(enumSchema);
+    registry.schemas[TypeId{3}] = std::move(arraySchema);
+    registry.schemas[TypeId{4}] = std::move(itemSchema);
+    registry.schemas[TypeId{5}] = std::make_unique<ValueSchema>();
     registry.finalize();
 
     auto root = model->root(0);
     REQUIRE(root);
     auto rootObj = model->resolve<Object>(**root);
     REQUIRE(rootObj);
-    REQUIRE(rootObj->setSchema(SchemaId{1}));
+    REQUIRE(rootObj->setSchema(TypeId{1}));
 
     Environment env(strings);
     env.querySchemaCallback = registry.asFunction();
@@ -387,7 +387,7 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     auto enumAst = compile(env, "Carrier", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(enumAst);
     INFO((*enumAst)->expr().toString());
     REQUIRE((*enumAst)->expr().toString().find("**") == std::string::npos);
@@ -403,11 +403,11 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     auto fieldAst = compile(env, "CARRIER", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(fieldAst);
     REQUIRE((*fieldAst)->expr().toString() == "**.CARRIER");
 
-    auto enumRefs = referencedSchemaPaths(env, **enumAst, SchemaId{1});
+    auto enumRefs = referencedSchemaPaths(env, **enumAst, TypeId{1});
     REQUIRE(enumRefs);
     REQUIRE_FALSE(enumRefs->hasBroadWildcardAccess);
     REQUIRE_FALSE(enumRefs->hasDynamicAccess);
@@ -426,7 +426,7 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
             && !ref.viaWildcard;
     }));
 
-    auto fieldRefs = referencedSchemaPaths(env, **fieldAst, SchemaId{1});
+    auto fieldRefs = referencedSchemaPaths(env, **fieldAst, TypeId{1});
     REQUIRE(fieldRefs);
     REQUIRE(fieldRefs->paths.size() == 1);
     REQUIRE(fieldRefs->paths.front().viaWildcard);
@@ -437,9 +437,9 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     auto unresolvedAst = compile(env, "unrelated.value", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::None,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(unresolvedAst);
-    auto unresolvedRefs = referencedSchemaPaths(env, **unresolvedAst, SchemaId{1});
+    auto unresolvedRefs = referencedSchemaPaths(env, **unresolvedAst, TypeId{1});
     REQUIRE(unresolvedRefs);
     REQUIRE(unresolvedRefs->paths.empty());
     REQUIRE(unresolvedRefs->hasUnresolvedAccess);
@@ -448,9 +448,9 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     auto absentAst = compile(env, "absent", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::None,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(absentAst);
-    auto absentRefs = referencedSchemaPaths(env, **absentAst, SchemaId{1});
+    auto absentRefs = referencedSchemaPaths(env, **absentAst, TypeId{1});
     REQUIRE(absentRefs);
     REQUIRE(absentRefs->paths.empty());
     REQUIRE(absentRefs->hasUnresolvedAccess);
@@ -459,9 +459,9 @@ TEST_CASE("Schema rewrites enum symbols to exact paths", "[model.schema]")
     auto childWildcardAst = compile(env, "*.CARRIER", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::None,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(childWildcardAst);
-    auto childWildcardRefs = referencedSchemaPaths(env, **childWildcardAst, SchemaId{1});
+    auto childWildcardRefs = referencedSchemaPaths(env, **childWildcardAst, TypeId{1});
     REQUIRE(childWildcardRefs);
     REQUIRE(childWildcardRefs->paths.empty());
     REQUIRE(childWildcardRefs->hasDynamicAccess);
@@ -480,17 +480,17 @@ TEST_CASE("Schema references expand recursive wildcard paths with a static suffi
     auto other = strings->get("other");
     SchemaRegistry registry;
     auto root = std::make_unique<ObjectSchema>();
-    root->addField(numLanes, {SchemaId{3}});
-    root->addField(nested, {SchemaId{2}});
+    root->addField(numLanes, {TypeId{3}});
+    root->addField(nested, {TypeId{2}});
     auto container = std::make_unique<ObjectSchema>();
-    container->addField(numLanes, {SchemaId{3}});
-    container->addField(other, {SchemaId{3}});
+    container->addField(numLanes, {TypeId{3}});
+    container->addField(other, {TypeId{3}});
     auto lanes = std::make_unique<ObjectSchema>();
-    lanes->addField(normalLanes, {SchemaId{4}});
-    registry.schemas[SchemaId{1}] = std::move(root);
-    registry.schemas[SchemaId{2}] = std::move(container);
-    registry.schemas[SchemaId{3}] = std::move(lanes);
-    registry.schemas[SchemaId{4}] = std::make_unique<ValueSchema>();
+    lanes->addField(normalLanes, {TypeId{4}});
+    registry.schemas[TypeId{1}] = std::move(root);
+    registry.schemas[TypeId{2}] = std::move(container);
+    registry.schemas[TypeId{3}] = std::move(lanes);
+    registry.schemas[TypeId{4}] = std::make_unique<ValueSchema>();
     registry.finalize();
     Environment env(strings);
     env.querySchemaCallback = registry.asFunction();
@@ -499,9 +499,9 @@ TEST_CASE("Schema references expand recursive wildcard paths with a static suffi
                        "**.numLanes.normalLanes > 1", "**.numLanes.normalLanes == 2"}) {
         CAPTURE(query);
         auto ast = compile(env, query, CompileOptions{
-            .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = SchemaId{1}});
+            .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = TypeId{1}});
         REQUIRE(ast);
-        auto refs = referencedSchemaPaths(env, **ast, SchemaId{1});
+        auto refs = referencedSchemaPaths(env, **ast, TypeId{1});
         REQUIRE(refs);
         REQUIRE_FALSE(refs->hasUnresolvedAccess);
         REQUIRE_FALSE(refs->hasBroadWildcardAccess);
@@ -519,9 +519,9 @@ TEST_CASE("Schema references expand recursive wildcard paths with a static suffi
 
     SECTION("Static paths still refer only to the root") {
         auto ast = compile(env, "numLanes.normalLanes", CompileOptions{
-            .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = SchemaId{1}});
+            .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = TypeId{1}});
         REQUIRE(ast);
-        auto refs = referencedSchemaPaths(env, **ast, SchemaId{1});
+        auto refs = referencedSchemaPaths(env, **ast, TypeId{1});
         REQUIRE(refs);
         REQUIRE(refs->paths.size() == 1);
         REQUIRE_FALSE(refs->paths.front().viaWildcard);
@@ -567,12 +567,12 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
             addField(value_);
             addField(primary_);
             addField(secondary_);
-            addField(unit_, {SchemaId{2}});
+            addField(unit_, {TypeId{2}});
         }
 
         auto symbolEqualityPaths(
             StringId symbol,
-            const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath> override
+            const std::function<const Schema*(TypeId)>&) const -> std::vector<SchemaPath> override
         {
             if (symbol != alias_)
                 return {};
@@ -581,7 +581,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
 
         auto scalarFieldPathsForSymbol(
             StringId symbol,
-            const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath> override
+            const std::function<const Schema*(TypeId)>&) const -> std::vector<SchemaPath> override
         {
             if (symbol == alias_) {
                 return {SchemaPath{{SchemaPathSegment::Kind::Field, value_}}};
@@ -610,15 +610,15 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     SchemaRegistry registry;
     auto enumSchema = std::make_unique<ValueSchema>();
     enumSchema->addEnumSymbol(enumSymbol);
-    registry.schemas[SchemaId{1}] = std::make_unique<AliasSchema>(alias, multiAlias, name, value, primary, secondary, unit);
-    registry.schemas[SchemaId{2}] = std::move(enumSchema);
+    registry.schemas[TypeId{1}] = std::make_unique<AliasSchema>(alias, multiAlias, name, value, primary, secondary, unit);
+    registry.schemas[TypeId{2}] = std::move(enumSchema);
     registry.finalize();
 
     auto root = model->root(0);
     REQUIRE(root);
     auto rootObj = model->resolve<Object>(**root);
     REQUIRE(rootObj);
-    REQUIRE(rootObj->setSchema(SchemaId{1}));
+    REQUIRE(rootObj->setSchema(TypeId{1}));
 
     Environment env(strings);
     env.querySchemaCallback = registry.asFunction();
@@ -628,7 +628,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto boundStandaloneAst = compile(env, "boundName", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(boundStandaloneAst);
     auto boundStandaloneResult = eval(env, **boundStandaloneAst, **root, nullptr);
     REQUIRE(boundStandaloneResult);
@@ -639,7 +639,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto boundOperandAst = compile(env, "$name == boundName", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(boundOperandAst);
     auto boundOperandResult = eval(env, **boundOperandAst, **root, nullptr);
     REQUIRE(boundOperandResult);
@@ -650,7 +650,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto standaloneAst = compile(env, "speed", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(standaloneAst);
     INFO((*standaloneAst)->expr().toString());
     REQUIRE((*standaloneAst)->expr().toString().find("$name") != std::string::npos);
@@ -665,7 +665,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto expressionAst = compile(env, "speed > 40", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(expressionAst);
     INFO((*expressionAst)->expr().toString());
     REQUIRE((*expressionAst)->expr().toString().find("value") != std::string::npos);
@@ -679,7 +679,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto enumOperandAst = compile(env, "unit == MPH", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(enumOperandAst);
     INFO((*enumOperandAst)->expr().toString());
     REQUIRE((*enumOperandAst)->expr().toString().find("\"MPH\"") != std::string::npos);
@@ -693,7 +693,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto quotedAst = compile(env, R"("speed" == speed)", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(quotedAst);
     INFO((*quotedAst)->expr().toString());
     REQUIRE((*quotedAst)->expr().toString().find("\"speed\"") != std::string::npos);
@@ -702,7 +702,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto anyAlternativeAst = compile(env, "limit > 80", CompileOptions{
         .any = true,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(anyAlternativeAst);
     INFO((*anyAlternativeAst)->expr().toString());
     REQUIRE((*anyAlternativeAst)->expr().toString().find("(paths") != std::string::npos);
@@ -718,7 +718,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto eachAlternativeAst = compile(env, "each(limit > 80)", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(eachAlternativeAst);
     auto eachAlternativeResult = eval(env, **eachAlternativeAst, **root, nullptr);
     REQUIRE(eachAlternativeResult);
@@ -729,7 +729,7 @@ TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema
     auto eachAllAlternativeAst = compile(env, "each(limit < 100)", CompileOptions{
         .any = false,
         .rewriteMode = RewriteMode::Schema,
-        .rootSchema = SchemaId{1}});
+        .rootSchema = TypeId{1}});
     REQUIRE(eachAllAlternativeAst);
     auto eachAllAlternativeResult = eval(env, **eachAllAlternativeAst, **root, nullptr);
     REQUIRE(eachAllAlternativeResult);
@@ -759,10 +759,10 @@ TEST_CASE("WildcardFieldExpr Field Pruning", "[model.schema]")
     // Build a simple schema
     auto schemaName = strings->emplace("schema1").value();
     auto schema1 = std::make_unique<ObjectSchema>();
-    schema1->addField(fieldId, {SchemaId{1}});
-    registry.schemas[SchemaId{1}] = std::make_unique<ValueSchema>();
+    schema1->addField(fieldId, {TypeId{1}});
+    registry.schemas[TypeId{1}] = std::make_unique<ValueSchema>();
 
-    registry.schemas[(SchemaId)schemaName] = std::move(schema1);
+    registry.schemas[(TypeId)schemaName] = std::move(schema1);
     registry.finalize();
 
     // Assign schemas to the model
@@ -771,8 +771,8 @@ TEST_CASE("WildcardFieldExpr Field Pruning", "[model.schema]")
 
     auto rootObj = model->resolve<Object>(*root.value());
     REQUIRE(rootObj);
-    REQUIRE(rootObj->setSchema((SchemaId)schemaName));
-    REQUIRE(rootObj->schema() == (SchemaId)schemaName);
+    REQUIRE(rootObj->setSchema((TypeId)schemaName));
+    REQUIRE(rootObj->schema() == (TypeId)schemaName);
 
     // Run a query and check if pruning of unknown fields works
     Environment env(strings);
@@ -813,12 +813,12 @@ TEST_CASE("WildcardFieldExpr Array Field Pruning", "[model.schema]")
 
     (void)strings->emplace("noField");
 
-    constexpr auto objectSchemaId = SchemaId{1};
-    constexpr auto arraySchemaId = SchemaId{2};
+    constexpr auto objectSchemaId = TypeId{1};
+    constexpr auto arraySchemaId = TypeId{2};
 
     auto objectSchema = std::make_unique<ObjectSchema>();
-    objectSchema->addField(fieldId, {SchemaId{3}});
-    registry.schemas[SchemaId{3}] = std::make_unique<ValueSchema>();
+    objectSchema->addField(fieldId, {TypeId{3}});
+    registry.schemas[TypeId{3}] = std::make_unique<ValueSchema>();
     registry.schemas[objectSchemaId] = std::move(objectSchema);
 
     auto arraySchema = std::make_unique<ArraySchema>();
@@ -873,9 +873,9 @@ TEST_CASE("WildcardFieldExpr non-recursive queries ignore partial root schemas",
     auto objectId = strings->get("object");
     (void)strings->emplace("field");
 
-    const auto rootSchemaId = SchemaId{1};
+    const auto rootSchemaId = TypeId{1};
     auto rootSchema = std::make_unique<ObjectSchema>();
-    rootSchema->addField(objectId, { NoSchemaId });
+    rootSchema->addField(objectId, { NoTypeId });
     registry.schemas[rootSchemaId] = std::move(rootSchema);
     registry.finalize();
 
@@ -910,11 +910,11 @@ TEST_CASE("WildcardFieldExpr schema plan cache follows schema mutations", "[mode
     auto targetId = strings->get("target");
     auto otherId = strings->emplace("other").value();
 
-    const auto rootSchemaId = SchemaId{1};
+    const auto rootSchemaId = TypeId{1};
     auto rootSchema = std::make_unique<ObjectSchema>();
     auto* rootSchemaPtr = rootSchema.get();
-    rootSchema->addField(otherId, {SchemaId{2}});
-    registry.schemas[SchemaId{2}] = std::make_unique<ValueSchema>();
+    rootSchema->addField(otherId, {TypeId{2}});
+    registry.schemas[TypeId{2}] = std::make_unique<ValueSchema>();
     registry.schemas[rootSchemaId] = std::move(rootSchema);
     registry.finalize();
 
@@ -972,15 +972,15 @@ TEST_CASE("Schema query performance", "[perf.schema]") {
     constexpr auto n = std::size_t{10'000};
     static_assert(n % 2 == 0, "n must be even");
 
-    const auto payloadASchemaId = SchemaId{1};
-    const auto payloadBSchemaId = SchemaId{2};
-    const auto xASchemaId = SchemaId{3};
-    const auto xBSchemaId = SchemaId{4};
-    const auto yASchemaId = SchemaId{5};
-    const auto yBSchemaId = SchemaId{6};
-    const auto rootObjASchemaId = SchemaId{7};
-    const auto rootObjBSchemaId = SchemaId{8};
-    const auto arraySchemaId = SchemaId{9};
+    const auto payloadASchemaId = TypeId{1};
+    const auto payloadBSchemaId = TypeId{2};
+    const auto xASchemaId = TypeId{3};
+    const auto xBSchemaId = TypeId{4};
+    const auto yASchemaId = TypeId{5};
+    const auto yBSchemaId = TypeId{6};
+    const auto rootObjASchemaId = TypeId{7};
+    const auto rootObjBSchemaId = TypeId{8};
+    const auto arraySchemaId = TypeId{9};
 
     auto strings = std::make_shared<StringPool>();
     auto model = std::make_shared<ModelPool>(strings);
@@ -1009,7 +1009,7 @@ TEST_CASE("Schema query performance", "[perf.schema]") {
     xBSchema->addField(yId, { yBSchemaId });
     registry.schemas[xBSchemaId] = std::move(xBSchema);
 
-    constexpr SchemaId scalarSchemaId = 65000;
+    constexpr TypeId scalarSchemaId = 65000;
     registry.schemas[scalarSchemaId] = std::make_unique<ValueSchema>();
 
     auto yASchema = std::make_unique<ObjectSchema>();
@@ -1130,11 +1130,11 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     constexpr auto objectCount = std::size_t{2'000};
     constexpr auto branchCount = std::size_t{32};
 
-    const auto targetBranchSchemaId = SchemaId{1};
-    const auto targetPayloadSchemaId = SchemaId{2};
-    const auto noiseBranchSchemaId = SchemaId{3};
-    const auto rootObjectSchemaId = SchemaId{4};
-    const auto arraySchemaId = SchemaId{5};
+    const auto targetBranchSchemaId = TypeId{1};
+    const auto targetPayloadSchemaId = TypeId{2};
+    const auto noiseBranchSchemaId = TypeId{3};
+    const auto rootObjectSchemaId = TypeId{4};
+    const auto arraySchemaId = TypeId{5};
 
     auto strings = std::make_shared<StringPool>();
     auto model = std::make_shared<ModelPool>(strings);
@@ -1154,7 +1154,7 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
         branchIds.push_back(strings->emplace(branchNames.back()).value());
     }
 
-    constexpr SchemaId scalarSchemaId = 65000;
+    constexpr TypeId scalarSchemaId = 65000;
     registry.schemas[scalarSchemaId] = std::make_unique<ValueSchema>();
 
     auto targetBranchSchema = std::make_unique<ObjectSchema>();
@@ -1273,7 +1273,7 @@ TEST_CASE("Sparse wide schema query performance", "[perf.schema]") {
     // Binding-aware traversal and scalar provenance are real costs, separate from the legacy callback path.
     registry.enabled = true;
     model->setSchemaBinding(std::make_shared<SchemaBinding>("sparse-wide-benchmark", registryOwner,
-        [registryOwner](SchemaId id) { return registryOwner->get(id); }, strings));
+        [registryOwner](TypeId id) { return registryOwner->get(id); }, strings));
     BENCHMARK("Query sparse wide field 'target' recursive with bound basic pruning") {
         auto res = targetQuery.eval(**modelRoot);
         REQUIRE(res);

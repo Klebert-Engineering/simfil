@@ -21,7 +21,7 @@ namespace simfil
 struct SchemaPool::Impl
 {
     static constexpr size_t MaxEdges = 4 * 1024 * 1024;
-    static constexpr uint32_t CodecVersion = 1;
+    static constexpr uint32_t CodecVersion = 2;
 
     /** Checked slice into an owner-wide column. */
     struct Range
@@ -39,8 +39,8 @@ struct SchemaPool::Impl
             return std::span<T const>(values).subspan(begin, count);
         }
     };
-    /** Fixed-width domain record; metadata text lives in the inherited ModelPool. */
-    struct DomainData
+    /** Fixed-width type record; metadata text lives in the inherited ModelPool. */
+    struct TypeData
     {
         MODEL_COLUMN_TYPE(76);
         uint32_t kind = uint32_t(Schema::Kind::Unknown), flags = 0;
@@ -62,8 +62,8 @@ struct SchemaPool::Impl
             s.value1b(flags);
         }
     };
-    /** Exact named scalar storage without borrowed caller strings. */
-    struct NamedData
+    /** Exact scalar storage shared by numeric bounds and named runtime values. */
+    struct ScalarData
     {
         uint64_t bits = 0;
         ModelNodeAddress text;
@@ -78,11 +78,23 @@ struct SchemaPool::Impl
             s.value1b(flags);
         }
     };
+    /** Named values retain an optional signed/unsigned ordinal without enlarging numeric rows. */
+    struct NamedData : ScalarData
+    {
+        uint64_t rawBits = 0;
+        uint8_t rawType = 0;
+        template <class S> void serialize(S& s)
+        {
+            s.object(static_cast<ScalarData&>(*this));
+            s.value8b(rawBits);
+            s.value1b(rawType);
+        }
+    };
     /** Numeric interpretation and intervals are independent of named sentinels. */
     struct NumericData
     {
         ModelNodeAddress encoding, unit;
-        NamedData minimum, maximum;
+        ScalarData minimum, maximum;
         double scale = 1, offset = 0;
         Range ranges;
         uint32_t flags = 0, reserved = 0;
@@ -113,14 +125,14 @@ struct SchemaPool::Impl
     struct DraftField
     {
         FieldData data;
-        std::vector<SchemaId> children;
+        std::vector<TypeId> children;
     };
     /** Construction state contains only the graph being built, not a JSON projection. */
     struct Draft
     {
-        DomainData data;
+        TypeData data;
         std::vector<DraftField> fields;
-        std::vector<SchemaId> elements, alternatives;
+        std::vector<TypeId> elements, alternatives;
         std::vector<StringId> symbols;
         std::vector<ModelNodeAddress> literals;
         std::vector<NamedData> named;
@@ -132,21 +144,22 @@ struct SchemaPool::Impl
         std::vector<StringId> ids;
         std::vector<std::string_view> names;
     };
-    struct Domain;
+    struct TypeDefinition;
 
     explicit Impl(SchemaPool& pool) : pool(pool), drafts(1) {}
     SchemaPool& pool;
     bool packed = false, packing = false;
     std::vector<Draft> drafts;
-    ModelColumn<DomainData> domains;
+    ModelColumn<TypeData> types;
     std::vector<FieldData> fields;
-    std::vector<SchemaId> edges;
+    std::vector<TypeId> edges;
     std::vector<StringId> symbols;
     std::vector<ModelNodeAddress> literals;
-    std::vector<NamedData> named, numbers;
+    std::vector<NamedData> named;
+    std::vector<ScalarData> numbers;
     std::vector<NumericData> numerics;
     std::vector<AliasData> aliases;
-    std::vector<std::unique_ptr<Domain>> views;
+    std::vector<std::unique_ptr<TypeDefinition>> views;
     std::vector<NameSet> sets;
     std::map<std::pair<bool, std::vector<StringId>>, size_t> setIndex;
     bool memberIndexesReady = false;
@@ -163,12 +176,12 @@ struct SchemaPool::Impl
     }
 
     /** Reject mutation once publication has started, even before the derived owner freezes. */
-    auto draft(SchemaId id) -> Draft&
+    auto draft(TypeId id) -> Draft&
     {
         if (packed || packing || pool.frozen())
             throw std::logic_error("SchemaPool is immutable after finalization");
         if (!id || id >= drafts.size())
-            throw std::invalid_argument("Unknown schema domain");
+            throw std::invalid_argument("Unknown schema type");
         return drafts[id];
     }
     /** Append metadata names only during construction. */
@@ -230,9 +243,9 @@ struct SchemaPool::Impl
         return value;
     }
     /** Preserve exact primitive bits while moving borrowed text into owner storage. */
-    template <class T> auto scalar(T const& value) -> NamedData
+    template <class T> auto scalar(T const& value) -> ScalarData
     {
-        NamedData result;
+        ScalarData result;
         if constexpr (std::is_same_v<T, bool>)
         {
             result.type = 0;
@@ -263,7 +276,7 @@ struct SchemaPool::Impl
         return result;
     }
     /** Decode numeric metadata without routing uint64 values through double. */
-    static auto number(NamedData const& value) -> Schema::NumericValue
+    static auto number(ScalarData const& value) -> Schema::NumericValue
     {
         switch (value.type)
         {
@@ -301,7 +314,7 @@ struct SchemaPool::Impl
             value);
     }
     /** Coalesce declarations of one direct field without changing insertion order. */
-    auto field(SchemaId id, std::string_view name) -> DraftField&
+    auto field(TypeId id, std::string_view name) -> DraftField&
     {
         auto& value = draft(id);
         auto key = intern(name);
@@ -321,7 +334,7 @@ struct SchemaPool::Impl
         output.insert(output.end(), input.begin(), input.end());
         return range;
     }
-    auto valid(SchemaId id) const -> bool { return id && id < domains.size(); }
+    auto valid(TypeId id) const -> bool { return id && id < types.size(); }
     void pack();
     void validate(size_t literalBudget = SIZE_MAX) const;
     void index();
@@ -334,18 +347,18 @@ struct SchemaPool::Impl
     static void string(S& archive, std::string& value, size_t limit, size_t& memory);
 };
 
-/** A borrowed view over one canonical domain row, pinned externally by bindings. */
-struct SchemaPool::Impl::Domain final : Schema
+/** A borrowed view over one canonical type row, pinned externally by bindings. */
+struct SchemaPool::Impl::TypeDefinition final : Schema
 {
     Impl const& graph;
-    SchemaId id;
+    TypeId id;
     std::array<size_t, 5> names{};
     bool complete = false, contextFields = false;
     std::vector<ScalarValueType> values;
     std::vector<NumericRange> ranges;
     std::optional<NumericDomain> numeric;
-    Domain(Impl const& graph, SchemaId id) : graph(graph), id(id) {}
-    auto data() const -> DomainData const& { return graph.domains[id]; }
+    TypeDefinition(Impl const& graph, TypeId id) : graph(graph), id(id) {}
+    auto data() const -> TypeData const& { return graph.types[id]; }
     auto kind() const -> Kind override { return Kind(data().kind); }
     auto typeName() const -> std::string_view override { return graph.text(data().typeName); }
     auto composition() const -> Composition override
@@ -359,7 +372,7 @@ struct SchemaPool::Impl::Domain final : Schema
     }
     auto reachabilityComplete() const -> bool override { return complete; }
     auto finalized() const -> bool override { return true; }
-    auto alternatives() const& -> std::span<SchemaId const> override
+    auto alternatives() const& -> std::span<TypeId const> override
     {
         return data().alternatives.in(graph.edges);
     }
@@ -429,7 +442,7 @@ struct SchemaPool::Impl::Domain final : Schema
                 return own.flags & 2 ? FieldRole::Context : FieldRole::Data;
         return data().base ? graph.views[data().base]->fieldRole(field) : FieldRole::Data;
     }
-    auto fieldSchema(StringId field) const -> SchemaId override
+    auto fieldSchema(StringId field) const -> TypeId override
     {
         if (composition() != Composition::None || !alternatives().empty())
             return Schema::fieldSchema(field);
@@ -437,16 +450,16 @@ struct SchemaPool::Impl::Domain final : Schema
         for (auto const& own : data().fields.in(graph.fields))
             if (own.name == field)
                 return uniqueSchema(own.children.in(graph.edges));
-        return data().base ? graph.views[data().base]->fieldSchema(field) : NoSchemaId;
+        return data().base ? graph.views[data().base]->fieldSchema(field) : NoTypeId;
     }
-    auto itemSchema() const -> SchemaId override
+    auto itemSchema() const -> TypeId override
     {
         return composition() != Composition::None || !alternatives().empty()
                    ? Schema::itemSchema()
                    : uniqueSchema(data().elements.in(graph.edges));
     }
     /** Inheritance changes the current object, not the depth of its field paths. */
-    void fields(std::function<void(StringId, std::span<SchemaId const>)> const& fn,
+    void fields(std::function<void(StringId, std::span<TypeId const>)> const& fn,
                 bool enumerable) const
     {
         graph.chargeIndexWork();
@@ -467,16 +480,16 @@ struct SchemaPool::Impl::Domain final : Schema
         }
     }
     void forEachDirectField(
-        std::function<void(StringId, std::span<SchemaId const>)> const& fn) const override
+        std::function<void(StringId, std::span<TypeId const>)> const& fn) const override
     {
         fields(fn, false);
     }
     void forEachEnumerableField(
-        std::function<void(StringId, std::span<SchemaId const>)> const& fn) const override
+        std::function<void(StringId, std::span<TypeId const>)> const& fn) const override
     {
         fields(fn, true);
     }
-    void forEachElementSchema(std::function<void(SchemaId)> const& fn) const override
+    void forEachElementSchema(std::function<void(TypeId)> const& fn) const override
     {
         for (auto id : data().elements.in(graph.edges))
             fn(id);
@@ -493,6 +506,10 @@ struct SchemaPool::Impl::Domain final : Schema
             value.meaning = NamedValue::Meaning((row.flags >> 2) & 7);
             value.deprecated = row.flags & 32;
             value.removed = row.flags & 64;
+            if (row.rawType == 1)
+                value.rawValue = std::bit_cast<int64_t>(row.rawBits);
+            else if (row.rawType == 2)
+                value.rawValue = row.rawBits;
             switch (row.type)
             {
             case 0:
@@ -531,88 +548,88 @@ SchemaPool::SchemaPool(std::shared_ptr<StringPool> strings)
 }
 SchemaPool::~SchemaPool() = default;
 
-auto SchemaPool::addSchema(Schema::Kind kind) -> SchemaId
+auto SchemaPool::addSchema(Schema::Kind kind) -> TypeId
 {
     requireMutable();
     if (schema_->packed || schema_->packing)
         throw std::logic_error("SchemaPool is immutable after finalization");
-    if (schema_->drafts.size() > MaxSchemaId)
-        throw std::length_error("SchemaPool exhausted its uint16 domain namespace");
+    if (schema_->drafts.size() > MaxTypeId)
+        throw std::length_error("SchemaPool exhausted its uint16 type namespace");
     Impl::Draft draft;
     draft.data.kind = uint32_t(kind);
     auto affinity = Schema::affinities(kind);
     auto mask = valueTypeAffinity(ValueType::Bitmask);
     if ((affinity & mask) && !(affinity & ~(mask | valueTypeAffinity(ValueType::Null))))
         draft.data.flags |= 64u << 8;
-    auto id = SchemaId(schema_->drafts.size());
+    auto id = TypeId(schema_->drafts.size());
     schema_->drafts.push_back(std::move(draft));
     return id;
 }
-void SchemaPool::addFieldSchema(SchemaId parent, std::string_view name, SchemaId child,
+void SchemaPool::addFieldSchema(TypeId parent, std::string_view name, TypeId child,
                                 bool multimap)
 {
     auto& field = schema_->field(parent, name);
     field.children.push_back(child);
     field.data.flags |= uint8_t(multimap);
 }
-void SchemaPool::setFieldRequired(SchemaId id, std::string_view name, std::optional<bool> required)
+void SchemaPool::setFieldRequired(TypeId id, std::string_view name, std::optional<bool> required)
 {
     schema_->field(id, name).data.required = required ? (*required ? 2 : 1) : 0;
 }
-void SchemaPool::setFieldRole(SchemaId id, std::string_view name, Schema::FieldRole role)
+void SchemaPool::setFieldRole(TypeId id, std::string_view name, Schema::FieldRole role)
 {
     auto& field = schema_->field(id, name);
     field.data.flags =
         (field.data.flags & ~uint8_t{2}) | (role == Schema::FieldRole::Context ? 2 : 0);
 }
-void SchemaPool::addFieldAlias(SchemaId id, std::string_view alias, std::string_view canonical)
+void SchemaPool::addFieldAlias(TypeId id, std::string_view alias, std::string_view canonical)
 {
     auto& draft = schema_->draft(id);
     draft.aliases.push_back({schema_->intern(alias), schema_->intern(canonical)});
 }
-void SchemaPool::setBaseSchema(SchemaId id, SchemaId base)
+void SchemaPool::setBaseSchema(TypeId id, TypeId base)
 {
     schema_->draft(id).data.base = base;
 }
-void SchemaPool::addElementSchema(SchemaId id, SchemaId child)
+void SchemaPool::addElementSchema(TypeId id, TypeId child)
 {
     schema_->draft(id).elements.push_back(child);
 }
-void SchemaPool::addAlternative(SchemaId id, SchemaId child)
+void SchemaPool::addAlternative(TypeId id, TypeId child)
 {
     schema_->draft(id).alternatives.push_back(child);
 }
-void SchemaPool::setComposition(SchemaId id, Schema::Composition composition)
+void SchemaPool::setComposition(TypeId id, Schema::Composition composition)
 {
     auto& row = schema_->draft(id).data;
     row.flags = (row.flags & ~0x30u) | (uint32_t(composition) << 4);
 }
-void SchemaPool::setTypeName(SchemaId id, std::string_view name)
+void SchemaPool::setTypeName(TypeId id, std::string_view name)
 {
     schema_->draft(id).data.typeName = schema_->text(name);
 }
-void SchemaPool::setOpen(SchemaId id, bool open)
+void SchemaPool::setOpen(TypeId id, bool open)
 {
     auto& row = schema_->draft(id).data;
     row.flags = (row.flags & ~1u) | uint32_t(open);
 }
-void SchemaPool::setNullable(SchemaId id, std::optional<bool> nullable)
+void SchemaPool::setNullable(TypeId id, std::optional<bool> nullable)
 {
     auto& row = schema_->draft(id).data;
     row.flags = (row.flags & ~6u) | (nullable ? 2u | (uint32_t(*nullable) << 2) : 0u);
 }
-void SchemaPool::addEnumSymbol(SchemaId id, std::string_view symbol)
+void SchemaPool::addEnumSymbol(TypeId id, std::string_view symbol)
 {
     schema_->draft(id).symbols.push_back(schema_->intern(symbol));
 }
-void SchemaPool::addEnumValue(SchemaId id, ScalarValueType const& value)
+void SchemaPool::addEnumValue(TypeId id, ScalarValueType const& value)
 {
     if (std::holds_alternative<std::string>(value) ||
         std::holds_alternative<std::string_view>(value))
         throw std::invalid_argument("String choices require addEnumSymbol");
     schema_->draft(id).literals.push_back(schema_->literal(value));
 }
-void SchemaPool::setNumericDomain(SchemaId id, Schema::NumericDomain const& value)
+void SchemaPool::setNumericDomain(TypeId id, Schema::NumericDomain const& value)
 {
     auto& draft = schema_->draft(id);
     Impl::NumericData row;
@@ -637,22 +654,27 @@ void SchemaPool::setNumericDomain(SchemaId id, Schema::NumericDomain const& valu
     schema_->numerics.push_back(row);
     draft.data.numeric = schema_->numerics.size();
 }
-void SchemaPool::addNamedValue(SchemaId id, Schema::NamedValue const& value)
+void SchemaPool::addNamedValue(TypeId id, Schema::NamedValue const& value)
 {
     auto& draft = schema_->draft(id);
-    auto row = std::visit([&](auto v) { return schema_->scalar(v); }, value.value);
+    Impl::NamedData row{std::visit([&](auto v) { return schema_->scalar(v); }, value.value)};
     row.name = schema_->intern(value.name);
     row.flags = uint8_t(value.role) | (uint8_t(value.meaning) << 2) |
                 (value.deprecated ? 32u : 0u) | (value.removed ? 64u : 0u);
+    if (value.rawValue)
+        std::visit([&](auto raw) {
+            row.rawType = std::is_same_v<decltype(raw), int64_t> ? 1 : 2;
+            row.rawBits = std::bit_cast<uint64_t>(raw);
+        }, *value.rawValue);
     draft.named.push_back(row);
 }
-void SchemaPool::setBitWidth(SchemaId id, uint8_t width)
+void SchemaPool::setBitWidth(TypeId id, uint8_t width)
 {
     auto& row = schema_->draft(id).data;
     auto bits = Schema::affinities(Schema::Kind(row.kind));
     if (!width || width > 64 || !(bits & valueTypeAffinity(ValueType::Bitmask)) ||
         (bits & ~(valueTypeAffinity(ValueType::Bitmask) | valueTypeAffinity(ValueType::Null))))
-        throw std::invalid_argument("Bit width requires a concrete bitmask domain");
+        throw std::invalid_argument("Bit width requires a concrete bitmask type");
     row.flags = (row.flags & ~0xff00u) | (uint32_t(width) << 8);
 }
 
@@ -660,13 +682,13 @@ auto SchemaPool::finalized() const -> bool
 {
     return schema_->packed;
 }
-auto SchemaPool::domainCount() const -> size_t
+auto SchemaPool::typeCount() const -> size_t
 {
     if (schema_->packing && !schema_->packed)
         throw std::logic_error("Schema publication failed");
-    return (schema_->packed ? schema_->domains.size() : schema_->drafts.size()) - 1;
+    return (schema_->packed ? schema_->types.size() : schema_->drafts.size()) - 1;
 }
-auto SchemaPool::domain(SchemaId id) const -> Schema const*
+auto SchemaPool::type(TypeId id) const -> Schema const*
 {
     return schema_->packed && schema_->valid(id) ? schema_->views[id].get() : nullptr;
 }
@@ -674,15 +696,15 @@ auto SchemaPool::schemaStatistics() const -> Statistics
 {
     return schema_->statistics;
 }
-auto SchemaPool::fieldNames(SchemaId id, bool recursive) const -> std::span<std::string_view const>
+auto SchemaPool::fieldNames(TypeId id, bool recursive) const -> std::span<std::string_view const>
 {
-    return domain(id) ? std::span<std::string_view const>(
+    return type(id) ? std::span<std::string_view const>(
                             schema_->sets[schema_->views[id]->names[recursive ? 1 : 0]].names)
                       : std::span<std::string_view const>{};
 }
-auto SchemaPool::enumNames(SchemaId id, bool recursive) const -> std::span<std::string_view const>
+auto SchemaPool::enumNames(TypeId id, bool recursive) const -> std::span<std::string_view const>
 {
-    return domain(id) ? std::span<std::string_view const>(
+    return type(id) ? std::span<std::string_view const>(
                             schema_->sets[schema_->views[id]->names[recursive ? 3 : 2]].names)
                       : std::span<std::string_view const>{};
 }
@@ -691,47 +713,47 @@ auto SchemaPool::binding(std::string identity) const -> std::shared_ptr<SchemaBi
     if (!finalized())
         throw std::logic_error("Bindings require an immutable schema graph");
     return std::make_shared<SchemaBinding>(
-        std::move(identity), shared_from_this(), [this](SchemaId id) { return domain(id); },
+        std::move(identity), shared_from_this(), [this](TypeId id) { return type(id); },
         strings());
 }
-auto SchemaPool::domainNode(SchemaId id) const -> ModelNode::Ptr
+auto SchemaPool::typeNode(TypeId id) const -> ModelNode::Ptr
 {
-    if (!domain(id))
-        throw std::invalid_argument("Descriptor requested for an unknown domain");
+    if (!type(id))
+        throw std::invalid_argument("Descriptor requested for an unknown type");
     auto owner = std::static_pointer_cast<SchemaPool const>(shared_from_this());
     auto model = std::make_shared<SchemaModel>(strings(),
-                                               [owner](SchemaId id) { return owner->domain(id); });
+                                               [owner](TypeId id) { return owner->type(id); });
     return model->root(id);
 }
-auto SchemaPool::baseSchema(SchemaId id) const -> SchemaId
+auto SchemaPool::baseSchema(TypeId id) const -> TypeId
 {
-    return schema_->valid(id) ? SchemaId(schema_->domains[id].base) : NoSchemaId;
+    return schema_->valid(id) ? TypeId(schema_->types[id].base) : NoTypeId;
 }
-auto SchemaPool::fieldMultimap(SchemaId id, StringId field) const -> bool
+auto SchemaPool::fieldMultimap(TypeId id, StringId field) const -> bool
 {
-    auto view = domain(id);
+    auto view = type(id);
     if (!view)
         return false;
     field = view->canonicalField(field);
-    auto const& row = schema_->domains[id];
+    auto const& row = schema_->types[id];
     for (auto const& item : row.fields.in(schema_->fields))
         if (item.name == field)
             return item.flags & 1;
-    return row.base && fieldMultimap(SchemaId(row.base), field);
+    return row.base && fieldMultimap(TypeId(row.base), field);
 }
-void SchemaPool::forEachFieldAlias(SchemaId id,
+void SchemaPool::forEachFieldAlias(TypeId id,
                                    std::function<void(StringId, StringId)> const& fn) const
 {
-    if (domain(id))
-        for (auto const& alias : schema_->domains[id].aliases.in(schema_->aliases))
+    if (type(id))
+        for (auto const& alias : schema_->types[id].aliases.in(schema_->aliases))
             fn(alias.alias, alias.canonical);
 }
 
 void SchemaPool::Impl::pack()
 {
     std::vector<NumericData> packedNumerics;
-    std::vector<NamedData> packedNumbers;
-    domains.resize(drafts.size());
+    std::vector<ScalarData> packedNumbers;
+    types.resize(drafts.size());
     for (size_t id = 1; id < drafts.size(); ++id)
     {
         auto const& source = drafts[id];
@@ -740,12 +762,12 @@ void SchemaPool::Impl::pack()
         for (auto const& field : source.fields)
         {
             auto packed = field.data;
-            packed.children = append(edges, std::span<SchemaId const>(field.children));
+            packed.children = append(edges, std::span<TypeId const>(field.children));
             fields.push_back(packed);
         }
         row.fields.count = fields.size() - row.fields.begin;
-        row.elements = append(edges, std::span<SchemaId const>(source.elements));
-        row.alternatives = append(edges, std::span<SchemaId const>(source.alternatives));
+        row.elements = append(edges, std::span<TypeId const>(source.elements));
+        row.alternatives = append(edges, std::span<TypeId const>(source.alternatives));
         row.symbols = append(symbols, std::span<StringId const>(source.symbols));
         row.literals = append(literals, std::span<ModelNodeAddress const>(source.literals));
         row.named = append(named, std::span<NamedData const>(source.named));
@@ -759,35 +781,35 @@ void SchemaPool::Impl::pack()
             packedNumerics.push_back(numeric);
             row.numeric = packedNumerics.size();
         }
-        domains[id] = row;
+        types[id] = row;
     }
     numerics = std::move(packedNumerics);
     numbers = std::move(packedNumbers);
     // Resolve logical affinity by a descending fixed point. A recursive union
-    // starts conservative; each bit can disappear at most once per domain.
-    std::vector<std::vector<SchemaId>> parents(domains.size());
-    std::vector<uint16_t> bits(domains.size(), Schema::AllAffinities);
-    std::vector<bool> queued(domains.size(), true);
-    std::vector<SchemaId> pending;
-    for (size_t id = 1; id < domains.size(); ++id)
+    // starts conservative; each bit can disappear at most once per type.
+    std::vector<std::vector<TypeId>> parents(types.size());
+    std::vector<uint16_t> bits(types.size(), Schema::AllAffinities);
+    std::vector<bool> queued(types.size(), true);
+    std::vector<TypeId> pending;
+    for (size_t id = 1; id < types.size(); ++id)
     {
-        auto const& row = domains[id];
+        auto const& row = types[id];
         if (!(row.flags & 0x30u))
             bits[id] = Schema::affinities(Schema::Kind(row.kind));
         for (auto child : row.alternatives.in(edges))
         {
-            if (child >= domains.size())
+            if (child >= types.size())
                 throw std::invalid_argument("Dangling alternative schema");
-            parents[child].push_back(SchemaId(id));
+            parents[child].push_back(TypeId(id));
         }
-        pending.push_back(SchemaId(id));
+        pending.push_back(TypeId(id));
     }
     while (!pending.empty())
     {
         auto id = pending.back();
         pending.pop_back();
         queued[id] = false;
-        auto& row = domains[id];
+        auto& row = types[id];
         auto mode = Schema::Composition((row.flags >> 4) & 3);
         auto value = Schema::affinities(Schema::Kind(row.kind));
         if (mode != Schema::Composition::None)
@@ -810,9 +832,9 @@ void SchemaPool::Impl::pack()
                 pending.push_back(parent);
             }
     }
-    for (size_t id = 1; id < domains.size(); ++id)
-        domains[id].kind = uint32_t(
-            Schema::makeKind(Schema::kindNameId(Schema::Kind(domains[id].kind)), bits[id]));
+    for (size_t id = 1; id < types.size(); ++id)
+        types[id].kind = uint32_t(
+            Schema::makeKind(Schema::kindNameId(Schema::Kind(types[id].kind)), bits[id]));
     std::vector<Draft>{}.swap(drafts);
     textIndex.clear();
     textIndex.rehash(0);
@@ -820,17 +842,17 @@ void SchemaPool::Impl::pack()
 
 void SchemaPool::Impl::validate(size_t literalBudget) const
 {
-    if (domains.empty() || domains.size() > size_t(MaxSchemaId) + 1)
-        throw std::length_error("SchemaPool domain column exceeds its namespace");
+    if (types.empty() || types.size() > size_t(MaxTypeId) + 1)
+        throw std::length_error("SchemaPool type column exceeds its namespace");
     auto name = [&](StringId id)
     {
         if (!pool.strings()->resolve(id))
             throw std::invalid_argument("Unknown schema dictionary identity");
     };
-    auto reference = [&](SchemaId id)
+    auto reference = [&](TypeId id)
     {
-        if (id >= domains.size())
-            throw std::invalid_argument("Dangling schema domain reference");
+        if (id >= types.size())
+            throw std::invalid_argument("Dangling schema type reference");
     };
     auto consume = [](Range range, size_t& end, size_t capacity)
     {
@@ -844,9 +866,9 @@ void SchemaPool::Impl::validate(size_t literalBudget) const
     size_t fieldEnd = 0, edgeEnd = 0, symbolEnd = 0, literalEnd = 0, namedEnd = 0, aliasEnd = 0;
     size_t numericEnd = 0, numberEnd = 0;
     std::unordered_map<uint32_t, size_t> byteSizes;
-    for (size_t id = 1; id < domains.size(); ++id)
+    for (size_t id = 1; id < types.size(); ++id)
     {
-        auto const& row = domains[id];
+        auto const& row = types[id];
         name(Schema::kindNameId(Schema::Kind(row.kind)));
         if (!Schema::kindNameId(Schema::Kind(row.kind)) ||
             Schema::kindNameId(Schema::Kind(row.kind)) >= StringPool::FirstDynamicId ||
@@ -895,6 +917,9 @@ void SchemaPool::Impl::validate(size_t literalBudget) const
             if (!value.name || value.type > 4 || (value.type == 0 && value.bits > 1) ||
                 (value.flags & 3) > 2 || ((value.flags >> 2) & 7) > 4 || (value.flags & 128))
                 throw std::invalid_argument("Invalid named schema value");
+            // A missing ordinal must have zero storage; zero itself is a present tagged value.
+            if (value.rawType > 2 || (!value.rawType && value.rawBits))
+                throw std::invalid_argument("Invalid named schema raw value");
             if (value.type == 4)
                 text(value.text);
             else if (value.type != 0)
@@ -927,16 +952,16 @@ void SchemaPool::Impl::validate(size_t literalBudget) const
         if (row.numeric > numerics.size())
             throw std::invalid_argument("Unknown numeric domain");
         if (row.numeric && row.numeric != ++numericEnd)
-            throw std::invalid_argument("Numeric rows must have one canonical domain owner");
-        if (row.base >= domains.size())
+            throw std::invalid_argument("Numeric rows must have one canonical type owner");
+        if (row.base >= types.size())
             throw std::invalid_argument("Unknown inherited schema");
         if (row.base && (!(affinity & valueTypeAffinity(ValueType::Object)) ||
-                         !(Schema::affinities(Schema::Kind(domains[row.base].kind)) &
+                         !(Schema::affinities(Schema::Kind(types[row.base].kind)) &
                            valueTypeAffinity(ValueType::Object))))
             throw std::invalid_argument("Only object schemas can inherit member edges");
         size_t depth = 0;
-        for (auto base = row.base; base; base = domains[base].base)
-            if (base >= domains.size() || base == id || ++depth > 256)
+        for (auto base = row.base; base; base = types[base].base)
+            if (base >= types.size() || base == id || ++depth > 256)
                 throw std::invalid_argument("Cyclic or excessive schema inheritance");
     }
     if (fieldEnd != fields.size() || edgeEnd != edges.size() || symbolEnd != symbols.size() ||
@@ -992,29 +1017,29 @@ auto SchemaPool::Impl::nameSet(std::vector<StringId> names, bool sort) -> size_t
 void SchemaPool::Impl::index()
 {
     auto& work = indexWork;
-    views.resize(domains.size());
+    views.resize(types.size());
     nameSet({}, false);
-    for (size_t id = 1; id < domains.size(); ++id)
-        views[id] = std::make_unique<Domain>(*this, SchemaId(id));
+    for (size_t id = 1; id < types.size(); ++id)
+        views[id] = std::make_unique<TypeDefinition>(*this, TypeId(id));
     // Lookup-only inheritance keeps canonical edges shared. A sorted shadow
     // index avoids scanning every local field for every inherited declaration.
-    for (size_t id = 1; id < domains.size(); ++id)
-        if (domains[id].base && domains[id].fields.count)
+    for (size_t id = 1; id < types.size(); ++id)
+        if (types[id].base && types[id].fields.count)
         {
             std::vector<StringId> own;
-            for (auto const& field : domains[id].fields.in(fields))
+            for (auto const& field : types[id].fields.in(fields))
             {
                 chargeIndexWork();
                 own.push_back(field.name);
             }
             views[id]->names[4] = nameSet(std::move(own), true);
         }
-    std::vector<std::vector<SchemaId>> children(domains.size()), parents(domains.size());
-    std::vector<bool> localComplete(domains.size(), true);
-    for (size_t id = 1; id < domains.size(); ++id)
+    std::vector<std::vector<TypeId>> children(types.size()), parents(types.size());
+    std::vector<bool> localComplete(types.size(), true);
+    for (size_t id = 1; id < types.size(); ++id)
     {
         auto& view = *views[id];
-        auto const& row = domains[id];
+        auto const& row = types[id];
         std::vector<StringId> direct;
         view.forEachDirectField([&](StringId field, auto) { direct.push_back(field); });
         view.names[0] = nameSet(std::move(direct), false);
@@ -1022,7 +1047,7 @@ void SchemaPool::Impl::index()
         view.names[2] = nameSet({directSymbols.begin(), directSymbols.end()}, false);
         for (auto const& field : row.fields.in(fields))
             view.contextFields |= bool(field.flags & 2);
-        auto addChild = [&](SchemaId child)
+        auto addChild = [&](TypeId child)
         {
             // Inherited edges can multiply a small wire graph. Charge before
             // expanding them, not only after building the SCC adjacency lists.
@@ -1054,7 +1079,7 @@ void SchemaPool::Impl::index()
         std::ranges::sort(next);
         next.erase(std::unique(next.begin(), next.end()), next.end());
         for (auto child : next)
-            parents[child].push_back(SchemaId(id));
+            parents[child].push_back(TypeId(id));
         for (auto address : row.literals.in(literals))
             view.values.push_back(primitive(address));
         for (auto const& alias : row.aliases.in(aliases))
@@ -1081,13 +1106,13 @@ void SchemaPool::Impl::index()
     }
     // Iterative SCC condensation computes cycle-correct reachability once and
     // never spends runtime lookup work traversing descendant graphs.
-    std::vector<bool> seen(domains.size());
-    std::vector<SchemaId> order;
-    for (size_t root = 1; root < domains.size(); ++root)
+    std::vector<bool> seen(types.size());
+    std::vector<TypeId> order;
+    for (size_t root = 1; root < types.size(); ++root)
     {
         if (seen[root])
             continue;
-        std::vector<std::pair<SchemaId, size_t>> stack{{SchemaId(root), 0}};
+        std::vector<std::pair<TypeId, size_t>> stack{{TypeId(root), 0}};
         seen[root] = true;
         while (!stack.empty())
         {
@@ -1108,15 +1133,15 @@ void SchemaPool::Impl::index()
             }
         }
     }
-    std::vector<uint32_t> component(domains.size(), UINT32_MAX);
-    std::vector<std::vector<SchemaId>> members;
+    std::vector<uint32_t> component(types.size(), UINT32_MAX);
+    std::vector<std::vector<TypeId>> members;
     for (auto it = order.rbegin(); it != order.rend(); ++it)
     {
         if (component[*it] != UINT32_MAX)
             continue;
         auto c = uint32_t(members.size());
         members.emplace_back();
-        std::vector<SchemaId> pending{*it};
+        std::vector<TypeId> pending{*it};
         component[*it] = c;
         while (!pending.empty())
         {
@@ -1170,16 +1195,16 @@ void SchemaPool::Impl::index()
             views[id]->complete = complete;
         }
     }
-    for (size_t id = 1; id < domains.size(); ++id)
+    for (size_t id = 1; id < types.size(); ++id)
         if (views[id]->composition() != Schema::Composition::None ||
             !views[id]->alternatives().empty())
-            views[id]->finalize([&](SchemaId id) -> Schema*
+            views[id]->finalize([&](TypeId id) -> Schema*
                                 { return valid(id) ? views[id].get() : nullptr; });
     // While collecting the combined indexes, roles describe each declaration's
     // own edges; only published lookups use the conservative combined result.
     memberIndexesReady = true;
     setIndex.clear();
-    statistics.domains = domains.size() - 1;
+    statistics.types = types.size() - 1;
     statistics.fields = fields.size();
     statistics.namedValues = named.size();
     statistics.numericDomains = numerics.size();
@@ -1188,7 +1213,7 @@ void SchemaPool::Impl::index()
         statistics.fieldEdges += field.children.count;
         statistics.contextFields += bool(field.flags & 2);
     }
-    for (auto const& row : domains)
+    for (auto const& row : types)
     {
         statistics.elementEdges += row.elements.count;
         statistics.alternativeEdges += row.alternatives.count;
@@ -1214,44 +1239,44 @@ void SchemaPool::finalize()
     ModelPool::freeze();
 }
 
-auto SchemaPool::importGraph(SchemaPool const& source, std::span<SchemaId const> reuse)
-    -> std::vector<SchemaId>
+auto SchemaPool::importGraph(SchemaPool const& source, std::span<TypeId const> reuse)
+    -> std::vector<TypeId>
 {
     requireMutable();
     if (schema_->packed || !source.finalized() || &source == this)
         throw std::invalid_argument(
             "Graph import requires a distinct frozen source and mutable destination");
-    auto count = source.schema_->domains.size();
+    auto count = source.schema_->types.size();
     if (!reuse.empty() && reuse.size() != count)
         throw std::invalid_argument("Schema reuse table has the wrong namespace size");
-    std::vector<SchemaId> remap(count);
+    std::vector<TypeId> remap(count);
     size_t additional = count - 1;
     for (size_t id = 1; id < count; ++id)
     {
-        auto name = Schema::kindNameId(source.domain(SchemaId(id))->kind());
+        auto name = Schema::kindNameId(source.type(TypeId(id))->kind());
         if (strings()->resolve(name) != source.strings()->resolve(name))
             throw std::invalid_argument("Schema kind names require the same static vocabulary");
         if (!reuse.empty() && reuse[id])
         {
             if (reuse[id] >= schema_->drafts.size())
-                throw std::invalid_argument("Reused domain is absent from the destination graph");
+                throw std::invalid_argument("Reused type is absent from the destination graph");
             remap[id] = reuse[id];
             --additional;
         }
     }
-    if (additional > size_t(MaxSchemaId) + 1 - schema_->drafts.size())
-        throw std::length_error("Imported graph exhausts the uint16 domain namespace");
+    if (additional > size_t(MaxTypeId) + 1 - schema_->drafts.size())
+        throw std::length_error("Imported graph exhausts the uint16 type namespace");
     // Allocate every identity first so cycles and sibling sharing remain exact.
     for (size_t id = 1; id < count; ++id)
         if (!remap[id])
-            remap[id] = addSchema(source.domain(SchemaId(id))->kind());
+            remap[id] = addSchema(source.type(TypeId(id))->kind());
     for (size_t id = 1; id < count; ++id)
     {
         if (!reuse.empty() && reuse[id])
             continue;
         auto target = remap[id];
-        auto const& row = source.schema_->domains[id];
-        auto view = source.domain(SchemaId(id));
+        auto const& row = source.schema_->types[id];
+        auto view = source.type(TypeId(id));
         setTypeName(target, view->typeName());
         setOpen(target, view->open());
         setNullable(target, view->nullable());
@@ -1262,7 +1287,7 @@ auto SchemaPool::importGraph(SchemaPool const& source, std::span<SchemaId const>
             auto name = source.strings()->resolve(field.name).value();
             auto children = field.children.in(source.schema_->edges);
             if (children.empty())
-                addFieldSchema(target, name, NoSchemaId, field.flags & 1);
+                addFieldSchema(target, name, NoTypeId, field.flags & 1);
             else
                 for (auto child : children)
                     addFieldSchema(target, name, remap[child], field.flags & 1);
@@ -1335,21 +1360,21 @@ template <class S> void SchemaPool::Impl::readWrite(S& archive, size_t budget)
     {
         uint64_t length = 0;
         archive.value8b(length);
-        if (length > (size_t(MaxSchemaId) + 1) * sizeof(DomainData) || length > budget ||
-            length > memory || length % sizeof(DomainData))
-            throw std::length_error("Schema domain column exceeds its namespace/byte budget");
+        if (length > (size_t(MaxTypeId) + 1) * sizeof(TypeData) || length > budget ||
+            length > memory || length % sizeof(TypeData))
+            throw std::length_error("Schema type column exceeds its namespace/byte budget");
         memory -= length;
-        if (!domains.read_payload_from_bitsery(archive.adapter(), size_t(length)))
-            throw std::invalid_argument("Truncated schema domain column");
+        if (!types.read_payload_from_bitsery(archive.adapter(), size_t(length)))
+            throw std::invalid_argument("Truncated schema type column");
     }
     else
-        archive.object(domains);
+        archive.object(types);
     auto vector = [&]<class T>(std::vector<T>& values)
     {
         container(archive, values, std::min(MaxEdges, budget / sizeof(T)), memory,
                   [](auto& archive, T& value)
                   {
-                      if constexpr (std::is_same_v<T, SchemaId>)
+                      if constexpr (std::is_same_v<T, TypeId>)
                           archive.value2b(value);
                       else if constexpr (std::is_same_v<T, ModelNodeAddress>)
                           archive.value4b(value.value_);
@@ -1446,7 +1471,7 @@ auto SchemaPool::schemaMemoryUsage() const -> MemoryUsage
     auto vector = [&]<class T>(std::vector<T> const& values) {
         result += MemoryUsage{values.size() * sizeof(T), values.capacity() * sizeof(T)};
     };
-    result += schema_->domains.memory_usage();
+    result += schema_->types.memory_usage();
     vector(schema_->fields);
     vector(schema_->edges);
     vector(schema_->symbols);
@@ -1465,7 +1490,7 @@ auto SchemaPool::schemaMemoryUsage() const -> MemoryUsage
     for (auto const& view : schema_->views)
         if (view)
         {
-            result += MemoryUsage{sizeof(Impl::Domain), sizeof(Impl::Domain)};
+            result += MemoryUsage{sizeof(Impl::TypeDefinition), sizeof(Impl::TypeDefinition)};
             result += view->indexMemory();
             vector(view->values);
             vector(view->ranges);

@@ -17,29 +17,29 @@ namespace simfil
 
 class Schema;
 class SchemaBinding;
-using SchemaId = std::uint16_t;
+using TypeId = std::uint16_t;
 
-/** An exact domain identity retaining its immutable graph independently of a source model. */
+/** An exact type identity retaining its immutable graph independently of a source model. */
 struct SchemaReference
 {
     std::shared_ptr<const SchemaBinding> binding;
-    SchemaId id = 0;
+    TypeId id = 0;
 
     /** Empty references carry no semantic interpretation. */
     explicit operator bool() const noexcept { return binding && id != 0; }
     /** Resolve the definition without transferring ownership to a borrowed view. */
     auto definition() const -> const Schema*;
-    /** Equal content identities and local domain ids denote the same domain. */
+    /** Equal content identities and local type ids denote the same type. */
     auto operator==(SchemaReference const& other) const noexcept -> bool;
 };
 
-/** Full-width flag bits with intrinsic domain identity; persistent rows store only bits and an id. */
+/** Full-width flag bits with intrinsic type identity; persistent rows store only bits and an id. */
 struct Bitmask
 {
     std::uint64_t bits = 0;
-    SchemaReference domain;
+    SchemaReference type;
 
-    /** Exact bits and domain equality, never flag membership. */
+    /** Exact bits and type equality, never flag membership. */
     bool operator==(Bitmask const&) const = default;
     /** Parse unsigned decimal/hexadecimal bits with no lossy signed or floating conversion. */
     static auto parseBits(std::string_view text) -> tl::expected<std::uint64_t, Error>;

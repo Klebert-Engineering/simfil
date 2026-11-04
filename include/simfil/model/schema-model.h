@@ -22,8 +22,8 @@ public:
     /** Release request-local views and the retained schema binding. */
     ~SchemaModel() override;
 
-    /** Obtain a descriptor root; NoSchemaId describes unknown information. */
-    auto root(SchemaId schema) const -> ModelNode::Ptr;
+    /** Obtain a descriptor root; NoTypeId describes unknown information. */
+    auto root(TypeId schema) const -> ModelNode::Ptr;
 
     /** Return the local namespace shared with the query environment. */
     auto strings() const -> std::shared_ptr<StringPool>;

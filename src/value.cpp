@@ -13,49 +13,49 @@ auto impl::ValueToString::operator()(const Bitmask& value) const -> std::string
 #if defined(SIMFIL_WITH_MODEL_JSON)
 auto Bitmask::toJson() const -> nlohmann::json
 {
-    auto definition = domain.definition();
+    auto definition = type.definition();
     if (!definition || !definition->isBitmask() || !definition->bitWidth() || definition->bitWidth() > 64 ||
         (definition->bitWidth() < 64 && (bits >> definition->bitWidth())))
-        throw std::invalid_argument("Cannot serialize a bitmask without its domain binding");
+        throw std::invalid_argument("Cannot serialize a bitmask without its type binding");
     return {{"_bitmask", true}, {"bits", fmt::format("0x{:016x}", bits)},
-            {"schema", domain.binding->identity()}, {"domain", domain.id}};
+            {"schema", type.binding->identity()}, {"typeId", type.id}};
 }
 #endif
 
 auto Value::schemaReference() const -> SchemaReference
 {
     if (auto scalar = std::get_if<QualifiedScalar>(&value))
-        return scalar->domain;
+        return scalar->type;
     if (auto mask = std::get_if<Bitmask>(&value))
-        return mask->domain;
+        return mask->type;
     if (auto source = node())
         return source->schemaReference();
     return {};
 }
 
-auto Value::withSchema(SchemaReference domain) const -> Value
+auto Value::withSchema(SchemaReference typeRef) const -> Value
 {
     // Flags are intrinsically typed, so annotation cannot change their interpretation.
     if (type == ValueType::Bitmask) {
-        if (domain && domain != as<ValueType::Bitmask>().domain)
-            throw std::invalid_argument("Cannot rebind a bitmask to a different domain");
+        if (typeRef && typeRef != as<ValueType::Bitmask>().type)
+            throw std::invalid_argument("Cannot rebind a bitmask to a different type");
         return *this;
     }
-    if (!domain || type == ValueType::Null || type == ValueType::Undef ||
+    if (!typeRef || type == ValueType::Null || type == ValueType::Undef ||
         type == ValueType::Object || type == ValueType::Array || type == ValueType::TransientObject)
         return *this;
-    return fromScalar(getScalar(), std::move(domain));
+    return fromScalar(getScalar(), std::move(typeRef));
 }
 
 auto Value::namedValue(std::string_view name) const -> tl::expected<Value, Error>
 {
-    auto domain = schemaReference();
-    auto definition = domain.definition();
+    auto typeRef = schemaReference();
+    auto definition = typeRef.definition();
     if (!definition)
-        return tl::unexpected(Error{Error::InvalidOperands, "Symbol requires an exact scalar domain: " + std::string(name)});
+        return tl::unexpected(Error{Error::InvalidOperands, "Symbol requires an exact scalar type: " + std::string(name)});
     auto named = definition->namedValue(name);
     if (!named)
-        return tl::unexpected(Error{Error::InvalidOperands, "Unknown symbol in scalar domain: " + std::string(name)});
+        return tl::unexpected(Error{Error::InvalidOperands, "Unknown symbol in scalar type: " + std::string(name)});
     return std::visit([&](auto raw) -> tl::expected<Value, Error> {
         using T = decltype(raw);
         if constexpr (std::is_same_v<T, std::uint64_t> || std::is_same_v<T, std::int64_t>) {
@@ -65,8 +65,8 @@ auto Value::namedValue(std::string_view name) const -> tl::expected<Value, Error
                         return tl::unexpected(Error{Error::InvalidOperands, "Negative flag declaration"});
                 if (!definition->isBitmask() || !definition->bitWidth() || definition->bitWidth() > 64 ||
                     (definition->bitWidth() < 64 && (std::uint64_t(raw) >> definition->bitWidth())))
-                    return tl::unexpected(Error{Error::InvalidOperands, "Flag exceeds its domain encoding"});
-                return Value::make(Bitmask{std::uint64_t(raw), domain});
+                    return tl::unexpected(Error{Error::InvalidOperands, "Flag exceeds its type encoding"});
+                return Value::make(Bitmask{std::uint64_t(raw), typeRef});
             }
             if constexpr (std::is_same_v<T, std::uint64_t>)
                 if (raw > std::uint64_t(std::numeric_limits<std::int64_t>::max()))
@@ -80,18 +80,18 @@ auto Value::namedValue(std::string_view name) const -> tl::expected<Value, Error
     }, named->value);
 }
 
-auto Value::fieldDomain(ModelNode const& parent, StringId field) -> SchemaReference
+auto Value::fieldTypeReference(ModelNode const& parent, StringId field) -> SchemaReference
 {
-    auto parentDomain = parent.schemaReference();
-    if (parentDomain) {
+    auto parentType = parent.schemaReference();
+    if (parentType) {
         auto owner = parent.owningModel();
         auto name = owner ? owner->lookupStringId(field) : std::nullopt;
-        auto schema = parentDomain.definition();
+        auto schema = parentType.definition();
         if (name && schema) {
-            auto id = parentDomain.binding->strings()->get(*name);
+            auto id = parentType.binding->strings()->get(*name);
             // Missing names must not alias a declared empty field.
             if (id != StringPool::Empty || name->empty())
-                return {std::move(parentDomain.binding), schema->fieldSchema(id)};
+                return {std::move(parentType.binding), schema->fieldSchema(id)};
         }
     }
     return {};
@@ -103,9 +103,9 @@ auto Value::at(ModelNode const& parent, ModelNode const& child, std::int64_t ind
     if (parent.type() == ValueType::Object)
         return field(parent, child, parent.keyAt(index));
     return field(child, [&]() -> SchemaReference {
-        auto parentDomain = parent.schemaReference();
-        auto schema = parentDomain.definition();
-        return schema ? SchemaReference{std::move(parentDomain.binding), schema->itemSchema()} : SchemaReference{};
+        auto parentType = parent.schemaReference();
+        auto schema = parentType.definition();
+        return schema ? SchemaReference{std::move(parentType.binding), schema->itemSchema()} : SchemaReference{};
     });
 }
 

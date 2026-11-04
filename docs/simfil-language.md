@@ -63,7 +63,7 @@ Schema-aware behavior is conservative:
 
 - A standalone scalar field name can resolve to the concrete schema path that owns that field.
 - A recursive wildcard such as `**.speedLimitKmh` can skip schema branches that cannot contain `speedLimitKmh`, which avoids scanning arbitrary object branches when the schema is precise.
-- An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum domain.
+- An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum type.
 - A standalone enum-like string literal can resolve to an equality comparison against the schema path that owns that enum value.
 - If the same token can mean both a field and an enum-like value, field access wins. This keeps schema shorthand aligned with normal unquoted identifiers.
 
@@ -79,7 +79,7 @@ can be compiled against a schema as the concrete path that owns `speedLimitKmh`,
 SPEED_LIMIT_END
 ```
 
-can be compiled as a comparison against schema paths whose enum domain contains `SPEED_LIMIT_END`.
+can be compiled as a comparison against schema paths whose enum type contains `SPEED_LIMIT_END`.
 
 Other common schema-aware patterns:
 
@@ -235,8 +235,8 @@ Functions can return values of types other than the ones mentioned. See [Functio
 ### Named Values And Bitmasks
 
 With schema mode enabled, `speed = SPEED_UNLIMITED` compares against the named
-value in that particular speed domain. The same name may mean different raw
-numbers in different domains. Quoted `'SPEED_UNLIMITED'` stays a string, and an
+value in that particular speed type. The same name may mean different raw
+numbers in different types. Quoted `'SPEED_UNLIMITED'` stays a string, and an
 unknown numeric code stays numeric. Standalone numeric symbols search declared
 positions; standalone flag symbols search for membership, not exact equality.
 
@@ -247,9 +247,9 @@ whereas `flags & 3` returns another bitmask. Zero masks, like integer zero, are
 truthy: do not use bitwise-result truthiness as a membership test.
 
 Use `bitmask(flags, '0x8000000000000000')` to construct full-width bits in an
-existing mask's domain. Decimal strings also work. Bitwise `&`, `|`, `^`, `~`,
-`<<`, and `>>` preserve the mask domain; complement and shifts honor its declared
-width. Mixing incompatible domains, negative integers or floats is rejected.
+existing mask's type. Decimal strings also work. Bitwise `&`, `|`, `^`, `~`,
+`<<`, and `>>` preserve the mask type; complement and shifts honor its declared
+width. Mixing incompatible types, negative integers or floats is rejected.
 Arithmetic and numeric casts are not implicit mask conversions.
 
 <!-- mcp:

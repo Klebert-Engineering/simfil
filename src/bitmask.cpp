@@ -25,10 +25,10 @@ auto Bitmask::parseBits(std::string_view text) -> tl::expected<std::uint64_t, Er
 
 auto Bitmask::hasFlag(std::string_view name) const -> tl::expected<bool, Error>
 {
-    auto schema = domain.definition();
+    auto schema = type.definition();
     auto flag = schema ? schema->namedValue(name) : std::nullopt;
     if (!flag || flag->role != Schema::NamedValue::Role::Flag)
-        return tl::unexpected(Error{Error::InvalidArguments, "Unknown flag in bitmask domain: " + std::string(name)});
+        return tl::unexpected(Error{Error::InvalidArguments, "Unknown flag in bitmask type: " + std::string(name)});
     std::optional<std::uint64_t> mask;
     if (auto value = std::get_if<std::uint64_t>(&flag->value))
         mask = *value;
@@ -36,7 +36,7 @@ auto Bitmask::hasFlag(std::string_view name) const -> tl::expected<bool, Error>
         mask = static_cast<std::uint64_t>(*value);
     if (!mask || !schema->isBitmask() || !schema->bitWidth() || schema->bitWidth() > 64 ||
         (schema->bitWidth() < 64 && ((*mask | bits) >> schema->bitWidth())))
-        return tl::unexpected(Error{Error::InvalidArguments, "Flag or value exceeds its bitmask domain encoding"});
+        return tl::unexpected(Error{Error::InvalidArguments, "Flag or value exceeds its bitmask type encoding"});
     return *mask ? (bits & *mask) == *mask : bits == 0;
 }
 
@@ -56,13 +56,13 @@ auto bitmaskUnary(std::string_view operation, Bitmask const& value) -> tl::expec
         return Value::t();
     if (operation == "not")
         return Value::f();
-    auto domain = value.domain.definition();
-    if (!domain || !domain->isBitmask() || domain->bitWidth() == 0 || domain->bitWidth() > 64)
-        return tl::unexpected(Error{Error::InvalidOperands, "Bitmask has no valid domain"});
-    auto width = domain->bitWidth();
+    auto typeRef = value.type.definition();
+    if (!typeRef || !typeRef->isBitmask() || typeRef->bitWidth() == 0 || typeRef->bitWidth() > 64)
+        return tl::unexpected(Error{Error::InvalidOperands, "Bitmask has no valid type"});
+    auto width = typeRef->bitWidth();
     auto mask = width == 64 ? std::numeric_limits<std::uint64_t>::max() : (std::uint64_t{1} << width) - 1;
     if (operation == "~")
-        return Value::make(Bitmask{~value.bits & mask, value.domain});
+        return Value::make(Bitmask{~value.bits & mask, value.type});
     return tl::unexpected(Error{Error::InvalidOperands, "Unsupported bitmask unary operation"});
 }
 
@@ -80,11 +80,11 @@ auto bitmaskBinary(std::string_view operation, Value const& left, Value const& r
     auto leftMask = left.type == ValueType::Bitmask;
     auto rightMask = right.type == ValueType::Bitmask;
     auto const& typed = leftMask ? left.as<ValueType::Bitmask>() : right.as<ValueType::Bitmask>();
-    auto definition = typed.domain.definition();
+    auto definition = typed.type.definition();
     if (!definition || !definition->isBitmask() || definition->bitWidth() == 0 || definition->bitWidth() > 64)
-        return tl::unexpected(Error{Error::InvalidOperands, "Bitmask has no valid domain"});
-    if (leftMask && rightMask && left.as<ValueType::Bitmask>().domain != right.as<ValueType::Bitmask>().domain)
-        return tl::unexpected(Error{Error::InvalidOperands, "Incompatible bitmask domains"});
+        return tl::unexpected(Error{Error::InvalidOperands, "Bitmask has no valid type"});
+    if (leftMask && rightMask && left.as<ValueType::Bitmask>().type != right.as<ValueType::Bitmask>().type)
+        return tl::unexpected(Error{Error::InvalidOperands, "Incompatible bitmask types"});
 
     auto raw = [](Value const& value) -> std::optional<std::uint64_t> {
         if (value.type == ValueType::Bitmask)
@@ -109,16 +109,16 @@ auto bitmaskBinary(std::string_view operation, Value const& left, Value const& r
         if (!leftMask || rightMask || *b >= width)
             return tl::unexpected(Error{Error::InvalidOperands, "Bitmask shift count is outside its encoding width"});
         auto bits = operation == "<<" ? (*a << *b) & widthMask : *a >> *b;
-        return Value::make(Bitmask{bits, typed.domain});
+        return Value::make(Bitmask{bits, typed.type});
     }
     if ((*a & ~widthMask) || (*b & ~widthMask))
         return tl::unexpected(Error{Error::InvalidOperands, "Raw mask operand exceeds the encoding width"});
     if (operation == "&")
-        return Value::make(Bitmask{*a & *b, typed.domain});
+        return Value::make(Bitmask{*a & *b, typed.type});
     if (operation == "|")
-        return Value::make(Bitmask{*a | *b, typed.domain});
+        return Value::make(Bitmask{*a | *b, typed.type});
     if (operation == "^")
-        return Value::make(Bitmask{*a ^ *b, typed.domain});
+        return Value::make(Bitmask{*a ^ *b, typed.type});
     return tl::unexpected(Error{Error::InvalidOperands, "Unsupported bitmask binary operation"});
 }
 

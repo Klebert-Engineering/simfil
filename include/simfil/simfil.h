@@ -77,7 +77,7 @@ struct CompileOptions
 {
     bool any = true;
     RewriteMode rewriteMode = RewriteMode::None;
-    SchemaId rootSchema = NoSchemaId;
+    TypeId rootSchema = NoTypeId;
 };
 
 /**
@@ -167,7 +167,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
  * `and`/`or` are inspected, and schema-aware rewrites are resolved to the exact
  * paths they can touch.
  */
-auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
+auto referencedSchemaPaths(Environment& env, const AST& ast, TypeId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
 
 /**
  * Return the symbol represented by a whole-query bare field or string literal.
@@ -234,11 +234,11 @@ auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Diagnostic
 auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node, CompletionOptions const& options) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 /**
- * Complete a represented domain directly, without evaluating dummy model values.
+ * Complete a represented type directly, without evaluating dummy model values.
  * The environment must bind the schema and its field/enum StringIds to one local
  * string namespace. Custom functions are never executed by this overload.
  */
-auto complete(Environment& env, std::string_view query, size_t point, SchemaId rootSchema,
+auto complete(Environment& env, std::string_view query, size_t point, TypeId rootSchema,
               CompletionOptions const& options = {}) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 }

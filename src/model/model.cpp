@@ -124,7 +124,7 @@ struct ModelPool::Impl
     bool directSchema_ = false;
     std::vector<std::string> schemaIdentities_;
     std::vector<BindingOwner> schemaBindings_;
-    ModelColumn<TwoPart<std::uint16_t, SchemaId>> importedSchemas_;
+    ModelColumn<TwoPart<std::uint16_t, TypeId>> importedSchemas_;
     SchemaBinding::Resolver schemaResolver_;
 
     struct {
@@ -135,13 +135,13 @@ struct ModelPool::Impl
         std::string stringData_;
         ModelColumn<StringRange, detail::ColumnPageSize> strings_;
         ModelColumn<StringRange, detail::ColumnPageSize> byteArrays_;
-        ModelColumn<TwoPart<ModelNodeAddress, SchemaId>> qualifiedScalars_;
-        ModelColumn<TwoPart<std::uint64_t, SchemaId>> bitmasks_;
+        ModelColumn<TwoPart<ModelNodeAddress, TypeId>> qualifiedScalars_;
+        ModelColumn<TwoPart<std::uint64_t, TypeId>> bitmasks_;
 
-        ModelColumn<SchemaId, detail::ColumnPageSize> objectSchemas_;
-        ModelColumn<SchemaId, detail::ColumnPageSize> objectSingletonSchemas_;
-        ModelColumn<SchemaId, detail::ColumnPageSize> arraySchemas_;
-        ModelColumn<SchemaId, detail::ColumnPageSize> arraySingletonSchemas_;
+        ModelColumn<TypeId, detail::ColumnPageSize> objectSchemas_;
+        ModelColumn<TypeId, detail::ColumnPageSize> objectSingletonSchemas_;
+        ModelColumn<TypeId, detail::ColumnPageSize> arraySchemas_;
+        ModelColumn<TypeId, detail::ColumnPageSize> arraySingletonSchemas_;
         Object::Storage objectMemberArrays_;
         Array::Storage arrayMemberArrays_;
     } columns_;
@@ -179,7 +179,7 @@ struct ModelPool::Impl
         s.object(columns_.qualifiedScalars_);
         s.object(columns_.bitmasks_);
         s.boolValue(directSchema_);
-        s.container(schemaIdentities_, available(s, size_t(MaxSchemaId)), [](auto& serializer, auto& identity) {
+        s.container(schemaIdentities_, available(s, size_t(MaxTypeId)), [](auto& serializer, auto& identity) {
             serializer.text1b(identity, available(serializer, size_t{65535}));
         });
         s.object(importedSchemas_);
@@ -195,7 +195,7 @@ public:
         : ModelNodeBase(node, owner.mpKey_), owner_(owner) {}
 
     /** Both scalar columns carry pool-local schema ids interpreted by their common bindings. */
-    auto schema() const -> SchemaId override
+    auto schema() const -> TypeId override
     {
         return addr().column() == Bitmask ? owner_.impl_->columns_.bitmasks_[addr().index()].second()
             : owner_.impl_->columns_.qualifiedScalars_[addr().index()].second();
@@ -505,11 +505,11 @@ model_ptr<Object> ModelPool::newObject(size_t initialFieldCapacity, bool fixedSi
         auto singletonIndex = Object::Storage::singleton_payload(memberArrId);
         if (impl_->columns_.objectSingletonSchemas_.size() <= singletonIndex)
             impl_->columns_.objectSingletonSchemas_.resize(singletonIndex + 1);
-        impl_->columns_.objectSingletonSchemas_[singletonIndex] = SchemaId{};
+        impl_->columns_.objectSingletonSchemas_[singletonIndex] = TypeId{};
     } else {
         if (impl_->columns_.objectSchemas_.size() <= memberArrId)
             impl_->columns_.objectSchemas_.resize(memberArrId + 1);
-        impl_->columns_.objectSchemas_[memberArrId] = SchemaId{};
+        impl_->columns_.objectSchemas_[memberArrId] = TypeId{};
     }
     return model_ptr<Object>::make(shared_from_this(), ModelNodeAddress{Objects, (uint32_t)memberArrId});
 }
@@ -522,11 +522,11 @@ model_ptr<Array> ModelPool::newArray(size_t initialFieldCapacity, bool fixedSize
         auto singletonIndex = Array::Storage::singleton_payload(memberArrId);
         if (impl_->columns_.arraySingletonSchemas_.size() <= singletonIndex)
             impl_->columns_.arraySingletonSchemas_.resize(singletonIndex + 1);
-        impl_->columns_.arraySingletonSchemas_[singletonIndex] = SchemaId{};
+        impl_->columns_.arraySingletonSchemas_[singletonIndex] = TypeId{};
     } else {
         if (impl_->columns_.arraySchemas_.size() <= memberArrId)
             impl_->columns_.arraySchemas_.resize(memberArrId + 1);
-        impl_->columns_.arraySchemas_[memberArrId] = SchemaId{};
+        impl_->columns_.arraySchemas_[memberArrId] = TypeId{};
     }
     return model_ptr<Array>::make(shared_from_this(), ModelNodeAddress{Arrays, (uint32_t)memberArrId});
 }
@@ -562,14 +562,14 @@ std::optional<std::string_view> Model::lookupStringId(const simfil::StringId) co
     return {};
 }
 
-auto Model::schemaReference(SchemaId) const -> SchemaReference
+auto Model::schemaReference(TypeId) const -> SchemaReference
 {
     return {};
 }
 
-auto Model::schema(ModelNode const& node) const -> SchemaId
+auto Model::schema(ModelNode const& node) const -> TypeId
 {
-    SchemaId result = NoSchemaId;
+    TypeId result = NoTypeId;
     resolve(node, Lambda([&](auto const& resolved) { result = resolved.schema(); }));
     return result;
 }
@@ -616,14 +616,14 @@ void ModelPool::remapSchemas(std::shared_ptr<const SchemaBinding> target,
         throw std::invalid_argument("Schema remapping requires a target binding and callback");
 
     // The table is bounded by the 16-bit local namespace, not the number of values.
-    std::vector<SchemaId> mapped(size_t(MaxSchemaId) + 1, NoSchemaId);
-    auto validate = [&](SchemaId id, ValueType type) -> const Schema* {
-        if (id == NoSchemaId)
+    std::vector<TypeId> mapped(size_t(MaxTypeId) + 1, NoTypeId);
+    auto validate = [&](TypeId id, ValueType type) -> const Schema* {
+        if (id == NoTypeId)
             return nullptr;
-        if (mapped[id] == NoSchemaId) {
+        if (mapped[id] == NoTypeId) {
             auto source = schemaReference(id);
             if (!source.definition())
-                throw std::invalid_argument("Cannot remap an unresolved source domain");
+                throw std::invalid_argument("Cannot remap an unresolved source type");
             auto replacement = remap(source);
             if (!replacement.binding || replacement.binding->identity() != target->identity() ||
                 !replacement.id || !target->lookup(replacement.id))
@@ -644,7 +644,7 @@ void ModelPool::remapSchemas(std::shared_ptr<const SchemaBinding> target,
     for (size_t i = 0; i < columns.qualifiedScalars_.size(); ++i) {
         auto value = columns.qualifiedScalars_[i];
         if (!validate(value.second(), type(ModelNode(shared_from_this(), value.first(), mpKey_))))
-            throw std::invalid_argument("A qualified scalar must retain its domain");
+            throw std::invalid_argument("A qualified scalar must retain its type");
     }
     for (size_t i = 0; i < columns.bitmasks_.size(); ++i) {
         auto value = columns.bitmasks_[i];
@@ -652,7 +652,7 @@ void ModelPool::remapSchemas(std::shared_ptr<const SchemaBinding> target,
         if (!definition || !definition->isBitmask() || !definition->bitWidth() ||
             definition->bitWidth() > 64 ||
             (definition->bitWidth() < 64 && (value.first() >> definition->bitWidth())))
-            throw std::invalid_argument("Remapped bitmask domain does not preserve its width");
+            throw std::invalid_argument("Remapped bitmask type does not preserve its width");
     }
 
     // Allocate the new owners before changing any column. The commit below cannot throw.
@@ -681,9 +681,9 @@ auto ModelPool::schemaBinding(std::string_view identity) const -> std::shared_pt
     return binding && binding->identity() == identity ? binding : nullptr;
 }
 
-auto ModelPool::schemaReference(SchemaId id) const -> SchemaReference
+auto ModelPool::schemaReference(TypeId id) const -> SchemaReference
 {
-    if (id == NoSchemaId || impl_->schemaBindings_.empty())
+    if (id == NoTypeId || impl_->schemaBindings_.empty())
         return {};
     if (impl_->directSchema_)
         return {impl_->schemaBindings_.front().owner, id};
@@ -709,7 +709,7 @@ auto ModelPool::schemaReference(ModelNode const& node) const -> SchemaReference
     return schemaReference(node.schema());
 }
 
-auto ModelPool::schema(ModelNode const& node) const -> SchemaId
+auto ModelPool::schema(ModelNode const& node) const -> TypeId
 {
     if (auto* owner = node.model_.get(); owner && owner != this)
         return owner->schema(node);
@@ -723,14 +723,14 @@ auto ModelPool::schema(ModelNode const& node) const -> SchemaId
         return arraySchemaId(address.index());
     case QualifiedScalar:
         return address.index() < impl_->columns_.qualifiedScalars_.size()
-            ? SchemaId(impl_->columns_.qualifiedScalars_[address.index()].second()) : NoSchemaId;
+            ? TypeId(impl_->columns_.qualifiedScalars_[address.index()].second()) : NoTypeId;
     case Bitmask:
         return address.index() < impl_->columns_.bitmasks_.size()
-            ? SchemaId(impl_->columns_.bitmasks_[address.index()].second()) : NoSchemaId;
+            ? TypeId(impl_->columns_.bitmasks_[address.index()].second()) : NoTypeId;
     default:
         // Custom columns keep their model-specific schema protocol. Plain core
-        // primitives have no occurrence-specific domain outside their parent.
-        return address.column() >= FirstCustomColumnId ? Model::schema(node) : NoSchemaId;
+        // primitives have no occurrence-specific type outside their parent.
+        return address.column() >= FirstCustomColumnId ? Model::schema(node) : NoTypeId;
     }
 }
 
@@ -762,74 +762,74 @@ auto ModelPool::type(ModelNode const& node) const -> ValueType
     }
 }
 
-auto ModelPool::importSchema(SchemaReference const& domain) -> tl::expected<SchemaId, Error>
+auto ModelPool::importSchema(SchemaReference const& typeRef) -> tl::expected<TypeId, Error>
 {
     if (frozen())
         return tl::unexpected(Error{Error::RuntimeError, "Cannot import a schema into a frozen ModelPool"});
-    if (!domain || !domain.definition())
-        return tl::unexpected(Error{Error::RuntimeError, "Cannot import an unresolved schema domain"});
+    if (!typeRef || !typeRef.definition())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot import an unresolved schema type"});
     if (impl_->directSchema_) {
-        if (domain.binding->identity() != impl_->schemaIdentities_.front())
-            return tl::unexpected(Error{Error::RuntimeError, "Foreign domain in a single-graph model"});
-        return domain.id;
+        if (typeRef.binding->identity() != impl_->schemaIdentities_.front())
+            return tl::unexpected(Error{Error::RuntimeError, "Foreign type in a single-graph model"});
+        return typeRef.id;
     }
-    auto identity = std::ranges::find(impl_->schemaIdentities_, domain.binding->identity());
+    auto identity = std::ranges::find(impl_->schemaIdentities_, typeRef.binding->identity());
     auto bindingIndex = size_t(identity - impl_->schemaIdentities_.begin());
     for (size_t i = 0; i < impl_->importedSchemas_.size(); ++i) {
         auto entry = impl_->importedSchemas_[i];
-        if (entry.first() == bindingIndex && entry.second() == domain.id)
-            return static_cast<SchemaId>(i + 1);
+        if (entry.first() == bindingIndex && entry.second() == typeRef.id)
+            return static_cast<TypeId>(i + 1);
     }
-    if (impl_->importedSchemas_.size() >= MaxSchemaId || bindingIndex >= MaxSchemaId)
+    if (impl_->importedSchemas_.size() >= MaxTypeId || bindingIndex >= MaxTypeId)
         return tl::unexpected(Error{Error::RuntimeError, "Model schema namespace exhausted"});
     if (identity == impl_->schemaIdentities_.end()) {
-        auto local = Impl::localBinding(domain.binding);
-        impl_->schemaIdentities_.emplace_back(domain.binding->identity());
+        auto local = Impl::localBinding(typeRef.binding);
+        impl_->schemaIdentities_.emplace_back(typeRef.binding->identity());
         impl_->schemaBindings_.push_back({std::move(local)});
     }
-    impl_->importedSchemas_.emplace_back(static_cast<std::uint16_t>(bindingIndex), domain.id);
-    return static_cast<SchemaId>(impl_->importedSchemas_.size());
+    impl_->importedSchemas_.emplace_back(static_cast<std::uint16_t>(bindingIndex), typeRef.id);
+    return static_cast<TypeId>(impl_->importedSchemas_.size());
 }
 
-auto ModelPool::newBitmask(std::uint64_t bits, SchemaReference const& domain) -> ModelNode::Ptr
+auto ModelPool::newBitmask(std::uint64_t bits, SchemaReference const& typeRef) -> ModelNode::Ptr
 {
     requireMutable();
-    auto definition = domain.definition();
+    auto definition = typeRef.definition();
     if (!definition || !definition->isBitmask() ||
         definition->bitWidth() == 0 || definition->bitWidth() > 64)
-        throw std::invalid_argument("Bitmask requires a compatible bound domain and width");
+        throw std::invalid_argument("Bitmask requires a compatible bound type and width");
     if (definition->bitWidth() < 64 && (bits >> definition->bitWidth()) != 0)
         throw std::invalid_argument("Bitmask exceeds its declared encoding width");
     auto index = impl_->columns_.bitmasks_.size();
     // These typed factories are input boundaries, unlike the trusted primitive builders.
     if (!ModelNodeAddress::checkIndex(index))
         throw std::length_error("Bitmask column exceeds its 24-bit index representation");
-    auto imported = importSchema(domain);
+    auto imported = importSchema(typeRef);
     if (!imported)
         throw std::invalid_argument(imported.error().message);
     impl_->columns_.bitmasks_.emplace_back(bits, *imported);
     return resolve(ModelNodeAddress{Bitmask, index});
 }
 
-auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaReference const& domain) -> ModelNode::Ptr
+auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaReference const& typeRef) -> ModelNode::Ptr
 {
     requireMutable();
     if (std::holds_alternative<std::monostate>(value))
         throw std::invalid_argument("Null is not a schema-qualified primitive");
     if (auto mask = std::get_if<simfil::Bitmask>(&value)) {
-        if (mask->domain != domain)
-            throw std::invalid_argument("Cannot rebind a bitmask to a different domain");
-        return newBitmask(mask->bits, domain);
+        if (mask->type != typeRef)
+            throw std::invalid_argument("Cannot rebind a bitmask to a different type");
+        return newBitmask(mask->bits, typeRef);
     }
     auto type = std::visit([](auto const& scalar) {
         return ValueType4CType<std::decay_t<decltype(scalar)>>::Type;
     }, value);
-    if (!domain.definition() || !domain.definition()->hasAffinity(type))
-        throw std::invalid_argument("Qualified scalar requires a compatible domain");
+    if (!typeRef.definition() || !typeRef.definition()->hasAffinity(type))
+        throw std::invalid_argument("Qualified scalar requires a compatible type");
     auto index = impl_->columns_.qualifiedScalars_.size();
     if (!ModelNodeAddress::checkIndex(index))
         throw std::length_error("Qualified scalar column exceeds its 24-bit index representation");
-    auto imported = importSchema(domain);
+    auto imported = importSchema(typeRef);
     if (!imported)
         throw std::invalid_argument(imported.error().message);
     auto raw = std::visit([&](auto const& scalar) -> tl::expected<ModelNode::Ptr, Error> {
@@ -841,7 +841,7 @@ auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaReference const& 
         else if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>)
             return tryNewValue(std::string_view(scalar));
         else if constexpr (std::is_same_v<T, simfil::Bitmask>)
-            return newBitmask(scalar.bits, scalar.domain);
+            return newBitmask(scalar.bits, scalar.type);
         else
             return tryNewValue(scalar);
     }, value);
@@ -1101,20 +1101,20 @@ Object::Storage& ModelPool::objectMemberStorage() {
     return impl_->columns_.objectMemberArrays_;
 }
 
-SchemaId ModelPool::objectSchemaId(ArrayIndex members) const
+TypeId ModelPool::objectSchemaId(ArrayIndex members) const
 {
     if (Object::Storage::is_singleton_handle(members)) {
         auto singletonIndex = Object::Storage::singleton_payload(members);
         if (singletonIndex >= impl_->columns_.objectSingletonSchemas_.size())
             return {};
-        return SchemaId{impl_->columns_.objectSingletonSchemas_[singletonIndex]};
+        return TypeId{impl_->columns_.objectSingletonSchemas_[singletonIndex]};
     }
     if (members >= impl_->columns_.objectSchemas_.size())
         return {};
-    return SchemaId{impl_->columns_.objectSchemas_[members]};
+    return TypeId{impl_->columns_.objectSchemas_[members]};
 }
 
-auto ModelPool::setObjectSchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
+auto ModelPool::setObjectSchemaId(ArrayIndex members, TypeId schemaId) -> tl::expected<void, Error>
 {
     if (frozen())
         return tl::unexpected(Error{Error::RuntimeError, "Cannot change a frozen object's schema"});
@@ -1135,20 +1135,20 @@ auto ModelPool::setObjectSchemaId(ArrayIndex members, SchemaId schemaId) -> tl::
     return {};
 }
 
-SchemaId ModelPool::arraySchemaId(ArrayIndex members) const
+TypeId ModelPool::arraySchemaId(ArrayIndex members) const
 {
     if (Array::Storage::is_singleton_handle(members)) {
         auto singletonIndex = Array::Storage::singleton_payload(members);
         if (singletonIndex >= impl_->columns_.arraySingletonSchemas_.size())
             return {};
-        return SchemaId{impl_->columns_.arraySingletonSchemas_[singletonIndex]};
+        return TypeId{impl_->columns_.arraySingletonSchemas_[singletonIndex]};
     }
     if (members >= impl_->columns_.arraySchemas_.size())
         return {};
-    return SchemaId{impl_->columns_.arraySchemas_[members]};
+    return TypeId{impl_->columns_.arraySchemas_[members]};
 }
 
-auto ModelPool::setArraySchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>
+auto ModelPool::setArraySchemaId(ArrayIndex members, TypeId schemaId) -> tl::expected<void, Error>
 {
     if (frozen())
         return tl::unexpected(Error{Error::RuntimeError, "Cannot change a frozen array's schema"});
@@ -1209,7 +1209,7 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
 
     // Hydrate all identities before making any schema-bearing value available to callers.
     if ((impl_->directSchema_ && (impl_->schemaIdentities_.size() != 1 || !impl_->importedSchemas_.empty())) ||
-        impl_->importedSchemas_.size() > MaxSchemaId)
+        impl_->importedSchemas_.size() > MaxTypeId)
         return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid model schema namespace"});
     std::vector<Impl::BindingOwner> bindings;
     for (auto const& identity : impl_->schemaIdentities_) {
@@ -1222,22 +1222,22 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
     }
     impl_->schemaBindings_ = std::move(bindings);
     for (size_t i = 0; i < impl_->importedSchemas_.size(); ++i) {
-        auto domain = schemaReference(static_cast<SchemaId>(i + 1));
-        if (!domain.definition())
-            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid imported schema domain"});
+        auto typeRef = schemaReference(static_cast<TypeId>(i + 1));
+        if (!typeRef.definition())
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid imported schema type"});
     }
 
-    auto validDomain = [&](SchemaId id, ValueType type) {
+    auto validType = [&](TypeId id, ValueType type) {
         auto definition = schemaReference(id).definition();
-        return id == NoSchemaId || (definition && definition->hasAffinity(type));
+        return id == NoTypeId || (definition && definition->hasAffinity(type));
     };
     if (!impl_->schemaBindings_.empty()) {
         for (auto const* column : {&impl_->columns_.objectSchemas_, &impl_->columns_.objectSingletonSchemas_,
                                   &impl_->columns_.arraySchemas_, &impl_->columns_.arraySingletonSchemas_})
             for (size_t i = 0; i < column->size(); ++i)
-                if (!validDomain((*column)[i], column == &impl_->columns_.objectSchemas_ ||
+                if (!validType((*column)[i], column == &impl_->columns_.objectSchemas_ ||
                     column == &impl_->columns_.objectSingletonSchemas_ ? ValueType::Object : ValueType::Array))
-                    return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid container schema domain"});
+                    return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid container schema type"});
     }
     for (auto const* column : {&impl_->columns_.strings_, &impl_->columns_.byteArrays_})
         for (size_t i = 0; i < column->size(); ++i) {
@@ -1291,7 +1291,7 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
         if (!inBounds || !definition)
             return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid qualified scalar reference"});
         if (!definition->hasAffinity(type))
-            return tl::unexpected(Error{Error::EncodeDecodeError, "Qualified scalar has an incompatible domain"});
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Qualified scalar has an incompatible type"});
     }
     for (size_t i = 0; i < impl_->columns_.bitmasks_.size(); ++i) {
         auto entry = impl_->columns_.bitmasks_[i];
@@ -1299,7 +1299,7 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
         if (!definition || !definition->isBitmask() ||
             definition->bitWidth() == 0 || definition->bitWidth() > 64 ||
             (definition->bitWidth() < 64 && (entry.first() >> definition->bitWidth()) != 0))
-            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid bitmask domain or width"});
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid bitmask type or width"});
     }
 
     return {};

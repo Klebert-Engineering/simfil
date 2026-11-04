@@ -68,7 +68,7 @@ struct Trace
 struct Environment
 {
 public:
-    using QuerySchemaCallback = std::function<const Schema*(SchemaId)>;
+    using QuerySchemaCallback = std::function<const Schema*(TypeId)>;
 
     /**
      * Construct a SIMFIL execution environment with a string cache,
@@ -129,7 +129,7 @@ public:
      * Query an object schema by its schema id.
      * Returns nullptr if no callback is configured or the schema is unknown.
      */
-    auto querySchema(SchemaId schemaId) const -> const Schema*;
+    auto querySchema(TypeId schemaId) const -> const Schema*;
 
 public:
     std::unique_ptr<std::mutex> warnMtx;

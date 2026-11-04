@@ -601,7 +601,7 @@ BitmaskFn BitmaskFn::Fn;
 
 auto BitmaskFn::ident() const -> const FnInfo&
 {
-    static const FnInfo info{"bitmask", "Constructs raw bits in an existing mask's domain.",
+    static const FnInfo info{"bitmask", "Constructs raw bits in an existing mask's type.",
         "bitmask(mask, unsignedDecimalOrHexString) -> bitmask"};
     return info;
 }
@@ -610,7 +610,7 @@ auto BitmaskFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& 
     -> tl::expected<Result, Error>
 {
     if (args.size() != 2)
-        return tl::unexpected(Error{Error::InvalidArguments, "bitmask expects a domain-bearing mask and a bits string"});
+        return tl::unexpected(Error{Error::InvalidArguments, "bitmask expects a type-bearing mask and a bits string"});
     Value mask = Value::undef(), text = Value::undef();
     auto ok = ArgParser("bitmask", ctx, val, args).arg("mask", ValueType::Bitmask, mask)
         .arg("bits", ValueType::String, text).ok();
@@ -619,12 +619,12 @@ auto BitmaskFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& 
         return res(ctx, Value::undef());
     auto bits = Bitmask::parseBits(text.stringView());
     TRY_EXPECTED(bits);
-    auto domain = mask.schemaReference();
-    auto definition = domain.definition();
+    auto typeRef = mask.schemaReference();
+    auto definition = typeRef.definition();
     if (!definition || !definition->isBitmask() || !definition->bitWidth() || definition->bitWidth() > 64 ||
         (definition->bitWidth() < 64 && (*bits >> definition->bitWidth())))
-        return tl::unexpected(Error{Error::InvalidArguments, "Bits exceed the mask domain encoding width"});
-    return res(ctx, Value::make(Bitmask{*bits, std::move(domain)}));
+        return tl::unexpected(Error{Error::InvalidArguments, "Bits exceed the mask type encoding width"});
+    return res(ctx, Value::make(Bitmask{*bits, std::move(typeRef)}));
 }
 
 MinFn MinFn::Fn;

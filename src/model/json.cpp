@@ -102,10 +102,10 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
 
     if (input.is_object()) {
         if (input.size() == 4 && input.contains("_bitmask") && input["_bitmask"] == true &&
-            input.contains("bits") && input.contains("schema") && input.contains("domain")) {
+            input.contains("bits") && input.contains("schema") && input.contains("typeId")) {
             // Only the complete reserved shape is a tag; application objects with extra keys remain objects.
-            if (!input["bits"].is_string() || !input["schema"].is_string() || !input["domain"].is_number_integer() ||
-                input["domain"] < 1 || input["domain"] > std::numeric_limits<SchemaId>::max())
+            if (!input["bits"].is_string() || !input["schema"].is_string() || !input["typeId"].is_number_integer() ||
+                input["typeId"] < 1 || input["typeId"] > std::numeric_limits<TypeId>::max())
                 return tl::unexpected(Error{Error::ParserError, "Invalid tagged bitmask fields"});
             auto bits = Bitmask::parseBits(input["bits"].get_ref<const std::string&>());
             TRY_EXPECTED(bits);
@@ -113,7 +113,7 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
             if (!binding)
                 return tl::unexpected(Error{Error::ParserError, "Tagged bitmask requires its exact schema graph"});
             try {
-                return model.newBitmask(*bits, {std::move(binding), input["domain"].get<SchemaId>()});
+                return model.newBitmask(*bits, {std::move(binding), input["typeId"].get<TypeId>()});
             }
             catch (std::exception const& error) {
                 return tl::unexpected(Error{Error::ParserError, error.what()});

@@ -6,11 +6,11 @@
 
 namespace
 {
-/** Exercise the public borrowed-domain adapter rather than duplicating MapSchema storage in tests. */
-class ScalarDomain : public ValueSchema
+/** Exercise the public borrowed-type adapter rather than duplicating MapSchema storage in tests. */
+class ScalarType : public ValueSchema
 {
 public:
-    explicit ScalarDomain(Kind kind) : ValueSchema(kind) {}
+    explicit ScalarType(Kind kind) : ValueSchema(kind) {}
     std::vector<NamedValue> names;
     std::optional<NumericDomain> numeric;
     std::uint8_t width = 64;
@@ -44,7 +44,7 @@ public:
 /** Own graph definitions independently from runtime field ids and source model lifetime. */
 struct TypedFixture
 {
-    using Graph = std::map<SchemaId, std::unique_ptr<Schema>>;
+    using Graph = std::map<TypeId, std::unique_ptr<Schema>>;
     std::shared_ptr<Graph> graph = std::make_shared<Graph>();
     std::shared_ptr<StringPool> strings = std::make_shared<StringPool>();
     std::shared_ptr<const SchemaBinding> binding;
@@ -58,16 +58,16 @@ struct TypedFixture
             REQUIRE(strings->emplace("schema-padding-" + std::to_string(i)));
         auto object = std::make_unique<ObjectSchema>();
         for (auto [name, id] : {std::pair{"speed", 2}, {"count", 3}, {"flags", 4}, {"items", 5}})
-            object->addField(strings->emplace(name).value(), {SchemaId(id)});
+            object->addField(strings->emplace(name).value(), {TypeId(id)});
         (*graph)[1] = std::move(object);
-        auto speed = std::make_unique<ScalarDomain>(Schema::Kind::Int);
+        auto speed = std::make_unique<ScalarType>(Schema::Kind::Int);
         speed->names = {{"SPEED_UNLIMITED", std::int64_t{255}, Schema::NamedValue::Role::Special,
                         Schema::NamedValue::Meaning::Unbounded}};
         speed->numeric = Schema::NumericDomain{.encoding = "uint8", .unit = "km/h",
             .minimum = std::int64_t{0}, .maximum = std::int64_t{255}, .complete = true};
         (*graph)[2] = std::move(speed);
         (*graph)[3] = std::make_unique<ValueSchema>(Schema::Kind::Int);
-        auto flags = std::make_unique<ScalarDomain>(Schema::Kind::Bitmask);
+        auto flags = std::make_unique<ScalarType>(Schema::Kind::Bitmask);
         flags->names = {{"NONE", std::uint64_t{0}, Schema::NamedValue::Role::Flag},
             {"PAIR", std::uint64_t{3}, Schema::NamedValue::Role::Flag},
             {"HIGH", std::uint64_t{1} << 63, Schema::NamedValue::Role::Flag},
@@ -77,9 +77,9 @@ struct TypedFixture
         array->addElementSchemas({2});
         (*graph)[5] = std::move(array);
         for (auto& [id, schema] : *graph)
-            schema->finalize([this](SchemaId child) { return graph->contains(child) ? graph->at(child).get() : nullptr; });
+            schema->finalize([this](TypeId child) { return graph->contains(child) ? graph->at(child).get() : nullptr; });
         binding = std::make_shared<SchemaBinding>(std::move(identity), graph,
-            [graph = graph](SchemaId id) { return graph->contains(id) ? graph->at(id).get() : nullptr; }, strings);
+            [graph = graph](TypeId id) { return graph->contains(id) ? graph->at(id).get() : nullptr; }, strings);
         REQUIRE(model->strings()->emplace("runtime-padding"));
         model->setSchemaBinding(binding);
         root = model->newObject();
@@ -108,7 +108,7 @@ struct TypedFixture
     auto schemaQuery(std::string_view text) -> tl::expected<std::vector<Value>, Error>
     {
         Environment compiler(strings);
-        compiler.querySchemaCallback = [binding = binding](SchemaId id) { return binding->lookup(id); };
+        compiler.querySchemaCallback = [binding = binding](TypeId id) { return binding->lookup(id); };
         auto ast = compile(compiler, text, CompileOptions{.any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = 1});
         if (!ast)
             return tl::unexpected(ast.error());
@@ -127,11 +127,11 @@ struct TypedFixture
 };
 }
 
-TEST_CASE("Scalar domains survive selection but not numerical construction", "[model.schema-value]")
+TEST_CASE("Scalar types survive selection but not numerical construction", "[model.schema-value]")
 {
     TypedFixture f;
     REQUIRE(f.root->at(0)->addr() == f.root->at(1)->addr());
-    REQUIRE(f.root->at(0)->schema() == NoSchemaId);
+    REQUIRE(f.root->at(0)->schema() == NoTypeId);
     for (auto text : {"speed", "_['speed']", "items[0]", "items.*", "**.speed", "select(speed, 0)",
                       "min(speed, count)", "max(speed, count)", "sum(speed, $val)"}) {
         INFO(text);
@@ -154,7 +154,7 @@ TEST_CASE("Scalar domains survive selection but not numerical construction", "[m
     REQUIRE(f.query("min(count, speed)")->front().schemaReference() == SchemaReference{f.binding, 3});
 }
 
-TEST_CASE("Retained expressions bind field domains per graph and observe later declarations", "[model.schema-value][evaluation.binding]")
+TEST_CASE("Retained expressions bind field types per graph and observe later declarations", "[model.schema-value][evaluation.binding]")
 {
     std::vector<Value> retained;
     {
@@ -216,7 +216,7 @@ TEST_CASE("Native copies keep compact compounds and qualify detached occurrences
     auto compound = destination->copyNode(*a.root);
     REQUIRE(compound);
     REQUIRE((*compound)->schemaReference() == SchemaReference{a.binding, 1});
-    REQUIRE((*compound)->at(0)->schema() == NoSchemaId);
+    REQUIRE((*compound)->at(0)->schema() == NoTypeId);
     REQUIRE((*compound)->at(0)->addr().column() != ModelPool::QualifiedScalar);
     auto values = std::vector<Value>{a.query("speed")->front(), a.query("count")->front(), b.query("speed")->front()};
     auto copied = destination->copySequence(values);
@@ -225,7 +225,7 @@ TEST_CASE("Native copies keep compact compounds and qualify detached occurrences
     REQUIRE((*copied)->at(0)->addr() != (*copied)->at(1)->addr());
     REQUIRE((*copied)->at(0)->schemaReference() == values[0].schemaReference());
     REQUIRE((*copied)->at(2)->schemaReference() == values[2].schemaReference());
-    REQUIRE(destination->serializationSizeStats().qualifiedScalarBytes == 3 * (sizeof(ModelNodeAddress) + sizeof(SchemaId)));
+    REQUIRE(destination->serializationSizeStats().qualifiedScalarBytes == 3 * (sizeof(ModelNodeAddress) + sizeof(TypeId)));
     auto bytes = TypedFixture::bytes(*destination);
     auto restored = std::make_shared<ModelPool>(destination->strings());
     REQUIRE_FALSE(restored->read(bytes));
@@ -305,10 +305,10 @@ TEST_CASE("Imported schema owners outlive their sources without retaining owners
             target->setSchemaResolver({});
         }
         auto node = target->root(0).value();
-        auto domain = node->schemaReference();
-        REQUIRE(domain == SchemaReference{f.binding, 2});
-        REQUIRE(domain.binding.get() == local.get());
-        targetGroup = domain.binding;
+        auto typeRef = node->schemaReference();
+        REQUIRE(typeRef == SchemaReference{f.binding, 2});
+        REQUIRE(typeRef.binding.get() == local.get());
+        targetGroup = typeRef.binding;
         retained.push_back(Value::field(*node));
     }
     CHECK(sourceGroup.expired());
@@ -394,16 +394,16 @@ TEST_CASE("Concurrent models share schema definitions but retain independent que
     }
 }
 
-TEST_CASE("Open objects retain declared scalar domains without guessing unknown alternatives", "[model.schema-value]")
+TEST_CASE("Open objects retain declared scalar types without guessing unknown alternatives", "[model.schema-value]")
 {
     TypedFixture f;
     f.graph->at(1)->setOpen(true);
-    auto lookup = [&](SchemaId id) { return f.binding->lookup(id); };
+    auto lookup = [&](TypeId id) { return f.binding->lookup(id); };
     auto speed = f.strings->get("speed");
     auto extra = f.strings->emplace("extra").value();
     REQUIRE(f.root->addField("extra", std::int64_t{255}));
-    REQUIRE(Schema::fieldSchemas(1, lookup, speed) == std::vector<SchemaId>{2});
-    REQUIRE(Schema::fieldSchemas(1, lookup, extra) == std::vector<SchemaId>{NoSchemaId});
+    REQUIRE(Schema::fieldSchemas(1, lookup, speed) == std::vector<TypeId>{2});
+    REQUIRE(Schema::fieldSchemas(1, lookup, extra) == std::vector<TypeId>{NoTypeId});
     for (auto query : {"speed", "_['speed']", "**.speed"}) {
         INFO(query);
         auto values = f.query(query);
@@ -416,7 +416,7 @@ TEST_CASE("Open objects retain declared scalar domains without guessing unknown 
     auto destination = std::make_shared<ModelPool>(std::make_shared<StringPool>(*f.model->strings()));
     auto compound = destination->copyNode(*f.root);
     REQUIRE(compound);
-    REQUIRE((*compound)->at(0)->schema() == NoSchemaId);
+    REQUIRE((*compound)->at(0)->schema() == NoTypeId);
     REQUIRE(Value::at(**compound, *(*compound)->at(0), 0).schemaReference() == SchemaReference{f.binding, 2});
     auto scalar = destination->copySequence(*f.query("speed"));
     REQUIRE(scalar);
@@ -430,24 +430,24 @@ TEST_CASE("Open objects retain declared scalar domains without guessing unknown 
         auto alternatives = std::make_unique<CombinedSchema>(Schema::Composition::AnyOf);
         alternatives->addAlternative(1);
         alternatives->addAlternative(6);
-        alternatives->finalize([&](SchemaId id) { return f.graph->at(id).get(); });
+        alternatives->finalize([&](TypeId id) { return f.graph->at(id).get(); });
         (*f.graph)[7] = std::move(alternatives);
     };
     finalize();
     REQUIRE(f.root->setSchema(7));
-    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<SchemaId>{NoSchemaId, 2});
+    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<TypeId>{NoTypeId, 2});
     REQUIRE_FALSE(f.query("speed")->front().schemaReference());
     // Differently declared alternatives are still ambiguous, even with identical raw values.
     static_cast<ObjectSchema&>(*f.graph->at(6)).addField(speed, {3});
     finalize();
-    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<SchemaId>{2, 3});
+    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<TypeId>{2, 3});
     REQUIRE_FALSE(f.query("speed")->front().schemaReference());
     auto matching = std::make_unique<ObjectSchema>();
     matching->setOpen(true);
     matching->addField(speed, {2});
     (*f.graph)[6] = std::move(matching);
     finalize();
-    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<SchemaId>{2});
+    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<TypeId>{2});
     REQUIRE(f.query("speed")->front().schemaReference() == SchemaReference{f.binding, 2});
 }
 
@@ -456,7 +456,7 @@ TEST_CASE("Bitmasks preserve high and unknown bits through query JSON and binary
     TypedFixture f;
     auto mask = f.root->at(2);
     REQUIRE(mask->type() == ValueType::Bitmask);
-    REQUIRE(f.model->serializationSizeStats().bitmaskBytes == sizeof(std::uint64_t) + sizeof(SchemaId));
+    REQUIRE(f.model->serializationSizeStats().bitmaskBytes == sizeof(std::uint64_t) + sizeof(TypeId));
     for (auto query : {"hasFlag(flags, 'PAIR')", "hasFlag(flags, 'HIGH')", "hasFlag(flags, 'ALIAS')",
                       "hasFlag(bitmask(flags, '0'), 'NONE')", "flags = bitmask(flags, '0x8000000000000003')",
                       "(flags & 3) = 3", "(bitmask(flags, '1') << 63) = bitmask(flags, '0x8000000000000000')"}) {
@@ -474,7 +474,7 @@ TEST_CASE("Bitmasks preserve high and unknown bits through query JSON and binary
         REQUIRE_FALSE(f.query(query));
     }
     auto golden = nlohmann::json{{"_bitmask", true}, {"bits", "0x8000000000000003"},
-        {"schema", "test-graph-v1"}, {"domain", 4}};
+        {"schema", "test-graph-v1"}, {"typeId", 4}};
     REQUIRE(mask->toJson() == golden);
     auto imported = json::buildModelNode(golden, *f.model);
     REQUIRE(imported);
@@ -542,7 +542,7 @@ TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", 
     REQUIRE(completionStrings->emplace("completion-only"));
 }
 
-TEST_CASE("Qualified string copying preserves aliased storage and exact domains", "[model.schema-value][model.growth]")
+TEST_CASE("Qualified string copying preserves aliased storage and exact types", "[model.schema-value][model.growth]")
 {
     TypedFixture f;
     (*f.graph)[6] = std::make_unique<ValueSchema>(Schema::Kind::String);
@@ -594,40 +594,40 @@ TEST_CASE("Unbound copied schemas and overflowing integer literals fail explicit
     REQUIRE(compile(env, "18446744073709551616.0", false));
 }
 
-TEST_CASE("Native copies explicitly remap exact domains without qualifying ordinary leaves", "[model.copy][model.schema-value]")
+TEST_CASE("Native copies explicitly remap exact types without qualifying ordinary leaves", "[model.copy][model.schema-value]")
 {
     TypedFixture source;
     auto graph = std::make_shared<TypedFixture::Graph>();
     auto object = std::make_unique<ObjectSchema>();
     for (auto [name, id] : {std::pair{"speed", 12}, {"count", 13}, {"flags", 14}, {"items", 15}})
-        object->addField(source.strings->get(name), {SchemaId(id)});
+        object->addField(source.strings->get(name), {TypeId(id)});
     (*graph)[11] = std::move(object);
     (*graph)[12] = std::make_unique<ValueSchema>(Schema::Kind::Int);
     (*graph)[13] = std::make_unique<ValueSchema>(Schema::Kind::Int);
-    (*graph)[14] = std::make_unique<ScalarDomain>(Schema::Kind::Bitmask);
+    (*graph)[14] = std::make_unique<ScalarType>(Schema::Kind::Bitmask);
     auto array = std::make_unique<ArraySchema>();
     array->addElementSchemas({12});
     (*graph)[15] = std::move(array);
-    auto lookup = [graph](SchemaId id) { return graph->contains(id) ? graph->at(id).get() : nullptr; };
+    auto lookup = [graph](TypeId id) { return graph->contains(id) ? graph->at(id).get() : nullptr; };
     for (auto& [_, schema] : *graph)
         schema->finalize(lookup);
     auto binding = std::make_shared<SchemaBinding>("composed-graph", graph, lookup, source.strings);
     auto destination = std::make_shared<ModelPool>(std::make_shared<StringPool>(*source.model->strings()));
-    std::vector<SchemaId> mapped;
+    std::vector<TypeId> mapped;
     ModelPool::CopyOptions options;
-    options.schemaRemap = [&](SchemaReference const& domain) {
-        REQUIRE(domain.binding->identity() == source.binding->identity());
-        mapped.push_back(domain.id);
-        return SchemaReference{binding, SchemaId(domain.id + 10)};
+    options.schemaRemap = [&](SchemaReference const& typeRef) {
+        REQUIRE(typeRef.binding->identity() == source.binding->identity());
+        mapped.push_back(typeRef.id);
+        return SchemaReference{binding, TypeId(typeRef.id + 10)};
     };
     auto copied = destination->copyNode(*source.root, options);
     REQUIRE(copied);
     REQUIRE((*copied)->schemaReference() == SchemaReference{binding, 11});
     REQUIRE((*copied)->at(2)->schemaReference() == SchemaReference{binding, 14});
     REQUIRE((*copied)->at(3)->schemaReference() == SchemaReference{binding, 15});
-    REQUIRE(mapped == std::vector<SchemaId>{1, 4, 5});
-    REQUIRE((*copied)->at(0)->schema() == NoSchemaId);
-    REQUIRE((*copied)->at(3)->at(0)->schema() == NoSchemaId);
+    REQUIRE(mapped == std::vector<TypeId>{1, 4, 5});
+    REQUIRE((*copied)->at(0)->schema() == NoTypeId);
+    REQUIRE((*copied)->at(3)->at(0)->schema() == NoTypeId);
     Environment env(destination->strings());
     auto expression = compile(env, "speed", false);
     REQUIRE(expression);
@@ -640,7 +640,7 @@ TEST_CASE("Native copies explicitly remap exact domains without qualifying ordin
     auto sequence = destination->copySequence(*selected, options);
     REQUIRE(sequence);
     REQUIRE((*sequence)->at(0)->schemaReference() == SchemaReference{binding, 12});
-    REQUIRE(mapped == std::vector<SchemaId>{1, 4, 5, 2});
+    REQUIRE(mapped == std::vector<TypeId>{1, 4, 5, 2});
     destination->addRoot(*copied);
     destination->addRoot(*sequence);
     REQUIRE(destination->validate());
@@ -656,7 +656,7 @@ TEST_CASE("Native copies explicitly remap exact domains without qualifying ordin
         REQUIRE(source.root->schemaReference() == SchemaReference{binding, 11});
         REQUIRE(source.root->at(2)->schemaReference() == SchemaReference{binding, 14});
         REQUIRE(source.root->at(3)->schemaReference() == SchemaReference{binding, 15});
-        REQUIRE(source.root->at(0)->schema() == NoSchemaId);
+        REQUIRE(source.root->at(0)->schema() == NoTypeId);
         REQUIRE(scalar->schemaReference() == SchemaReference{binding, 12});
         REQUIRE(selected->front().schemaReference() == SchemaReference{source.binding, 2});
         REQUIRE(source.query("speed")->front().schemaReference() == SchemaReference{binding, 12});
@@ -671,13 +671,13 @@ TEST_CASE("Native copies explicitly remap exact domains without qualifying ordin
     }
     SECTION("In-place validation failure leaves all bytes and bindings unchanged") {
         auto before = TypedFixture::bytes(*source.model);
-        auto fail = [&](SchemaReference const& domain) {
-            return SchemaReference{binding, SchemaId(domain.id == 4 ? 12 : domain.id + 10)};
+        auto fail = [&](SchemaReference const& typeRef) {
+            return SchemaReference{binding, TypeId(typeRef.id == 4 ? 12 : typeRef.id + 10)};
         };
         REQUIRE_THROWS_AS(source.model->remapSchemas(binding, fail), std::invalid_argument);
         REQUIRE(TypedFixture::bytes(*source.model) == before);
         REQUIRE(source.model->hasDirectSchemaBinding(source.binding->identity()));
-        REQUIRE_THROWS_AS(source.model->remapSchemas(binding, [](auto const& domain) { return domain; }),
+        REQUIRE_THROWS_AS(source.model->remapSchemas(binding, [](auto const& typeRef) { return typeRef; }),
                           std::invalid_argument);
         REQUIRE(TypedFixture::bytes(*source.model) == before);
     }
@@ -689,11 +689,11 @@ TEST_CASE("Native copies explicitly remap exact domains without qualifying ordin
             return {};
         });
         REQUIRE(empty->hasDirectSchemaBinding(binding->identity()));
-        REQUIRE(empty->root(0).value()->schema() == NoSchemaId);
+        REQUIRE(empty->root(0).value()->schema() == NoTypeId);
         empty->freeze();
         REQUIRE_THROWS_AS(empty->remapSchemas(binding, options.schemaRemap), std::logic_error);
     }
-    SECTION("Missing or invalid replacement domains fail instead of dropping provenance") {
+    SECTION("Missing or invalid replacement types fail instead of dropping provenance") {
         options.schemaRemap = [](auto const&) { return SchemaReference{}; };
         REQUIRE_FALSE(destination->copyNode(*source.root, options));
         REQUIRE_FALSE(destination->copySequence(*selected, options));
@@ -716,7 +716,7 @@ TEST_CASE("Native copies explicitly remap exact domains without qualifying ordin
     }
 }
 
-TEST_CASE("Named queries use the actual numeric or flag domain rather than common raw codes", "[model.schema-value][schema.symbol]")
+TEST_CASE("Named queries use the actual numeric or flag type rather than common raw codes", "[model.schema-value][schema.symbol]")
 {
     TypedFixture f;
     for (auto query : {"SPEED_UNLIMITED", "speed = SPEED_UNLIMITED", "SPEED_UNLIMITED <= speed",
@@ -733,7 +733,7 @@ TEST_CASE("Named queries use the actual numeric or flag domain rather than commo
     REQUIRE_FALSE(f.schemaQuery("speed = 'SPEED_UNLIMITED'")->front().as<ValueType::Bool>());
     REQUIRE_FALSE(f.schemaQuery("count = SPEED_UNLIMITED"));
 
-    auto& other = static_cast<ScalarDomain&>(*f.graph->at(2));
+    auto& other = static_cast<ScalarType&>(*f.graph->at(2));
     other.names.front().value = std::int64_t{0};
     REQUIRE_FALSE(f.schemaQuery("speed = SPEED_UNLIMITED")->front().as<ValueType::Bool>());
     REQUIRE_FALSE(f.schemaQuery("SPEED_UNLIMITED")->front().as<ValueType::Bool>());
@@ -761,7 +761,7 @@ TEST_CASE("Open string enum traversal retains the owning dictionary across unbou
     REQUIRE(f.root->addField("nested", object));
     REQUIRE(f.model->strings()->get("LEGACY_ENUM") == StringPool::Empty);
     for (auto& [id, schema] : *f.graph)
-        schema->finalize([&](SchemaId child) { return f.graph->contains(child) ? f.graph->at(child).get() : nullptr; });
+        schema->finalize([&](TypeId child) { return f.graph->contains(child) ? f.graph->at(child).get() : nullptr; });
     for (auto bindChild : {false, true}) {
         if (bindChild)
             REQUIRE(object->setSchema(7));
@@ -785,7 +785,7 @@ TEST_CASE("Schema descriptors and completion expose borrowed named numeric metad
 {
     TypedFixture f;
     auto descriptors = std::make_shared<SchemaModel>(f.strings,
-        [binding = f.binding](SchemaId id) { return binding->lookup(id); });
+        [binding = f.binding](TypeId id) { return binding->lookup(id); });
     auto before = f.strings->size();
     auto json = descriptors->root(1)->toJson();
     REQUIRE(json["fields"]["speed"]["numericDomain"]["unit"] == "km/h");
@@ -795,25 +795,25 @@ TEST_CASE("Schema descriptors and completion expose borrowed named numeric metad
     REQUIRE(json["fields"]["flags"]["namedValues"][2]["value"] == "0x8000000000000000");
     REQUIRE(f.strings->size() == before);
     Environment env(f.strings);
-    env.querySchemaCallback = [binding = f.binding](SchemaId id) { return binding->lookup(id); };
+    env.querySchemaCallback = [binding = f.binding](TypeId id) { return binding->lookup(id); };
     for (auto query : {"SPEED_", "speed = SPEED_", "flags = HI"}) {
         INFO(query);
-        auto candidates = complete(env, query, std::string_view(query).size(), SchemaId{1});
+        auto candidates = complete(env, query, std::string_view(query).size(), TypeId{1});
         REQUIRE(candidates);
         auto wanted = std::string_view(query) == "flags = HI" ? "HIGH" : "SPEED_UNLIMITED";
         REQUIRE(std::ranges::any_of(*candidates, [&](auto const& candidate) { return candidate.text == wanted; }));
     }
-    auto candidates = complete(env, "count = SPEED_", 14, SchemaId{1});
+    auto candidates = complete(env, "count = SPEED_", 14, TypeId{1});
     REQUIRE(candidates);
     REQUIRE_FALSE(std::ranges::any_of(*candidates, [](auto const& candidate) { return candidate.text == "SPEED_UNLIMITED"; }));
     auto quoted = std::string("speed = 'SPEED_");
-    candidates = complete(env, quoted, quoted.size(), SchemaId{1});
+    candidates = complete(env, quoted, quoted.size(), TypeId{1});
     REQUIRE(candidates);
     REQUIRE_FALSE(std::ranges::any_of(*candidates, [](auto const& candidate) {
         return candidate.text.find("SPEED_UNLIMITED") != std::string::npos;
     }));
     auto flag = std::string("hasFlag(flags, 'PA");
-    candidates = complete(env, flag, flag.size(), SchemaId{1});
+    candidates = complete(env, flag, flag.size(), TypeId{1});
     REQUIRE(candidates);
     REQUIRE(std::ranges::any_of(*candidates, [](auto const& candidate) { return candidate.text == "\"PAIR\""; }));
 }
@@ -825,15 +825,15 @@ TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.
     (*f.graph)[7] = std::make_unique<ValueSchema>(Schema::Kind::Float);
     (*f.graph)[8] = std::make_unique<ValueSchema>(Schema::Kind::String);
     (*f.graph)[9] = std::make_unique<ValueSchema>(Schema::Kind::Bytes);
-    std::vector<std::pair<ScalarValueType, SchemaId>> values{
+    std::vector<std::pair<ScalarValueType, TypeId>> values{
         {std::int64_t{255}, 2}, {std::int64_t{-1}, 2}, {std::int64_t{65536}, 2},
         {true, 6}, {2.5, 7}, {std::string("qualified text"), 8}, {ByteArray("raw bytes"), 9}};
     for (auto direct : {false, true}) {
         auto source = std::make_shared<ModelPool>();
         if (direct)
             source->setSchemaBinding(f.binding);
-        for (auto const& [raw, domain] : values)
-            source->addRoot(source->newQualifiedValue(raw, {f.binding, domain}));
+        for (auto const& [raw, typeRef] : values)
+            source->addRoot(source->newQualifiedValue(raw, {f.binding, typeRef}));
         auto restored = std::make_shared<ConstructorReadPool>(TypedFixture::bytes(*source), f.binding, source->strings());
         REQUIRE(restored->loaded);
         REQUIRE(restored->numRoots() == values.size());
@@ -906,7 +906,7 @@ TEST_CASE("Native readers bound allocations and reject malformed qualified refer
         restored->setSchemaResolver([binding = f.binding](auto) { return binding; });
         REQUIRE_FALSE(restored->read(TypedFixture::bytes(*qualified)));
     }
-    for (auto id : {SchemaId{1}, SchemaId{5}}) {
+    for (auto id : {TypeId{1}, TypeId{5}}) {
         f.graph->at(id)->setKind(Schema::Kind::Int);
         restored = std::make_shared<ModelPool>();
         restored->setSchemaBinding(f.binding);
@@ -920,10 +920,10 @@ TEST_CASE("Bound wildcard plans separate graphs and schema dictionary namespaces
     TypedFixture one;
     TypedFixture two("second-graph");
     auto& root = static_cast<ObjectSchema&>(*two.graph->at(1));
-    auto& speed = static_cast<ScalarDomain&>(*two.graph->at(2));
+    auto& speed = static_cast<ScalarType&>(*two.graph->at(2));
     speed.names.front().value = std::int64_t{0};
     root.addField(two.strings->emplace("unique").value(), {2});
-    root.finalize([&](SchemaId id) { return two.graph->contains(id) ? two.graph->at(id).get() : nullptr; });
+    root.finalize([&](TypeId id) { return two.graph->contains(id) ? two.graph->at(id).get() : nullptr; });
     REQUIRE(two.root->addField("unique", std::int64_t{9}));
     auto strings = std::make_shared<StringPool>(*one.model->strings());
     REQUIRE(strings->emplace("unique"));
@@ -933,7 +933,7 @@ TEST_CASE("Bound wildcard plans separate graphs and schema dictionary namespaces
     REQUIRE(sequence);
     Environment env(strings);
     // Deliberately wrong callback: concrete model bindings must take precedence over bare numeric ids.
-    env.querySchemaCallback = [binding = one.binding](SchemaId id) { return binding->lookup(id); };
+    env.querySchemaCallback = [binding = one.binding](TypeId id) { return binding->lookup(id); };
     for (auto plans : {false, true}) {
         env.enableWildcardFieldPlans = plans;
         auto ast = compile(env, "**.unique", false);
@@ -949,7 +949,7 @@ TEST_CASE("Bound wildcard plans separate graphs and schema dictionary namespaces
 TEST_CASE("Symbol alternatives at one path use concrete provenance and survive traces", "[model.schema-value][schema.symbol]")
 {
     TypedFixture f;
-    auto other = std::make_unique<ScalarDomain>(Schema::Kind::Int);
+    auto other = std::make_unique<ScalarType>(Schema::Kind::Int);
     other->names = {{"SPEED_UNLIMITED", std::int64_t{0}, Schema::NamedValue::Role::Special}};
     (*f.graph)[7] = std::move(other);
     auto second = std::make_unique<ObjectSchema>();
@@ -960,16 +960,16 @@ TEST_CASE("Symbol alternatives at one path use concrete provenance and survive t
     alternatives->addAlternative(6);
     (*f.graph)[8] = std::move(alternatives);
     for (auto& [id, schema] : *f.graph)
-        schema->finalize([&](SchemaId child) { return f.graph->contains(child) ? f.graph->at(child).get() : nullptr; });
+        schema->finalize([&](TypeId child) { return f.graph->contains(child) ? f.graph->at(child).get() : nullptr; });
     Environment compiler(f.strings);
-    compiler.querySchemaCallback = [binding = f.binding](SchemaId id) { return binding->lookup(id); };
+    compiler.querySchemaCallback = [binding = f.binding](TypeId id) { return binding->lookup(id); };
     auto ast = compile(compiler, "speed = SPEED_UNLIMITED",
         CompileOptions{.any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = 8});
     REQUIRE(ast);
     Environment runtime(f.model->strings());
-    for (auto [domain, raw, expected] : {std::tuple{1, 255, true}, {6, 255, false}, {6, 0, true}}) {
+    for (auto [typeRef, raw, expected] : {std::tuple{1, 255, true}, {6, 255, false}, {6, 0, true}}) {
         auto root = f.model->newObject();
-        REQUIRE(root->setSchema(SchemaId(domain)));
+        REQUIRE(root->setSchema(TypeId(typeRef)));
         REQUIRE(root->addField("speed", std::int64_t(raw)));
         auto values = eval(runtime, **ast, *root, nullptr);
         REQUIRE(values);
@@ -992,10 +992,10 @@ TEST_CASE("Symbol alternatives at one path use concrete provenance and survive t
 TEST_CASE("Narrow masks retain unknown bits and constrain complement and mixing", "[model.schema-value][bitmask]")
 {
     TypedFixture f;
-    auto domain = std::make_unique<ScalarDomain>(Schema::Kind::Bitmask);
-    domain->width = 8;
-    domain->names = {{"PAIR", std::uint64_t{3}, Schema::NamedValue::Role::Flag}};
-    (*f.graph)[9] = std::move(domain);
+    auto typeRef = std::make_unique<ScalarType>(Schema::Kind::Bitmask);
+    typeRef->width = 8;
+    typeRef->names = {{"PAIR", std::uint64_t{3}, Schema::NamedValue::Role::Flag}};
+    (*f.graph)[9] = std::move(typeRef);
     auto narrow = f.model->newBitmask(0x81, {f.binding, 9});
     REQUIRE(f.root->addField("narrow", narrow));
     for (auto [query, expected] : {std::pair{"~narrow", 0x7e}, {"narrow >> 7", 1}, {"narrow << 7", 0x80}}) {
@@ -1020,7 +1020,7 @@ TEST_CASE("Narrow masks retain unknown bits and constrain complement and mixing"
     REQUIRE_FALSE(json::buildModelNode(tag, *f.model));
 
     auto descriptors = std::make_shared<SchemaModel>(f.strings,
-        [binding = f.binding](SchemaId id) { return binding->lookup(id); });
+        [binding = f.binding](TypeId id) { return binding->lookup(id); });
     for (auto kind : {Schema::Kind::Unknown, Schema::Kind::Any, Schema::Kind::Value}) {
         f.graph->at(9)->setKind(kind);
         REQUIRE_FALSE(f.graph->at(9)->isBitmask());

@@ -786,7 +786,7 @@ namespace impl
 
 /** Apply intrinsic flag semantics without widening ordinary signed integer operations. */
 auto bitmaskUnary(std::string_view operation, Bitmask const& value) -> tl::expected<Value, Error>;
-/** Preserve domain identity for bitwise results and reject incompatible typed operands. */
+/** Preserve type identity for bitwise results and reject incompatible typed operands. */
 auto bitmaskBinary(std::string_view operation, Value const& left, Value const& right) -> tl::expected<Value, Error>;
 
 template <class Operator_, class CType_>

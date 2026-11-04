@@ -286,26 +286,26 @@ auto completeWords(
 namespace simfil
 {
 
-auto Completion::visitDomain(Context& ctx) -> bool
+auto Completion::visitType(Context& ctx) -> bool
 {
-    if (ctx.canceled() || domainVisits_ >= options.maxSchemaVisits)
+    if (ctx.canceled() || typeVisits_ >= options.maxSchemaVisits)
         return false;
-    ++domainVisits_;
+    ++typeVisits_;
     return true;
 }
 
-auto Completion::expandDomains(Context& ctx, const std::vector<SchemaId>& input, bool recursive)
-    -> std::vector<SchemaId>
+auto Completion::expandTypes(Context& ctx, const std::vector<TypeId>& input, bool recursive)
+    -> std::vector<TypeId>
 {
-    std::vector<SchemaId> result, pending(input.rbegin(), input.rend()), visited;
+    std::vector<TypeId> result, pending(input.rbegin(), input.rend()), visited;
     if (pending.size() > options.maxSchemaVisits)
         pending.resize(options.maxSchemaVisits);
-    auto append = [&](SchemaId child) {
+    auto append = [&](TypeId child) {
         // Fan-out must not allocate a whole registry before the next budget check.
-        if (!ctx.canceled() && pending.size() < options.maxSchemaVisits - domainVisits_)
+        if (!ctx.canceled() && pending.size() < options.maxSchemaVisits - typeVisits_)
             pending.push_back(child);
     };
-    while (!pending.empty() && visitDomain(ctx)) {
+    while (!pending.empty() && visitType(ctx)) {
         auto id = pending.back();
         pending.pop_back();
         if (std::ranges::find(visited, id) != visited.end())
@@ -313,7 +313,7 @@ auto Completion::expandDomains(Context& ctx, const std::vector<SchemaId>& input,
         visited.push_back(id);
         auto schema = ctx.env->querySchema(id);
         if (!schema) {
-            result.push_back(NoSchemaId);
+            result.push_back(NoTypeId);
             continue;
         }
         if (!Schema::affinities(schema->kind()))
@@ -324,7 +324,7 @@ auto Completion::expandDomains(Context& ctx, const std::vector<SchemaId>& input,
         for (auto child = alternatives.rbegin(); child != alternatives.rend(); ++child)
             append(*child);
         if (recursive) {
-            schema->forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
+            schema->forEachEnumerableField([&](StringId, std::span<const TypeId> children) {
                 for (auto child = children.rbegin(); child != children.rend(); ++child)
                     append(*child);
             });
@@ -334,18 +334,18 @@ auto Completion::expandDomains(Context& ctx, const std::vector<SchemaId>& input,
     return result;
 }
 
-void Completion::suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
-                               const std::vector<SchemaId>& expected, std::string_view prefix,
+void Completion::suggestType(Context& ctx, const std::vector<TypeId>& input,
+                               const std::vector<TypeId>& expected, std::string_view prefix,
                                SourceLocation location, bool inPath, bool literalsOnly)
 {
     const bool caseSensitive = options.smartCase && containsUppercaseCharacter(prefix);
-    auto domains = expandDomains(ctx, input, false);
+    auto types = expandTypes(ctx, input, false);
     const bool shorthand = !inPath && expected.empty();
-    if (shorthand && std::ranges::any_of(domains, [&](SchemaId id) {
+    if (shorthand && std::ranges::any_of(types, [&](TypeId id) {
             auto schema = ctx.env->querySchema(id);
             return schema && !schema->reachabilityComplete();
         }))
-        domains = expandDomains(ctx, input, true);
+        types = expandTypes(ctx, input, true);
     auto isKnownField = [&](std::string_view text) {
         if (!expected.empty() || literalsOnly)
             return false;
@@ -354,21 +354,21 @@ void Completion::suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
                                                        CompletionCandidate::Type::FIELD, {}));
     };
     if (!literalsOnly) {
-        for (auto id : domains) {
+        for (auto id : types) {
             auto schema = ctx.env->querySchema(id);
             if (!schema)
                 continue;
             auto fields = shorthand ? schema->nestedFields() : schema->directFields();
             // Dirty or custom schemas may only provide direct field enumeration.
             for (auto field : fields) {
-                if (!visitDomain(ctx) || size() >= limit)
+                if (!visitType(ctx) || size() >= limit)
                     return;
                 if (auto name = ctx.env->strings()->resolve(field))
                     completeFieldName(*name, prefix, caseSensitive, *this, location);
             }
             if (fields.empty())
                 schema->forEachDirectField([&](StringId field, auto) {
-                    if (visitDomain(ctx) && size() < limit)
+                    if (visitType(ctx) && size() < limit)
                         if (auto name = ctx.env->strings()->resolve(field))
                             completeFieldName(*name, prefix, caseSensitive, *this, location);
                 });
@@ -377,13 +377,13 @@ void Completion::suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
     if (inPath)
         return;
 
-    auto enumDomains = expandDomains(ctx, expected.empty() ? input : expected, expected.empty());
-    for (auto id : enumDomains) {
+    auto enumTypes = expandTypes(ctx, expected.empty() ? input : expected, expected.empty());
+    for (auto id : enumTypes) {
         auto schema = ctx.env->querySchema(id);
         if (!schema)
             continue;
         for (auto symbol : schema->directEnumSymbols()) {
-            if (!visitDomain(ctx) || size() >= limit)
+            if (!visitType(ctx) || size() >= limit)
                 return;
             auto text = ctx.env->strings()->resolve(symbol);
             // Reuse field candidates for precedence instead of building a second
@@ -392,7 +392,7 @@ void Completion::suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
                 add(escapeStringLiteral(*text), location, CompletionCandidate::Type::CONSTANT);
         }
         for (const auto& literal : schema->enumValues()) {
-            if (!visitDomain(ctx) || size() >= limit)
+            if (!visitType(ctx) || size() >= limit)
                 return;
             auto value = Value(ScalarValueType(literal));
             auto text = value.isa(ValueType::String) ? std::string(value.as<ValueType::String>()) : value.toString();
@@ -403,7 +403,7 @@ void Completion::suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
                     location, CompletionCandidate::Type::CONSTANT);
         }
         schema->forEachNamedValue([&](Schema::NamedValue const& value) {
-            if (!visitDomain(ctx) || size() >= limit || value.removed || isKnownField(value.name))
+            if (!visitType(ctx) || size() >= limit || value.removed || isKnownField(value.name))
                 return;
             // Completing inside quotes must not turn a numeric symbol into a string-valued comparison.
             if (literalsOnly) {
@@ -415,42 +415,42 @@ void Completion::suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
                     location, CompletionCandidate::Type::CONSTANT);
         });
     }
-    if (!literalsOnly && !ctx.canceled() && domainVisits_ < options.maxSchemaVisits)
+    if (!literalsOnly && !ctx.canceled() && typeVisits_ < options.maxSchemaVisits)
         completeFunctions(ctx, prefix, *this, location);
 }
 
-auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vector<SchemaId>& input,
-                            const std::vector<SchemaId>& expected, std::size_t depth, bool insidePath) -> std::vector<SchemaId>
+auto Completion::walkType(Context& ctx, const Expr& expression, const std::vector<TypeId>& input,
+                            const std::vector<TypeId>& expected, std::size_t depth, bool insidePath) -> std::vector<TypeId>
 {
-    if (depth >= options.maxSchemaDepth || !visitDomain(ctx))
-        return {NoSchemaId};
-    auto lookup = [&](SchemaId id) { return ctx.env->querySchema(id); };
-    auto walk = [&](const Expr& child, const std::vector<SchemaId>& domains,
-                    const std::vector<SchemaId>& expectedDomains = std::vector<SchemaId>{},
+    if (depth >= options.maxSchemaDepth || !visitType(ctx))
+        return {NoTypeId};
+    auto lookup = [&](TypeId id) { return ctx.env->querySchema(id); };
+    auto walk = [&](const Expr& child, const std::vector<TypeId>& types,
+                    const std::vector<TypeId>& expectedTypes = std::vector<TypeId>{},
                     std::optional<bool> childInsidePath = {}) {
-        return walkDomain(ctx, child, domains, expectedDomains, depth + 1, childInsidePath.value_or(insidePath));
+        return walkType(ctx, child, types, expectedTypes, depth + 1, childInsidePath.value_or(insidePath));
     };
     if (auto completion = dynamic_cast<const CompletionFieldOrWordExpr*>(&expression)) {
-        suggestDomain(ctx, input, expected, completion->prefix_, completion->sourceLocation(), completion->inPath_, false);
-        return {NoSchemaId};
+        suggestType(ctx, input, expected, completion->prefix_, completion->sourceLocation(), completion->inPath_, false);
+        return {NoTypeId};
     }
     if (auto completion = dynamic_cast<const CompletionWordExpr*>(&expression)) {
-        suggestDomain(ctx, input, expected, completion->prefix_, completion->sourceLocation(), false, true);
-        return {NoSchemaId};
+        suggestType(ctx, input, expected, completion->prefix_, completion->sourceLocation(), false, true);
+        return {NoTypeId};
     }
     if (auto field = dynamic_cast<const FieldExpr*>(&expression)) {
         if (field->isCurrent())
             return input;
-        auto domains = expandDomains(ctx, input, false);
+        auto types = expandTypes(ctx, input, false);
         auto name = ctx.env->strings()->get(field->name_);
-        std::vector<SchemaId> result;
+        std::vector<TypeId> result;
         std::vector<SchemaPath> aliases;
         // Match compile-time operand rewriting: root-owned hooks win over direct
         // fields, but neither whole tokens nor explicit paths reinterpret members.
         if (depth > 0 && !insidePath)
             if (auto root = lookup(rootSchema_))
                 aliases = root->scalarFieldPathsForSymbol(name, lookup);
-        for (auto id : domains) {
+        for (auto id : types) {
             if (aliases.empty()) {
                 auto children = Schema::fieldSchemas(id, lookup, name);
                 result.insert(result.end(), children.begin(), children.end());
@@ -458,13 +458,13 @@ auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vec
             else {
                 // Mapget-owned scalar aliases remain schema hooks, not hardcoded paths.
                 for (const auto& path : aliases) {
-                    if (!visitDomain(ctx))
+                    if (!visitType(ctx))
                         return result;
-                    std::vector<SchemaId> selected{id};
+                    std::vector<TypeId> selected{id};
                     for (const auto& segment : path) {
-                        std::vector<SchemaId> next;
+                        std::vector<TypeId> next;
                         for (auto current : selected) {
-                            if (!visitDomain(ctx))
+                            if (!visitType(ctx))
                                 return result;
                             auto children = segment.kind == SchemaPathSegment::Kind::Field
                                 ? Schema::fieldSchemas(current, lookup, segment.field)
@@ -482,26 +482,26 @@ auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vec
     if (auto path = dynamic_cast<const PathExpr*>(&expression))
         return walk(*path->right_, walk(*path->left_, input, {}, true), expected, true);
     if (auto sub = dynamic_cast<const SubExpr*>(&expression)) {
-        auto domains = walk(*sub->left_, input);
-        walk(*sub->sub_, domains, expected);
-        // Filtering changes presence, not the domain of the surviving value.
-        return domains;
+        auto types = walk(*sub->left_, input);
+        walk(*sub->sub_, types, expected);
+        // Filtering changes presence, not the type of the surviving value.
+        return types;
     }
     if (auto subscript = dynamic_cast<const SubscriptExpr*>(&expression)) {
-        auto domains = walk(*subscript->left_, input);
+        auto types = walk(*subscript->left_, input);
         if (auto key = dynamic_cast<const CompletionWordExpr*>(subscript->index_.get())) {
             // A quoted subscript completes member names, not enum values.
             const bool smartCase = options.smartCase && containsUppercaseCharacter(key->prefix_);
-            for (auto id : expandDomains(ctx, domains, false))
+            for (auto id : expandTypes(ctx, types, false))
                 if (auto schema = lookup(id))
                     schema->forEachDirectField([&](StringId field, auto) {
-                        if (!visitDomain(ctx) || size() >= limit)
+                        if (!visitType(ctx) || size() >= limit)
                             return;
                         auto name = ctx.env->strings()->resolve(field);
                         if (name && startsWith(*name, key->prefix_, smartCase))
                             add(escapeStringLiteral(*name), key->sourceLocation(), CompletionCandidate::Type::FIELD);
                     });
-            return {NoSchemaId};
+            return {NoTypeId};
         }
         walk(*subscript->index_, input);
         auto index = dynamic_cast<const ConstExpr*>(subscript->index_.get());
@@ -509,50 +509,50 @@ auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vec
         if (auto negative = dynamic_cast<const UnaryExpr<OperatorNegate>*>(subscript->index_.get()))
             index = dynamic_cast<const ConstExpr*>(negative->childAt(0).get());
         if (!index)
-            return {NoSchemaId};
-        std::vector<SchemaId> result;
-        for (auto id : domains) {
-            std::vector<SchemaId> children;
+            return {NoTypeId};
+        std::vector<TypeId> result;
+        for (auto id : types) {
+            std::vector<TypeId> children;
             if (index->value().isa(ValueType::Int))
                 children = Schema::itemSchemas(id, lookup);
             else if (index->value().isa(ValueType::String))
                 children = Schema::fieldSchemas(id, lookup, ctx.env->strings()->get(index->value().as<ValueType::String>()));
             else
-                return {NoSchemaId};
+                return {NoTypeId};
             result.insert(result.end(), children.begin(), children.end());
         }
         return result;
     }
     if (dynamic_cast<const WildcardExpr*>(&expression))
-        return expandDomains(ctx, input, true);
+        return expandTypes(ctx, input, true);
     if (dynamic_cast<const AnyChildExpr*>(&expression)) {
-        std::vector<SchemaId> result;
-        for (auto id : expandDomains(ctx, input, false)) {
+        std::vector<TypeId> result;
+        for (auto id : expandTypes(ctx, input, false)) {
             if (auto schema = lookup(id)) {
-                schema->forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
+                schema->forEachEnumerableField([&](StringId, std::span<const TypeId> children) {
                     for (auto child : children)
-                        if (visitDomain(ctx))
+                        if (visitType(ctx))
                             result.push_back(child);
                 });
-                schema->forEachElementSchema([&](SchemaId child) {
-                    if (visitDomain(ctx))
+                schema->forEachElementSchema([&](TypeId child) {
+                    if (visitType(ctx))
                         result.push_back(child);
                 });
             }
             else
-                result.push_back(NoSchemaId);
+                result.push_back(NoTypeId);
         }
         return result;
     }
     if (auto conjunction = dynamic_cast<const CompletionAndExpr*>(&expression)) {
         if (conjunction->left_) walk(*conjunction->left_, input);
         if (conjunction->right_) walk(*conjunction->right_, input);
-        return {NoSchemaId};
+        return {NoTypeId};
     }
     if (auto disjunction = dynamic_cast<const CompletionOrExpr*>(&expression)) {
         if (disjunction->left_) walk(*disjunction->left_, input);
         if (disjunction->right_) walk(*disjunction->right_, input);
-        return {NoSchemaId};
+        return {NoTypeId};
     }
     const bool comparison = dynamic_cast<const ComparisonExprBase*>(&expression)
         || dynamic_cast<const BinaryExpr<OperatorEq>*>(&expression)
@@ -564,13 +564,13 @@ auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vec
     if (comparison) {
         auto left = walk(*expression.childAt(0), input);
         if (left.empty())
-            left.push_back(NoSchemaId); // Unknown/absent operands do not license unrelated enum suggestions.
+            left.push_back(NoTypeId); // Unknown/absent operands do not license unrelated enum suggestions.
         walk(*expression.childAt(1), input, left);
         return {};
     }
     if (auto call = dynamic_cast<const CallExpression*>(&expression);
         call && ctx.env->findFunction(call->name_) == &HasFlagFn::Fn && call->args_.size() == 2) {
-        auto domains = walk(*call->args_[0], input);
+        auto types = walk(*call->args_[0], input);
         std::optional<std::string_view> prefix;
         if (auto text = dynamic_cast<const CompletionWordExpr*>(call->args_[1].get()))
             prefix = text->prefix_;
@@ -578,28 +578,28 @@ auto Completion::walkDomain(Context& ctx, const Expr& expression, const std::vec
             prefix = word->prefix_;
         if (prefix) {
             const bool sensitive = options.smartCase && containsUppercaseCharacter(*prefix);
-            for (auto id : expandDomains(ctx, domains, false))
+            for (auto id : expandTypes(ctx, types, false))
                 if (auto schema = lookup(id))
                     schema->forEachNamedValue([&](auto const& value) {
-                        if (visitDomain(ctx) && size() < limit && value.role == Schema::NamedValue::Role::Flag &&
+                        if (visitType(ctx) && size() < limit && value.role == Schema::NamedValue::Role::Flag &&
                             !value.removed && startsWith(value.name, *prefix, sensitive))
                             add(escapeStringLiteral(value.name), call->args_[1]->sourceLocation(), CompletionCandidate::Type::CONSTANT);
                     });
         }
-        return {NoSchemaId};
+        return {NoTypeId};
     }
     // Calls and dynamic expressions have unknown results. Their arguments still
     // carry useful cursor-local contexts, but no registered function is executed.
     for (std::size_t i = 0; i < expression.numChildren(); ++i)
         walk(*expression.childAt(i), input);
-    return dynamic_cast<const ConstExpr*>(&expression) ? std::vector<SchemaId>{} : std::vector<SchemaId>{NoSchemaId};
+    return dynamic_cast<const ConstExpr*>(&expression) ? std::vector<TypeId>{} : std::vector<TypeId>{NoTypeId};
 }
 
-void Completion::completeDomain(Context ctx, const Expr& expression, SchemaId root)
+void Completion::completeType(Context ctx, const Expr& expression, TypeId root)
 {
-    domainVisits_ = 0;
+    typeVisits_ = 0;
     rootSchema_ = root;
-    walkDomain(ctx, expression, {root}, {}, 0);
+    walkType(ctx, expression, {root}, {}, 0);
 }
 
 CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath)

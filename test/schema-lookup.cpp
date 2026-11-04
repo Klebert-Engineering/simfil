@@ -15,8 +15,8 @@ public:
     /** Model an object adapter with the base class's prepared member index. */
     auto kind() const -> Kind override { return Kind::Object; }
 
-    /** Fail if runtime lookup regresses to enumeration of possible child domains. */
-    void forEachDirectField(const std::function<void(StringId, std::span<const SchemaId>)>& fn) const override
+    /** Fail if runtime lookup regresses to enumeration of possible child types. */
+    void forEachDirectField(const std::function<void(StringId, std::span<const TypeId>)>& fn) const override
     {
         if (published)
             throw std::logic_error("Runtime member lookup must not enumerate schema fields");
@@ -63,13 +63,13 @@ private:
         CustomNode(ModelNode const& node, detail::mp_key key) : ModelNodeBase(node, key) {}
         /** Custom nodes remain authoritative for their structural type. */
         auto type() const -> ValueType override { return ValueType::Bool; }
-        /** Resolve the custom domain independently of core column indices. */
-        auto schema() const -> SchemaId override { return 42; }
+        /** Resolve the custom type independently of core column indices. */
+        auto schema() const -> TypeId override { return 42; }
     };
 };
 }
 
-TEST_CASE("Member lookup reads declared edges without narrowing their domains", "[model.schema-lookup]")
+TEST_CASE("Member lookup reads declared edges without narrowing their types", "[model.schema-lookup]")
 {
     AliasedSchema object;
     object.alias = 10;
@@ -85,22 +85,22 @@ TEST_CASE("Member lookup reads declared edges without narrowing their domains", 
     CHECK(object.fieldSchema(10) == 2);
     CHECK(object.fieldSchema(11) == 2);
     CHECK(object.fieldSchema(12) == 3);
-    CHECK(object.fieldSchema(13) == NoSchemaId);
-    CHECK(object.fieldSchema(14) == NoSchemaId);
-    CHECK(object.fieldSchema(15) == NoSchemaId);
+    CHECK(object.fieldSchema(13) == NoTypeId);
+    CHECK(object.fieldSchema(14) == NoTypeId);
+    CHECK(object.fieldSchema(15) == NoTypeId);
     CHECK(object.fieldSchema(16) == 2);
-    CHECK(object.fieldSchema(17) == NoSchemaId);
+    CHECK(object.fieldSchema(17) == NoTypeId);
     object.addField(10, {3});
     object.addField(16, {3});
     CHECK(object.fieldSchema(10) == 3);
-    CHECK(object.fieldSchema(16) == NoSchemaId);
+    CHECK(object.fieldSchema(16) == NoTypeId);
 
     ArraySchema array;
-    CHECK(array.itemSchema() == NoSchemaId);
+    CHECK(array.itemSchema() == NoTypeId);
     array.addElementSchemas({2, 2});
     CHECK(array.itemSchema() == 2);
     array.addElementSchemas({3});
-    CHECK(array.itemSchema() == NoSchemaId);
+    CHECK(array.itemSchema() == NoTypeId);
 }
 
 TEST_CASE("Finalized union members use point lookup without revisiting the graph", "[model.schema-lookup]")
@@ -113,9 +113,9 @@ TEST_CASE("Finalized union members use point lookup without revisiting the graph
     combined.addAlternative(2);
     combined.addAlternative(3);
     ValueSchema integer(Schema::Kind::Int), text(Schema::Kind::String);
-    std::map<SchemaId, Schema*> graph{{1, &combined}, {2, &left}, {3, &right}, {4, &integer}, {5, &text}};
+    std::map<TypeId, Schema*> graph{{1, &combined}, {2, &left}, {3, &right}, {4, &integer}, {5, &text}};
     bool published = false;
-    auto lookup = [&](SchemaId id) -> Schema* {
+    auto lookup = [&](TypeId id) -> Schema* {
         if (published)
             throw std::logic_error("Runtime member lookup must not traverse logical alternatives");
         auto found = graph.find(id);
@@ -130,7 +130,7 @@ TEST_CASE("Finalized union members use point lookup without revisiting the graph
         CHECK(combined.fieldSchema(10) == 4);
         CHECK(combined.fieldSchema(11) == 5);
         CHECK(combined.fieldSchema(12) == 1);
-        CHECK(combined.fieldSchema(13) == NoSchemaId);
+        CHECK(combined.fieldSchema(13) == NoTypeId);
     }
     CHECK(combined.composition() == Schema::Composition::OneOf);
     CHECK(combined.alternatives().size() == 2);
@@ -150,7 +150,7 @@ TEST_CASE("Prepared member lookup agrees with analysis for incomplete and cyclic
     ValueSchema scalar(Schema::Kind::Int);
     Schema unknown;
     CombinedSchema emptyAll(Schema::Composition::AllOf);
-    std::map<SchemaId, Schema*> graph{{1, &combined}, {2, &left}, {3, &right}, {4, &scalar},
+    std::map<TypeId, Schema*> graph{{1, &combined}, {2, &left}, {3, &right}, {4, &scalar},
                                     {5, &scalar}, {6, &array}, {7, &unknown}, {8, &emptyAll}};
     SECTION("Closed branches") {}
     SECTION("Open branch without the other member") { right.setOpen(true); }
@@ -161,28 +161,28 @@ TEST_CASE("Prepared member lookup agrees with analysis for incomplete and cyclic
         right.addField(10, {4});
     }
     SECTION("Conflicting declarations") { right.addField(10, {5}); }
-    SECTION("Unknown declared domain") { right.addField(10); }
+    SECTION("Unknown declared type") { right.addField(10); }
     SECTION("Unresolved alternative") { combined.addAlternative(0); }
     SECTION("Missing alternative") { combined.addAlternative(99); }
     SECTION("Unrestricted alternative") { combined.addAlternative(7); }
     SECTION("Empty intersection alternative") { combined.addAlternative(8); }
     SECTION("Self-referential alternative") { combined.addAlternative(1); }
     SECTION("Array alternative") { combined.addAlternative(6); }
-    auto lookup = [&](SchemaId id) -> Schema* {
+    auto lookup = [&](TypeId id) -> Schema* {
         auto found = graph.find(id);
         return found == graph.end() ? nullptr : found->second;
     };
     for (auto [id, schema] : graph)
         schema->finalize(lookup);
     for (StringId field : {10, 11, 12}) {
-        auto domains = Schema::fieldSchemas(1, lookup, field);
-        CHECK(combined.fieldSchema(field) == (domains.size() == 1 ? domains.front() : NoSchemaId));
+        auto types = Schema::fieldSchemas(1, lookup, field);
+        CHECK(combined.fieldSchema(field) == (types.size() == 1 ? types.front() : NoTypeId));
     }
-    auto domains = Schema::itemSchemas(1, lookup);
-    CHECK(combined.itemSchema() == (domains.size() == 1 ? domains.front() : NoSchemaId));
+    auto types = Schema::itemSchemas(1, lookup);
+    CHECK(combined.itemSchema() == (types.size() == 1 ? types.front() : NoTypeId));
     combined.addAlternative(0);
-    CHECK(combined.fieldSchema(10) == NoSchemaId);
-    CHECK(combined.itemSchema() == NoSchemaId);
+    CHECK(combined.fieldSchema(10) == NoTypeId);
+    CHECK(combined.itemSchema() == NoTypeId);
 }
 
 TEST_CASE("Scalar extraction uses the parent's point lookup rather than schema enumeration", "[model.schema-lookup]")
@@ -192,7 +192,7 @@ TEST_CASE("Scalar extraction uses the parent's point lookup rather than schema e
     auto objectSchema = std::make_shared<IndexedSchema>();
     auto scalarSchema = std::make_shared<ValueSchema>(Schema::Kind::Int);
     objectSchema->fields.addField(field, {2});
-    auto lookup = [objectSchema, scalarSchema](SchemaId id) -> Schema* {
+    auto lookup = [objectSchema, scalarSchema](TypeId id) -> Schema* {
         if (id == 1)
             return objectSchema.get();
         return id == 2 ? scalarSchema.get() : nullptr;
@@ -220,13 +220,13 @@ TEST_CASE("Core node metadata avoids wrappers without bypassing custom or foreig
         auto array = pool->newArray(singleton ? 1 : 2, singleton);
         REQUIRE(object->setSchema(7));
         REQUIRE(array->setSchema(8));
-        for (auto const& [node, type, domain] : std::vector<std::tuple<ModelNode::Ptr, ValueType, SchemaId>>{
+        for (auto const& [node, type, typeRef] : std::vector<std::tuple<ModelNode::Ptr, ValueType, TypeId>>{
                  {object, ValueType::Object, 7}, {array, ValueType::Array, 8}}) {
             auto generic = ModelNode::Ptr::make(pool, node->addr());
             CHECK(generic->type() == type);
-            CHECK(generic->schema() == domain);
+            CHECK(generic->schema() == typeRef);
             CHECK(other->type(*generic) == type);
-            CHECK(other->schema(*generic) == domain);
+            CHECK(other->schema(*generic) == typeRef);
         }
     }
     for (auto const& [node, type] : std::vector<std::pair<ModelNode::Ptr, ValueType>>{
@@ -241,13 +241,13 @@ TEST_CASE("Core node metadata avoids wrappers without bypassing custom or foreig
              {pool->newValue(ByteArray("bytes")), ValueType::Bytes}}) {
         auto generic = ModelNode::Ptr::make(pool, node->addr());
         CHECK(generic->type() == type);
-        CHECK(generic->schema() == NoSchemaId);
+        CHECK(generic->schema() == NoTypeId);
     }
     for (auto column : {ModelPool::Int64, ModelPool::Double, ModelPool::String,
                        ModelPool::ByteArray, ModelPool::Bitmask}) {
         auto invalid = pool->resolve(ModelNodeAddress{column, 100000});
         CHECK(invalid->type() == ValueType::Null);
-        CHECK(invalid->schema() == NoSchemaId);
+        CHECK(invalid->schema() == NoTypeId);
     }
     CHECK(pool->resolutions == 0);
 

@@ -86,31 +86,31 @@ auto boolify(const Value& v) -> bool
 
 WildcardExpr::WildcardExpr() = default;
 
-SchemaEnumExpr::SchemaEnumExpr(SchemaId root, std::string symbol, SourceLocation location, bool named)
+SchemaEnumExpr::SchemaEnumExpr(TypeId root, std::string symbol, SourceLocation location, bool named)
     : Expr(location), root_(root), symbol_(std::move(symbol)), named_(named) {}
 
 auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Compilation)
         return result(ctx, Value::undef());
-    std::vector<std::tuple<Value, std::vector<SchemaId>, std::size_t, std::shared_ptr<const SchemaBinding>>> pending;
-    pending.emplace_back(value, std::vector<SchemaId>{root_}, 0, nullptr);
+    std::vector<std::tuple<Value, std::vector<TypeId>, std::size_t, std::shared_ptr<const SchemaBinding>>> pending;
+    pending.emplace_back(value, std::vector<TypeId>{root_}, 0, nullptr);
     while (!pending.empty()) {
         if (ctx.canceled())
             return Result::Stop;
-        auto [nodeValue, domains, depth, binding] = std::move(pending.back());
+        auto [nodeValue, types, depth, binding] = std::move(pending.back());
         pending.pop_back();
         if (ctx.evaluation && !ctx.step(depth))
             return Result::Stop;
         auto concrete = nodeValue.schemaReference();
         if (concrete) {
-            domains = {concrete.id};
+            types = {concrete.id};
             binding = concrete.binding;
         }
-        // Candidate domains retain their namespace even when the child has no unique provenance.
-        auto lookup = [&](SchemaId id) { return binding ? binding->lookup(id) : ctx.env->querySchema(id); };
+        // Candidate types retain their namespace even when the child has no unique provenance.
+        auto lookup = [&](TypeId id) { return binding ? binding->lookup(id) : ctx.env->querySchema(id); };
         if (named_ || (nodeValue.isa(ValueType::String) && nodeValue.as<ValueType::String>() == symbol_)) {
-            std::vector<SchemaId> alternatives = domains, visited;
+            std::vector<TypeId> alternatives = types, visited;
             while (!alternatives.empty()) {
                 if (ctx.evaluation && !ctx.step())
                     return Result::Stop;
@@ -142,7 +142,7 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
         for (std::int64_t i = node->size(); i-- > 0;) {
             if (ctx.evaluation && !ctx.step(depth + 1))
                 return Result::Stop;
-            std::vector<SchemaId> children;
+            std::vector<TypeId> children;
             std::optional<StringId> field = node->keyAt(i);
             if (binding && type == ValueType::Object) {
                 auto owner = node->owningModel();
@@ -154,9 +154,9 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
                 if (*field == StringPool::Empty && !name->empty())
                     field.reset();
             }
-            for (auto domain : domains) {
-                auto next = type != ValueType::Object ? Schema::itemSchemas(domain, lookup)
-                    : field ? Schema::fieldSchemas(domain, lookup, *field) : std::vector<SchemaId>{NoSchemaId};
+            for (auto typeRef : types) {
+                auto next = type != ValueType::Object ? Schema::itemSchemas(typeRef, lookup)
+                    : field ? Schema::fieldSchemas(typeRef, lookup, *field) : std::vector<TypeId>{NoTypeId};
                 children.insert(children.end(), next.begin(), next.end());
             }
             if (!children.empty())
@@ -183,7 +183,7 @@ auto SchemaSymbolExpr::compare(Value const& value, std::string_view symbol, std:
     if (value.type == ValueType::Null)
         return Value::make(operation == "!=");
     auto definition = value.schemaReference().definition();
-    // A standalone shorthand may visit several domains at the same path. Only the actual domain decides.
+    // A standalone shorthand may visit several types at the same path. Only the actual type decides.
     if (operation == "member" && definition && !definition->namedValue(symbol))
         return Value::f();
     if (operation == "member" && value.type == ValueType::Bitmask) {
@@ -1330,10 +1330,10 @@ WildcardFieldExpr::WildcardFieldExpr(bool recurse, std::string name, SourceLocat
 
 auto WildcardFieldExpr::childSchemaMayHaveField(
     const Context& ctx,
-    SchemaId schemaId,
+    TypeId schemaId,
     StringId fieldId, const SchemaBinding* binding) const -> bool
 {
-    if (schemaId == NoSchemaId)
+    if (schemaId == NoTypeId)
         return true;
 
     const auto* childSchema = binding ? binding->lookup(schemaId) : ctx.env->querySchema(schemaId);
@@ -1355,7 +1355,7 @@ auto WildcardFieldExpr::buildObjectSchemaPlan(
     std::size_t fieldCount = 0;
     bool unknownNames = false;
     const auto canonical = schema.canonicalField(fieldId);
-    schema.forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+    schema.forEachDirectField([&](StringId field, std::span<const TypeId> children) {
         ++fieldCount;
         if (field == canonical)
             plan.directField = true;
@@ -1411,13 +1411,19 @@ auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema
         return buildObjectSchemaPlan(ctx, schema, fieldId, binding);
     if (schema.hasAffinity(ValueType::Array) && !schema.hasAffinity(ValueType::Object)) {
         plan.kind = SchemaPlan::Kind::Array;
+        // Named array lookups are terminals too, including Context edges. Only
+        // elements are traversed below; lookup-only children must not be descended.
         plan.directField = false;
+        const auto canonical = schema.canonicalField(fieldId);
+        schema.forEachDirectField([&](StringId field, std::span<const TypeId>) {
+            plan.directField |= field == canonical;
+        });
     }
 
     return plan;
 }
 
-auto WildcardFieldExpr::schemaPlan(const Context& ctx, SchemaId schemaId, const Schema& schema,
+auto WildcardFieldExpr::schemaPlan(const Context& ctx, TypeId schemaId, const Schema& schema,
                                    std::shared_ptr<const SchemaBinding> const& binding) const -> const SchemaPlan*
 {
     if (!ctx.runtime)
@@ -1568,8 +1574,7 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
                                            const SchemaPlan* plan,
                                            size_t depth) noexcept -> tl::expected<Result, Error>
         {
-            const auto directFieldPossible = !plan
-                || (plan->kind == SchemaPlan::Kind::Object && plan->directField);
+            const auto directFieldPossible = !plan || plan->directField;
             if (!directFieldPossible || (maxDepth > 0 && depth == 0))
                 return Result::Continue;
 

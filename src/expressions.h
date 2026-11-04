@@ -72,7 +72,7 @@ class SchemaEnumExpr : public Expr
 {
 public:
     /** Retain portable symbol text and the represented root identity, never pool-local field IDs. */
-    SchemaEnumExpr(SchemaId root, std::string symbol, SourceLocation location, bool named = false);
+    SchemaEnumExpr(TypeId root, std::string symbol, SourceLocation location, bool named = false);
     /** A declared-position enum predicate produces one boolean value. */
     auto type() const -> Type override { return Type::VALUE; }
     /** Expose the original enum term to schema-independent static query analysis. */
@@ -82,12 +82,12 @@ public:
     auto toString() const -> std::string override;
 
 private:
-    SchemaId root_;
+    TypeId root_;
     std::string symbol_;
     bool named_ = false;
 };
 
-/** Compare a selected value to its own domain's symbol; standalone flags use membership instead. */
+/** Compare a selected value to its own type's symbol; standalone flags use membership instead. */
 class SchemaSymbolExpr : public Expr
 {
 public:
@@ -96,7 +96,7 @@ public:
                      SourceLocation location);
     /** Symbolic predicates construct booleans, never annotated numeric results. */
     auto type() const -> Type override { return Type::VALUE; }
-    /** Evaluate the input once, retaining the selected value's concrete domain through comparison. */
+    /** Evaluate the input once, retaining the selected value's concrete type through comparison. */
     auto ieval(Context, const Value&, const ResultFn&) const -> tl::expected<Result, Error> override;
     /** Expose the selected path to generic expression visitors. */
     void accept(ExprVisitor&) const override;
@@ -683,14 +683,14 @@ public:
 private:
     using SchemaPlan = detail::ExpressionRuntime::WildcardSchemaPlan;
 
-    auto schemaPlan(const Context& ctx, SchemaId schemaId, const Schema& schema,
+    auto schemaPlan(const Context& ctx, TypeId schemaId, const Schema& schema,
                     std::shared_ptr<const SchemaBinding> const& binding = {}) const -> const SchemaPlan*;
     auto buildSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId, const SchemaBinding* binding) const
         -> SchemaPlan;
     auto
     buildObjectSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId, const SchemaBinding* binding) const
         -> SchemaPlan;
-    auto childSchemaMayHaveField(const Context& ctx, SchemaId schemaId, StringId fieldId, const SchemaBinding* binding) const
+    auto childSchemaMayHaveField(const Context& ctx, TypeId schemaId, StringId fieldId, const SchemaBinding* binding) const
         -> bool;
 };
 

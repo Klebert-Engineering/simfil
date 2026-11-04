@@ -66,8 +66,8 @@ StringId ModelNode::keyAt(int64_t i) const {
     return result;
 }
 
-SchemaId ModelNode::schema() const {
-    return model_ ? model_->schema(*this) : NoSchemaId;
+TypeId ModelNode::schema() const {
+    return model_ ? model_->schema(*this) : NoTypeId;
 }
 
 /// Get the number of children
@@ -199,9 +199,9 @@ StringId ModelNodeBase::keyAt(int64_t) const
     return 0;
 }
 
-SchemaId ModelNodeBase::schema() const
+TypeId ModelNodeBase::schema() const
 {
-    return NoSchemaId;
+    return NoTypeId;
 }
 
 uint32_t ModelNodeBase::size() const

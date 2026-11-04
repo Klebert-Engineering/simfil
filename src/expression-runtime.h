@@ -65,14 +65,14 @@ public:
                     ModelNode const& parent, ModelNode const& child) -> Value
     {
         return Value::field(child, [&]() -> SchemaReference {
-            auto domain = parent.schemaReference();
-            auto schema = domain.definition();
+            auto typeRef = parent.schemaReference();
+            auto schema = typeRef.definition();
             if (!schema)
                 return {};
-            auto field = schemaFieldId(expressionId, name, domain.binding);
+            auto field = schemaFieldId(expressionId, name, typeRef.binding);
             if (field == StringPool::Empty && !name.empty())
                 return {};
-            return {std::move(domain.binding), schema->fieldSchema(field)};
+            return {std::move(typeRef.binding), schema->fieldSchema(field)};
         });
     }
 
@@ -91,15 +91,15 @@ public:
     template <typename BuildFn>
     auto wildcardSchemaPlan(
         Expr::ExprId expressionId,
-        SchemaId schemaId,
+        TypeId schemaId,
         const Schema& schema,
         BuildFn&& build, std::shared_ptr<const SchemaBinding> const& binding = {}) -> const WildcardSchemaPlan*
     {
-        if (schemaId == NoSchemaId || !schema.finalized())
+        if (schemaId == NoTypeId || !schema.finalized())
             return nullptr;
 
         auto& state = stateFor(expressionId);
-        // Keep domains from different immutable graphs distinct even when their local ids coincide.
+        // Keep types from different immutable graphs distinct even when their local ids coincide.
         auto& plans = binding ? state.forBinding(binding).plans : state.wildcardSchemaPlans;
         const auto planIndex = static_cast<std::size_t>(schemaId);
         const auto schemaRevision = schema.revision();

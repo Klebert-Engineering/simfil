@@ -16,9 +16,9 @@ SchemaBinding::SchemaBinding(std::string identity, std::shared_ptr<const void> g
         throw std::invalid_argument("SchemaBinding requires an identity, graph owner, lookup and dictionary");
 }
 
-auto SchemaBinding::lookup(SchemaId id) const -> const Schema*
+auto SchemaBinding::lookup(TypeId id) const -> const Schema*
 {
-    return id == NoSchemaId ? nullptr : lookup_(id);
+    return id == NoTypeId ? nullptr : lookup_(id);
 }
 
 auto SchemaReference::definition() const -> const Schema*
@@ -45,15 +45,15 @@ auto Schema::namedValue(std::string_view name) const -> std::optional<NamedValue
     return result;
 }
 
-auto Schema::namedValuePaths(SchemaId root, const Lookup& lookup, std::string_view name, bool* complete)
+auto Schema::namedValuePaths(TypeId root, const Lookup& lookup, std::string_view name, bool* complete)
     -> std::vector<SchemaPath>
 {
     std::vector<SchemaPath> result;
-    std::vector<SchemaId> active;
+    std::vector<TypeId> active;
     SchemaPath path;
     std::size_t visits = 0;
     bool exhaustive = true;
-    std::function<void(SchemaId)> visit = [&](SchemaId id) {
+    std::function<void(TypeId)> visit = [&](TypeId id) {
         auto schema = id ? lookup(id) : nullptr;
         if (!schema || ++visits > 10000 || active.size() >= 128 || result.size() >= 10000 ||
             std::ranges::find(active, id) != active.end()) {
@@ -65,7 +65,7 @@ auto Schema::namedValuePaths(SchemaId root, const Lookup& lookup, std::string_vi
         active.push_back(id);
         if (schema->namedValue(name) && std::ranges::find(result, path) == result.end())
             result.push_back(path);
-        schema->forEachEnumerableField([&](StringId field, std::span<const SchemaId> children) {
+        schema->forEachEnumerableField([&](StringId field, std::span<const TypeId> children) {
             path.push_back({SchemaPathSegment::Kind::Field, field});
             if (children.empty())
                 exhaustive = false;
@@ -74,7 +74,7 @@ auto Schema::namedValuePaths(SchemaId root, const Lookup& lookup, std::string_vi
             path.pop_back();
         });
         bool elements = false;
-        schema->forEachElementSchema([&](SchemaId child) {
+        schema->forEachElementSchema([&](TypeId child) {
             elements = true;
             path.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
             visit(child);
@@ -94,7 +94,7 @@ auto Schema::namedValuePaths(SchemaId root, const Lookup& lookup, std::string_vi
     return result;
 }
 
-auto Schema::computeReachabilityComplete(const std::function<Schema*(SchemaId)>& lookup) const -> bool
+auto Schema::computeReachabilityComplete(const std::function<Schema*(TypeId)>& lookup) const -> bool
 {
     std::vector<const Schema*> pending{this};
     std::unordered_set<const Schema*> visited;
@@ -113,21 +113,21 @@ auto Schema::computeReachabilityComplete(const std::function<Schema*(SchemaId)>&
         if (schema->composition() == Composition::AllOf && schema->alternatives().empty())
             return false; // Empty intersection is unrestricted, not an empty object.
         bool complete = true;
-        auto append = [&](SchemaId id) {
-            auto child = id == NoSchemaId ? nullptr : lookup(id);
+        auto append = [&](TypeId id) {
+            auto child = id == NoTypeId ? nullptr : lookup(id);
             if (!child)
                 complete = false;
             else
                 pending.push_back(child);
         };
-        schema->forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
+        schema->forEachEnumerableField([&](StringId, std::span<const TypeId> children) {
             if (children.empty())
                 complete = false;
             for (auto child : children)
                 append(child);
         });
         bool hasElements = false;
-        schema->forEachElementSchema([&](SchemaId id) { hasElements = true; append(id); });
+        schema->forEachElementSchema([&](TypeId id) { hasElements = true; append(id); });
         if (schema->hasAffinity(ValueType::Array) && schema->composition() == Composition::None && !hasElements)
             complete = false;
         for (auto id : schema->alternatives())
@@ -138,18 +138,18 @@ auto Schema::computeReachabilityComplete(const std::function<Schema*(SchemaId)>&
     return true;
 }
 
-auto Schema::fieldSchemas(SchemaId root, const Lookup& lookup, StringId field) -> std::vector<SchemaId>
+auto Schema::fieldSchemas(TypeId root, const Lookup& lookup, StringId field) -> std::vector<TypeId>
 {
-    std::vector<SchemaId> result, pending{root}, visited;
+    std::vector<TypeId> result, pending{root}, visited;
     while (!pending.empty()) {
         auto id = pending.back();
         pending.pop_back();
         if (std::ranges::find(visited, id) != visited.end())
             continue;
         visited.push_back(id);
-        auto schema = id == NoSchemaId ? nullptr : lookup(id);
+        auto schema = id == NoTypeId ? nullptr : lookup(id);
         if (!schema) {
-            result.push_back(NoSchemaId);
+            result.push_back(NoTypeId);
             continue;
         }
         if (!affinities(schema->kind()))
@@ -157,20 +157,20 @@ auto Schema::fieldSchemas(SchemaId root, const Lookup& lookup, StringId field) -
         auto canonical = schema->canonicalField(field);
         bool declared = false;
         schema->forEachDirectField(
-            [&](StringId name, std::span<const SchemaId> children) {
+            [&](StringId name, std::span<const TypeId> children) {
                 if (name != canonical)
                     return;
                 declared = true;
                 if (children.empty())
-                    result.push_back(NoSchemaId);
+                    result.push_back(NoTypeId);
                 result.insert(result.end(), children.begin(), children.end());
             });
-        // Openness admits undeclared fields; it does not weaken an explicit field's domain.
+        // Openness admits undeclared fields; it does not weaken an explicit field's type.
         // Each alternative is checked independently, so an undeclared open branch stays unknown.
         if ((!declared && schema->open()) || kindNameId(schema->kind()) == kindNameId(Kind::Unknown) || kindNameId(schema->kind()) == kindNameId(Kind::Any))
-            result.push_back(NoSchemaId);
+            result.push_back(NoTypeId);
         if (schema->composition() == Composition::AllOf && schema->alternatives().empty())
-            result.push_back(NoSchemaId);
+            result.push_back(NoTypeId);
         for (auto child : schema->alternatives())
             pending.push_back(child);
     }
@@ -179,28 +179,28 @@ auto Schema::fieldSchemas(SchemaId root, const Lookup& lookup, StringId field) -
     return result;
 }
 
-auto Schema::itemSchemas(SchemaId root, const Lookup& lookup) -> std::vector<SchemaId>
+auto Schema::itemSchemas(TypeId root, const Lookup& lookup) -> std::vector<TypeId>
 {
-    std::vector<SchemaId> result, pending{root}, visited;
+    std::vector<TypeId> result, pending{root}, visited;
     while (!pending.empty()) {
         auto id = pending.back();
         pending.pop_back();
         if (std::ranges::find(visited, id) != visited.end())
             continue;
         visited.push_back(id);
-        auto schema = id == NoSchemaId ? nullptr : lookup(id);
+        auto schema = id == NoTypeId ? nullptr : lookup(id);
         if (!schema) {
-            result.push_back(NoSchemaId);
+            result.push_back(NoTypeId);
             continue;
         }
         if (!affinities(schema->kind()))
             continue;
         bool found = false;
-        schema->forEachElementSchema([&](SchemaId child) { found = true; result.push_back(child); });
+        schema->forEachElementSchema([&](TypeId child) { found = true; result.push_back(child); });
         if (!found && schema->hasAffinity(ValueType::Array) && schema->composition() == Composition::None)
-            result.push_back(NoSchemaId);
+            result.push_back(NoTypeId);
         if (schema->composition() == Composition::AllOf && schema->alternatives().empty())
-            result.push_back(NoSchemaId);
+            result.push_back(NoTypeId);
         for (auto child : schema->alternatives())
             pending.push_back(child);
     }
@@ -209,11 +209,11 @@ auto Schema::itemSchemas(SchemaId root, const Lookup& lookup) -> std::vector<Sch
     return result;
 }
 
-auto Schema::fieldSchema(StringId field) const -> SchemaId
+auto Schema::fieldSchema(StringId field) const -> TypeId
 {
     field = canonicalField(field);
     auto found = std::ranges::lower_bound(fieldSchemas_, field, {}, [](auto const& entry) { return entry.first; });
-    return found != fieldSchemas_.end() && found->first == field ? found->second : NoSchemaId;
+    return found != fieldSchemas_.end() && found->first == field ? found->second : NoTypeId;
 }
 
 auto Schema::fieldRole(StringId field) const -> FieldRole
@@ -222,35 +222,35 @@ auto Schema::fieldRole(StringId field) const -> FieldRole
         ? FieldRole::Context : FieldRole::Data;
 }
 
-auto Schema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
+auto Schema::finalize(const std::function<Schema*(TypeId)>& lookup) -> State
 {
     // This is a member index, not descendant reachability: a recursive object's
     // child edges are never followed. Logical alternatives share this position.
     std::vector<const Schema*> pending{this};
     std::unordered_set<const Schema*> visited;
-    std::map<StringId, std::pair<SchemaId, size_t>> fields;
+    std::map<StringId, std::pair<TypeId, size_t>> fields;
     std::map<StringId, bool> contexts;
     std::vector<StringId> declared;
     size_t openBranches = 0;
     bool unknownFields = false;
-    std::optional<SchemaId> item;
-    auto mergeItem = [&](SchemaId child) { item = item && *item != child ? NoSchemaId : child; };
+    std::optional<TypeId> item;
+    auto mergeItem = [&](TypeId child) { item = item && *item != child ? NoTypeId : child; };
     while (!pending.empty()) {
         auto schema = pending.back();
         pending.pop_back();
         if (!schema) {
             unknownFields = true;
-            mergeItem(NoSchemaId);
+            mergeItem(NoTypeId);
             continue;
         }
         if (!visited.insert(schema).second || !affinities(schema->kind()))
             continue;
         declared.clear();
-        schema->forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+        schema->forEachDirectField([&](StringId field, std::span<const TypeId> children) {
             auto child = uniqueSchema(children);
             auto [entry, inserted] = fields.try_emplace(field, child, size_t{0});
             if (!inserted && entry->second.first != child)
-                entry->second.first = NoSchemaId;
+                entry->second.first = NoTypeId;
             auto context = schema->fieldRole(field) == FieldRole::Context;
             auto [role, first] = contexts.try_emplace(field, context);
             if (!first)
@@ -267,30 +267,30 @@ auto Schema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
                 ++fields.at(field).second;
         }
         bool hasItems = false;
-        schema->forEachElementSchema([&](SchemaId child) { hasItems = true; mergeItem(child); });
+        schema->forEachElementSchema([&](TypeId child) { hasItems = true; mergeItem(child); });
         if (!hasItems && schema->hasAffinity(ValueType::Array) && schema->composition() == Composition::None)
-            mergeItem(NoSchemaId);
+            mergeItem(NoTypeId);
         auto name = kindNameId(schema->kind());
         if (name == kindNameId(Kind::Any) || name == kindNameId(Kind::Unknown))
             unknownFields = true;
         if (schema->composition() == Composition::AllOf && schema->alternatives().empty()) {
             unknownFields = true;
-            mergeItem(NoSchemaId);
+            mergeItem(NoTypeId);
         }
         for (auto child : schema->alternatives())
-            pending.push_back(child == NoSchemaId ? nullptr : lookup(child));
+            pending.push_back(child == NoTypeId ? nullptr : lookup(child));
     }
     fieldSchemas_.clear();
     contextFields_.clear();
     if (!unknownFields) {
         for (auto const& [field, entry] : fields) {
-            if (entry.first != NoSchemaId && entry.second == openBranches)
+            if (entry.first != NoTypeId && entry.second == openBranches)
                 fieldSchemas_.emplace_back(field, entry.first);
             if (contexts.at(field) && entry.second == openBranches)
                 contextFields_.push_back(field);
         }
     }
-    itemSchema_ = item.value_or(NoSchemaId);
+    itemSchema_ = item.value_or(NoTypeId);
     return State::Clean;
 }
 
@@ -300,7 +300,7 @@ CombinedSchema::CombinedSchema(Composition mode) : mode_(mode)
         throw std::invalid_argument("CombinedSchema requires a logical operator");
 }
 
-void CombinedSchema::addAlternative(SchemaId schema)
+void CombinedSchema::addAlternative(TypeId schema)
 {
     alternatives_.push_back(schema);
     invalidate();
@@ -310,7 +310,7 @@ auto CombinedSchema::kind() const -> Kind
 {
     auto name = mode_ == Composition::AllOf ? StringPool::SchemaIntersection
         : mode_ == Composition::OneOf ? StringPool::SchemaOneOf : StringPool::SchemaUnion;
-    return domainKind(makeKind(name, state_ == State::Clean ? affinities_ : AllAffinities));
+    return typeKind(makeKind(name, state_ == State::Clean ? affinities_ : AllAffinities));
 }
 
 auto CombinedSchema::canHaveField(StringId field) const -> bool
@@ -323,14 +323,14 @@ auto CombinedSchema::canHaveEnumSymbol(StringId symbol) const -> bool
     return containsField(state_, symbols_, symbol);
 }
 
-auto CombinedSchema::finalize(const std::function<Schema*(SchemaId)>& lookup) -> State
+auto CombinedSchema::finalize(const std::function<Schema*(TypeId)>& lookup) -> State
 {
     if (state_ != State::Dirty)
         return state_;
     auto result = finalizeReachableMetadata(state_, fields_, symbols_, lookup, *this);
     affinities_ = mode_ == Composition::AllOf ? AllAffinities : 0;
     for (auto id : alternatives_) {
-        auto child = id == NoSchemaId ? nullptr : lookup(id);
+        auto child = id == NoTypeId ? nullptr : lookup(id);
         auto bits = child && child != this ? affinities(child->kind()) : AllAffinities;
         if (mode_ == Composition::AllOf)
             affinities_ &= bits;
@@ -341,15 +341,15 @@ auto CombinedSchema::finalize(const std::function<Schema*(SchemaId)>& lookup) ->
     return result;
 }
 
-void CombinedSchema::collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
-                                        SchemaIdStack& visited, std::vector<StringId>& fields) const
+void CombinedSchema::collectNestedFields(const std::function<Schema*(TypeId)>& lookup,
+                                        TypeIdStack& visited, std::vector<StringId>& fields) const
 {
     for (auto id : alternatives_)
         appendSchemaFields(id, lookup, visited, fields);
 }
 
-void CombinedSchema::collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& lookup,
-                                             SchemaIdStack& visited, std::vector<StringId>& symbols) const
+void CombinedSchema::collectNestedEnumSymbols(const std::function<Schema*(TypeId)>& lookup,
+                                             TypeIdStack& visited, std::vector<StringId>& symbols) const
 {
     for (auto id : alternatives_)
         appendSchemaEnumSymbols(id, lookup, visited, symbols);

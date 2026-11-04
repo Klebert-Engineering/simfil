@@ -214,9 +214,9 @@ static auto enumPathExpression(
     return result;
 }
 
-static auto schemaQuery(Environment& env) -> std::function<const Schema*(SchemaId)>
+static auto schemaQuery(Environment& env) -> std::function<const Schema*(TypeId)>
 {
-    return [&env](SchemaId schemaId) -> const Schema* {
+    return [&env](TypeId schemaId) -> const Schema* {
         return env.querySchema(schemaId);
     };
 }
@@ -279,9 +279,9 @@ static auto rewriteStandaloneNameBySchema(
     Environment& env,
     std::string_view query,
     ExprPtr expr,
-    SchemaId rootSchema) -> expected<ExprPtr, Error>
+    TypeId rootSchema) -> expected<ExprPtr, Error>
 {
-    if (rootSchema == NoSchemaId || !expr)
+    if (rootSchema == NoTypeId || !expr)
         return expr;
 
     // Environment constants have parser-level precedence over schema aliases.
@@ -346,11 +346,11 @@ static auto rewriteOperandShorthandBySchema(
     Environment& env,
     std::string_view query,
     ExprPtr expr,
-    SchemaId rootSchema,
+    TypeId rootSchema,
     bool isRoot,
     bool insidePath) -> expected<ExprPtr, Error>
 {
-    if (!expr || rootSchema == NoSchemaId) {
+    if (!expr || rootSchema == NoTypeId) {
         return expr;
     }
 
@@ -667,22 +667,22 @@ static auto addReferencedPath(
 
 /** Walk a concrete path, retaining canonical aliases and avoiding whole-graph
  * enumeration. */
-static auto canonicalReferencedPath(Environment& env, SchemaId rootSchema,
+static auto canonicalReferencedPath(Environment& env, TypeId rootSchema,
                                     SchemaPath path)
     -> std::optional<SchemaPath>
 {
-    auto lookup = [&env](SchemaId id) { return env.querySchema(id); };
-    std::vector<SchemaId> domains{rootSchema};
+    auto lookup = [&env](TypeId id) { return env.querySchema(id); };
+    std::vector<TypeId> types{rootSchema};
     std::size_t visits = 0;
     for (auto& segment : path) {
-        std::vector<SchemaId> next, visited;
+        std::vector<TypeId> next, visited;
         std::optional<StringId> canonical;
-        while (!domains.empty()) {
+        while (!types.empty()) {
             if (++visits > 10000)
                 return std::nullopt;
-            auto id = domains.back();
-            domains.pop_back();
-            if (id == NoSchemaId || std::ranges::find(visited, id) != visited.end())
+            auto id = types.back();
+            types.pop_back();
+            if (id == NoTypeId || std::ranges::find(visited, id) != visited.end())
                 continue;
             visited.push_back(id);
             auto schema = lookup(id);
@@ -690,7 +690,7 @@ static auto canonicalReferencedPath(Environment& env, SchemaId rootSchema,
                 continue;
             if (schema->composition() != Schema::Composition::None) {
                 auto alternatives = schema->alternatives();
-                domains.insert(domains.end(), alternatives.begin(), alternatives.end());
+                types.insert(types.end(), alternatives.begin(), alternatives.end());
                 continue;
             }
             auto field = schema->canonicalField(segment.field);
@@ -719,7 +719,7 @@ static auto canonicalReferencedPath(Environment& env, SchemaId rootSchema,
             segment.field = *canonical;
         std::ranges::sort(next);
         next.erase(std::unique(next.begin(), next.end()), next.end());
-        domains = std::move(next);
+        types = std::move(next);
     }
     return path;
 }
@@ -733,7 +733,7 @@ static auto schemaPathEndsWith(const SchemaPath& path, const SchemaPath& suffix)
 }
 
 /** Expand a recursive suffix while preserving whether all possible owners were visited. */
-static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, const SchemaPath& suffix, bool& complete) -> std::vector<SchemaPath>
+static auto schemaPathsMatchingSuffix(Environment& env, TypeId rootSchema, const SchemaPath& suffix, bool& complete) -> std::vector<SchemaPath>
 {
     auto leafField = std::ranges::find_if(
         suffix.rbegin(),
@@ -746,7 +746,7 @@ static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, con
         return {};
     }
 
-    auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
+    auto querySchema = [&env](TypeId schemaId) -> const Schema* {
         return env.querySchema(schemaId);
     };
     auto possiblePaths = Schema::fieldPaths(rootSchema, querySchema, leafField->field, &complete);
@@ -767,11 +767,11 @@ static auto schemaPathsMatchingSuffix(Environment& env, SchemaId rootSchema, con
 static auto collectReferencedSchemaPaths(
     Environment& env,
     const Expr& expr,
-    SchemaId rootSchema,
+    TypeId rootSchema,
     ReferencedSchemaPaths& result) -> expected<void, Error>
 {
     if (dynamic_cast<const SchemaEnumExpr*>(&expr)) {
-        // A recursive domain predicate cannot be summarized by a finite path set.
+        // A recursive type predicate cannot be summarized by a finite path set.
         result.hasUnresolvedAccess = true;
         return {};
     }
@@ -842,7 +842,7 @@ static auto collectReferencedSchemaPaths(
             return {};
         }
 
-        auto querySchema = [&env](SchemaId schemaId) -> const Schema* {
+        auto querySchema = [&env](TypeId schemaId) -> const Schema* {
             return env.querySchema(schemaId);
         };
         bool complete = true;
@@ -1706,7 +1706,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
         auto root = p.parse();
         TRY_EXPECTED(root);
 
-        if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoSchemaId) {
+        if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoTypeId) {
             root = rewriteStandaloneNameBySchema(
                 env,
                 query,
@@ -1728,7 +1728,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
     }();
     TRY_EXPECTED(expr);
 
-    if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoSchemaId) {
+    if (options.rewriteMode == RewriteMode::Schema && options.rootSchema != NoTypeId) {
         expr = rewriteOperandShorthandBySchema(env, query, std::move(*expr), options.rootSchema, true, false);
         TRY_EXPECTED(expr);
     }
@@ -1744,7 +1744,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
 
 /** Share tokenization, relaxed parselets and candidate presentation for both completion roots. */
 static auto completeImpl(Environment& env, std::string_view query, size_t point,
-                         const ModelNode* node, SchemaId rootSchema, const CompletionOptions& options)
+                         const ModelNode* node, TypeId rootSchema, const CompletionOptions& options)
     -> expected<std::vector<CompletionCandidate>, Error>
 {
     if (point > query.size())
@@ -1821,7 +1821,7 @@ static auto completeImpl(Environment& env, std::string_view query, size_t point,
         }));
     }
     else if (ast) {
-        comp.completeDomain(ctx, *ast, rootSchema);
+        comp.completeType(ctx, *ast, rootSchema);
     }
 
     auto candidates = std::vector<CompletionCandidate>(comp.candidates.begin(), comp.candidates.end());
@@ -1857,19 +1857,19 @@ static auto completeImpl(Environment& env, std::string_view query, size_t point,
 auto complete(Environment& env, std::string_view query, size_t point, const ModelNode& node,
               const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>
 {
-    return completeImpl(env, query, point, &node, NoSchemaId, options);
+    return completeImpl(env, query, point, &node, NoTypeId, options);
 }
 
-auto complete(Environment& env, std::string_view query, size_t point, SchemaId rootSchema,
+auto complete(Environment& env, std::string_view query, size_t point, TypeId rootSchema,
               const CompletionOptions& options) -> expected<std::vector<CompletionCandidate>, Error>
 {
     return completeImpl(env, query, point, nullptr, rootSchema, options);
 }
 
-auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> expected<ReferencedSchemaPaths, Error>
+auto referencedSchemaPaths(Environment& env, const AST& ast, TypeId rootSchema) -> expected<ReferencedSchemaPaths, Error>
 {
     ReferencedSchemaPaths result;
-    if (rootSchema == NoSchemaId) {
+    if (rootSchema == NoTypeId) {
         result.hasUnresolvedAccess = true;
         return result;
     }

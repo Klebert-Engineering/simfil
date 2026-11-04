@@ -64,9 +64,9 @@ auto Environment::strings() const -> std::shared_ptr<StringPool> {
     return stringPool;
 }
 
-auto Environment::querySchema(SchemaId schemaId) const -> const Schema*
+auto Environment::querySchema(TypeId schemaId) const -> const Schema*
 {
-    if (!querySchemaCallback || schemaId == NoSchemaId)
+    if (!querySchemaCallback || schemaId == NoTypeId)
         return nullptr;
     return querySchemaCallback(schemaId);
 }

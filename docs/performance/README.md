@@ -4,7 +4,7 @@
 `77fe792588ce34653998984b0df967f59b84ec04` revision and the candidate. The reference
 uses its callback interface; candidate modes retain exact schema bindings, using
 either the independent `ObjectSchema` registry or compact `SchemaPool`. Ordinary
-leaves remain untagged in every mode. The original reference has no scalar-domain
+leaves remain untagged in every mode. The original reference has no scalar-type
 provenance, so this measures the total implementation cost, not just one lookup.
 
 Compilation, graph finalization, model construction, expression binding and
@@ -105,7 +105,7 @@ threshold crossing as statistical certainty.
 Each subprocess also records the existing retained-capacity lower bounds for
 model columns and dictionaries, after timing. Shared schema dictionaries count
 once; separate runtime dictionaries count per model. Compact-pool modes report
-generic domain/index storage and primitive columns separately. The independent
+generic type/index storage and primitive columns separately. The independent
 `ObjectSchema` registry has no complete retained-memory API, so its graph value
 is explicitly `null`, not zero. Model-column comparisons are useful but **do not
 close the schema-owner memory comparison against the pre-cutover implementation**.

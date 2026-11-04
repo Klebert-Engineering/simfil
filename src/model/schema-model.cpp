@@ -18,7 +18,7 @@ public:
     /** One traversal position retains ancestry so cycles serialize as explicit references. */
     struct Entry {
         View view = View::Descriptor;
-        std::vector<SchemaId> schemas;
+        std::vector<TypeId> schemas;
         std::optional<std::uint32_t> parent;
         std::optional<bool> required;
         Schema::FieldRole role = Schema::FieldRole::Data;
@@ -39,11 +39,25 @@ public:
         entries.push_back(std::move(terminal));
     }
 
-    /** Resolve a single definition; multiple ids denote an implicit field-domain union. */
+    /** Resolve a single definition; multiple ids denote an implicit field-type union. */
     auto schema(const Entry& entry) const -> const Schema*
     {
-        return entry.schemas.size() == 1 && entry.schemas.front() != NoSchemaId
+        return entry.schemas.size() == 1 && entry.schemas.front() != NoTypeId
             ? lookup(entry.schemas.front()) : nullptr;
+    }
+
+    /** Borrow the named-value declaration selected by this descriptor's ordinal. */
+    auto namedValue(const Entry& entry) const -> std::optional<Schema::NamedValue>
+    {
+        std::optional<Schema::NamedValue> result;
+        if (auto definition = schema(entry)) {
+            std::size_t ordinal = 0;
+            definition->forEachNamedValue([&](auto const& value) {
+                if (ordinal++ == entry.position)
+                    result = value;
+            });
+        }
+        return result;
     }
 
     /** Stop recursive expansion without disguising the definition as an empty object. */
@@ -53,7 +67,7 @@ public:
             exhausted = true;
             return 0;
         }
-        if (entry.view == View::Descriptor && entry.schemas.size() == 1 && entry.schemas.front() != NoSchemaId) {
+        if (entry.view == View::Descriptor && entry.schemas.size() == 1 && entry.schemas.front() != NoTypeId) {
             for (auto parent = entry.parent; parent; parent = entries[*parent].parent) {
                 const auto& ancestor = entries[*parent];
                 if (ancestor.view == View::Descriptor && ancestor.schemas == entry.schemas) {
@@ -74,10 +88,12 @@ public:
             return *entry.keys;
         entry.keys.emplace();
         auto& keys = *entry.keys;
-        auto domain = schema(entry);
+        auto typeRef = schema(entry);
         if (entry.view == View::NamedValue) {
             keys = {StringPool::SchemaName, StringPool::SchemaValue, StringPool::SchemaRole,
                 StringPool::SchemaMeaning, StringPool::SchemaDeprecated, StringPool::SchemaRemoved};
+            if (auto value = namedValue(entry); value && value->rawValue)
+                keys.push_back(StringPool::SchemaRawValue);
             return keys;
         }
         if (entry.view == View::Range) {
@@ -85,7 +101,7 @@ public:
             return keys;
         }
         if (entry.view == View::NumericDomain) {
-            auto numeric = domain ? domain->numericDomain() : std::nullopt;
+            auto numeric = typeRef ? typeRef->numericDomain() : std::nullopt;
             if (!numeric)
                 return keys;
             keys = {StringPool::SchemaEncoding, StringPool::SchemaUnit};
@@ -98,15 +114,15 @@ public:
             return keys;
         }
         if (entry.view == View::Fields) {
-            if (domain)
-                domain->forEachDirectField([&](StringId name, auto) { keys.push_back(name); });
+            if (typeRef)
+                typeRef->forEachDirectField([&](StringId name, auto) { keys.push_back(name); });
             return keys;
         }
         if (entry.view != View::Descriptor)
             return keys;
         keys.push_back(StringPool::SchemaKind);
         if (entry.schemas.size() > 1 ||
-            (entry.schemas.size() == 1 && entry.schemas.front() != NoSchemaId))
+            (entry.schemas.size() == 1 && entry.schemas.front() != NoTypeId))
             keys.push_back(StringPool::SchemaRef);
         if (entry.role == Schema::FieldRole::Context)
             keys.push_back(StringPool::SchemaRole);
@@ -114,55 +130,55 @@ public:
             keys.push_back(StringPool::SchemaTruncated);
             return keys;
         }
-        if (domain && !domain->typeName().empty())
+        if (typeRef && !typeRef->typeName().empty())
             keys.push_back(StringPool::SchemaTypeName);
         if (entry.required)
             keys.push_back(StringPool::SchemaRequired);
-        if (domain && domain->nullable())
+        if (typeRef && typeRef->nullable())
             keys.push_back(StringPool::SchemaNullable);
-        if (entry.schemas.size() > 1 || (domain && domain->composition() != Schema::Composition::None))
+        if (entry.schemas.size() > 1 || (typeRef && typeRef->composition() != Schema::Composition::None))
             keys.push_back(StringPool::SchemaAlternatives);
-        if (domain) {
+        if (typeRef) {
             // Combiners may declare their own lookup context in addition to the
             // physical alternatives. Do not hide those independently named edges.
-            if ((domain->composition() == Schema::Composition::None || !domain->directFields().empty()) &&
-                domain->hasAffinity(ValueType::Object) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Any)) {
+            if ((typeRef->composition() == Schema::Composition::None || !typeRef->directFields().empty()) &&
+                typeRef->hasAffinity(ValueType::Object) && Schema::kindNameId(typeRef->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(typeRef->kind()) != Schema::kindNameId(Schema::Kind::Any)) {
                 keys.push_back(StringPool::SchemaFields);
                 keys.push_back(StringPool::SchemaOpen);
             }
-            if (domain->composition() == Schema::Composition::None && domain->hasAffinity(ValueType::Array) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(domain->kind()) != Schema::kindNameId(Schema::Kind::Any))
+            if (typeRef->composition() == Schema::Composition::None && typeRef->hasAffinity(ValueType::Array) && Schema::kindNameId(typeRef->kind()) != Schema::kindNameId(Schema::Kind::Unknown) && Schema::kindNameId(typeRef->kind()) != Schema::kindNameId(Schema::Kind::Any))
                 keys.push_back(StringPool::SchemaElements);
         }
-        if (domain && (!domain->enumValues().empty() || !domain->directEnumSymbols().empty()))
+        if (typeRef && (!typeRef->enumValues().empty() || !typeRef->directEnumSymbols().empty()))
             keys.push_back(StringPool::SchemaEnum);
-        if (domain) {
+        if (typeRef) {
             bool named = false;
-            domain->forEachNamedValue([&](auto const&) { named = true; });
+            typeRef->forEachNamedValue([&](auto const&) { named = true; });
             if (named)
                 keys.push_back(StringPool::SchemaNamedValues);
-            if (domain->numericDomain())
+            if (typeRef->numericDomain())
                 keys.push_back(StringPool::SchemaNumericDomain);
-            if (domain->isBitmask())
+            if (typeRef->isBitmask())
                 keys.push_back(StringPool::SchemaBitWidth);
         }
         return keys;
     }
 
-    /** Array views list possible domains or enum values, not fabricated feature elements. */
-    auto schemas(const Entry& entry) const -> std::vector<SchemaId>
+    /** Array views list possible types or enum values, not fabricated feature elements. */
+    auto schemas(const Entry& entry) const -> std::vector<TypeId>
     {
         if (entry.view == View::References)
             return entry.schemas;
-        auto domain = schema(entry);
+        auto typeRef = schema(entry);
         if (entry.view == View::Alternatives) {
             if (entry.schemas.size() > 1)
                 return entry.schemas;
-            if (domain)
-                return {domain->alternatives().begin(), domain->alternatives().end()};
+            if (typeRef)
+                return {typeRef->alternatives().begin(), typeRef->alternatives().end()};
         }
-        std::vector<SchemaId> result;
-        if (domain && entry.view == View::Elements)
-            domain->forEachElementSchema([&](SchemaId id) { result.push_back(id); });
+        std::vector<TypeId> result;
+        if (typeRef && entry.view == View::Elements)
+            typeRef->forEachElementSchema([&](TypeId id) { result.push_back(id); });
         return result;
     }
 
@@ -173,7 +189,7 @@ public:
     std::deque<Entry> entries;
 };
 
-/** The ordinary node protocol always exposes metadata and never feature-domain access. */
+/** The ordinary node protocol always exposes metadata and never feature-type access. */
 class SchemaModel::Node : public ModelNodeBase
 {
 public:
@@ -189,8 +205,8 @@ public:
             view == Impl::View::NumericDomain || view == Impl::View::Range ? ValueType::Object : ValueType::Array;
     }
 
-    /** Descriptor objects have no feature-domain schema attached. */
-    auto schema() const -> SchemaId override { return NoSchemaId; }
+    /** Descriptor objects have no feature-type schema attached. */
+    auto schema() const -> TypeId override { return NoTypeId; }
 
     /** Inspect only immediate metadata without expanding child descriptors. */
     auto size() const -> std::uint32_t override
@@ -198,18 +214,18 @@ public:
         if (type() == ValueType::Object)
             return impl().keys(index_).size();
         if (entry().view == Impl::View::Enum) {
-            auto domain = impl().schema(entry());
-            return domain ? domain->directEnumSymbols().size() + domain->enumValues().size() : 0;
+            auto typeRef = impl().schema(entry());
+            return typeRef ? typeRef->directEnumSymbols().size() + typeRef->enumValues().size() : 0;
         }
         if (entry().view == Impl::View::NamedValues) {
             std::uint32_t count = 0;
-            if (auto domain = impl().schema(entry()))
-                domain->forEachNamedValue([&](auto const&) { ++count; });
+            if (auto typeRef = impl().schema(entry()))
+                typeRef->forEachNamedValue([&](auto const&) { ++count; });
             return count;
         }
         if (entry().view == Impl::View::Ranges) {
-            auto domain = impl().schema(entry());
-            auto numeric = domain ? domain->numericDomain() : std::nullopt;
+            auto typeRef = impl().schema(entry());
+            auto numeric = typeRef ? typeRef->numericDomain() : std::nullopt;
             return numeric ? numeric->ordinaryRanges.size() : 0;
         }
         return impl().schemas(entry()).size();
@@ -238,18 +254,15 @@ public:
     {
         if (position < 0 || std::size_t(position) >= size())
             return {};
-        auto domain = impl().schema(entry());
+        auto typeRef = impl().schema(entry());
         if (entry().view == Impl::View::NamedValue) {
-            std::optional<Schema::NamedValue> named;
-            std::size_t ordinal = 0;
-            domain->forEachNamedValue([&](auto const& value) {
-                if (ordinal++ == entry().position)
-                    named = value;
-            });
+            auto named = impl().namedValue(entry());
             if (!named)
                 return {};
             switch (keyAt(position)) {
             case StringPool::SchemaName: return scalar(std::string(named->name));
+            case StringPool::SchemaRawValue:
+                return std::visit([&](auto value) { return metadataScalar(value); }, *named->rawValue);
             case StringPool::SchemaValue:
                 return std::visit([&](auto value) { return metadataScalar(value, named->role == Schema::NamedValue::Role::Flag); }, named->value);
             case StringPool::SchemaRole:
@@ -270,7 +283,7 @@ public:
             }
         }
         if (entry().view == Impl::View::Range) {
-            auto numeric = domain->numericDomain();
+            auto numeric = typeRef->numericDomain();
             if (!numeric || entry().position >= numeric->ordinaryRanges.size())
                 return {};
             auto const& range = numeric->ordinaryRanges[entry().position];
@@ -278,7 +291,7 @@ public:
                 keyAt(position) == StringPool::SchemaMin ? range.min : range.max);
         }
         if (entry().view == Impl::View::NumericDomain) {
-            auto numeric = domain->numericDomain();
+            auto numeric = typeRef->numericDomain();
             switch (keyAt(position)) {
             case StringPool::SchemaEncoding: return scalar(std::string(numeric->encoding));
             case StringPool::SchemaUnit: return scalar(std::string(numeric->unit));
@@ -293,27 +306,27 @@ public:
         if (entry().view == Impl::View::References)
             return scalar(int64_t(entry().schemas[position]));
         if (entry().view == Impl::View::Enum) {
-            auto symbols = domain->directEnumSymbols();
+            auto symbols = typeRef->directEnumSymbols();
             if (std::size_t(position) < symbols.size())
                 return scalar(std::string(impl().strings->resolve(symbols[position]).value_or("")));
-            return scalar(domain->enumValues()[position - symbols.size()]);
+            return scalar(typeRef->enumValues()[position - symbols.size()]);
         }
         if (entry().view == Impl::View::Descriptor) {
             switch (keyAt(position)) {
             case StringPool::SchemaKind: {
                 auto kind = entry().schemas.size() > 1 ? Schema::Kind::Union
-                    : domain ? domain->kind() : Schema::Kind::Unknown;
+                    : typeRef ? typeRef->kind() : Schema::Kind::Unknown;
                 auto name = impl().strings->resolve(Schema::kindNameId(kind));
                 if (!name)
                     throw std::logic_error("Schema kind name is absent from its string namespace");
                 return scalar(std::string(*name));
             }
-            case StringPool::SchemaTypeName: return scalar(std::string(domain->typeName()));
+            case StringPool::SchemaTypeName: return scalar(std::string(typeRef->typeName()));
             case StringPool::SchemaRequired: return scalar(*entry().required);
             case StringPool::SchemaRole: return scalar(std::string("context"));
-            case StringPool::SchemaNullable: return scalar(*domain->nullable());
-            case StringPool::SchemaOpen: return scalar(domain->open());
-            case StringPool::SchemaBitWidth: return scalar(std::int64_t(domain->bitWidth()));
+            case StringPool::SchemaNullable: return scalar(*typeRef->nullable());
+            case StringPool::SchemaOpen: return scalar(typeRef->open());
+            case StringPool::SchemaBitWidth: return scalar(std::int64_t(typeRef->bitWidth()));
             case StringPool::SchemaRef:
                 if (entry().schemas.size() == 1)
                     return scalar(int64_t(entry().schemas.front()));
@@ -352,14 +365,14 @@ public:
         else {
             if (entry().view == Impl::View::Fields) {
                 auto field = keyAt(position);
-                child.role = domain->fieldRole(field);
-                domain->forEachDirectField([&](StringId name, std::span<const SchemaId> ids) {
+                child.role = typeRef->fieldRole(field);
+                typeRef->forEachDirectField([&](StringId name, std::span<const TypeId> ids) {
                     if (name == field)
                         child.schemas.insert(child.schemas.end(), ids.begin(), ids.end());
                 });
-                child.required = domain->fieldRequired(field);
+                child.required = typeRef->fieldRequired(field);
                 if (child.schemas.empty())
-                    child.schemas.push_back(NoSchemaId);
+                    child.schemas.push_back(NoTypeId);
             }
             else
                 child.schemas.push_back(impl().schemas(entry())[position]);
@@ -417,7 +430,7 @@ SchemaModel::SchemaModel(std::shared_ptr<StringPool> strings, Schema::Lookup loo
 
 SchemaModel::~SchemaModel() = default;
 
-auto SchemaModel::root(SchemaId schema) const -> ModelNode::Ptr
+auto SchemaModel::root(TypeId schema) const -> ModelNode::Ptr
 {
     Impl::Entry entry;
     entry.schemas.push_back(schema);

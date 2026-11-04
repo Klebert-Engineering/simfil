@@ -80,6 +80,7 @@ struct StringPool
         SchemaScale,
         SchemaOffset,
         SchemaComplete,
+        SchemaRawValue,
 
         NextStaticId,
         FirstDynamicId = 256

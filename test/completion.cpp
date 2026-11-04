@@ -72,19 +72,19 @@ auto CompleteSchemaQuery(std::string_view query, std::optional<size_t> point = {
     valueSchema->addEnumSymbol(enumFast);
 
     auto objectSchema = std::make_unique<ObjectSchema>();
-    objectSchema->addField(schemaOnlyField, {SchemaId{2}});
+    objectSchema->addField(schemaOnlyField, {TypeId{2}});
     objectSchema->addField(specialField);
-    objectSchema->addField(nested, {SchemaId{3}});
+    objectSchema->addField(nested, {TypeId{3}});
 
     auto nestedSchema = std::make_unique<ObjectSchema>();
     nestedSchema->addField(enumFast);
 
-    auto registry = std::make_shared<std::map<SchemaId, std::unique_ptr<Schema>>>();
-    (*registry)[SchemaId{1}] = std::move(objectSchema);
-    (*registry)[SchemaId{2}] = std::move(valueSchema);
-    (*registry)[SchemaId{3}] = std::move(nestedSchema);
+    auto registry = std::make_shared<std::map<TypeId, std::unique_ptr<Schema>>>();
+    (*registry)[TypeId{1}] = std::move(objectSchema);
+    (*registry)[TypeId{2}] = std::move(valueSchema);
+    (*registry)[TypeId{3}] = std::move(nestedSchema);
 
-    auto lookup = [registry](SchemaId schemaId) -> Schema* {
+    auto lookup = [registry](TypeId schemaId) -> Schema* {
         if (auto it = registry->find(schemaId); it != registry->end())
             return it->second.get();
         return nullptr;
@@ -96,10 +96,10 @@ auto CompleteSchemaQuery(std::string_view query, std::optional<size_t> point = {
     REQUIRE(root);
     auto rootObj = model->resolve<Object>(**root);
     REQUIRE(rootObj);
-    REQUIRE(rootObj->setSchema(SchemaId{1}));
+    REQUIRE(rootObj->setSchema(TypeId{1}));
 
     Environment env(strings);
-    env.querySchemaCallback = [registry](SchemaId schemaId) -> const Schema* {
+    env.querySchemaCallback = [registry](TypeId schemaId) -> const Schema* {
         if (auto it = registry->find(schemaId); it != registry->end())
             return it->second.get();
         return nullptr;

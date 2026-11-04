@@ -159,7 +159,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
-/** Explicit all-bits membership using the mask's exact domain and declared flag name. */
+/** Explicit all-bits membership using the mask's exact type and declared flag name. */
 class HasFlagFn : public Function
 {
 public:
@@ -170,14 +170,14 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
-/** Construct exact unsigned bits using an existing mask's domain, without relabeling another mask. */
+/** Construct exact unsigned bits using an existing mask's type, without relabeling another mask. */
 class BitmaskFn : public Function
 {
 public:
     static BitmaskFn Fn;
     /** Describe lossless string construction for completion and help. */
     auto ident() const -> const FnInfo& override;
-    /** Parse one raw-bits string and validate the resulting mask against the selected domain width. */
+    /** Parse one raw-bits string and validate the resulting mask against the selected type width. */
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 

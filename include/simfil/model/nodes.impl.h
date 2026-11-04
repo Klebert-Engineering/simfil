@@ -22,13 +22,13 @@ ValueType BaseArray<ModelType, ModelNodeType>::type() const
 }
 
 template <class ModelType, class ModelNodeType>
-SchemaId BaseArray<ModelType, ModelNodeType>::schema() const
+TypeId BaseArray<ModelType, ModelNodeType>::schema() const
 {
     return model().arraySchemaId(members_);
 }
 
 template <class ModelType, class ModelNodeType>
-auto BaseArray<ModelType, ModelNodeType>::setSchema(SchemaId schemaId) -> tl::expected<void, Error>
+auto BaseArray<ModelType, ModelNodeType>::setSchema(TypeId schemaId) -> tl::expected<void, Error>
 {
     return model().setArraySchemaId(members_, schemaId);
 }
@@ -110,13 +110,13 @@ ValueType BaseObject<ModelType, ModelNodeType>::type() const
 }
 
 template <class ModelType, class ModelNodeType>
-SchemaId BaseObject<ModelType, ModelNodeType>::schema() const
+TypeId BaseObject<ModelType, ModelNodeType>::schema() const
 {
     return model().objectSchemaId(members_);
 }
 
 template <class ModelType, class ModelNodeType>
-auto BaseObject<ModelType, ModelNodeType>::setSchema(SchemaId schemaId) -> tl::expected<void, Error>
+auto BaseObject<ModelType, ModelNodeType>::setSchema(TypeId schemaId) -> tl::expected<void, Error>
 {
     return model().setObjectSchemaId(members_, schemaId);
 }

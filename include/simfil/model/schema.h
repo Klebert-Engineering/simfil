@@ -21,8 +21,8 @@ namespace simfil
 
 class Schema;
 
-constexpr SchemaId NoSchemaId = SchemaId{0};
-constexpr SchemaId MaxSchemaId = SchemaId{std::numeric_limits<SchemaId>::max()};
+constexpr TypeId NoTypeId = TypeId{0};
+constexpr TypeId MaxTypeId = TypeId{std::numeric_limits<TypeId>::max()};
 
 /**
  * One segment in a schema-derived query path.
@@ -47,18 +47,18 @@ struct SchemaPathSegment
 using SchemaPath = std::vector<SchemaPathSegment>;
 
 /**
- * Concept defining a callback to query a Schema* by SchemaId.
+ * Concept defining a callback to query a Schema* by TypeId.
  */
 template <class Fn>
 concept QuerySchemaFn = requires(const Fn& fn) {
-    { fn(SchemaId{}) } -> std::convertible_to<const Schema*>;
+    { fn(TypeId{}) } -> std::convertible_to<const Schema*>;
 };
 template <class Fn>
 concept QueryMutableSchemaFn = requires(const Fn& fn) {
-    { fn(SchemaId{}) } -> std::convertible_to<Schema*>;
+    { fn(TypeId{}) } -> std::convertible_to<Schema*>;
 };
 
-/** Read-only domain interface shared by schema queries, completion and pruning. */
+/** Read-only type interface shared by schema queries, completion and pruning. */
 class Schema
 {
 public:
@@ -71,7 +71,7 @@ public:
         NumericValue max = std::int64_t{0};
     };
 
-    /** Borrowed numeric-domain metadata whose storage belongs to the immutable schema graph. */
+    /** Borrowed numeric-type metadata whose storage belongs to the immutable schema graph. */
     struct NumericDomain {
         std::string_view encoding;
         std::string_view unit;
@@ -93,14 +93,16 @@ public:
         Meaning meaning = Meaning::Ordinary;
         bool deprecated = false;
         bool removed = false;
+        /** Original integer encoding, independent of the runtime label; absent is not zero. */
+        std::optional<std::variant<std::int64_t, std::uint64_t>> rawValue;
     };
 
     /** Enumerate borrowed named-value views without requiring a second persistent metadata vector. */
     virtual void forEachNamedValue(const std::function<void(NamedValue const&)>&) const {}
-    /** Resolve an exact symbol spelling in this domain only. */
+    /** Resolve an exact symbol spelling in this type only. */
     auto namedValue(std::string_view name) const -> std::optional<NamedValue>;
     /** Enumerate positions declaring a symbol; incomplete/cyclic paths require runtime traversal. */
-    static auto namedValuePaths(SchemaId root, const std::function<const Schema*(SchemaId)>& lookup,
+    static auto namedValuePaths(TypeId root, const std::function<const Schema*(TypeId)>& lookup,
                                std::string_view name, bool* complete = nullptr) -> std::vector<SchemaPath>;
     /** Describe physical numeric interpretation without restricting an open range to its named values. */
     virtual auto numericDomain() const -> std::optional<NumericDomain> { return {}; }
@@ -135,7 +137,7 @@ public:
     enum class Composition { None, AnyOf, OneOf, AllOf };
 
     /** Bind identities to borrowed definitions whose owner outlives all traversal. */
-    using Lookup = std::function<const Schema*(SchemaId)>;
+    using Lookup = std::function<const Schema*(TypeId)>;
 
     /** Construct an extension kind without registering its semantics in simfil. */
     static constexpr auto makeKind(StringId name, std::uint16_t affinities) -> Kind
@@ -152,7 +154,7 @@ public:
 
     /** Recognize generic structure even for an unfamiliar specialized kind. */
     auto hasAffinity(ValueType type) const -> bool { return affinities(kind()) & valueTypeAffinity(type); }
-    /** A concrete mask domain, not an unknown/value/union merely capable of containing masks. */
+    /** A concrete mask type, not an unknown/value/union merely capable of containing masks. */
     auto isBitmask() const -> bool
     {
         auto bits = affinities(kind());
@@ -160,7 +162,7 @@ public:
             !(bits & ~(valueTypeAffinity(ValueType::Bitmask) | valueTypeAffinity(ValueType::Null)));
     }
 
-    /** Preserve the concrete producer type name; anonymous domains leave it empty. */
+    /** Preserve the concrete producer type name; anonymous types leave it empty. */
     virtual auto typeName() const -> std::string_view { return typeName_; }
     /** Assign a concrete producer name and invalidate metadata-derived indexes. */
     void setTypeName(std::string name) { typeName_ = std::move(name); invalidate(); }
@@ -168,7 +170,7 @@ public:
     /** Change semantic classification while retaining the implementation's traversal. */
     void setKind(Kind kind) { kindOverride_ = kind; invalidate(); }
 
-    /** Whether undeclared object fields are allowed by this domain. */
+    /** Whether undeclared object fields are allowed by this type. */
     virtual auto open() const -> bool { return open_; }
     /** Permit or forbid undeclared object members independently of known fields. */
     void setOpen(bool open) { open_ = open; invalidate(); }
@@ -182,7 +184,7 @@ public:
     virtual auto fieldRequired(StringId) const -> std::optional<bool> { return {}; }
 
     /** Data edges participate in enumeration; context edges require explicit lookup.
-     * The role belongs to the parent-field edge, never to a name spelling or target domain. */
+     * The role belongs to the parent-field edge, never to a name spelling or target type. */
     enum class FieldRole : uint8_t { Data, Context };
     /** Unknown or conflicting declarations remain enumerable conservatively. */
     virtual auto fieldRole(StringId field) const -> FieldRole;
@@ -199,25 +201,25 @@ public:
 
     /** Preserve the combiner rather than merging away exclusive/intersection semantics. */
     virtual auto composition() const -> Composition { return Composition::None; }
-    /** Domain identities combined at this value position, not child array elements. */
-    virtual auto alternatives() const & -> std::span<const SchemaId> { return {}; }
+    /** Type identities combined at this value position, not child array elements. */
+    virtual auto alternatives() const & -> std::span<const TypeId> { return {}; }
 
     /** Cached proof that field reachability contains no unknown or open descendants. */
     virtual auto reachabilityComplete() const -> bool { return reachabilityComplete_; }
 
-    /** Resolve the possible domains of a member, flattening only logical alternatives. */
-    static auto fieldSchemas(SchemaId root, const Lookup& lookup, StringId field) -> std::vector<SchemaId>;
+    /** Resolve the possible types of a member, flattening only logical alternatives. */
+    static auto fieldSchemas(TypeId root, const Lookup& lookup, StringId field) -> std::vector<TypeId>;
 
-    /** Resolve item domains independently of a prospective runtime array index. */
-    static auto itemSchemas(SchemaId root, const Lookup& lookup) -> std::vector<SchemaId>;
+    /** Resolve item types independently of a prospective runtime array index. */
+    static auto itemSchemas(TypeId root, const Lookup& lookup) -> std::vector<TypeId>;
 
-    /** Look up a declared member domain without allocation or graph traversal.
-     * Unknown or conflicting declarations return NoSchemaId; a declared union
-     * remains that union's domain. Field IDs belong to this schema's dictionary. */
-    virtual auto fieldSchema(StringId field) const -> SchemaId;
+    /** Look up a declared member type without allocation or graph traversal.
+     * Unknown or conflicting declarations return NoTypeId; a declared union
+     * remains that union's type. Field IDs belong to this schema's dictionary. */
+    virtual auto fieldSchema(StringId field) const -> TypeId;
 
-    /** Look up the declared array element domain without allocation or traversal. */
-    virtual auto itemSchema() const -> SchemaId { return itemSchema_; }
+    /** Look up the declared array element type without allocation or traversal. */
+    virtual auto itemSchema() const -> TypeId { return itemSchema_; }
 
     /** Finalization state */
     enum class State {
@@ -226,14 +228,14 @@ public:
         Clean,
     };
 
-    using SchemaIdStack = sfl::small_vector<SchemaId, 8>;
+    using TypeIdStack = sfl::small_vector<TypeId, 8>;
 
     virtual ~Schema() = default;
 
     /**
      * Return this schemas kind.
      */
-    virtual auto kind() const -> Kind { return domainKind(Kind::Unknown); }
+    virtual auto kind() const -> Kind { return typeKind(Kind::Unknown); }
 
     /**
      * Returns true if this schema or any of the schemas it refers to
@@ -256,7 +258,7 @@ public:
     /**
      * Finalize this schema and all schemas it refers to.
      */
-    virtual auto finalize(const std::function<Schema*(SchemaId)>& queryFn) -> State;
+    virtual auto finalize(const std::function<Schema*(TypeId)>& queryFn) -> State;
 
     /**
      * @return All nested field names.
@@ -309,13 +311,13 @@ public:
      * Finalized reachability indexes prune unrelated branches. `complete` is
      * false when unknown metadata, recursion or safety limits can hide matches.
      */
-    static auto fieldPaths(SchemaId root,
-                           const std::function<const Schema*(SchemaId)>& queryFn,
+    static auto fieldPaths(TypeId root,
+                           const std::function<const Schema*(TypeId)>& queryFn,
                            StringId field,
                            bool* complete = nullptr) -> std::vector<SchemaPath>
     {
         std::vector<SchemaPath> paths;
-        SchemaIdStack visited;
+        TypeIdStack visited;
         SchemaPath current;
         bool exhaustive = true;
         std::size_t visits = 0;
@@ -329,13 +331,13 @@ public:
     /**
      * Enumerate precise paths to all values that can hold the enum-like symbol.
      */
-    static auto enumSymbolPaths(SchemaId root,
-                                const std::function<const Schema*(SchemaId)>& queryFn,
+    static auto enumSymbolPaths(TypeId root,
+                                const std::function<const Schema*(TypeId)>& queryFn,
                                 StringId symbol,
                                 bool* complete = nullptr) -> std::vector<SchemaPath>
     {
         std::vector<SchemaPath> paths;
-        SchemaIdStack visited;
+        TypeIdStack visited;
         SchemaPath current;
         bool exhaustive = true;
         std::size_t visits = 0;
@@ -353,7 +355,7 @@ public:
      */
     virtual auto symbolEqualityPaths(
         StringId,
-        const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath>
+        const std::function<const Schema*(TypeId)>&) const -> std::vector<SchemaPath>
     {
         return {};
     }
@@ -364,7 +366,7 @@ public:
      */
     virtual auto scalarFieldPathsForSymbol(
         StringId,
-        const std::function<const Schema*(SchemaId)>&) const -> std::vector<SchemaPath>
+        const std::function<const Schema*(TypeId)>&) const -> std::vector<SchemaPath>
     {
         return {};
     }
@@ -373,10 +375,10 @@ public:
      * Return the first reachable scalar path below the supplied schema.
      */
     static auto firstScalarFieldPath(
-        SchemaId root,
-        const std::function<const Schema*(SchemaId)>& queryFn) -> std::optional<SchemaPath>
+        TypeId root,
+        const std::function<const Schema*(TypeId)>& queryFn) -> std::optional<SchemaPath>
     {
-        SchemaIdStack visited;
+        TypeIdStack visited;
         SchemaPath current;
         return firstScalarFieldPath(root, queryFn, visited, current);
     }
@@ -399,7 +401,7 @@ public:
 
 protected:
     /** Apply optional metadata without losing the kind's static symbolic name. */
-    auto domainKind(Kind fallback) const -> Kind
+    auto typeKind(Kind fallback) const -> Kind
     {
         auto result = kindOverride_.value_or(fallback);
         if (nullable_)
@@ -416,26 +418,26 @@ protected:
         reachabilityComplete_ = false;
         fieldSchemas_.clear();
         contextFields_.clear();
-        itemSchema_ = NoSchemaId;
+        itemSchema_ = NoTypeId;
     }
 
-    /** Reduce repeated declarations of one domain without guessing among distinct domains. */
-    static auto uniqueSchema(std::span<const SchemaId> schemas) -> SchemaId
+    /** Reduce repeated declarations of one type without guessing among distinct types. */
+    static auto uniqueSchema(std::span<const TypeId> schemas) -> TypeId
     {
         if (schemas.empty())
-            return NoSchemaId;
+            return NoTypeId;
         auto id = schemas.front();
-        return std::ranges::all_of(schemas, [id](auto other) { return other == id; }) ? id : NoSchemaId;
+        return std::ranges::all_of(schemas, [id](auto other) { return other == id; }) ? id : NoTypeId;
     }
 
     // Adapters and combiners prepare effective members once. Objects/arrays can
     // instead implement point lookup directly over their existing edge storage.
-    std::vector<std::pair<StringId, SchemaId>> fieldSchemas_;
+    std::vector<std::pair<StringId, TypeId>> fieldSchemas_;
     std::vector<StringId> contextFields_;
-    SchemaId itemSchema_ = NoSchemaId;
+    TypeId itemSchema_ = NoTypeId;
 
     /** Compute completeness from the graph, independently of cyclic finalization state. */
-    auto computeReachabilityComplete(const std::function<Schema*(SchemaId)>& lookup) const -> bool;
+    auto computeReachabilityComplete(const std::function<Schema*(TypeId)>& lookup) const -> bool;
 
     std::uint64_t metadataRevision_ = 0;
     mutable bool reachabilityComplete_ = false;
@@ -449,18 +451,18 @@ protected:
      * finalization state. This lets cyclic schema graphs still produce an exact
      * field set by cutting recursion at already visited schema ids.
      */
-    virtual auto collectNestedFields(const std::function<Schema*(SchemaId)>& queryFn,
-                                     SchemaIdStack& visited,
+    virtual auto collectNestedFields(const std::function<Schema*(TypeId)>& queryFn,
+                                     TypeIdStack& visited,
                                      std::vector<StringId>& fields) const -> void
     {
-        forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+        forEachDirectField([&](StringId field, std::span<const TypeId> children) {
             fields.push_back(field);
             if (fieldRole(field) == FieldRole::Context)
                 return;
             for (auto child : children)
                 appendSchemaFields(child, queryFn, visited, fields);
         });
-        forEachElementSchema([&](SchemaId child) { appendSchemaFields(child, queryFn, visited, fields); });
+        forEachElementSchema([&](TypeId child) { appendSchemaFields(child, queryFn, visited, fields); });
         for (auto child : alternatives())
             appendSchemaFields(child, queryFn, visited, fields);
     }
@@ -469,17 +471,17 @@ protected:
      * Append all enum-like string symbols reachable from this schema without
      * relying on cached finalization state.
      */
-    virtual auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& queryFn,
-                                          SchemaIdStack& visited,
+    virtual auto collectNestedEnumSymbols(const std::function<Schema*(TypeId)>& queryFn,
+                                          TypeIdStack& visited,
                                           std::vector<StringId>& symbols) const -> void
     {
         auto symbolsHere = directEnumSymbols();
         symbols.insert(symbols.end(), symbolsHere.begin(), symbolsHere.end());
-        forEachEnumerableField([&](StringId, std::span<const SchemaId> children) {
+        forEachEnumerableField([&](StringId, std::span<const TypeId> children) {
             for (auto child : children)
                 appendSchemaEnumSymbols(child, queryFn, visited, symbols);
         });
-        forEachElementSchema([&](SchemaId child) { appendSchemaEnumSymbols(child, queryFn, visited, symbols); });
+        forEachElementSchema([&](TypeId child) { appendSchemaEnumSymbols(child, queryFn, visited, symbols); });
         for (auto child : alternatives())
             appendSchemaEnumSymbols(child, queryFn, visited, symbols);
     }
@@ -490,15 +492,15 @@ public:
      * schemas. The default is empty for scalar schemas.
      */
     virtual auto forEachDirectField(
-        const std::function<void(StringId, std::span<const SchemaId>)>&) const -> void
+        const std::function<void(StringId, std::span<const TypeId>)>&) const -> void
     {
     }
 
     /** Enumerate data edges without following lookup-only query-context links. */
     virtual auto forEachEnumerableField(
-        const std::function<void(StringId, std::span<const SchemaId>)>& fn) const -> void
+        const std::function<void(StringId, std::span<const TypeId>)>& fn) const -> void
     {
-        forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+        forEachDirectField([&](StringId field, std::span<const TypeId> children) {
             if (fieldRole(field) == FieldRole::Data)
                 fn(field, children);
         });
@@ -507,7 +509,7 @@ public:
     /**
      * Visit possible array element schemas. The default is empty for non-arrays.
      */
-    virtual auto forEachElementSchema(const std::function<void(SchemaId)>&) const -> void
+    virtual auto forEachElementSchema(const std::function<void(TypeId)>&) const -> void
     {
     }
 
@@ -515,15 +517,15 @@ protected:
     /**
      * Recursively collect schema paths to matching fields.
      */
-    static auto collectFieldPaths(SchemaId schemaId,
-                                  const std::function<const Schema*(SchemaId)>& queryFn,
+    static auto collectFieldPaths(TypeId schemaId,
+                                  const std::function<const Schema*(TypeId)>& queryFn,
                                   StringId field,
-                                  SchemaIdStack& visited,
+                                  TypeIdStack& visited,
                                   SchemaPath& current,
                                   std::vector<SchemaPath>& paths,
                                   bool& complete, std::size_t& visits) -> void
     {
-        if (++visits > 10000 || schemaId == NoSchemaId || paths.size() >= 10000) {
+        if (++visits > 10000 || schemaId == NoTypeId || paths.size() >= 10000) {
             complete = false;
             return;
         }
@@ -551,7 +553,7 @@ protected:
         visited.push_back(schemaId);
 
         auto canonical = schema->canonicalField(field);
-        schema->forEachDirectField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+        schema->forEachDirectField([&](StringId directField, std::span<const TypeId> childSchemas) {
             current.push_back({SchemaPathSegment::Kind::Field, directField});
             if (directField == canonical && paths.size() < 10000)
                 paths.push_back(current);
@@ -569,7 +571,7 @@ protected:
         });
 
         bool hasElements = false;
-        schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+        schema->forEachElementSchema([&](TypeId elementSchemaId) {
             hasElements = true;
             current.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
             collectFieldPaths(elementSchemaId, queryFn, field, visited, current, paths, complete, visits);
@@ -592,15 +594,15 @@ protected:
      * Recursively collect schema paths to values accepting a matching enum-like
      * string symbol.
      */
-    static auto collectEnumSymbolPaths(SchemaId schemaId,
-                                       const std::function<const Schema*(SchemaId)>& queryFn,
+    static auto collectEnumSymbolPaths(TypeId schemaId,
+                                       const std::function<const Schema*(TypeId)>& queryFn,
                                        StringId symbol,
-                                       SchemaIdStack& visited,
+                                       TypeIdStack& visited,
                                        SchemaPath& current,
                                        std::vector<SchemaPath>& paths,
                                   bool& complete, std::size_t& visits) -> void
     {
-        if (++visits > 10000 || schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end()
+        if (++visits > 10000 || schemaId == NoTypeId || std::ranges::find(visited, schemaId) != visited.end()
             || visited.size() >= 128 || paths.size() >= 10000) {
             complete = false;
             return;
@@ -621,7 +623,7 @@ protected:
                 paths.push_back(current);
         }
 
-        schema->forEachEnumerableField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+        schema->forEachEnumerableField([&](StringId directField, std::span<const TypeId> childSchemas) {
             current.push_back({SchemaPathSegment::Kind::Field, directField});
             if (childSchemas.empty())
                 complete = false;
@@ -631,7 +633,7 @@ protected:
         });
 
         bool hasElements = false;
-        schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+        schema->forEachElementSchema([&](TypeId elementSchemaId) {
             hasElements = true;
             current.push_back({SchemaPathSegment::Kind::ArrayElement, 0});
             collectEnumSymbolPaths(elementSchemaId, queryFn, symbol, visited, current, paths, complete, visits);
@@ -653,12 +655,12 @@ protected:
     /**
      * Recursively find the first scalar field path in schema declaration order.
      */
-    static auto firstScalarFieldPath(SchemaId schemaId,
-                                     const std::function<const Schema*(SchemaId)>& queryFn,
-                                     SchemaIdStack& visited,
+    static auto firstScalarFieldPath(TypeId schemaId,
+                                     const std::function<const Schema*(TypeId)>& queryFn,
+                                     TypeIdStack& visited,
                                      SchemaPath& current) -> std::optional<SchemaPath>
     {
-        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+        if (schemaId == NoTypeId || std::ranges::find(visited, schemaId) != visited.end())
             return std::nullopt;
 
         auto const* schema = queryFn(schemaId);
@@ -681,7 +683,7 @@ protected:
 
         if (schema->hasAffinity(ValueType::Object)) {
             std::optional<SchemaPath> result;
-            schema->forEachEnumerableField([&](StringId directField, std::span<const SchemaId> childSchemas) {
+            schema->forEachEnumerableField([&](StringId directField, std::span<const TypeId> childSchemas) {
                 if (result)
                     return;
 
@@ -703,7 +705,7 @@ protected:
         }
 
         std::optional<SchemaPath> result;
-        schema->forEachElementSchema([&](SchemaId elementSchemaId) {
+        schema->forEachElementSchema([&](TypeId elementSchemaId) {
             if (result)
                 return;
 
@@ -732,14 +734,14 @@ protected:
      * caches when possible and falling back to raw graph traversal for cycles.
      */
     template <class CachedValuesFn, class CollectValuesFn>
-    static auto appendSchemaValues(SchemaId schemaId,
-                                   const std::function<Schema*(SchemaId)>& queryFn,
-                                   SchemaIdStack& visited,
+    static auto appendSchemaValues(TypeId schemaId,
+                                   const std::function<Schema*(TypeId)>& queryFn,
+                                   TypeIdStack& visited,
                                    std::vector<StringId>& values,
                                    CachedValuesFn&& cachedValues,
                                    CollectValuesFn&& collectValues) -> void
     {
-        if (schemaId == NoSchemaId || std::ranges::find(visited, schemaId) != visited.end())
+        if (schemaId == NoTypeId || std::ranges::find(visited, schemaId) != visited.end())
             return;
 
         auto* schema = queryFn(schemaId);
@@ -760,9 +762,9 @@ protected:
     /**
      * Append fields reachable through a schema id.
      */
-    static auto appendSchemaFields(SchemaId schemaId,
-                                   const std::function<Schema*(SchemaId)>& queryFn,
-                                   SchemaIdStack& visited,
+    static auto appendSchemaFields(TypeId schemaId,
+                                   const std::function<Schema*(TypeId)>& queryFn,
+                                   TypeIdStack& visited,
                                    std::vector<StringId>& fields) -> void
     {
         appendSchemaValues(
@@ -779,9 +781,9 @@ protected:
     /**
      * Append enum-like string symbols reachable through a schema id.
      */
-    static auto appendSchemaEnumSymbols(SchemaId schemaId,
-                                        const std::function<Schema*(SchemaId)>& queryFn,
-                                        SchemaIdStack& visited,
+    static auto appendSchemaEnumSymbols(TypeId schemaId,
+                                        const std::function<Schema*(TypeId)>& queryFn,
+                                        TypeIdStack& visited,
                                         std::vector<StringId>& symbols) -> void
     {
         appendSchemaValues(
@@ -812,7 +814,7 @@ protected:
     static auto finalizeReachableMetadata(State& state,
                                           std::vector<StringId>& flatFields,
                                           std::vector<StringId>& flatEnumSymbols,
-                                          const std::function<Schema*(SchemaId)>& queryFn,
+                                          const std::function<Schema*(TypeId)>& queryFn,
                                           const Schema& schema) -> State
     {
         if (state == State::Clean || state == State::Finalizing)
@@ -822,11 +824,11 @@ protected:
         flatFields.clear();
         flatEnumSymbols.clear();
 
-        SchemaIdStack visitedFields;
+        TypeIdStack visitedFields;
         schema.collectNestedFields(queryFn, visitedFields, flatFields);
         sortUnique(flatFields);
 
-        SchemaIdStack visitedEnumSymbols;
+        TypeIdStack visitedEnumSymbols;
         schema.collectNestedEnumSymbols(queryFn, visitedEnumSymbols, flatEnumSymbols);
         sortUnique(flatEnumSymbols);
 
@@ -857,10 +859,10 @@ public:
     /** The owner keeps every borrowed definition/string alive; never retain this binding in that owner. */
     SchemaBinding(std::string identity, std::shared_ptr<const void> graphOwner,
                   Schema::Lookup lookup, std::shared_ptr<const StringPool> strings);
-    /** Exact externally meaningful graph identity, including its numeric domain numbering. */
+    /** Exact externally meaningful graph identity, including its graph-local type numbering. */
     auto identity() const noexcept -> std::string_view { return identity_; }
-    /** Resolve a graph-local domain; zero and absent ids have no definition. */
-    auto lookup(SchemaId id) const -> const Schema*;
+    /** Resolve a graph-local type; zero and absent ids have no definition. */
+    auto lookup(TypeId id) const -> const Schema*;
     /** Dictionary used by the schema's field edges, independently of the data dictionary. */
     auto strings() const noexcept -> std::shared_ptr<const StringPool> const& { return strings_; }
 
@@ -882,7 +884,7 @@ class ObjectSchema : public Schema
 public:
     struct FieldSummary {
         StringId field = 0;
-        sfl::small_vector<SchemaId, 1> schemas;
+        sfl::small_vector<TypeId, 1> schemas;
         std::optional<bool> required;
         FieldRole role = FieldRole::Data;
 
@@ -894,7 +896,7 @@ public:
 
     auto kind() const -> Kind override
     {
-        return domainKind(Kind::Object);
+        return typeKind(Kind::Object);
     }
 
     auto canHaveField(StringId field) const -> bool override
@@ -910,7 +912,7 @@ public:
     /**
      * Add a direct field and optional child schemas reachable through it.
      */
-    auto addField(StringId field, std::initializer_list<SchemaId> schemas = {},
+    auto addField(StringId field, std::initializer_list<TypeId> schemas = {},
                   std::optional<bool> required = {}, FieldRole role = FieldRole::Data) -> void
     {
         FieldSummary summary;
@@ -930,7 +932,7 @@ public:
      * Recompute the cached descendant field set from this schema and all
      * reachable child schemas.
      */
-    auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override
+    auto finalize(const std::function<Schema*(TypeId)>& lookup) -> State override
     {
         return finalizeReachableMetadata(state_, flatFields_, flatEnumSymbols_, lookup, *this);
     }
@@ -967,23 +969,23 @@ public:
     }
 
     /** Read the existing field edges, including aliases and repeated declarations. */
-    auto fieldSchema(StringId field) const -> SchemaId override
+    auto fieldSchema(StringId field) const -> TypeId override
     {
         field = canonicalField(field);
-        std::optional<SchemaId> result;
+        std::optional<TypeId> result;
         for (auto const& item : fields_) {
             if (item.field != field)
                 continue;
             auto child = uniqueSchema({item.schemas.data(), item.schemas.size()});
             if (result && *result != child)
-                return NoSchemaId;
+                return NoTypeId;
             result = child;
         }
-        return result.value_or(NoSchemaId);
+        return result.value_or(NoTypeId);
     }
 
     auto forEachDirectField(
-        const std::function<void(StringId, std::span<const SchemaId>)>& fn) const -> void override
+        const std::function<void(StringId, std::span<const TypeId>)>& fn) const -> void override
     {
         for (auto const& field : fields_)
             fn(field.field, {field.schemas.begin(), field.schemas.end()});
@@ -991,7 +993,7 @@ public:
 
     /** The usual all-data object keeps a single linear enumeration pass. */
     auto forEachEnumerableField(
-        const std::function<void(StringId, std::span<const SchemaId>)>& fn) const -> void override
+        const std::function<void(StringId, std::span<const TypeId>)>& fn) const -> void override
     {
         for (auto const& field : fields_)
             if (field.role == FieldRole::Data || fieldRole(field.field) == FieldRole::Data)
@@ -1024,11 +1026,11 @@ public:
     }
 
 private:
-    /** Invalidate derived indexes when domain metadata changes. */
+    /** Invalidate derived indexes when type metadata changes. */
     void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
 
-    auto collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
-                             SchemaIdStack& visited,
+    auto collectNestedFields(const std::function<Schema*(TypeId)>& lookup,
+                             TypeIdStack& visited,
                              std::vector<StringId>& fields) const -> void override
     {
         for (const auto& field : fields_) {
@@ -1040,8 +1042,8 @@ private:
         }
     }
 
-    auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& lookup,
-                                  SchemaIdStack& visited,
+    auto collectNestedEnumSymbols(const std::function<Schema*(TypeId)>& lookup,
+                                  TypeIdStack& visited,
                                   std::vector<StringId>& symbols) const -> void override
     {
         for (const auto& field : fields_) {
@@ -1071,10 +1073,10 @@ private:
 class ValueSchema : public Schema
 {
 public:
-    /** An untyped scalar domain, or a precise builtin scalar kind. */
+    /** An untyped scalar type, or a precise builtin scalar kind. */
     explicit ValueSchema(Kind kind = Kind::Value) { setKind(kind); }
 
-    /** Scalar domains have no descendant fields; a widened extension kind remains conservative. */
+    /** Scalar types have no descendant fields; a widened extension kind remains conservative. */
     auto reachabilityComplete() const -> bool override
     {
         return !open() && !hasAffinity(ValueType::Object) && !hasAffinity(ValueType::Array);
@@ -1093,7 +1095,7 @@ public:
 
     auto kind() const -> Kind override
     {
-        return domainKind(Kind::Value);
+        return typeKind(Kind::Value);
     }
 
     auto canHaveField(StringId) const -> bool override
@@ -1117,7 +1119,7 @@ public:
         ++revision_;
     }
 
-    auto finalize(const std::function<Schema*(SchemaId)>&) -> State override
+    auto finalize(const std::function<Schema*(TypeId)>&) -> State override
     {
         if (state_ == State::Clean || state_ == State::Finalizing)
             return state_;
@@ -1154,17 +1156,17 @@ public:
     }
 
 private:
-    /** Invalidate derived indexes when domain metadata changes. */
+    /** Invalidate derived indexes when type metadata changes. */
     void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
 
-    auto collectNestedFields(const std::function<Schema*(SchemaId)>&,
-                             SchemaIdStack&,
+    auto collectNestedFields(const std::function<Schema*(TypeId)>&,
+                             TypeIdStack&,
                              std::vector<StringId>&) const -> void override
     {
     }
 
-    auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>&,
-                                  SchemaIdStack&,
+    auto collectNestedEnumSymbols(const std::function<Schema*(TypeId)>&,
+                                  TypeIdStack&,
                                   std::vector<StringId>& symbols) const -> void override
     {
         symbols.insert(symbols.end(), enumSymbols_.begin(), enumSymbols_.end());
@@ -1187,7 +1189,7 @@ class ArraySchema : public Schema
 public:
     auto kind() const -> Kind override
     {
-        return domainKind(Kind::Array);
+        return typeKind(Kind::Array);
     }
 
     auto canHaveField(StringId field) const -> bool override
@@ -1203,7 +1205,7 @@ public:
     /**
      * Add possible schemas for elements contained in the array.
      */
-    auto addElementSchemas(std::initializer_list<SchemaId> schemas) -> void
+    auto addElementSchemas(std::initializer_list<TypeId> schemas) -> void
     {
         schemas_.insert(schemas_.end(), schemas.begin(), schemas.end());
         state_ = State::Dirty;
@@ -1215,7 +1217,7 @@ public:
      * Recompute the cached descendant field set from all possible element
      * schemas.
      */
-    auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override
+    auto finalize(const std::function<Schema*(TypeId)>& lookup) -> State override
     {
         return finalizeReachableMetadata(state_, flatFields_, flatEnumSymbols_, lookup, *this);
     }
@@ -1240,51 +1242,51 @@ public:
         return revision_ + metadataRevision_;
     }
 
-    auto elementSchemas() const & -> std::span<const SchemaId>
+    auto elementSchemas() const & -> std::span<const TypeId>
     {
         return {schemas_.begin(), schemas_.end()};
     }
 
     /** Read the existing element declarations without materializing a result vector. */
-    auto itemSchema() const -> SchemaId override
+    auto itemSchema() const -> TypeId override
     {
         return uniqueSchema({schemas_.data(), schemas_.size()});
     }
 
-    auto forEachElementSchema(const std::function<void(SchemaId)>& fn) const -> void override
+    auto forEachElementSchema(const std::function<void(TypeId)>& fn) const -> void override
     {
         for (auto schemaId : schemas_)
             fn(schemaId);
     }
 
 private:
-    /** Invalidate derived indexes when domain metadata changes. */
+    /** Invalidate derived indexes when type metadata changes. */
     void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
 
-    auto collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
-                             SchemaIdStack& visited,
+    auto collectNestedFields(const std::function<Schema*(TypeId)>& lookup,
+                             TypeIdStack& visited,
                              std::vector<StringId>& fields) const -> void override
     {
         for (const auto& schemaId : schemas_)
             appendSchemaFields(schemaId, lookup, visited, fields);
     }
 
-    auto collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& lookup,
-                                  SchemaIdStack& visited,
+    auto collectNestedEnumSymbols(const std::function<Schema*(TypeId)>& lookup,
+                                  TypeIdStack& visited,
                                   std::vector<StringId>& symbols) const -> void override
     {
         for (const auto& schemaId : schemas_)
             appendSchemaEnumSymbols(schemaId, lookup, visited, symbols);
     }
 
-    sfl::small_vector<SchemaId, 1> schemas_;
+    sfl::small_vector<TypeId, 1> schemas_;
     std::vector<StringId> flatFields_; // Ordered!
     std::vector<StringId> flatEnumSymbols_; // Ordered!
     std::uint64_t revision_ = 0;
     State state_ = State::Dirty;
 };
 
-/** Union, exclusive union or intersection of domains at the same value position. */
+/** Union, exclusive union or intersection of types at the same value position. */
 class CombinedSchema : public Schema
 {
 public:
@@ -1292,13 +1294,13 @@ public:
     explicit CombinedSchema(Composition mode);
 
     /** Add an alternative by identity without copying its definition. */
-    void addAlternative(SchemaId schema);
-    /** Combine affinity summaries while preserving this domain's logical kind name. */
+    void addAlternative(TypeId schema);
+    /** Combine affinity summaries while preserving this type's logical kind name. */
     auto kind() const -> Kind override;
     /** Report the explicit logical operator rather than a flattened approximation. */
     auto composition() const -> Composition override { return mode_; }
     /** Expose immutable alternative identities in declaration order. */
-    auto alternatives() const & -> std::span<const SchemaId> override { return alternatives_; }
+    auto alternatives() const & -> std::span<const TypeId> override { return alternatives_; }
     /** Cached names reachable through any alternative. */
     auto nestedFields() const & -> std::span<const StringId> override { return fields_; }
     /** Cached string symbols reachable through any alternative. */
@@ -1309,24 +1311,24 @@ public:
     auto finalized() const -> bool override { return state_ == State::Clean; }
     /** Invalidate environment-local plans after alternative or metadata edits. */
     auto revision() const -> std::uint64_t override { return metadataRevision_; }
-    /** Prune only when every relevant domain supports the absence proof. */
+    /** Prune only when every relevant type supports the absence proof. */
     auto canHaveField(StringId field) const -> bool override;
     /** Test known symbol reachability, remaining conservative while dirty. */
     auto canHaveEnumSymbol(StringId symbol) const -> bool override;
     /** Derive reachability and coarse affinity without merging away alternatives. */
-    auto finalize(const std::function<Schema*(SchemaId)>& lookup) -> State override;
+    auto finalize(const std::function<Schema*(TypeId)>& lookup) -> State override;
 
 private:
     /** Alternative mutations invalidate both affinity and reachability summaries. */
     void invalidate() override { Schema::invalidate(); state_ = State::Dirty; }
     /** Walk alternative edges to assemble the field index. */
-    void collectNestedFields(const std::function<Schema*(SchemaId)>& lookup,
-                             SchemaIdStack& visited, std::vector<StringId>& fields) const override;
+    void collectNestedFields(const std::function<Schema*(TypeId)>& lookup,
+                             TypeIdStack& visited, std::vector<StringId>& fields) const override;
     /** Walk alternative edges to assemble the symbol index. */
-    void collectNestedEnumSymbols(const std::function<Schema*(SchemaId)>& lookup,
-                                  SchemaIdStack& visited, std::vector<StringId>& symbols) const override;
+    void collectNestedEnumSymbols(const std::function<Schema*(TypeId)>& lookup,
+                                  TypeIdStack& visited, std::vector<StringId>& symbols) const override;
     Composition mode_;
-    std::vector<SchemaId> alternatives_;
+    std::vector<TypeId> alternatives_;
     std::vector<StringId> fields_, symbols_;
     State state_ = State::Dirty;
     std::uint16_t affinities_ = AllAffinities;

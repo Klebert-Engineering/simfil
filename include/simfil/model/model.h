@@ -183,9 +183,9 @@ public:
     /** Read a node's type; the default preserves custom models' resolution protocol. */
     virtual auto type(ModelNode const& node) const -> ValueType;
     /** Read a node's stored schema id; custom models may use their normal resolution protocol. */
-    virtual auto schema(ModelNode const& node) const -> SchemaId;
-    /** Resolve a model-local schema id into an owning graph-qualified domain. */
-    virtual auto schemaReference(SchemaId id) const -> SchemaReference;
+    virtual auto schema(ModelNode const& node) const -> TypeId;
+    /** Resolve a model-local schema id into an owning graph-qualified type. */
+    virtual auto schemaReference(TypeId id) const -> SchemaReference;
     /** Custom/overlay models may resolve an occurrence without inventing persistent local ids. */
     virtual auto schemaReference(ModelNode const& node) const -> SchemaReference;
 
@@ -288,10 +288,10 @@ public:
     ModelNode::Ptr newValue(simfil::ByteArray const& value);
     ModelNode::Ptr newValue(StringId handle);
 
-    /** Persist an existing scalar domain; validate storage bounds and throw on invalid input. */
-    auto newQualifiedValue(ScalarValueType value, SchemaReference const& domain) -> ModelNode::Ptr;
-    /** Persist full-width bits and their intrinsic domain; reject invalid width, binding or storage size. */
-    auto newBitmask(std::uint64_t bits, SchemaReference const& domain) -> ModelNode::Ptr;
+    /** Persist an existing scalar type; validate storage bounds and throw on invalid input. */
+    auto newQualifiedValue(ScalarValueType value, SchemaReference const& typeRef) -> ModelNode::Ptr;
+    /** Persist full-width bits and their intrinsic type; reject invalid width, binding or storage size. */
+    auto newBitmask(std::uint64_t bits, SchemaReference const& typeRef) -> ModelNode::Ptr;
     /** Bind a single graph directly, preserving its numeric ids; incompatible rebinding is rejected. */
     void setSchemaBinding(std::shared_ptr<const SchemaBinding> binding);
     /** Rebind core schema columns transactionally to one exact graph without copying payloads.
@@ -305,16 +305,16 @@ public:
     auto schemaBinding(std::string_view identity) const -> std::shared_ptr<const SchemaBinding>;
     /** Check a native single-graph payload binding without invoking its external resolver. */
     auto hasDirectSchemaBinding(std::string_view identity) const noexcept -> bool;
-    /** Resolve a single-graph id or a result pool's common remapped domain id. */
-    auto schemaReference(SchemaId id) const -> SchemaReference override;
+    /** Resolve a single-graph id or a result pool's common remapped type id. */
+    auto schemaReference(TypeId id) const -> SchemaReference override;
     /** Read core schema columns directly, retaining custom-node and foreign-owner dispatch. */
-    auto schema(ModelNode const& node) const -> SchemaId override;
+    auto schema(ModelNode const& node) const -> TypeId override;
     /** Classify core columns without materializing wrappers; custom columns still resolve normally. */
     auto type(ModelNode const& node) const -> ValueType override;
     /** Avoid resolving node schemas when this model has no semantic graph binding. */
     auto schemaReference(ModelNode const& node) const -> SchemaReference override;
-    /** Import an exact domain into this pool's common binding namespace, retaining its graph once. */
-    auto importSchema(SchemaReference const& domain) -> tl::expected<SchemaId, Error>;
+    /** Import an exact type into this pool's common binding namespace, retaining its graph once. */
+    auto importSchema(SchemaReference const& typeRef) -> tl::expected<TypeId, Error>;
 
     /** Checked creation for untrusted inputs; size errors and frozen pools return errors without mutation. */
     [[nodiscard]] auto tryNewObject(size_t initialFieldCapacity = 2, bool fixedSize = false)
@@ -332,9 +332,9 @@ public:
         size_t maxDepth = 64;
         size_t maxNodes = 100000;
         size_t maxBytes = 16 * 1024 * 1024;
-        /** Rebind known domains during copying, for example into a composed graph.
+        /** Rebind known types during copying, for example into a composed graph.
          * An absent callback preserves source bindings. A callback must return a
-         * resolved domain; removing provenance or coercing the payload is not allowed.
+         * resolved type; removing provenance or coercing the payload is not allowed.
          * Ordinary unqualified scalar leaves do not invoke it. */
         std::function<SchemaReference(SchemaReference const&)> schemaRemap;
     };
@@ -441,10 +441,10 @@ protected:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
-    [[nodiscard]] SchemaId objectSchemaId(ArrayIndex members) const;
-    auto setObjectSchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>;
-    [[nodiscard]] SchemaId arraySchemaId(ArrayIndex members) const;
-    auto setArraySchemaId(ArrayIndex members, SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId objectSchemaId(ArrayIndex members) const;
+    auto setObjectSchemaId(ArrayIndex members, TypeId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId arraySchemaId(ArrayIndex members) const;
+    auto setArraySchemaId(ArrayIndex members, TypeId schemaId) -> tl::expected<void, Error>;
 
     /**
      * Protected object/array member storage access,

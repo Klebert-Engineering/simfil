@@ -94,8 +94,8 @@ TEST_CASE("Native copying preserves types and remaps existing field names", "[mo
         auto result = target->copyNode(*overlay);
         REQUIRE(result);
         copied = *result;
-        REQUIRE(copied->schema() == NoSchemaId);
-        REQUIRE(copied->at(2)->schema() == NoSchemaId);
+        REQUIRE(copied->schema() == NoTypeId);
+        REQUIRE(copied->at(2)->schema() == NoTypeId);
         REQUIRE(copied->keyAt(0) != root->keyAt(0));
     }
     REQUIRE(lifetime.expired());

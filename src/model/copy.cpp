@@ -57,12 +57,12 @@ public:
                 value.type == ValueType::TransientObject || value.type == ValueType::LAST_) {
                 return failure("Unsupported result value in native copy");
             }
-            else if (auto domain = value.schemaReference()) {
+            else if (auto typeRef = value.schemaReference()) {
                 if (options_.maxDepth < 1 || nodes_ >= options_.maxNodes || !charge(sizeof(ModelNodeAddress)))
                     return failure("Node copy node/depth/byte budget exceeded");
                 ++nodes_;
                 // Qualification follows captured Value provenance, never destination-schema inference.
-                copied = copyQualified(value.getScalar(), domain);
+                copied = copyQualified(value.getScalar(), typeRef);
             }
             else {
                 auto scalar = model_ptr<ValueNode>::make(value.getScalar(), target_.shared_from_this());
@@ -84,7 +84,7 @@ private:
         try {
             auto mapped = options_.schemaRemap(source);
             if (!mapped || !mapped.definition())
-                return failure("Schema remapping returned an unresolved domain");
+                return failure("Schema remapping returned an unresolved type");
             return mapped;
         }
         catch (std::exception const& error) {
@@ -98,8 +98,8 @@ private:
         if (!charge(sizeof(ModelNodeAddress)))
             return failure("Node copy byte budget exceeded");
         if (source.type() != ValueType::Object && source.type() != ValueType::Array)
-            if (auto domain = source.schemaReference())
-                return copyQualified(source.value(), domain);
+            if (auto typeRef = source.schemaReference())
+                return copyQualified(source.value(), typeRef);
         switch (source.type()) {
         case ValueType::Undef: return target_.newUndefined();
         case ValueType::Null: return target_.resolve(ModelNodeAddress{Model::Null, 1});
@@ -140,29 +140,29 @@ private:
     }
 
     /** Persist one already-typed scalar; raw numeric leaves copied inside compounds stay compact. */
-    auto copyQualified(ScalarValueType const& value, SchemaReference const& sourceDomain)
+    auto copyQualified(ScalarValueType const& value, SchemaReference const& sourceType)
         -> tl::expected<ModelNode::Ptr, Error>
     {
-        if (!sourceDomain.definition())
+        if (!sourceType.definition())
             return failure("Scalar has no resolved schema definition");
-        auto mapped = remapSchema(sourceDomain);
+        auto mapped = remapSchema(sourceType);
         if (!mapped)
             return tl::unexpected(mapped.error());
-        auto const& domain = *mapped;
+        auto const& typeRef = *mapped;
         // Charge conservatively for raw storage, qualifier and common binding metadata.
-        size_t bytes = sizeof(std::uint64_t) + sizeof(SchemaId) + sizeof(ModelNodeAddress);
+        size_t bytes = sizeof(std::uint64_t) + sizeof(TypeId) + sizeof(ModelNodeAddress);
         if (auto text = std::get_if<std::string>(&value))
             bytes += text->size() + 2 * sizeof(std::uint32_t);
         else if (auto view = std::get_if<std::string_view>(&value))
             bytes += view->size() + 2 * sizeof(std::uint32_t);
         else if (auto data = std::get_if<simfil::ByteArray>(&value))
             bytes += data->bytes.size() + 2 * sizeof(std::uint32_t);
-        if (!charge(bytes) || !charge(domain.binding->identity().size()))
+        if (!charge(bytes) || !charge(typeRef.binding->identity().size()))
             return failure("Node copy byte budget exceeded");
         try {
             if (auto mask = std::get_if<simfil::Bitmask>(&value))
-                return target_.newBitmask(mask->bits, domain);
-            return target_.newQualifiedValue(value, domain);
+                return target_.newBitmask(mask->bits, typeRef);
+            return target_.newQualifiedValue(value, typeRef);
         }
         catch (std::exception const& error) {
             return failure(error.what());
@@ -196,24 +196,24 @@ private:
                 return tl::unexpected(created.error());
             object = *created;
         }
-        if (auto sourceDomain = source.schemaReference()) {
-            auto mapped = remapSchema(sourceDomain);
+        if (auto sourceType = source.schemaReference()) {
+            auto mapped = remapSchema(sourceType);
             if (!mapped)
                 return tl::unexpected(mapped.error());
-            auto const& domain = *mapped;
+            auto const& typeRef = *mapped;
             // Graph composition may widen a container, but must not turn it into a scalar.
-            if (options_.schemaRemap && !domain.definition()->hasAffinity(source.type()))
+            if (options_.schemaRemap && !typeRef.definition()->hasAffinity(source.type()))
                 return failure("Remapped schema is incompatible with the copied container");
-            if (!charge(domain.binding->identity().size() + sizeof(SchemaId)))
+            if (!charge(typeRef.binding->identity().size() + sizeof(TypeId)))
                 return failure("Node copy byte budget exceeded");
-            auto imported = target_.importSchema(domain);
+            auto imported = target_.importSchema(typeRef);
             if (!imported)
                 return tl::unexpected(imported.error());
             auto attached = array ? array->setSchema(*imported) : object->setSchema(*imported);
             if (!attached)
                 return tl::unexpected(attached.error());
         }
-        else if (source.schema() != NoSchemaId)
+        else if (source.schema() != NoTypeId)
             return failure("Cannot copy an unbound source schema id");
         for (uint32_t i = 0; i < count; ++i) {
             std::optional<std::string_view> name;

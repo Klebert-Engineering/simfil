@@ -1,11 +1,17 @@
-# Schema Domains And Query Views
+# Schema Types And Query Views
 
 Simfil uses one typed schema graph for query optimization and completion.
 `SchemaModel` exposes that same graph as lazy metadata objects for ordinary
 Simfil queries. Completion does not evaluate those descriptors or construct
 sample feature objects.
 
-## Domain Contract
+## Type Contract
+
+`TypeId` is a 16-bit graph-local identity, not an artifact identity or a feature
+class name. `NoTypeId` is the unknown sentinel. `SchemaReference` combines that
+local ID with its exact owning `SchemaBinding`; its identity token still denotes
+the complete immutable graph. `SchemaPool::typeCount()` and
+`schemaStatistics().types` count allocated definitions, excluding the sentinel.
 
 `Schema::Kind` is a 32-bit packed value. Its upper 16 bits are a **static**
 kind-name `StringId`; its lower 16 bits describe possible runtime `ValueType`s.
@@ -28,20 +34,20 @@ is a separate optional concrete producer type name, not the kind's spelling.
 
 The distinctions are intentional:
 
-- `Unknown` means unavailable information; `Any` means an unrestricted domain.
+- `Unknown` means unavailable information; `Any` means an unrestricted type.
   Neither proves a descendant field absent. `Never` means no possible value.
 - An empty `ObjectSchema` is a known closed object. Use `setOpen(true)` for
-  undeclared members. A field with no child schema, `NoSchemaId`, or an unresolved
+  undeclared members. A field with no child schema, `NoTypeId`, or an unresolved
   schema reference is unknown, **not** an implicitly scalar leaf. Openness does
   not weaken explicitly declared fields; an undeclared open alternative still
-  prevents guessing one exact domain for an ambiguous union.
+  prevents guessing one exact type for an ambiguous union.
 - An array's element alternatives describe possible types, not length or tuple
-  positions. An unspecified element domain is unknown.
+  positions. An unspecified element type is unknown.
 - `CombinedSchema` retains `AnyOf`, `OneOf`, or `AllOf` at the same value position.
   Empty AnyOf/OneOf is impossible; empty AllOf is unrestricted. Affinity summarizes
   alternatives but does not replace their logical operator.
 - `fieldRequired` belongs to the parent-field edge: true, false, or unknown.
-  `nullable` belongs to the value domain and independently allows/excludes null.
+  `nullable` belongs to the value type and independently allows/excludes null.
 - All string enums/constants use `addEnumSymbol` / `directEnumSymbols` in the
   binding's pool. `enumValues` / `addEnumValue` are for non-string scalar literals;
   the concrete builder rejects both string and string_view values there. This
@@ -50,7 +56,7 @@ The distinctions are intentional:
   a few named sentinels do not make a numeric range an exhaustive enum.
 
 This is not a JSON Schema validator. In particular, following an intersection's
-fields returns a conservative set of candidate domains, not the complete logical
+fields returns a conservative set of candidate types, not the complete logical
 intersection of every scalar constraint.
 
 ## Ownership And Indexes
@@ -72,11 +78,11 @@ Runtime scalar extraction uses the allocation-free `fieldSchema(fieldId)` and
 `itemSchema()` point lookups, not the allocating `fieldSchemas` / `itemSchemas`
 analysis helpers. Objects and arrays read their existing member edges directly.
 Combiners prepare an effective member index during finalization: a named union
-member has a declared domain just like an object member, regardless of which
+member has a declared type just like an object member, regardless of which
 member is currently present. This does not flatten `OneOf` descriptors or infer
-a narrower domain from the scalar's raw value. A field declared as one union
-domain retains that domain; unresolved or conflicting declarations return
-`NoSchemaId`.
+a narrower type from the scalar's raw value. A field declared as one union
+type retains that type; unresolved or conflicting declarations return
+`NoTypeId`.
 
 Custom adapters can override these point lookups over their own edge storage,
 or call `Schema::finalize(lookup)` to prepare the default member index from their
@@ -93,8 +99,8 @@ Owners must rebuild/invalidate dependent bindings and indexes after graph edits.
 
 `SchemaPool : ModelPool` is the reusable owning implementation. It stores fields,
 elements, alternatives, named values and numeric metadata in compact canonical
-columns. `domain(id)` borrows a `Schema` view over those columns; `domainNode(id)`
-creates a lazy descriptor view, not another domain graph. Applications such as
+columns. `type(id)` borrows a `Schema` view over those columns; `typeNode(id)`
+creates a lazy descriptor view, not another type graph. Applications such as
 mapget derive their artifact owner to add format, layer and feature metadata.
 The independent `ObjectSchema`/`ArraySchema` builders and custom adapters remain
 supported; a consumer need not use `SchemaPool` to participate in queries.
@@ -124,9 +130,9 @@ edge roles remain explicit; a combiner can expose both its alternatives and its
 own context fields in the descriptor model.
 
 `importGraph(source, reuse)` copies native declarations while preserving sharing
-and cycles. Its temporary source-ID table translates only graph-local domain
+and cycles. Its temporary source-ID table translates only graph-local type
 IDs. Nonzero entries in an optional reuse table refer to existing destination
-domains; the application must establish their semantic compatibility. Generic
+types; the application must establish their semantic compatibility. Generic
 import does not guess whether same-named application types may be merged.
 
 The bounded native codec includes the private dictionary and ModelPool payload.
@@ -145,7 +151,7 @@ performance improvement; the unresolved baseline gate below still applies.
 Extraction validation on 2026-11-03 rebuilt the standalone Release library and
 ran all 210 test cases successfully, including every benchmark body with one
 sample (3,377,177 assertions; calibration affects the assertion count). The focused
-pool/context/copy/domain selection passed 57 cases and 7,970 assertions. Full
+pool/context/copy/type selection passed 57 cases and 7,970 assertions. Full
 Memcheck and Helgrind runs each passed 205 cases with the five benchmark cases
 intentionally skipped; both reported zero errors, and Memcheck retained zero
 bytes at exit. A separate JSON-disabled Release library also compiled. These checks include
@@ -160,7 +166,7 @@ references and a malformed core self-cycle rejected before recursion.
 
 `SchemaBinding` retains the immutable graph owner, exact content identity, lookup
 and schema dictionary. `SchemaReference` combines that binding with a local
-16-bit `SchemaId`. Different graphs may reuse the same local IDs. Runtime field
+16-bit `TypeId`. Different graphs may reuse the same local IDs. Runtime field
 dictionaries may differ from the schema dictionary: scalar extraction and bound
 wildcard plans translate names rather than interpreting foreign IDs as local ones.
 Wildcard plan caches retain each graph independently.
@@ -193,20 +199,34 @@ creates a mutable private dictionary suitable for compilation/completion.
 Adapters implement `forEachNamedValue`, `numericDomain`, and `bitWidth` directly
 over their owning graph. Views borrow storage from that graph; they must not
 reference callback-local strings or ranges. Names have exact spelling and may
-have aliases. A named value includes its raw boolean/integer/unsigned/float/string
+have aliases. A named value includes its runtime boolean/integer/unsigned/float/string
 literal, role (`constant`, `special`, `flag`), meaning (`ordinary`, `unknown`,
 `variable`, `unbounded`, `saturated`), and deprecated/removed status. Numeric
 metadata separately describes encoding, bounds, ordinary ranges, unit, scale,
 offset and completeness. Unknown numeric codes remain ordinary raw numbers.
 
+`NamedValue::rawValue` optionally preserves the original signed or unsigned
+64-bit ordinal separately from that runtime literal. Missing metadata is distinct
+from zero; aliases can share an ordinal. This does not change query evaluation,
+enum completion, or the runtime label. Descriptors omit `rawValue` when absent
+and otherwise expose it through the normal node protocol. As with other integer
+metadata, unsigned values above `INT64_MAX` use exact decimal strings in descriptor
+JSON rather than floating-point conversion.
+
+The generic native `SchemaPool` codec is version 2. Named-value rows append the
+ordinal bits and a presence/signedness tag; numeric bounds and range rows retain
+their previous layout. Readers reject all other codec versions and malformed
+ordinal tags rather than silently dropping metadata. `importGraph` preserves
+ordinals while remapping graph-local type IDs.
+
 Schema mode rewrites standalone named values to predicates on declared paths.
 Numeric names use equality; flags use all-bits membership. Contextual comparisons
 such as `speed = SPEED_UNLIMITED` resolve the name against the **selected value's
-actual domain**, not a global symbol table or a union of possible raw codes.
-Missing or ambiguous domain provenance is an error rather than a guessed profile.
+actual type**, not a global symbol table or a union of possible raw codes.
+Missing or ambiguous type provenance is an error rather than a guessed profile.
 Quoted strings remain strings; fields and environment constants retain precedence.
 Incomplete/cyclic path sets use bounded runtime schema traversal, retaining the
-owning dictionary even through descendants with no unique domain. Completion uses
+owning dictionary even through descendants with no unique type. Completion uses
 the same metadata and scopes named suggestions to the other comparison operand.
 
 Values extracted from a concrete parent field or array-element edge retain an
@@ -214,31 +234,31 @@ optional `SchemaReference`. Int/Float/String categories do not change. Identity
 and selection operations, traces, and the first min/max winner on a tie retain
 the reference. Arithmetic, casts, comparisons, new literals and ordinary numeric
 sum/count construct unannotated values, including `+ 0`. A custom selecting fold
-preserves whichever Value it returns. Null and undefined never acquire a domain
+preserves whichever Value it returns. Null and undefined never acquire a type
 from their parent. Ordinary stored leaves remain compact and unannotated.
 
-`ValueType::Bitmask` instead carries intrinsic uint64 bits and exact domain
-identity. Persistent mask rows contain only uint64 bits and a local SchemaId;
+`ValueType::Bitmask` instead carries intrinsic uint64 bits and exact type
+identity. Persistent mask rows contain only uint64 bits and a local TypeId;
 the common binding table owns the graph. `hasFlag(mask, 'NAME')` tests all
 declared bits; a named zero matches exactly zero. Unknown flags, incompatible
-domains, negative/float coercions and invalid shifts are errors. Unknown active
+types, negative/float coercions and invalid shifts are errors. Unknown active
 bits are retained. Complement and shifts respect the declared width. Use
 `bitmask(existingMask, '0x8000000000000000')` for lossless full-width construction;
 ordinary signed integer literals reject overflow.
 
 The exact JSON tag is
-`{"_bitmask":true,"bits":"0x8000000000000000","schema":"exact-graph-token","domain":4}`.
+`{"_bitmask":true,"bits":"0x8000000000000000","schema":"exact-graph-token","typeId":4}`.
 Import requires that exact graph through the model binding/resolver. Objects with
 additional keys remain application objects. Mask JSON never uses floating-point
 numbers or labels as a substitute for raw bits.
 
 Exact path enumeration accepts an optional `bool* complete` output. Active-path
-SchemaIds detect cycles; reused definitions in sibling branches and repeated
+TypeIds detect cycles; reused definitions in sibling branches and repeated
 field names are valid. Enumeration also has depth/work caps. Incomplete enum
 path sets use a schema-guided predicate over actual data instead of an incorrect
 finite OR that misses deeper matches. That predicate matches only declared enum
 positions, not unrelated strings, and static path analysis reports unresolved
-access. Its compiled root SchemaId must refer to the same logical graph when
+access. Its compiled root TypeId must refer to the same logical graph when
 the AST is rebound.
 
 Field-path enumeration prunes branches only when a finalized, complete
@@ -274,7 +294,7 @@ The lookup closure and pool outlive all returned nodes through the model owner.
 The graph and namespace must not change during the view's lifetime. Views are
 request-local and not concurrently mutable. The adapter never interns strings.
 
-Descriptors are ordinary objects, even for represented scalar/array domains:
+Descriptors are ordinary objects, even for represented scalar/array types:
 
 ```json
 {
@@ -293,11 +313,11 @@ Descriptors are ordinary objects, even for represented scalar/array domains:
 }
 ```
 
-Explicit combiners use `alternatives`, not `elements`. Multiple domain IDs on a
+Explicit combiners use `alternatives`, not `elements`. Multiple type IDs on a
 field edge are an implicit union. Unknown optional metadata is omitted. Field
 names are under `fields`, so they cannot collide with descriptor metadata names.
 `get`, `at`, `keyAt`, `iterate`, and `toJson` agree; `kind` is a string through all
-of them. Descriptor `schema()` is `NoSchemaId`, not the represented domain ID.
+of them. Descriptor `schema()` is `NoTypeId`, not the represented type ID.
 This prevents feature-field pruning from hiding descriptor metadata.
 
 Scalar descriptors additionally expose `namedValues`, `numericDomain`, and
@@ -329,6 +349,9 @@ Field edges distinguish enumerable `Schema::FieldRole::Data` from lookup-only
 member; `forEachEnumerableField` omits context edges. Explicit lookup, including
 completion after `context.`, follows either role. Recursive discovery, enum
 shorthand and wildcard child plans do not descend through context links.
+Arrays may also declare named lookup edges, such as a coordinate's `lon` member.
+Wildcard plans preserve those direct matches, including context terminals, while
+recursing only through array elements. Ordinary arrays still skip named lookup.
 Classification is independent of spelling: a `$`-prefixed data field is still
 enumerable, and an ordinary-named context field is not. Lazy field descriptors
 mark lookup-only links with `role: "context"` without hiding their target `$ref`.
@@ -343,14 +366,14 @@ members; schema metadata does not remove real children from arbitrary models.
 auto candidates = simfil::complete(env, "items[17].na", 12, rootSchemaId, options);
 ```
 
-This overload takes a `SchemaId` instead of a `ModelNode`. It reuses tokenization,
+This overload takes a `TypeId` instead of a `ModelNode`. It reuses tokenization,
 the relaxed parser, completion AST, smart-case filtering, and replacement ranges.
 It does not execute constant-folding or registered functions. Unfinished string
 literals are accepted only for schema completion; compilation remains strict.
 
-Field access follows member domains, arbitrary positive/negative array indices
-follow element domains, and logical alternatives do not insert a fictional array
-level. Filtering preserves the input domain. AND/OR inspect cursor-local branches
+Field access follows member types, arbitrary positive/negative array indices
+follow element types, and logical alternatives do not insert a fictional array
+level. Filtering preserves the input type. AND/OR inspect cursor-local branches
 independently of sample truth values. Comparisons offer the left operand's enum
 choices; unknown functions/accesses stay unknown instead of inventing fields.
 Root-owned operand alias hooks have the same precedence/scope as compilation;
@@ -358,7 +381,7 @@ explicit paths do not reinterpret member names as aliases.
 
 Model lookup aliases are separate: an adapter can override
 `Schema::canonicalField` to resolve a member name as its runtime model does,
-without duplicating enumerated field paths. Member-domain resolution, field path
+without duplicating enumerated field paths. Member-type resolution, field path
 discovery, wildcard direct-field plans and concrete/recursive `referencedSchemaPaths`
 analysis use that hook. Adapters must also keep `canHaveField` conservative for
 lookup aliases reachable in descendants; a canonical-only name index cannot
@@ -413,7 +436,7 @@ evaluation overload remains unbounded and unchanged for existing callers.
 
 ## Native Result Materialization
 
-`CopyOptions::schemaRemap` optionally translates each known source domain while
+`CopyOptions::schemaRemap` optionally translates each known source type while
 copying into another exact graph. Unqualified leaves remain unqualified and do
 not invoke the callback. Missing or physically incompatible target definitions
 are errors, not permission to drop provenance.
@@ -425,7 +448,7 @@ failed validation leaves the model unchanged. Derived models must prevalidate
 their own custom schema columns and update them after the core operation.
 Use this only on unpublished, exclusively owned models: existing node handles
 observe the new binding, while already detached Values retain their old exact
-domain. Translation tables are temporary ingestion work, not query-path state.
+type. Translation tables are temporary ingestion work, not query-path state.
 
 `ModelPool::copyNode(node, options)` copies a query-visible subtree through its
 native node protocol. `copySequence(span<Value const>, options)` returns an outer
@@ -435,12 +458,12 @@ field name must already exist in the destination pool; IDs are remapped by name.
 Strings and bytes become destination-owned payloads. The source owner is retained
 during copying, but not by the result. Exact schema graph owners are retained in
 the destination's common binding table and schema IDs are remapped. A direct
-single-graph pool rejects foreign domains; an unbound result pool can import
+single-graph pool rejects foreign types; an unbound result pool can import
 several graphs. Unbound nonzero source schema IDs are errors, not silently erased.
 
 Copying an existing compound preserves its schema and ordinary scalar leaves.
 An independently selected scalar Value with provenance becomes a qualified node
-holding a same-pool primitive address and local domain ID. Unannotated values
+holding a same-pool primitive address and local type ID. Unannotated values
 remain ordinary storage. There is no destination-schema inference, generated
 result schema, or per-result parallel metadata table. Bitmasks always use their
 dedicated column. Numeric/string JSON export remains plain and intentionally
@@ -508,7 +531,7 @@ field plans and the exact path with an owning schema binding and runtime scalar
 provenance; these costs must not be hidden behind the legacy callback benchmark.
 Scalar leaves now have explicit
 ValueSchemas: unknown child metadata no longer silently means scalar. Completion
-benchmarks compare real-model/schema root suggestions with direct root-domain
+benchmarks compare real-model/schema root suggestions with direct root-type
 suggestions and a nested array/union index. Setup and finalization are outside
 timed loops. They are diagnostic measurements, not flaky wall-time assertions.
 
@@ -518,7 +541,7 @@ Paired local Release runs on 2026-09-29 (GCC 13, 40 samples, 2000 resamples),
 without concurrent builds, compare the preserved `626984e` executable with this
 implementation. Times are sample means, not performance guarantees. The baseline
 used the previous implicit-scalar schema leaves; the current fixture makes those
-same scalar domains explicit without changing the model data or query topology.
+same scalar types explicit without changing the model data or query topology.
 
 | Query | Before | After |
 | --- | ---: | ---: |
@@ -540,14 +563,14 @@ to attribute the remaining cost; retain these no-schema controls rather than
 hiding that cost behind schema pruning.
 
 For 256 candidate fields, completion in the same run measured 48.9 us through a
-real model/schema root, 53.6 us directly through the root domain, and 48.2 us
+real model/schema root, 53.6 us directly through the root type, and 48.2 us
 through a nested array/union index. Those short samples have appreciable timing
 noise; they establish comparable latency, not a statistically significant ordering.
 The direct path needs no synthetic model construction. Removing duplicate field
-enumeration reduced its earlier nested-domain measurement from about 83 us to
+enumeration reduced its earlier nested-type measurement from about 83 us to
 about 50 us on this machine.
 
-### Earlier Bound Domain Measurements
+### Earlier Bound Type Measurements
 
 On 2026-10-30, a quiet Release run (GCC 13, 40 samples, 2000 resamples)
 measured the owning-binding/scalar-provenance implementation on the same
@@ -569,7 +592,7 @@ Bound field plans are 2.64x faster than bound basic pruning, and take 1.48x
 the bound exact-path time. Binding/provenance is not free: relative to the
 callback cases at that revision, bound plans cost about 31% more and bound exact access
 about 53% more. Persisted scalar leaves remain compact in both variants; the
-bound queries derive and retain their domain while emitting runtime values.
+bound queries derive and retain their type while emitting runtime values.
 This benchmark does not isolate binding lookup, dictionary translation and
 qualification costs, so attributing the difference requires profiling.
 
@@ -609,7 +632,7 @@ counts, and about 1% fewer callback field-plan instructions.
 Counting `operator new` calls only around warmed evaluation gives **8,001 to 1
 allocations per bound query**, for all three bound variants. The remaining
 allocation holds the final result vector; deriving the 2,000 numeric leaf
-domains no longer allocates. This is not a promise that arbitrary queries or
+types no longer allocates. This is not a promise that arbitrary queries or
 owning string results allocate nothing. Bound field plans also reduce successful
 schema-dictionary `get` calls from 8,001 to 2,000 per query. Exact graph ownership,
 scalar qualification and independent-dictionary translation still have a cost.
@@ -624,14 +647,14 @@ earlier ones establish an end-to-end application speedup.
 
 The allocation-free lookup result above compared against an already regressed
 implementation. It did **not** meet the performance budget against `77fe792`.
-The subsequent runtime pass removes redundant work rather than dropping domains:
+The subsequent runtime pass removes redundant work rather than dropping types:
 
 - `ModelPool::type` and `ModelPool::schema` read core column metadata directly;
   custom columns still use virtual resolution, and typed nodes retain their
   overrides. Generic nodes no longer construct owning wrappers just to read
   these two properties.
 - Scalar extraction constructs the qualified `Value` once. Compound children
-  need no inferred scalar domain, while intrinsic scalar provenance takes
+  need no inferred scalar type, while intrinsic scalar provenance takes
   precedence over the parent edge.
 - `ExpressionRuntime` binds static field names to each exact schema dictionary.
   Successful translations and wildcard plans share a graph-owned cache, with a
@@ -677,12 +700,12 @@ All candidate sample ranges were below their respective reference ranges. For
 the narrowest margin, separate-dictionary basic pruning, the seven candidate
 means span 3.181--3.350 ms versus 3.460--3.661 ms for the reference. This fixture
 meets the at-most-1% regression budget without using a 5% exception; it is not
-an end-to-end MapViewer or cross-platform performance guarantee. Exact-domain
+an end-to-end MapViewer or cross-platform performance guarantee. Exact-type
 handling still has a measurable cost relative to the faster unbound candidate.
 Separate Callgrind runs count 3.8% more instructions for bound basic pruning,
 but 5.8% fewer for bound plans and 8.2% fewer for bound exact paths versus the
 original corresponding query. Instruction counts are not latency: the basic
-path still performs extra domain bookkeeping while avoiding costlier ownership
+path still performs extra type bookkeeping while avoiding costlier ownership
 operations and wrapper construction.
 
 Warmed evaluation in every mode performs one 88-byte allocation for the result
@@ -781,7 +804,7 @@ strictly correctness coverage; it never reports performance acceptance. Retain
 the historical raw evidence rather than replacing it with an intermediate-base
 comparison or an unpinned one-sample benchmark.
 Both harness versions compile, and a 60-row tiny smoke matrix passes all 120
-reference/candidate subprocesses, including untimed exact-binding/leaf-domain
+reference/candidate subprocesses, including untimed exact-binding/leaf-type
 checks. Nine runner tests cover evidence preservation, paired ordering and
 rejection of mismatched builds/workloads. These are harness-correctness results,
 not a new latency comparison.
@@ -791,7 +814,7 @@ Untimed capacity checks on the full 2,000-object/32-branch fixture report
 bytes with the candidate's registry binding (+5,803 bytes, +0.295%) and 1,973,456
 bytes with compact-pool binding. These exclude dictionaries and shared graph
 storage. The candidate schema dictionary reports 8,752 bytes; each separate
-runtime dictionary adds 8,832 bytes. Compact graph domain/index storage reports
+runtime dictionary adds 8,832 bytes. Compact graph type/index storage reports
 25,746 bytes plus 1,088,538 bytes of primitive ModelPool capacity, shared across
 workers. These are existing API lower bounds, not allocator/RSS totals. The
 independent registry lacks a complete retained-size API, so **whole-schema memory
