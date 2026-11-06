@@ -63,7 +63,7 @@ Schema-aware behavior is conservative:
 
 - A standalone scalar field name can resolve to the concrete schema path that owns that field.
 - A recursive wildcard such as `**.speedLimitKmh` can skip schema branches that cannot contain `speedLimitKmh`, which avoids scanning arbitrary object branches when the schema is precise.
-- An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum domain.
+- An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum type.
 - A standalone enum-like string literal can resolve to an equality comparison against the schema path that owns that enum value.
 - If the same token can mean both a field and an enum-like value, field access wins. This keeps schema shorthand aligned with normal unquoted identifiers.
 
@@ -79,7 +79,7 @@ can be compiled against a schema as the concrete path that owns `speedLimitKmh`,
 SPEED_LIMIT_END
 ```
 
-can be compiled as a comparison against schema paths whose enum domain contains `SPEED_LIMIT_END`.
+can be compiled as a comparison against schema paths whose enum type contains `SPEED_LIMIT_END`.
 
 Other common schema-aware patterns:
 
@@ -219,7 +219,7 @@ keywords: ["null", "missing value", "undefined", "boolean", "integer", "string"]
 -->
 ## Types
 
-Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes` and `re`.
+Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes`, `bitmask` and `re`.
 Additionally, the `model` type represents compound object/array container nodes.
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
@@ -231,6 +231,26 @@ also matches an explicit `false` flag. Use an explicit `null` comparison when `f
 count as present data. Direct missing-field access returns `null`.
 
 Functions can return values of types other than the ones mentioned. See [Functions](#Functions) for details.
+
+### Named Values And Bitmasks
+
+With schema mode enabled, `speed = SPEED_UNLIMITED` compares against the named
+value in that particular speed type. The same name may mean different raw
+numbers in different types. Quoted `'SPEED_UNLIMITED'` stays a string, and an
+unknown numeric code stays numeric. Standalone numeric symbols search declared
+positions; standalone flag symbols search for membership, not exact equality.
+
+`hasFlag(flags, 'TRUCK')` checks all bits of the declared flag. Composite flags,
+overlaps, aliases and unknown active bits are supported. A named zero flag matches
+exactly zero; an unknown flag name is an error. `flags = 3` tests exact bits,
+whereas `flags & 3` returns another bitmask. Zero masks, like integer zero, are
+truthy: do not use bitwise-result truthiness as a membership test.
+
+Use `bitmask(flags, '0x8000000000000000')` to construct full-width bits in an
+existing mask's type. Decimal strings also work. Bitwise `&`, `|`, `^`, `~`,
+`<<`, and `>>` preserve the mask type; complement and shifts honor its declared
+width. Mixing incompatible types, negative integers or floats is rejected.
+Arithmetic and numeric casts are not implicit mask conversions.
 
 <!-- mcp:
 title: "Simfil type conversion"
@@ -306,6 +326,12 @@ The `!=` operator will always return `true` in such cases.
 | `and`, `or`                            | 1          |
 
 <!-- --8<-- [end:operators] -->
+
+## Explicit schema-symbol membership
+
+`hasSymbol(value, 'ANIMALS')` tests whether the value or its descendants contain a matching enum or named value declared by their schemas. Equal untyped strings or numbers do not count as declared symbols. The result is one boolean and remains the same when composed with `any(...)`, `and`, or `or`.
+
+Prepared searches may use `hasSymbol(value, name, schemaIdentity, typeId)` to select one exact declaring type. The type ID belongs to that immutable schema artifact. An identically named symbol from another type or artifact does not match. This qualified form lets a search client resolve ambiguity before dispatch without expanding recursive schemas into incomplete lists of paths.
 
 ## Functions
 

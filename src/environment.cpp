@@ -25,6 +25,9 @@ Environment::Environment(std::shared_ptr<StringPool> strings)
     functions["keys"]   = &KeysFn::Fn;
     functions["trace"]  = &TraceFn::Fn;
     functions["re"]     = &ReFn::Fn;
+    functions["hassymbol"] = &HasSymbolFn::Fn;
+    functions["hasflag"] = &HasFlagFn::Fn;
+    functions["bitmask"] = &BitmaskFn::Fn;
 }
 
 Environment::Environment(NewStringCache_)
@@ -62,11 +65,11 @@ auto Environment::strings() const -> std::shared_ptr<StringPool> {
     return stringPool;
 }
 
-auto Environment::querySchema(SchemaId schemaId) const -> const Schema*
+void Environment::setSchema(SchemaType root)
 {
-    if (!querySchemaCallback || schemaId == NoSchemaId)
-        return nullptr;
-    return querySchemaCallback(schemaId);
+    if (root && !root.finalized())
+        throw std::invalid_argument("A query schema must be published before binding");
+    rootSchema_ = root.retain();
 }
 
 Context::Context(Environment* env, Diagnostics* diag, Context::Phase phase)

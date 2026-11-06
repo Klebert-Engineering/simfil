@@ -1,23 +1,29 @@
-# Schema Domains And Query Views
+# Schema Types And Query Views
 
-Simfil uses one typed schema graph for query optimization and completion.
-`SchemaModel` exposes that same graph as lazy metadata objects for ordinary
-Simfil queries. Completion does not evaluate those descriptors or construct
-sample feature objects.
+Simfil uses one canonical `SchemaPool` for query optimization and completion.
+`SchemaType` is a cheap typed view; `SchemaTypeModelNode` exposes the same records
+through the ordinary node protocol for metadata queries. Completion does not
+evaluate descriptors or construct sample feature objects.
 
-## Domain Contract
+## Type Contract
 
-`Schema::Kind` is a 32-bit packed value. Its upper 16 bits are a **static**
+`TypeId` is a 16-bit graph-local identity, not an artifact identity or a feature
+class name. `NoTypeId` is the unknown sentinel. `SchemaType` combines that local
+ID with its exact pool and optionally retains the pool. Its pool's artifact
+identity names the complete immutable graph. `SchemaPool::typeCount()` and
+`schemaStatistics().types` count allocated definitions, excluding the sentinel.
+
+`SchemaType::Kind` is a 32-bit packed value. Its upper 16 bits are a **static**
 kind-name `StringId`; its lower 16 bits describe possible runtime `ValueType`s.
-Use `Schema::makeKind`, `kindNameId`, `affinities`, `hasAffinity`, and
+Use `SchemaType::makeKind`, `kindNameId`, `affinities`, `hasAffinity`, and
 `valueTypeAffinity`. Only affinity bits are OR-combinable; never OR whole kinds.
 `ValueType` itself remains an ordinary enum.
 
 Core kinds include unknown, any, never, untyped scalar (`Value`), null, boolean,
-integer, float, string, bytes, object, array, union, exclusive union, and
+integer, float, string, bytes, bitmask, object, array, union, exclusive union, and
 intersection. An external kind such as `Feature` can have object affinity and
 provide fields through the same typed interface. Generic consumers do not
-require inheritance from `ObjectSchema` or knowledge of that name.
+require a separate application type implementation or knowledge of that name.
 
 Extensions allocate names between `StringPool::NextStaticId` and
 `StringPool::FirstDynamicId` (now 256). Register identical static mappings in
@@ -28,54 +34,219 @@ is a separate optional concrete producer type name, not the kind's spelling.
 
 The distinctions are intentional:
 
-- `Unknown` means unavailable information; `Any` means an unrestricted domain.
+- `Unknown` means unavailable information; `Any` means an unrestricted type.
   Neither proves a descendant field absent. `Never` means no possible value.
-- An empty `ObjectSchema` is a known closed object. Use `setOpen(true)` for
-  undeclared members. A field with no child schema, `NoSchemaId`, or an unresolved
-  schema reference is unknown, **not** an implicitly scalar leaf.
+- An empty object type is a known closed object. Use `setOpen(true)` for
+  undeclared members. A field with no child schema, `NoTypeId`, or an unresolved
+  schema reference is unknown, **not** an implicitly scalar leaf. Openness does
+  not weaken explicitly declared fields; an undeclared open alternative still
+  prevents guessing one exact type for an ambiguous union.
 - An array's element alternatives describe possible types, not length or tuple
-  positions. An unspecified element domain is unknown.
-- `CombinedSchema` retains `AnyOf`, `OneOf`, or `AllOf` at the same value position.
+  positions. An unspecified element type is unknown.
+- `SchemaCompositionType` retains `AnyOf`, `OneOf`, or `AllOf` at one value position.
   Empty AnyOf/OneOf is impossible; empty AllOf is unrestricted. Affinity summarizes
   alternatives but does not replace their logical operator.
-- `fieldRequired` belongs to the parent-field edge: true, false, or unknown.
-  `nullable` belongs to the value domain and independently allows/excludes null.
-- All string enums/constants use `addEnumSymbol` / `directEnumSymbols` in the
-  binding's pool. `enumValues` / `addEnumValue` are for non-string scalar literals;
-  the concrete builder rejects both string and string_view values there. This
+- `SchemaField::required()` belongs to the parent-field edge: true, false, or unknown.
+  `nullable` belongs to the value type and independently allows/excludes null.
+- String enums use `SchemaEnumType::addSymbol` / `directEnumSymbols` in the
+  schema's dictionary. `addValue` is for non-string scalar literals; its value
+  type excludes both string and string_view. This
   keeps descriptor output, completion, and symbol rewrites on one string index.
-  Numeric bitmask semantics are not implemented by these APIs.
+  Named numeric constants and flags use the separate metadata interface below;
+  a few named sentinels do not make a numeric range an exhaustive enum.
 
 This is not a JSON Schema validator. In particular, following an intersection's
-fields returns a conservative set of candidate domains, not the complete logical
+fields returns a conservative set of candidate types, not the complete logical
 intersection of every scalar constraint.
 
 ## Ownership And Indexes
 
-The producer owns schema definitions; `Environment::querySchemaCallback` supplies
-the binding. There is no additional registry in Simfil. Use the same namespace
-for a schema binding, its query environment, and its descriptor model. For
-completion/schema inspection, construct a request-local namespace and return
-owning candidate strings. Do not modify a datasource's authoritative pool.
+`SchemaPool : ModelPool` is the sole schema owner and storage implementation.
+Fixed records use `ModelColumn`; variable collections use `ArrayArena`.
+Construction writes those records directly. There is no draft graph, packing
+pass, independent virtual schema backend, or descriptor-tree owner.
 
-After building a graph, finalize its schemas. Reachability and wildcard plans are
-derived indexes. `reachabilityComplete()` is a proof, not a synonym for
-`finalized()`: open, dirty, or incomplete graphs must remain conservative.
-Custom adapters expose fields/elements through the public enumeration methods;
-an adapter with an incomplete cached index must not claim completeness.
-Sparse wildcard plans use this generic interface, not concrete builder RTTI.
+`schemaType(id)` returns a borrowed `SchemaType`. A borrowed copy performs no
+allocation or reference-count update. Keep the pool alive, or call `retain()` to
+obtain an owning view; a stack-owned pool cannot produce an owning view. Converting
+to an object/array/enum/bitmask/scalar/composition view preserves ownership.
+`borrow()` removes ownership from the returned view only. Collection ranges and
+strings always borrow storage, even when obtained from an owning view.
 
-Treat a published graph as immutable. Mutations update a concrete schema's local
-revision, but cannot automatically invalidate caches on all referring schemas.
-Owners must rebuild/invalidate dependent bindings and indexes after graph edits.
+Use `Environment::setSchema(root)` for a runtime fallback and supply the root
+explicitly to compilation, completion and static analysis. The environment
+retains it once; `Environment::schema()` borrows it. An empty
+`CompileOptions::rootSchema` intentionally disables schema interpretation rather
+than substituting that fallback. Real model nodes resolve their attached types
+through `Model::resolveSchemaType` / `ModelNode::schemaType`.
+
+Schema and data dictionaries may differ. Field IDs in `SchemaPath` and schema
+ranges belong to the schema dictionary. Compilation stores portable text; bound
+expressions cache runtime translation per exact owner and type. Never reinterpret
+foreign IDs or intern schema-only names into a datasource dictionary. Completion
+uses a temporary dictionary and returns owning strings.
+
+Finalization validates the graph, prepares indexes and freezes the pool and its
+dictionary. Mutable views obtained earlier cannot bypass publication. Published
+graphs have no revision counter: replace the owner to change a graph. Plan caches
+retain the exact pool, not a temporary view's address or an unverified identity
+string. Caller-supplied transport identities are not content authentication.
+
+`reachabilityComplete()` proves field absence; it is not synonymous with
+`finalized()`. Unknown/open descendants remain conservative. Point
+`fieldSchema(fieldId)` / `itemSchema()` lookups and arena-backed alternatives are
+allocation-free. Finalization prepares effective inherited/combined members;
+runtime lookup never traverses descriptors or enumerates descendant graphs.
+A field declared as one union retains that type. Conflicting or unknown target
+declarations return `NoTypeId` without inferring a type from the runtime literal.
+
+### Typed Construction
+
+```cpp
+auto schema = std::make_shared<simfil::SchemaPool>();
+auto record = schema->newObjectType();
+auto count = schema->newScalarType(simfil::SchemaType::Kind::Int);
+record.addField("count", count).setRequired(true);
+auto category = schema->newEnumType();
+category.addSymbol("urban");
+category.addSymbol("rural");
+record.addField("category", category);
+schema->finalize("application-owned-exact-artifact-id");
+auto retainedRoot = record.retain();
+```
+
+Construction copies borrowed metadata. Finalization discards construction-local
+sorting/SCC/deduplication state; retained indexes also use columns and arenas.
+A failed finalization makes that unpublished builder unusable; retry with a new
+owner. `forEachField` works during construction; prepared `directFields` and
+recursive name indexes are available after finalization. Direct names preserve
+declaration order; recursive names are sorted numeric StringIds, not lexical text.
+Empty field names and empty enum symbols are valid. Prefer `field("name")` for
+text lookup: a missing dictionary lookup returning zero is not proof of an empty
+field declaration.
+
+`SchemaObjectType::setBase` inherits object members without storing a second copy; local
+members take precedence. Inheritance is bounded and acyclic, unlike ordinary
+field/element graph edges, which may be recursive. Lookup aliases and `Context`
+edge roles remain explicit; a combiner can expose both its alternatives and its
+own context fields in the descriptor model. `SchemaField` carries required,
+multimap and role metadata on the occurrence, not its shared target type.
+`declareField` preserves an explicitly empty target list; `addField(name, {})`
+adds an explicit unknown target. Do not collapse these during import.
+
+`seal()` protects one reusable record before whole-pool publication. `cloneType`
+copies direct declarations, shares child identities and returns a writable copy.
+Derived owners use mutation-policy hooks to protect native envelopes even through
+generic typed views; aliases validate both spellings before interning. Their
+clone hook copies declarative policy, not runtime use-site associations.
+
+`importGraph(source, reuse)` copies native declarations while preserving sharing
+and cycles. Its temporary source-ID table translates only graph-local type
+IDs. Nonzero entries in an optional reuse table refer to existing destination
+types; the application must establish their semantic compatibility. Generic
+import does not guess whether same-named application types may be merged.
+
+The bounded native codec includes the private dictionary and ModelPool payload.
+Derived owners embed this payload in their own versioned, content-identified
+envelopes. The generic codec deliberately bypasses application dictionary stream
+prefixes. Named `finalize`/`read` operations accept an externally verified,
+nonempty identity of at most 65535 bytes. Anonymous graphs are valid query owners,
+but transports must reject anonymous or ambiguous artifact keys. No ingestion
+remap table, per-leaf tag or second JSON
+schema tree is retained by this generic graph.
+
+`schemaStatistics()` is prepared once. `schemaMemoryUsage()` reports retained
+generic graph storage, excluding the dictionary and ModelPool payload so derived
+owners can account for those exactly once. These are allocation lower bounds,
+not allocator/RSS estimates. The extraction does not by itself establish a
+performance improvement; whole-owner and runtime gates require separate evidence.
+
+Each `ModelPool` installs a model-local shared-ownership group for each bound
+graph. The canonical `SchemaPool` pointer, definitions, identity and dictionary
+remain shared; no graph is copied. This prevents independent tile workers from
+contending on one graph-wide reference counter during scalar extraction and
+pruning. Imports and readers flatten existing local groups to the original
+owner, preserving alias pointers rather than retaining chains of source models'
+groups. The final strong reference releases the graph even when weak observers
+remain. Both the stored handle and the new control block are cache-line isolated
+to avoid allocator-dependent false sharing with another model's hot counter.
+This adds storage/allocation once per installed graph, not per lookup or Value.
+Memory statistics include known padded handle/deleter storage, but exclude
+implementation-specific shared-pointer bookkeeping and allocator overhead.
+
+`ModelPool::freeze()` seals the pool and its shared `StringPool`. Factories,
+binary reads, rebinding and mutations through retained Object/Array nodes then
+fail. Derived schema owners must also guard their own columns. Freeze before
+publication, without concurrent writes or outstanding low-level mutable storage
+borrows; it does not revoke arbitrary C++ references. Copying a frozen StringPool
+creates a mutable private dictionary suitable for compilation/completion.
+
+## Named Scalar Metadata
+
+Adapters implement `forEachNamedValue`, `numericDomain`, and `bitWidth` directly
+over their owning graph. Views borrow storage from that graph; they must not
+reference callback-local strings or ranges. Names have exact spelling and may
+have aliases. A named value includes its runtime boolean/integer/unsigned/float/string
+literal, role (`constant`, `special`, `flag`), meaning (`ordinary`, `unknown`,
+`variable`, `unbounded`, `saturated`), and deprecated/removed status. Numeric
+metadata separately describes encoding, bounds, ordinary ranges, unit, scale,
+offset and completeness. Unknown numeric codes remain ordinary raw numbers.
+
+`NamedValue::rawValue` optionally preserves the original signed or unsigned
+64-bit ordinal separately from that runtime literal. Missing metadata is distinct
+from zero; aliases can share an ordinal. This does not change query evaluation,
+enum completion, or the runtime label. Descriptors omit `rawValue` when absent
+and otherwise expose it through the normal node protocol. As with other integer
+metadata, unsigned values above `INT64_MAX` use exact decimal strings in descriptor
+JSON rather than floating-point conversion.
+
+The generic native `SchemaPool` codec is version 4. It serializes canonical fixed
+columns and arena collections, including exact ordinal bits and their
+presence/signedness tag. Readers reject other versions, malformed rows and arena
+handles, invalid static names and out-of-budget amplification rather than
+silently dropping metadata. `importGraph` preserves ordinals while remapping
+graph-local type IDs.
+
+Schema mode rewrites standalone named values to predicates on declared paths.
+Numeric names use equality; flags use all-bits membership. Contextual comparisons
+such as `speed = SPEED_UNLIMITED` resolve the name against the **selected value's
+actual type**, not a global symbol table or a union of possible raw codes.
+Missing or ambiguous type provenance is an error rather than a guessed profile.
+Quoted strings remain strings; fields and environment constants retain precedence.
+Incomplete/cyclic path sets use bounded runtime schema traversal, retaining the
+owning dictionary even through descendants with no unique type. Completion uses
+the same metadata and scopes named suggestions to the other comparison operand.
+
+Values extracted from a concrete parent field or array-element edge retain an
+optionally owning `SchemaType`. Int/Float/String categories do not change. Identity
+and selection operations, traces, and the first min/max winner on a tie retain
+the reference. Arithmetic, casts, comparisons, new literals and ordinary numeric
+sum/count construct unannotated values, including `+ 0`. A custom selecting fold
+preserves whichever Value it returns. Null and undefined never acquire a type
+from their parent. Ordinary stored leaves remain compact and unannotated.
+
+`ValueType::Bitmask` instead carries intrinsic uint64 bits and exact type
+identity. Persistent mask rows contain only uint64 bits and a local TypeId;
+the common binding table owns the graph. `hasFlag(mask, 'NAME')` tests all
+declared bits; a named zero matches exactly zero. Unknown flags, incompatible
+types, negative/float coercions and invalid shifts are errors. Unknown active
+bits are retained. Complement and shifts respect the declared width. Use
+`bitmask(existingMask, '0x8000000000000000')` for lossless full-width construction;
+ordinary signed integer literals reject overflow.
+
+The exact JSON tag is
+`{"_bitmask":true,"bits":"0x8000000000000000","schema":"exact-graph-token","typeId":4}`.
+Import requires that exact graph through the model binding/resolver. Objects with
+additional keys remain application objects. Mask JSON never uses floating-point
+numbers or labels as a substitute for raw bits.
 
 Exact path enumeration accepts an optional `bool* complete` output. Active-path
-SchemaIds detect cycles; reused definitions in sibling branches and repeated
+TypeIds detect cycles; reused definitions in sibling branches and repeated
 field names are valid. Enumeration also has depth/work caps. Incomplete enum
 path sets use a schema-guided predicate over actual data instead of an incorrect
 finite OR that misses deeper matches. That predicate matches only declared enum
 positions, not unrelated strings, and static path analysis reports unresolved
-access. Its compiled root SchemaId must refer to the same logical graph when
+access. Its compiled root TypeId must refer to the same logical graph when
 the AST is rebound.
 
 Field-path enumeration prunes branches only when a finalized, complete
@@ -87,31 +258,30 @@ well as canonical names, including aliases reachable through descendants.
 `hasUnresolvedAccess` when enumeration is incomplete; a partial path list is
 not an exhaustive ownership or scope proof.
 
-Read-only schema bindings can override `hasDirectEnumSymbol(text, pool)` when
-declared enum strings do not exist in the runtime dictionary. Recursive/open
-schema enum predicates use this textual hook; they must not intern datasource
-metadata or reuse compilation-pool IDs in another environment.
+`hasDirectEnumSymbol(text)` checks the canonical dictionary by spelling even when
+that symbol does not exist in the runtime dictionary. Recursive/open schema enum
+predicates never intern datasource metadata or reuse compilation-pool IDs in
+another environment.
 
 ## Lazy Descriptors
 
 ```cpp
-#include <simfil/model/schema-model.h>
+#include <simfil/model/schema-node.h>
 
-// strings and lookup belong to this request's schema binding. The closure must
-// capture the graph owner by shared ownership, not a temporary Environment&.
-auto descriptors = std::make_shared<simfil::SchemaModel>(strings, lookup, 10000);
-auto root = descriptors->root(rootSchemaId);
-simfil::Environment env(descriptors->strings());
-auto query = simfil::compile(env, "fields.items.elements[0].kind", false);
+auto root = record.modelNode(); // Retains the same SchemaPool.
+auto queryStrings = std::make_shared<simfil::StringPool>(*schema->strings());
+simfil::Environment env(queryStrings);
+auto query = simfil::compile(env, "fields.category.kind", false);
 ```
 
-The constructor is
-`SchemaModel(shared_ptr<StringPool>, Schema::Lookup, maxNodes=10000)`.
-The lookup closure and pool outlive all returned nodes through the model owner.
-The graph and namespace must not change during the view's lifetime. Views are
-request-local and not concurrently mutable. The adapter never interns strings.
+`SchemaType::modelNode()` retains the pool explicitly. Descriptor child addresses
+refer directly to canonical records/collections in that same owner. Navigation
+does not allocate or cache a parallel descriptor graph and never interns strings.
+Repeated `get`, `at` and `keyAt` calls are history-independent, including recursive
+edges. Published descriptors can be shared across readers; traversal state belongs
+to each query/export, not the graph.
 
-Descriptors are ordinary objects, even for represented scalar/array domains:
+Descriptors are ordinary objects, even for represented scalar/array types:
 
 ```json
 {
@@ -130,59 +300,88 @@ Descriptors are ordinary objects, even for represented scalar/array domains:
 }
 ```
 
-Explicit combiners use `alternatives`, not `elements`. Multiple domain IDs on a
+Explicit combiners use `alternatives`, not `elements`. Multiple type IDs on a
 field edge are an implicit union. Unknown optional metadata is omitted. Field
 names are under `fields`, so they cannot collide with descriptor metadata names.
 `get`, `at`, `keyAt`, `iterate`, and `toJson` agree; `kind` is a string through all
-of them. Descriptor `schema()` is `NoSchemaId`, not the represented domain ID.
+of them. Descriptor `describedType()` is the represented type; its runtime
+`schemaType()` is empty and `schema()` is `NoTypeId`.
 This prevents feature-field pruning from hiding descriptor metadata.
+
+Scalar descriptors additionally expose `namedValues`, `numericDomain`, and
+`bitWidth` when applicable. Named entries have `name`, `value`, `role`, `meaning`,
+`deprecated`, and `removed`. Numeric metadata has `encoding`, `unit`, optional
+`minimum`/`maximum`, `ordinaryRanges` (`min`/`max`), `scale`, `offset`, and
+`complete`. Flag values are hexadecimal strings; unsigned numbers outside the
+signed scalar range are decimal strings. These are lazy views of the same graph,
+not a second registry or JSON model.
 
 Every known descriptor exposes its numeric identity as `$ref`, including
 expanded definitions. An implicit union exposes an array of IDs, such as
 `{"kind":"union","$ref":[2,3]}`; each ID can be used as a new descriptor root.
-Cycles stop expansion with a reference such as
-`{"kind":"object","$ref":1,"truncated":"cycle"}`. Allocation exhaustion
-uses `{"kind":"unknown","truncated":"node-budget"}`. A stop marker is not
-an empty definition. The model does not impose a schema-depth cutoff before query
-evaluation. `exhausted()` reports any allocation-budget stop, even when a scalar
-projection never emits its marker; callers must mark such query results incomplete.
-Limits count lazy views, not serialized bytes; callers still need bounded evaluation
-and output serialization with stack-safety guards. Repeated metadata
-access reuses child views. `materializedNodeCount()` includes the terminal budget
-marker, and `maxNodes` must be at least two.
+JSON export stops active-path cycles with a reference such as
+`{"kind":"object","$ref":1,"truncated":"cycle"}`. Shared sibling definitions
+remain independently expandable. `SchemaTypeModelNode::JsonOptions` bounds depth,
+nodes and charged output bytes; exhaustion throws instead of returning partial
+JSON. Optional reserve/scalar callbacks let an embedding application share a
+budget or apply exact-integer output policy without another descriptor traversal.
+Accessor/callback internals and allocator overhead are not a process sandbox.
+
+Recursive query evaluation separately suppresses active-path back-edges before
+emitting them, without changing explicit finite navigation or sibling order and
+multiplicity. Work/cancellation checks precede cycle suppression. Ordinary
+tree-model evaluation uses its no-cycle-tracking path. Use `EvaluationOptions`
+and inspect the returned summary; descriptor access itself has no request-local
+allocation counter or sticky exhausted state.
 
 ## Direct Completion
 
+Field edges distinguish enumerable `SchemaType::FieldRole::Data` from lookup-only
+`Context`. `forEachDirectField` and `directFields` still describe every declared
+member; implicit discovery checks each edge's role before descent. Explicit lookup, including
+completion after `context.`, follows either role. Recursive discovery, enum
+shorthand and wildcard child plans do not descend through context links.
+Arrays may also declare named lookup edges, such as a coordinate's `lon` member.
+Wildcard plans preserve those direct matches, including context terminals, while
+recursing only through array elements. Ordinary arrays still skip named lookup.
+Classification is independent of spelling: a `$`-prefixed data field is still
+enumerable, and an ordinary-named context field is not. Lazy field descriptors
+mark lookup-only links with `role: "context"` without hiding their target `$ref`.
+
+Unknown context targets do not make the data reachability index incomplete.
+Repeated/alternative declarations with conflicting roles stay conservative;
+they cannot establish a context-only absence proof. The runtime model must
+implement the same enumeration contract, as `OverlayNode` does for injected
+members; schema metadata does not remove real children from arbitrary models.
+
 ```cpp
-auto candidates = simfil::complete(env, "items[17].na", 12, rootSchemaId, options);
+auto candidates = simfil::complete(env, "items[17].na", 12, rootType, options);
 ```
 
-This overload takes a `SchemaId` instead of a `ModelNode`. It reuses tokenization,
+This overload takes a `SchemaType` instead of a `ModelNode`. It reuses tokenization,
 the relaxed parser, completion AST, smart-case filtering, and replacement ranges.
 It does not execute constant-folding or registered functions. Unfinished string
 literals are accepted only for schema completion; compilation remains strict.
 
-Field access follows member domains, arbitrary positive/negative array indices
-follow element domains, and logical alternatives do not insert a fictional array
-level. Filtering preserves the input domain. AND/OR inspect cursor-local branches
+Field access follows member types, arbitrary positive/negative array indices
+follow element types, and logical alternatives do not insert a fictional array
+level. Filtering preserves the input type. AND/OR inspect cursor-local branches
 independently of sample truth values. Comparisons offer the left operand's enum
 choices; unknown functions/accesses stay unknown instead of inventing fields.
 Root-owned operand alias hooks have the same precedence/scope as compilation;
 explicit paths do not reinterpret member names as aliases.
 
-Model lookup aliases are separate: an adapter can override
-`Schema::canonicalField` to resolve a member name as its runtime model does,
-without duplicating enumerated field paths. Member-domain resolution, field path
-discovery, wildcard direct-field plans and concrete/recursive `referencedSchemaPaths`
-analysis use that hook. Adapters must also keep `canHaveField` conservative for
-lookup aliases reachable in descendants; a canonical-only name index cannot
-prove an alias absent. For example, mapget features
+Model lookup aliases are separate: object/array `addAlias` declares a lookup-only
+spelling without duplicating enumerated field paths. `canonicalField`, member-type
+resolution, path discovery, wildcard plans and `referencedSchemaPaths` share that
+canonical metadata. Reachability includes descendant aliases; a canonical-only
+name index cannot prove an alias absent. For example, mapget features
 resolve `attributes` to `properties` unless a real `attributes` member is declared.
 
 `limit`, `timeoutMs`, `maxSchemaVisits` (default 10000), and `maxSchemaDepth`
-(AST inference depth, default 128) bound candidate/traversal work. Registry
-callbacks must also be cheap and finite; Simfil cannot interrupt code inside
-such a callback. The existing model-based overload remains for real data, not
+(AST inference depth, default 128) bound candidate/traversal work. Domain-owner
+hooks must also be cheap and finite; Simfil cannot interrupt code inside a hook.
+The existing model-based overload remains for real data, not
 as a schema-completion fallback. Neither overload completes operators.
 
 ## Streaming Evaluation
@@ -227,13 +426,43 @@ evaluation overload remains unbounded and unchanged for existing callers.
 
 ## Native Result Materialization
 
+`CopyOptions::schemaRemap` optionally translates each known source type while
+copying into another exact graph. Unqualified leaves remain unqualified and do
+not invoke the callback. Missing or physically incompatible target definitions
+are errors, not permission to drop provenance.
+
+`ModelPool::remapSchemas(target, callback)` performs the equivalent operation on
+stored core schema columns without copying payloads or changing node addresses.
+It validates all replacements before committing one direct target namespace;
+failed validation leaves the model unchanged. Derived models must prevalidate
+their own custom schema columns and update them after the core operation.
+Use this only on unpublished, exclusively owned models: existing node handles
+observe the new binding, while already detached Values retain their old exact
+type. Translation tables are temporary ingestion work, not query-path state.
+
 `ModelPool::copyNode(node, options)` copies a query-visible subtree through its
 native node protocol. `copySequence(span<Value const>, options)` returns an outer
 array and shares one budget across every result and descendant. Neither operation
-calls `toJson`, imports foreign schema IDs, or inserts dictionary names. A source
+calls `toJson`, copies bare foreign schema IDs, or inserts dictionary names. A source
 field name must already exist in the destination pool; IDs are remapped by name.
 Strings and bytes become destination-owned payloads. The source owner is retained
-during copying, but not by the result.
+during copying, but not by the result. Exact schema graph owners are retained in
+the destination's common binding table and schema IDs are remapped. A direct
+single-graph pool rejects foreign types; an unbound result pool can import
+several graphs. Unbound nonzero source schema IDs are errors, not silently erased.
+
+Copying an existing compound preserves its schema and ordinary scalar leaves.
+An independently selected scalar Value with provenance becomes a qualified node
+holding a same-pool primitive address and local type ID. Unannotated values
+remain ordinary storage. There is no destination-schema inference, generated
+result schema, or per-result parallel metadata table. Bitmasks always use their
+dedicated column. Numeric/string JSON export remains plain and intentionally
+does not preserve qualification; native binary results do.
+
+Binary readers require every stored graph identity to resolve exactly before
+returning success. Install `setSchemaPool` or `setSchemaResolver` first.
+`hasDirectSchemaPool(identity)` checks a payload's single-graph contract
+without consulting the resolver. Dictionary restoration remains separate.
 Copied containers use exact-size storage; singleton and empty results use compact
 singleton handles rather than growable arena chunks. These materialized containers
 are intended for read-only results, not subsequent incremental appends.
@@ -257,17 +486,26 @@ Shared acyclic children are copied independently. Failed copies can leave bounde
 unreachable allocations in the append-only destination; no partial root is
 returned. Evaluator work/result limits remain a separate responsibility.
 
-The native undefined column shifts the core ModelPool column tags; dependent
-binary protocols must version that break rather than read older columns using the
-new mapping. Mapget coordinates this in TileLayerStream 5.3.
+The mask/qualifier columns and common graph bindings change the native ModelPool
+wire layout and static dictionary assignments. Dependent binary protocols must
+version this break; there is no implicit legacy conversion.
 
 ## Validation
 
 `test/schema-domain.cpp` exercises descriptors, specialized kinds, combiners,
-completion, custom bindings, recursive rewrites, and namespace ownership.
+completion, derived owners, recursive rewrites, and namespace ownership.
+`test/schema-type.cpp`, `test/schema-node.cpp` and `test/schema-append-checkpoint.cpp`
+cover typed construction, ownership, direct descriptors, canonical guards,
+transactional append/rollback and malformed native storage.
 `test/evaluation.cpp` covers streaming limits, interruption, compound ownership,
 callback errors, and streaming builtins. `test/model-copy.cpp` covers native
 undefined, sequence cardinality, ownership, dictionary remapping and copy limits.
+`test/schema-value.cpp` covers exact scalar provenance, named predicates, mask
+operators/roundtrips, mixed result graphs, freeze boundaries and malformed reads.
+Its constructor-time reader regression checks qualified scalar storage without
+requiring `shared_from_this()` before a derived model has finished construction.
+`test/schema-lookup.cpp` covers direct members, named unions, aliases, duplicate
+declarations, incomplete/cyclic metadata and canonical member indexes.
 Existing language/model tests continue to cover the unbounded APIs. Descriptors,
 direct completion, bounded evaluation and native copying are also available with
 `SIMFIL_WITH_MODEL_JSON=OFF`; JSON serialization is not their storage backend.
@@ -280,19 +518,31 @@ build-release/test/test.simfil '[perf.schema],[perf.completion]' \
 ```
 
 The sparse-wide fixture compares no schema, basic pruning, generic field plans,
-and an exact-path ceiling on identical data. Scalar leaves now have explicit
-ValueSchemas: unknown child metadata no longer silently means scalar. Completion
-benchmarks compare real-model/schema root suggestions with direct root-domain
+and an exact-path ceiling on identical data. It also repeats basic pruning,
+field plans and the exact path with model-owned schema provenance; these costs
+must not be hidden behind the Environment-only fallback control. Scalar leaves
+have explicit scalar types: unknown child metadata does not mean scalar. Completion
+benchmarks compare real-model/schema root suggestions with direct root-type
 suggestions and a nested array/union index. Setup and finalization are outside
 timed loops. They are diagnostic measurements, not flaky wall-time assertions.
 
-### Reference Measurements
+### Historical Measurements
+
+The measurements below describe earlier implementations, including APIs and
+independent schema backends removed by the canonical typed-view refinement.
+They are retained as regression history, not evidence that the current code
+meets its performance gate. Use the paired runner in
+[performance/README.md](performance/README.md) for fresh original-reference
+comparisons, and report whole-owner retained/peak allocation separately from
+partial graph counters.
+
+#### Reference Measurements
 
 Paired local Release runs on 2026-09-29 (GCC 13, 40 samples, 2000 resamples),
 without concurrent builds, compare the preserved `626984e` executable with this
 implementation. Times are sample means, not performance guarantees. The baseline
 used the previous implicit-scalar schema leaves; the current fixture makes those
-same scalar domains explicit without changing the model data or query topology.
+same scalar types explicit without changing the model data or query topology.
 
 | Query | Before | After |
 | --- | ---: | ---: |
@@ -314,9 +564,284 @@ to attribute the remaining cost; retain these no-schema controls rather than
 hiding that cost behind schema pruning.
 
 For 256 candidate fields, completion in the same run measured 48.9 us through a
-real model/schema root, 53.6 us directly through the root domain, and 48.2 us
+real model/schema root, 53.6 us directly through the root type, and 48.2 us
 through a nested array/union index. Those short samples have appreciable timing
 noise; they establish comparable latency, not a statistically significant ordering.
 The direct path needs no synthetic model construction. Removing duplicate field
-enumeration reduced its earlier nested-domain measurement from about 83 us to
+enumeration reduced its earlier nested-type measurement from about 83 us to
 about 50 us on this machine.
+
+#### Earlier Bound Type Measurements
+
+On 2026-10-30, a quiet Release run (GCC 13, 40 samples, 2000 resamples)
+measured the owning-binding/scalar-provenance implementation on the same
+sparse-wide fixture, before merging the subsequent `size-checks` optimizations
+through `77fe792`. In particular, that merge makes diagnostics collection
+optional on the evaluation hot path; the following numbers do not measure the
+merged implementation. The earlier same-day `e324358` baseline used 20 samples
+and 1000 resamples, with appreciable noise in its field-plan result. These are
+not freshly interleaved before/after runs or a statistical regression threshold.
+
+| Query | Earlier Baseline | Callback At That Revision | Bound Graph At That Revision |
+| --- | ---: | ---: | ---: |
+| No schema | 6.814 ms | 7.070 ms | - |
+| Basic pruning | 3.222 ms | 3.549 ms | 5.532 ms |
+| Field plans | 1.560 ms | 1.606 ms | 2.098 ms |
+| Exact path | 0.786 ms | 0.927 ms | 1.419 ms |
+
+Bound field plans are 2.64x faster than bound basic pruning, and take 1.48x
+the bound exact-path time. Binding/provenance is not free: relative to the
+callback cases at that revision, bound plans cost about 31% more and bound exact access
+about 53% more. Persisted scalar leaves remain compact in both variants; the
+bound queries derive and retain their type while emitting runtime values.
+This benchmark does not isolate binding lookup, dictionary translation and
+qualification costs, so attributing the difference requires profiling.
+
+Nor is the legacy path uniformly unchanged: its no-schema/basic/plan/exact
+means increased by approximately 4%/10%/3%/18% over the earlier baseline.
+Retain these controls when optimizing instead of reporting only the relative
+pruning speedup. In the same quiet run, model-root, direct-root and nested
+array/union completion measured 47.9, 50.0 and 50.6 us respectively, comparable
+to the earlier roughly 50 us measurements.
+
+#### Allocation-Free Member Lookup
+
+On 2026-11-02, paired Release measurements compared `a67e654` with direct
+`fieldSchema` / `itemSchema` lookup and cached wildcard dictionary translation.
+Both executables used GCC 13, `-O3 -DNDEBUG`, the same sparse-wide fixture
+(2,000 objects, 32 branches), and CPU affinity to one core of a Ryzen 7 PRO
+7840U. The following are medians of seven interleaved rounds, each evaluating
+150 queries after three warmups, with a retained `BoundExpression`. Setup,
+schema finalization and compilation are outside the measurements.
+
+| Query | Before | Point Lookup |
+| --- | ---: | ---: |
+| No schema | 6.948 ms | 7.042 ms |
+| Callback basic pruning | 3.628 ms | 3.490 ms |
+| Callback field plans | 1.624 ms | 1.594 ms |
+| Unbound exact path | 0.918 ms | 0.897 ms |
+| Bound basic pruning | 5.552 ms | 5.216 ms |
+| Bound field plans | 2.079 ms | 1.781 ms |
+| Bound exact path | 1.404 ms | 1.167 ms |
+
+Bound field-plan latency falls about 14%, and bound exact-path latency about
+17%. The unbound controls vary by -3.8% to +1.3%; these local timings are not
+regression thresholds. Separate Callgrind runs show approximately 11% fewer
+instructions for both bound cases, unchanged no-schema/exact-path instruction
+counts, and about 1% fewer callback field-plan instructions.
+
+Counting `operator new` calls only around warmed evaluation gives **8,001 to 1
+allocations per bound query**, for all three bound variants. The remaining
+allocation holds the final result vector; deriving the 2,000 numeric leaf
+types no longer allocates. This is not a promise that arbitrary queries or
+owning string results allocate nothing. Bound field plans also reduce successful
+schema-dictionary `get` calls from 8,001 to 2,000 per query. Exact graph ownership,
+scalar qualification and independent-dictionary translation still have a cost.
+
+The existing Catch2 schema/completion benchmarks were also rerun three times
+with 40 samples and 2,000 resamples. Median completion means were 47.5 us for
+model-root, 53.3 us for direct-root and 50.3 us for nested array/union completion.
+One run had substantial timing outliers; neither these measurements nor the
+earlier ones establish an end-to-end application speedup.
+
+#### Runtime Cost Recovery Against The Original Baseline
+
+The allocation-free lookup result above compared against an already regressed
+implementation. It did **not** meet the performance budget against `77fe792`.
+The subsequent runtime pass removes redundant work rather than dropping types:
+
+- `ModelPool::type` and `ModelPool::schema` read core column metadata directly;
+  custom columns still use virtual resolution, and typed nodes retain their
+  overrides. Generic nodes no longer construct owning wrappers just to read
+  these two properties.
+- Scalar extraction constructs the qualified `Value` once. Compound children
+  need no inferred scalar type, while intrinsic scalar provenance takes
+  precedence over the parent edge.
+- `ExpressionRuntime` binds static field names to each exact schema dictionary.
+  Successful translations and wildcard plans share a graph-owned cache, with a
+  last-graph fast path. Missing names remain retryable; definitions are looked
+  up again, so schema replacement does not leave dangling definition pointers.
+  Dynamic subscripts still resolve the actual key for each access.
+- Resolution reuses the node's existing strong owner instead of acquiring an
+  extra dispatch reference and locking `enable_shared_from_this` for each
+  temporary wrapper. Wrappers and independently retained results still own
+  their model/graph; no borrowed-value lifetime protocol was introduced.
+- Address-only node construction initializes its default null payload directly,
+  rather than moving and destroying an otherwise unused scalar variant.
+
+The final comparison uses the same explicit-leaf sparse-wide fixture and
+compiler settings as above, but both executables first start and join a thread.
+This activates the ordinary threaded-process shared-pointer synchronization
+path before timing, rather than benefiting from a single-threaded-process
+library shortcut. Evaluation itself remains single-worker, pinned to CPU 4.
+Seven interleaved rounds evaluate 200 queries each after three warmups, retaining
+the `BoundExpression`; setup, dictionary migration and compilation are excluded.
+The original `77fe792` executable is the reference, not `a67e654`.
+
+| Query | Original Median | Final Median | Latency Change |
+| --- | ---: | ---: | ---: |
+| No schema | 7.483 ms | 5.646 ms | -24.5% |
+| Callback basic pruning | 3.569 ms | 2.751 ms | -22.9% |
+| Callback field plans | 1.604 ms | 1.245 ms | -22.4% |
+| Unbound exact path | 0.814 ms | 0.564 ms | -30.7% |
+| Bound basic pruning | 3.559 ms | 3.282 ms | -7.8% |
+| Bound field plans | 1.607 ms | 1.305 ms | -18.8% |
+| Bound exact path | 0.826 ms | 0.641 ms | -22.4% |
+| Separate dictionaries, bound basic | 3.495 ms | 3.272 ms | -6.4% |
+| Separate dictionaries, bound plans | 1.624 ms | 1.306 ms | -19.6% |
+| Separate dictionaries, bound exact | 0.820 ms | 0.636 ms | -22.4% |
+
+Each bound variant is compared with the original corresponding callback/exact
+query, which did not preserve scalar provenance. The separate-dictionary
+candidate additionally pays translation into an independent runtime namespace;
+its reference still uses the original shared dictionary. Repeated reference
+medians differ because each variant has its own interleaved reference samples.
+
+All candidate sample ranges were below their respective reference ranges. For
+the narrowest margin, separate-dictionary basic pruning, the seven candidate
+means span 3.181--3.350 ms versus 3.460--3.661 ms for the reference. This fixture
+meets the at-most-1% regression budget without using a 5% exception; it is not
+an end-to-end MapViewer or cross-platform performance guarantee. Exact-type
+handling still has a measurable cost relative to the faster unbound candidate.
+Separate Callgrind runs count 3.8% more instructions for bound basic pruning,
+but 5.8% fewer for bound plans and 8.2% fewer for bound exact paths versus the
+original corresponding query. Instruction counts are not latency: the basic
+path still performs extra type bookkeeping while avoiding costlier ownership
+operations and wrapper construction.
+
+Warmed evaluation in every mode performs one 88-byte allocation for the result
+vector, with no successful dictionary `get` calls. `Value`, `ModelNode` and
+`ScalarValueType` remain 88, 72 and 40 bytes on this platform, respectively.
+`test/schema.cpp` now retains bindings, activates threaded-process refcounts,
+and benchmarks all three independent-dictionary variants. Focused tests cover
+core/custom/foreign metadata dispatch, graph-local ID collisions, dictionary
+translation, late declarations, replacement definitions, dynamic subscripts,
+and result ownership after both the environment and source models are gone.
+
+
+#### Parallel Ownership Follow-Up
+
+The single-worker result above did not establish parallel scalability. A
+four-worker diagnostic with distinct models sharing one binding exposed a 52%
+regression in basic pruning against `77fe792`: each transient schema reference
+contended on the same graph-wide atomic counter. Splitting ownership counters
+without copying the graph removed most of it. That alone was insufficient:
+`perf c2c` then identified false sharing between a model's stored binding handle
+and another model's reference counter. Isolating both the handle and the new
+counter fixes that allocator-placement effect; padding unrelated model nodes
+or Values is not part of the change.
+
+The following complete matrix uses GCC 13.3 Release on an AMD Ryzen 7 PRO 7840U.
+Each worker has its own model, environment and retained `BoundExpression`, but
+shares the same schema graph and AST. Seven interleaved rounds each time 200
+queries per worker after three warmups. The statistic is the median of the
+slowest worker's mean query latency in each round, not aggregate throughput.
+Construction and compilation are excluded. Models are either built on the main
+thread or by their querying worker to check allocator-placement sensitivity.
+CPUs 4/5 and 6/7 share cores; CPUs 4/6/8/10 are distinct physical cores. The
+reference is always the original corresponding callback/exact query at
+`77fe792`, not the regressed Schema 2 implementation. `separate-*` additionally
+pays for an independent runtime dictionary; its reference still shares the
+schema dictionary. Negative change means faster.
+
+| Workers / Placement | Construction | Query | Original | Local Owners | Change |
+| --- | --- | --- | ---: | ---: | ---: |
+| 1 | main | bound-basic | 3.654 ms | 3.255 ms | -10.90% |
+| 1 | main | bound-plans | 1.646 ms | 1.327 ms | -19.40% |
+| 1 | main | bound-exact | 0.871 ms | 0.681 ms | -21.80% |
+| 1 | main | separate-basic | 3.622 ms | 3.298 ms | -8.95% |
+| 1 | main | separate-plans | 1.628 ms | 1.321 ms | -18.86% |
+| 1 | main | separate-exact | 0.861 ms | 0.688 ms | -20.13% |
+| 4 / 2 cores (SMT) | main | bound-basic | 5.573 ms | 5.831 ms | +4.63% |
+| 4 / 2 cores (SMT) | main | bound-plans | 2.570 ms | 2.477 ms | -3.61% |
+| 4 / 2 cores (SMT) | main | bound-exact | 1.211 ms | 1.151 ms | -4.97% |
+| 4 / 2 cores (SMT) | main | separate-basic | 5.592 ms | 5.792 ms | +3.57% |
+| 4 / 2 cores (SMT) | main | separate-plans | 2.581 ms | 2.473 ms | -4.20% |
+| 4 / 2 cores (SMT) | main | separate-exact | 1.204 ms | 1.155 ms | -4.05% |
+| 4 / 4 cores | main | bound-basic | 3.863 ms | 3.594 ms | -6.98% |
+| 4 / 4 cores | main | bound-plans | 1.711 ms | 1.382 ms | -19.22% |
+| 4 / 4 cores | main | bound-exact | 0.912 ms | 0.721 ms | -20.97% |
+| 4 / 4 cores | main | separate-basic | 3.869 ms | 3.515 ms | -9.15% |
+| 4 / 4 cores | main | separate-plans | 1.723 ms | 1.412 ms | -18.06% |
+| 4 / 4 cores | main | separate-exact | 0.948 ms | 0.713 ms | -24.83% |
+| 4 / 2 cores (SMT) | worker | bound-basic | 5.635 ms | 5.920 ms | +5.05% |
+| 4 / 2 cores (SMT) | worker | bound-plans | 2.590 ms | 2.518 ms | -2.76% |
+| 4 / 2 cores (SMT) | worker | bound-exact | 1.218 ms | 1.182 ms | -2.97% |
+| 4 / 2 cores (SMT) | worker | separate-basic | 5.612 ms | 5.933 ms | +5.72% |
+| 4 / 2 cores (SMT) | worker | separate-plans | 2.593 ms | 2.485 ms | -4.17% |
+| 4 / 2 cores (SMT) | worker | separate-exact | 1.205 ms | 1.197 ms | -0.66% |
+| 4 / 4 cores | worker | bound-basic | 3.891 ms | 3.562 ms | -8.45% |
+| 4 / 4 cores | worker | bound-plans | 1.779 ms | 1.414 ms | -20.50% |
+| 4 / 4 cores | worker | bound-exact | 0.927 ms | 0.763 ms | -17.70% |
+| 4 / 4 cores | worker | separate-basic | 3.912 ms | 3.616 ms | -7.57% |
+| 4 / 4 cores | worker | separate-plans | 1.735 ms | 1.435 ms | -17.31% |
+| 4 / 4 cores | worker | separate-exact | 0.939 ms | 0.763 ms | -18.68% |
+
+All single-worker and four-distinct-core medians improve. The strict <=1%
+regression target is nevertheless **not fully met**: basic pruning with four
+workers sharing two physical cores remains 3.57--5.72% slower. That is not an
+approved 5% exception, and the remaining target stays open. Field plans and
+exact paths improve in those SMT runs too, but do not erase the basic-pruning
+result. This is a bounded fixture comparison, not an end-to-end MapViewer,
+same-model concurrent-query, or cross-platform performance guarantee.
+
+All per-worker samples, CPU placement and source identifiers are retained in
+[`performance/schema-runtime-2026-11-02.json`](performance/schema-runtime-2026-11-02.json).
+The repository's sparse-wide benchmark also runs four-model batches for basic
+pruning, plans and exact paths. Its batch timings include thread/binding setup
+amortized over 16 queries per worker; they are not the pinned steady-state
+measurements reported above and should not become noisy CI timing assertions.
+
+The same fixture now compares compact `SchemaPool` against the independent
+`ObjectSchema` registry for basic pruning, field plans and exact paths, with
+both shared and separate dictionaries. Payloads and container IDs are unchanged;
+native schema rebinding is outside timing. These additional benchmark variants
+are coverage for the extraction, not yet a new accepted baseline measurement.
+
+The persistent [paired runtime harness](performance/README.md) compiles the same
+fixture against the original revision and the candidate, records build identities
+and all worker samples, and includes compact-pool variants. Its smoke mode is
+strictly correctness coverage; it never reports performance acceptance. Retain
+the historical raw evidence rather than replacing it with an intermediate-base
+comparison or an unpinned one-sample benchmark.
+Both harness versions compile, and a 60-row tiny smoke matrix passes all 120
+reference/candidate subprocesses, including untimed exact-binding/leaf-type
+checks. Nine runner tests cover evidence preservation, paired ordering and
+rejection of mismatched builds/workloads. These are harness-correctness results,
+not a new latency comparison.
+
+Untimed capacity checks on the full 2,000-object/32-branch fixture report
+1,967,654 bytes of model-column backing capacity at `77fe792`, versus 1,973,457
+bytes with the candidate's registry binding (+5,803 bytes, +0.295%) and 1,973,456
+bytes with compact-pool binding. These exclude dictionaries and shared graph
+storage. The candidate schema dictionary reports 8,752 bytes; each separate
+runtime dictionary adds 8,832 bytes. Compact graph type/index storage reports
+25,746 bytes plus 1,088,538 bytes of primitive ModelPool capacity, shared across
+workers. These are existing API lower bounds, not allocator/RSS totals. The
+independent registry lacks a complete retained-size API, so **whole-schema memory
+comparison against the pre-cutover representation remains open**. Raw capacity
+evidence is retained in
+[`performance/schema-memory-2026-11-03.json`](performance/schema-memory-2026-11-03.json).
+Timings from this loaded-host capacity probe were discarded. The prepared paired
+runtime matrix has not been run; the historical SMT regression gate remains open.
+
+CTest in coverage builds runs every benchmark with one measured sample and no
+statistical analysis. Fixture setup, calibration, benchmark bodies and their assertions
+still execute; ordinary builds retain full sampling. Instrumented timings, especially
+with shared atomic gcov counters, are not performance evidence.
+
+A separate nine-round lifecycle probe installed one binding in each of 10,000
+empty models, then destroyed the models. Relative to `c217e0d` (which already
+supports bindings), median installation rises from 117 to 265 ns/model, and
+whole-model destruction from 7.713 to 8.031 us/model. Installation adds one heap
+allocation and 240 requested bytes per model/graph on this libstdc++ build
+(3 allocations / 68 bytes before, 4 / 308 after). The retained-capacity lower
+bound increases by 112 bytes; it deliberately does not claim the omitted
+control-block bookkeeping/padding. These are installation/teardown costs, not
+per-query allocations, and other standard libraries may use different layouts.
+
+Regression tests cover independent counters with unchanged graph pointers,
+direct/imported/read bindings, alias pointers differing from their owner,
+weak-reference release, detached scalar lifetimes, and concurrent workers
+using one schema with independent model dictionaries. No borrowed Value API,
+public node-layout change, or stream-format change is introduced.

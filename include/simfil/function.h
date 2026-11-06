@@ -159,6 +159,40 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Explicit all-bits membership using the mask's exact type and declared flag name. */
+/**
+ * Explicit schema-declared enum/named-value membership below a value. Unlike
+ * shorthand, this predicate keeps its meaning inside generated boolean filters.
+ */
+class HasSymbolFn : public Function {
+public:
+  static HasSymbolFn Fn;
+  auto ident() const -> const FnInfo & override;
+  auto eval(Context, const Value &, const std::vector<ExprPtr> &,
+            const ResultFn &) const -> tl::expected<Result, Error> override;
+};
+
+class HasFlagFn : public Function
+{
+public:
+    static HasFlagFn Fn;
+    /** Describe the membership primitive for completion and help. */
+    auto ident() const -> const FnInfo& override;
+    /** Evaluate one typed mask and one declared flag name, propagating errors and undefined values. */
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+};
+
+/** Construct exact unsigned bits using an existing mask's type, without relabeling another mask. */
+class BitmaskFn : public Function
+{
+public:
+    static BitmaskFn Fn;
+    /** Describe lossless string construction for completion and help. */
+    auto ident() const -> const FnInfo& override;
+    /** Parse one raw-bits string and validate the resulting mask against the selected type width. */
+    auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
+};
+
 /** Utility functions for working with arguments*/
 namespace util
 {

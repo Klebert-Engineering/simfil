@@ -8,8 +8,7 @@
 #include <utility>
 
 #include "arena.h"
-#include "schema.h"
-#include "value-type.h"
+#include "scalar-value.h"
 #include "string-pool.h"
 #include "simfil/byte-array.h"
 #include "simfil/error.h"
@@ -148,7 +147,7 @@ private:
 /**
  * Unique address of a ModelNode within a Pool.
  * Consists of an 8b column id and 24b index within a column.
- * No column may grow beyond 2^25-1 (33.5M) entries.
+ * An addressed column supports at most 2^24 (16.8M) entries.
  *
  * Some special cases apply for small scalar types:
  * - String: The index is interpreted directly as a string ID.
@@ -163,8 +162,18 @@ struct ModelNodeAddress
 
     uint32_t value_ = 0;
 
-    ModelNodeAddress(uint8_t const& col, uint32_t const& idx = 0) {  // NOLINT
-        value_ = (idx << 8) | col;
+    /** Compare full column/index identity, not the implicit presence conversion. */
+    bool operator==(ModelNodeAddress const&) const = default;
+
+    /** Validate once at the owning column's allocation boundary. */
+    [[nodiscard]] static constexpr bool checkIndex(size_t idx) noexcept {
+        return idx <= 0xffffffU;
+    }
+
+    /** Pack an already validated index; the precondition is asserted in debug builds. */
+    ModelNodeAddress(uint8_t const& col, size_t idx = 0) {  // NOLINT
+        assert(checkIndex(idx));
+        value_ = (static_cast<uint32_t>(idx) << 8) | col;
     }
 
     [[nodiscard]] uint8_t column() const {
@@ -251,8 +260,11 @@ struct ModelNode
     /// Get an Object model's field names
     [[nodiscard]] virtual StringId keyAt(int64_t i) const;
 
-    /// Get the schema id for schema-aware container nodes, or NoSchemaId otherwise.
-    [[nodiscard]] virtual SchemaId schema() const;
+    /// Get the schema id for a bound container or explicitly qualified scalar.
+    [[nodiscard]] virtual TypeId schema() const;
+
+    /** Retain the graph defining this node's explicit schema; plain leaves use their parent edge. */
+    [[nodiscard]] auto schemaType() const -> SchemaType;
 
     /// Get the number of children
     [[nodiscard]] virtual uint32_t size() const;
@@ -268,6 +280,8 @@ struct ModelNode
 
     /// Return the model that owns this node address.
     [[nodiscard]] inline ModelConstPtr owningModel() const {return model_;}
+    /** Borrow the owner already retained by this node, without touching its ownership counter. */
+    [[nodiscard]] auto borrowedModel() const noexcept -> Model const* { return model_.get(); }
 
     /// Virtual destructor to allow polymorphism
     virtual ~ModelNode() = default;
@@ -412,9 +426,14 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] ModelNode::Ptr get(const StringId&) const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
-    [[nodiscard]] SchemaId schema() const override;
+    [[nodiscard]] TypeId schema() const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+    /** Default structural/scalar export after resolution; special nodes may override it. */
+    [[nodiscard]] nlohmann::json toJson() const override;
+#endif
 
 public:
     explicit ModelNodeBase(detail::mp_key key) : ModelNode(key) {}
@@ -539,8 +558,8 @@ public:
 
     bool forEach(std::function<bool(ModelNodeType const&)> const& callback) const;
 
-    [[nodiscard]] SchemaId schema() const override;
-    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId schema() const override;
+    auto setSchema(TypeId schemaId) -> tl::expected<void, Error>;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -605,8 +624,8 @@ public:
         return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
     }
 
-    [[nodiscard]] SchemaId schema() const override;
-    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId schema() const override;
+    auto setSchema(TypeId schemaId) -> tl::expected<void, Error>;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;

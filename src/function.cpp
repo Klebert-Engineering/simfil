@@ -1,16 +1,18 @@
 #include "simfil/function.h"
 
-#include "simfil/model/nodes.h"
-#include "simfil/result.h"
-#include "simfil/operator.h"
+#include "expected.h"
+#include "expressions.h"
+#include "fmt/core.h"
 #include "simfil/environment.h"
 #include "simfil/model/model.h"
-#include "simfil/types.h"
+#include "simfil/model/nodes.h"
+#include "simfil/operator.h"
 #include "simfil/overlay.h"
-#include "fmt/core.h"
+#include "simfil/result.h"
+#include "simfil/types.h"
 #include "tl/expected.hpp"
-#include "expected.h"
 
+#include <limits>
 #include <optional>
 
 namespace simfil
@@ -276,7 +278,7 @@ auto TraceFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& ar
             // Do not allow string view to leak into the trace result.
             auto copy = vv;
             if (auto sv = vv.stringViewValue())
-                copy = Value::make(std::string(*sv));
+                copy = Value::make(std::string(*sv)).withSchemaType(vv.schemaType());
             values.emplace_back(std::move(copy));
         }
         return res(ctx, std::move(vv));
@@ -555,7 +557,9 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
             TRY_EXPECTED(subRes);
         } else {
             if (sum.isa(ValueType::Null)) {
-                sum = std::move(vv);
+                // Arithmetic sum constructs a number even when null makes this the first candidate.
+                sum = vv.type == ValueType::Int || vv.type == ValueType::Float
+                    ? Value(vv.getScalar()) : std::move(vv);
             } else {
                 auto newSum = BinaryOperatorDispatcher<OperatorAdd>::dispatch(sum, vv);
                 TRY_EXPECTED(newSum);
@@ -568,6 +572,134 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
     TRY_EXPECTED(argRes);
 
     return res(ctx, sum);
+}
+
+HasSymbolFn HasSymbolFn::Fn;
+
+auto HasSymbolFn::ident() const -> const FnInfo & {
+  static const FnInfo info{
+      "hasSymbol",
+      "Tests declared enum or named-value membership below a typed value.",
+      "hasSymbol(value, name[, schemaIdentity, typeId]) -> bool"};
+  return info;
+}
+
+auto HasSymbolFn::eval(Context ctx, const Value &val,
+                       const std::vector<ExprPtr> &args,
+                       const ResultFn &res) const
+    -> tl::expected<Result, Error> {
+  if (args.size() != 2 && args.size() != 4)
+    return tl::unexpected(Error{
+        Error::InvalidArguments,
+        "hasSymbol expects value, name and optional schema identity/type ID"});
+  if (ctx.phase == Context::Compilation)
+    return res(ctx, Value::undef());
+  // The name is literal data. Evaluate the input as a stream so wildcards do
+  // not accidentally discard all but their first value.
+  Value name = Value::undef();
+  auto parsed = ArgParser("hasSymbol", ctx, val, args, 1)
+                    .arg("name", ValueType::String, name)
+                    .ok();
+  TRY_EXPECTED(parsed);
+  if (!*parsed)
+    return res(ctx, Value::undef());
+  Value identity = Value::make(std::string()),
+        type = Value::make(std::int64_t{0});
+  if (args.size() == 4) {
+    auto qualified = ArgParser("hasSymbol", ctx, val, args, 2)
+                         .arg("schema", ValueType::String, identity)
+                         .arg("typeId", ValueType::Int, type)
+                         .ok();
+    TRY_EXPECTED(qualified);
+    if (!*qualified)
+      return res(ctx, Value::undef());
+    if (type.as<ValueType::Int>() <= 0 ||
+        type.as<ValueType::Int>() > std::numeric_limits<TypeId>::max())
+      return tl::unexpected(
+          Error{Error::InvalidArguments,
+                "hasSymbol typeId is outside the schema type range"});
+  }
+  bool matched = false;
+  auto evaluated = args[0]->eval(
+      ctx, val,
+      LambdaResultFn([&](Context child,
+                         Value &&input) -> tl::expected<Result, Error> {
+        for (bool named : {true, false}) {
+          SchemaEnumExpr predicate(
+              {}, std::string(name.stringView()), {}, named,
+              std::string(identity.stringView()),
+              static_cast<TypeId>(type.as<ValueType::Int>()));
+          auto checked = predicate.eval(
+              child, input,
+              LambdaResultFn(
+                  [&](Context, Value &&answer) -> tl::expected<Result, Error> {
+                    matched = answer.isa(ValueType::Bool) &&
+                              answer.as<ValueType::Bool>();
+                    return Result::Continue;
+                  }));
+          TRY_EXPECTED(checked);
+          if (matched)
+            return Result::Stop;
+        }
+        return Result::Continue;
+      }));
+  TRY_EXPECTED(evaluated);
+  return res(ctx, Value::make(matched));
+}
+
+HasFlagFn HasFlagFn::Fn;
+
+auto HasFlagFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{"hasFlag", "Tests all bits of a declared flag; a zero flag means exactly zero.",
+        "hasFlag(mask, name) -> bool"};
+    return info;
+}
+
+auto HasFlagFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const
+    -> tl::expected<Result, Error>
+{
+    if (args.size() != 2)
+        return tl::unexpected(Error{Error::InvalidArguments, "hasFlag expects a mask and a flag name"});
+    Value mask = Value::undef(), name = Value::undef();
+    auto ok = ArgParser("hasFlag", ctx, val, args).arg("mask", ValueType::Bitmask, mask)
+        .arg("name", ValueType::String, name).ok();
+    TRY_EXPECTED(ok);
+    if (!*ok)
+        return res(ctx, Value::undef());
+    auto result = mask.as<ValueType::Bitmask>().hasFlag(name.stringView());
+    TRY_EXPECTED(result);
+    return res(ctx, Value::make(*result));
+}
+
+BitmaskFn BitmaskFn::Fn;
+
+auto BitmaskFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{"bitmask", "Constructs raw bits in an existing mask's type.",
+        "bitmask(mask, unsignedDecimalOrHexString) -> bitmask"};
+    return info;
+}
+
+auto BitmaskFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args, const ResultFn& res) const
+    -> tl::expected<Result, Error>
+{
+    if (args.size() != 2)
+        return tl::unexpected(Error{Error::InvalidArguments, "bitmask expects a type-bearing mask and a bits string"});
+    Value mask = Value::undef(), text = Value::undef();
+    auto ok = ArgParser("bitmask", ctx, val, args).arg("mask", ValueType::Bitmask, mask)
+        .arg("bits", ValueType::String, text).ok();
+    TRY_EXPECTED(ok);
+    if (!*ok)
+        return res(ctx, Value::undef());
+    auto bits = Bitmask::parseBits(text.stringView());
+    TRY_EXPECTED(bits);
+    auto typeRef = mask.schemaType();
+    auto definition = typeRef;
+    if (!definition || !definition.isBitmask() || !definition.bitWidth() || definition.bitWidth() > 64 ||
+        (definition.bitWidth() < 64 && (*bits >> definition.bitWidth())))
+        return tl::unexpected(Error{Error::InvalidArguments, "Bits exceed the mask type encoding width"});
+    return res(ctx, Value::make(Bitmask{*bits, std::move(typeRef)}));
 }
 
 MinFn MinFn::Fn;

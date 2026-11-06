@@ -6,6 +6,7 @@
 #include <cassert>
 #include <bitset>
 #include <type_traits>
+#include <stdexcept>
 
 #include "model/nodes.h"
 #include "simfil/byte-array.h"
@@ -65,6 +66,9 @@ struct ValueToString
         return v.toLiteral();
     }
 
+    /** Render raw bits losslessly; symbolic labels are a separate schema-aware presentation. */
+    auto operator()(const Bitmask& value) const -> std::string;
+
     auto operator()(const TransientObject&) const
     {
         return "<transient>"s;
@@ -93,6 +97,7 @@ inline auto valueType2String(ValueType t) -> const char*
     case ValueType::Float:  return "float";
     case ValueType::String: return "string";
     case ValueType::Bytes:  return "bytes";
+    case ValueType::Bitmask: return "bitmask";
     case ValueType::TransientObject: return "transient";
     case ValueType::Object: return "object";
     case ValueType::Array:  return "array";
@@ -174,6 +179,11 @@ struct ValueType4CType<ByteArray> {
 };
 
 template <>
+struct ValueType4CType<Bitmask> {
+    static constexpr ValueType Type = ValueType::Bitmask;
+};
+
+template <>
 struct ValueType4CType<TransientObject> {
     static constexpr ValueType Type = ValueType::TransientObject;
 };
@@ -219,6 +229,11 @@ struct ValueTypeInfo<ValueType::String> {
 template <>
 struct ValueTypeInfo<ValueType::Bytes> {
     using Type = ByteArray;
+};
+
+template <>
+struct ValueTypeInfo<ValueType::Bitmask> {
+    using Type = Bitmask;
 };
 
 template <>
@@ -297,6 +312,47 @@ struct ValueAs<ValueType::Array>
 class Value
 {
 public:
+    /** An annotated primitive fits inside the existing variant instead of enlarging every Value. */
+    struct QualifiedScalar {
+        ScalarValueType value;
+        SchemaType type;
+
+        QualifiedScalar() = default;
+        /** Escaping scalar values retain the graph, preserving an existing local owner group. */
+        QualifiedScalar(ScalarValueType value, SchemaType type)
+            : value(std::move(value)), type(type.ownsPool() ? std::move(type) : type.retain())
+        {
+            if (auto text = std::get_if<std::string_view>(&this->value))
+                this->value = std::string(*text);
+        }
+    };
+
+    /** Return this value's exact retained type, including intrinsic mask identity. */
+    auto schemaType() const -> SchemaType;
+    /** Resolve a symbolic literal from this value's exact type, never from its raw numeric code. */
+    auto namedValue(std::string_view name) const -> tl::expected<Value, Error>;
+    /** Attach known primitive provenance; null/undefined never inherit a caller's type. */
+    auto withSchemaType(SchemaType typeRef) const -> Value;
+    /** Extract a child using the actual parent's schema field edge before scalarization. */
+    static auto field(ModelNode const& parent, ModelNode const& child, StringId field) -> Value
+    {
+        return Value::field(child, [&] { return fieldType(parent, field); });
+    }
+    /** Extract a child, inferring a type only for primitives without intrinsic provenance. */
+    template <class TypeFn>
+    static auto field(ModelNode const& child, TypeFn&& typeRef) -> Value
+    {
+        const auto type = child.type();
+        if (type == ValueType::Undef)
+            return Value::undef();
+        // Compound values already retain their model and its schema. No scalar
+        // qualification or owning type lookup is needed while following paths.
+        if (type == ValueType::Object || type == ValueType::Array)
+            return {type, model_ptr<ModelNode>(child)};
+        return scalarNode(child, std::forward<TypeFn>(typeRef));
+    }
+    /** Extract an indexed child; object indexes use their actual key, arrays use the element type. */
+    static auto at(ModelNode const& parent, ModelNode const& child, std::int64_t index) -> Value;
     static auto t() -> Value
     {
         return {ValueType::Bool, true};
@@ -335,19 +391,7 @@ public:
 
     static auto field(const ModelNode& node) -> Value
     {
-        const auto type = node.type();
-        if (type == ValueType::Undef)
-            return Value::undef();
-        if (type == ValueType::Object || type == ValueType::Array) {
-            return Value{type, model_ptr<ModelNode>(node)};
-        } else if (type == ValueType::String) {
-            auto value = node.value();
-            if (auto view = std::get_if<std::string_view>(&value))
-                return Value::make(std::string(*view));
-            return Value{std::move(value)};
-        } else {
-            return Value{node.value()};
-        }
+        return field(node, [] { return SchemaType{}; });
     }
 
     static auto field(ModelNode&& node) -> Value
@@ -357,13 +401,8 @@ public:
             return Value::undef();
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(std::move(node))};
-        } else if (type == ValueType::String) {
-            auto value = node.value();
-            if (auto view = std::get_if<std::string_view>(&value))
-                return Value::make(std::string(*view));
-            return Value{std::move(value)};
         } else {
-            return Value{node.value()};
+            return scalarNode(node, [] { return SchemaType{}; });
         }
     }
 
@@ -376,7 +415,7 @@ public:
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(node)};
         } else {
-            return Value{node->value()};
+            return scalarNode(*node, [] { return SchemaType{}; });
         }
     }
 
@@ -410,12 +449,20 @@ public:
     }
     
     [[nodiscard]] bool asBool() const noexcept {
+        if (auto scalar = std::get_if<QualifiedScalar>(&value))
+            return std::get<bool>(scalar->value);
         return std::get<bool>(value);
     }
     
     template <ValueType ArgType>
     [[nodiscard]] auto as() const -> decltype(auto)
     {
+        if constexpr (ArgType == ValueType::Bool || ArgType == ValueType::Int ||
+                      ArgType == ValueType::Float || ArgType == ValueType::String ||
+                      ArgType == ValueType::Bytes || ArgType == ValueType::Bitmask) {
+            if (auto scalar = std::get_if<QualifiedScalar>(&value))
+                return ValueAs<ArgType>::get(scalar->value);
+        }
         return ValueAs<ArgType>::get(value);
     }
 
@@ -443,6 +490,8 @@ public:
             return fn(this->template as<ValueType::String>());
         case ValueType::Bytes:
             return fn(this->template as<ValueType::Bytes>());
+        case ValueType::Bitmask:
+            return fn(this->template as<ValueType::Bitmask>());
         case ValueType::TransientObject:
             return fn(this->template as<ValueType::TransientObject>());
         case ValueType::Object:
@@ -481,6 +530,8 @@ public:
             void operator() (std::string const& v) {result = v;}
             void operator() (std::string_view const& v) {result = v;}
             void operator() (ByteArray const& v) {result = v;}
+            void operator() (Bitmask const& v) {result = v;}
+            void operator() (QualifiedScalar const& v) {result = v.value;}
             void operator() (TransientObject const&) {}
             void operator() (ModelNode::Ptr const&) {}
             ScalarValueType result;
@@ -491,7 +542,24 @@ public:
 
     std::string_view const* stringViewValue() noexcept
     {
+        if (auto scalar = std::get_if<QualifiedScalar>(&value))
+            return std::get_if<std::string_view>(&scalar->value);
         return std::get_if<std::string_view>(&value);
+    }
+
+    /** Borrow a string's bytes for bounded consumers without copying or discarding qualification. */
+    auto stringView() const noexcept -> std::string_view
+    {
+        auto view = [](auto const& payload) -> std::string_view {
+            if (auto string = std::get_if<std::string>(&payload))
+                return *string;
+            if (auto string = std::get_if<std::string_view>(&payload))
+                return *string;
+            return {};
+        };
+        if (auto scalar = std::get_if<QualifiedScalar>(&value))
+            return view(scalar->value);
+        return view(value);
     }
 
     ModelNode::Ptr const* nodePtr() const noexcept
@@ -515,8 +583,47 @@ public:
         std::string,
         std::string_view,
         ByteArray,
+        Bitmask,
         TransientObject,
-        ModelNode::Ptr> value;
+        ModelNode::Ptr,
+        QualifiedScalar> value;
+
+private:
+    /** Construct a primitive once, retaining its type and any borrowed string bytes. */
+    static auto fromScalar(ScalarValueType scalar, SchemaType typeRef) -> Value
+    {
+        if (auto view = std::get_if<std::string_view>(&scalar))
+            scalar = std::string(*view);
+        if (auto mask = std::get_if<Bitmask>(&scalar)) {
+            if (typeRef && typeRef != mask->type)
+                throw std::invalid_argument("Cannot rebind a bitmask to a different type");
+            if (!mask->type.ownsPool())
+                mask->type = mask->type.retain();
+        }
+        else if (typeRef && !std::holds_alternative<std::monostate>(scalar)) {
+            auto type = std::visit([](auto const& raw) {
+                return ValueType4CType<std::decay_t<decltype(raw)>>::Type;
+            }, scalar);
+            return {type, QualifiedScalar{std::move(scalar), std::move(typeRef)}};
+        }
+        return Value{std::move(scalar)};
+    }
+
+    /** Scalarize a known primitive without repeating its virtual type lookup. */
+    template <class TypeFn>
+    static auto scalarNode(ModelNode const& node, TypeFn&& inferType) -> Value
+    {
+        auto scalar = node.value();
+        auto typeRef = node.schemaType();
+        if (auto mask = std::get_if<Bitmask>(&scalar); mask && !typeRef)
+            typeRef = mask->type;
+        if (!typeRef && !std::holds_alternative<std::monostate>(scalar))
+            typeRef = inferType();
+        return fromScalar(std::move(scalar), std::move(typeRef));
+    }
+
+    /** Resolve a parent's declared field type without constructing an intermediate Value. */
+    static auto fieldType(ModelNode const& parent, StringId field) -> SchemaType;
 };
 
 template <typename ResultT, typename ValueT>

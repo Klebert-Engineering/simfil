@@ -22,13 +22,13 @@ ValueType BaseArray<ModelType, ModelNodeType>::type() const
 }
 
 template <class ModelType, class ModelNodeType>
-SchemaId BaseArray<ModelType, ModelNodeType>::schema() const
+TypeId BaseArray<ModelType, ModelNodeType>::schema() const
 {
     return model().arraySchemaId(members_);
 }
 
 template <class ModelType, class ModelNodeType>
-auto BaseArray<ModelType, ModelNodeType>::setSchema(SchemaId schemaId) -> tl::expected<void, Error>
+auto BaseArray<ModelType, ModelNodeType>::setSchema(TypeId schemaId) -> tl::expected<void, Error>
 {
     return model().setArraySchemaId(members_, schemaId);
 }
@@ -76,6 +76,7 @@ template <class ModelType, class ModelNodeType>
 BaseArray<ModelType, ModelNodeType>&
 BaseArray<ModelType, ModelNodeType>::appendInternal(ModelNode::Ptr const& value)
 {
+    model().requireMutable();
     storage_->push_back(members_, value->addr());
     return *this;
 }
@@ -109,13 +110,13 @@ ValueType BaseObject<ModelType, ModelNodeType>::type() const
 }
 
 template <class ModelType, class ModelNodeType>
-SchemaId BaseObject<ModelType, ModelNodeType>::schema() const
+TypeId BaseObject<ModelType, ModelNodeType>::schema() const
 {
     return model().objectSchemaId(members_);
 }
 
 template <class ModelType, class ModelNodeType>
-auto BaseObject<ModelType, ModelNodeType>::setSchema(SchemaId schemaId) -> tl::expected<void, Error>
+auto BaseObject<ModelType, ModelNodeType>::setSchema(TypeId schemaId) -> tl::expected<void, Error>
 {
     return model().setObjectSchemaId(members_, schemaId);
 }
@@ -183,6 +184,8 @@ tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error
     std::string_view const& name,
     ModelNode::Ptr const& value)
 {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     if (!fieldId)
         return tl::unexpected<Error>(std::move(fieldId.error()));

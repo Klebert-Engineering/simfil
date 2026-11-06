@@ -5,9 +5,10 @@
 #include "simfil/environment.h"
 #include "simfil/expression.h"
 #include "simfil/function.h"
-#include "simfil/model/schema.h"
+#include "simfil/model/schema-pool.h"
 
 #include <memory>
+#include <map>
 #include <string_view>
 #include <vector>
 
@@ -49,6 +50,33 @@ public:
         return state.fieldId;
     }
 
+    /** Translate a static name once per graph, including the basic pruning path. */
+    auto schemaFieldId(Expr::ExprId expressionId, std::string_view name, SchemaType const& type) -> StringId
+    {
+        auto& state = stateFor(expressionId).forSchema(type);
+        if (!state.fieldResolved)
+        {
+            state.fieldId = type.pool()->dictionary().get(name);
+            state.fieldResolved = true;
+        }
+        return state.fieldId;
+    }
+
+    /** Extract a static member with a cached namespace translation, preserving scalar provenance. */
+    auto fieldValue(Expr::ExprId expressionId, std::string_view name,
+                    ModelNode const& parent, ModelNode const& child) -> Value
+    {
+        return Value::field(child, [&]() -> SchemaType {
+            auto type = parent.schemaType();
+            if (!type)
+                return {};
+            auto field = schemaFieldId(expressionId, name, type);
+            if (field == StringPool::Empty && !name.empty())
+                return {};
+            return type.fieldType(field);
+        });
+    }
+
     /** Resolve a function against this binding's environment, caching successful lookups. */
     auto function(Expr::ExprId expressionId, const std::string& name) -> const Function*
     {
@@ -58,62 +86,67 @@ public:
         return state.function;
     }
 
-    /**
-     * Return a schema traversal plan, rebuilding it after schema replacement or mutation.
-     */
+    /** Cache one immutable pool/type plan; temporary view addresses are never identity keys. */
     template <typename BuildFn>
-    auto wildcardSchemaPlan(
-        Expr::ExprId expressionId,
-        SchemaId schemaId,
-        const Schema& schema,
-        BuildFn&& build) -> const WildcardSchemaPlan*
+    auto wildcardSchemaPlan(Expr::ExprId expressionId, SchemaType const& schema,
+                            BuildFn&& build) -> const WildcardSchemaPlan*
     {
-        if (schemaId == NoSchemaId || !schema.finalized())
+        if (!schema.finalized())
             return nullptr;
-
-        auto& plans = stateFor(expressionId).wildcardSchemaPlans;
-        const auto planIndex = static_cast<std::size_t>(schemaId);
-        const auto schemaRevision = schema.revision();
-        if (planIndex < plans.size()) {
-            const auto& cachedPlan = plans[planIndex];
-            if (cachedPlan && cachedPlan->schema == &schema &&
-                cachedPlan->schemaRevision == schemaRevision)
-                return &cachedPlan->plan;
-        }
-
-        if (plans.size() <= planIndex)
-            plans.resize(planIndex + 1);
-        plans[planIndex] = std::make_unique<CachedWildcardSchemaPlan>(
-            schema,
-            schemaRevision,
-            std::forward<BuildFn>(build)());
-        return &plans[planIndex]->plan;
+        auto& plans = stateFor(expressionId).forSchema(schema).plans;
+        auto index = size_t(schema.id());
+        if (plans.size() <= index)
+            plans.resize(index + 1);
+        if (!plans[index])
+            plans[index] = std::make_unique<WildcardSchemaPlan>(std::forward<BuildFn>(build)());
+        return plans[index].get();
     }
 
 private:
-    struct CachedWildcardSchemaPlan
+    /** One retained graph namespace; per-type plans have stable addresses during recursive traversal. */
+    struct BoundSchemaState
     {
-        /** Retain one plan together with the schema state that produced it. */
-        CachedWildcardSchemaPlan(
-            const Schema& sourceSchema,
-            std::uint64_t sourceRevision,
-            WildcardSchemaPlan sourcePlan)
-            : schema(&sourceSchema)
-            , schemaRevision(sourceRevision)
-            , plan(std::move(sourcePlan))
-        {
-        }
-
-        const Schema* schema = nullptr;
-        std::uint64_t schemaRevision = 0;
-        WildcardSchemaPlan plan;
+        SchemaType owner;
+        StringId fieldId = StringPool::Empty;
+        bool fieldResolved = false;
+        std::vector<std::unique_ptr<WildcardSchemaPlan>> plans;
     };
 
+    /** One movable, noncopyable cache slot; its map may have an allocating move on some libraries. */
     struct ExpressionState
     {
+        /** Start an empty environment-local slot. */
+        ExpressionState() = default;
+        /** Transfer graph-owned entries when the expression slot vector grows. */
+        ExpressionState(ExpressionState&&) = default;
+        /** Transfer cache ownership when replacing a slot. */
+        auto operator=(ExpressionState&&) -> ExpressionState& = default;
+        // Explicit deletion prevents vector relocation from selecting a map copy
+        // whose nested unique_ptr entries cannot be copied (notably with MSVC).
+        ExpressionState(ExpressionState const&) = delete;
+        auto operator=(ExpressionState const&) -> ExpressionState& = delete;
+
         StringId fieldId = StringPool::StaticStringIds::Empty;
         const Function* function = nullptr;
-        std::vector<std::unique_ptr<CachedWildcardSchemaPlan>> wildcardSchemaPlans;
+        std::map<SchemaPool const*, BoundSchemaState> boundSchemas;
+
+        /** Fast-path the usual single graph without incrementing its ownership counter. */
+        auto forSchema(SchemaType const& type) -> BoundSchemaState&
+        {
+            if (lastPool != type.pool())
+            {
+                auto [entry, inserted] = boundSchemas.try_emplace(type.pool());
+                if (inserted)
+                    entry->second.owner = type.retain();
+                lastSchemaState = &entry->second;
+                lastPool = type.pool();
+            }
+            return *lastSchemaState;
+        }
+
+    private:
+        SchemaPool const* lastPool = nullptr;
+        BoundSchemaState* lastSchemaState = nullptr;
     };
 
     /** Materialize the cache slot assigned by AST::reenumerate(). */

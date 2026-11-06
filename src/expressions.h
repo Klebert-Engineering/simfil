@@ -65,6 +65,10 @@ public:
     auto ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error> override;
     void accept(ExprVisitor& v) const override;
     auto toString() const -> std::string override;
+
+private:
+    /** Select graph ancestry handling once, keeping ordinary tree recursion unchanged. */
+    template <bool TrackCycles> struct Traversal;
 };
 
 /** Match declared enum positions when recursive/incomplete schemas prevent exact-path expansion. */
@@ -72,18 +76,56 @@ class SchemaEnumExpr : public Expr
 {
 public:
     /** Retain portable symbol text and the represented root identity, never pool-local field IDs. */
-    SchemaEnumExpr(SchemaId root, std::string symbol, SourceLocation location);
-    /** A declared-position enum predicate produces one boolean value. */
-    auto type() const -> Type override { return Type::VALUE; }
-    /** Expose the original enum term to schema-independent static query analysis. */
-    auto symbol() const -> std::string_view { return symbol_; }
-    auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> override;
-    void accept(ExprVisitor& visitor) const override;
-    auto toString() const -> std::string override;
+  SchemaEnumExpr(SchemaType root, std::string symbol, SourceLocation location,
+                 bool named = false, std::string schemaIdentity = {},
+                 TypeId symbolType = NoTypeId);
+  /** A declared-position enum predicate produces one boolean value. */
+  auto type() const -> Type override { return Type::VALUE; }
+  /** Expose the original enum term to schema-independent static query analysis.
+   */
+  auto symbol() const -> std::string_view { return symbol_; }
+  auto ieval(Context ctx, const Value &value, const ResultFn &result) const
+      -> tl::expected<Result, Error> override;
+  void accept(ExprVisitor &visitor) const override;
+  auto toString() const -> std::string override;
 
 private:
-    SchemaId root_;
+    SchemaType root_;
     std::string symbol_;
+    bool named_ = false;
+    std::string schemaIdentity_;
+    TypeId symbolType_ = NoTypeId;
+};
+
+/** Compare a selected value to its own type's symbol; standalone flags use membership instead. */
+class SchemaSymbolExpr : public Expr
+{
+public:
+    /** Retain only portable expression/text state; numeric meanings are resolved per emitted value. */
+    SchemaSymbolExpr(ExprPtr input, std::string symbol, std::string operation, bool symbolOnLeft,
+                     SourceLocation location);
+    /** Symbolic predicates construct booleans, never annotated numeric results. */
+    auto type() const -> Type override { return Type::VALUE; }
+    /** Evaluate the input once, retaining the selected value's concrete type through comparison. */
+    auto ieval(Context, const Value&, const ResultFn&) const -> tl::expected<Result, Error> override;
+    /** Expose the selected path to generic expression visitors. */
+    void accept(ExprVisitor&) const override;
+    /** One child selects values; the symbol is metadata, not another root-relative query. */
+    auto numChildren() const -> std::size_t override { return 1; }
+    /** Permit the ordinary rewrite engine to optimize the selected path. */
+    auto childAt(std::size_t i) -> ExprPtr& override { return detail::childAtOrThrow(i, input_); }
+    /** Inspect the selected path without changing immutable AST state. */
+    auto childAt(std::size_t i) const -> const ExprPtr& override { return detail::childAtOrThrow(i, input_); }
+    /** Describe symbolic meaning without pretending it is a globally fixed numeric literal. */
+    auto toString() const -> std::string override;
+    /** Shared runtime matching for finite paths and conservative recursive traversal. */
+    static auto compare(Value const&, std::string_view symbol, std::string_view operation,
+                        bool symbolOnLeft = false) -> tl::expected<Value, Error>;
+private:
+    ExprPtr input_;
+    std::string symbol_;
+    std::string operation_;
+    bool symbolOnLeft_ = false;
 };
 
 /**
@@ -649,16 +691,17 @@ public:
     const bool recurse_ = {};
 
 private:
+    /** Own one recursive lookup's callback, schema decisions and optional graph ancestry. */
+    template <bool TrackCycles> struct Traversal;
     using SchemaPlan = detail::ExpressionRuntime::WildcardSchemaPlan;
 
-    auto schemaPlan(const Context& ctx, SchemaId schemaId, const Schema& schema) const -> const SchemaPlan*;
-    auto buildSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId) const
-        -> SchemaPlan;
-    auto
-    buildObjectSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId) const
-        -> SchemaPlan;
-    auto childSchemaMayHaveField(const Context& ctx, SchemaId schemaId, StringId fieldId) const
-        -> bool;
+    /** Reuse one graph/type traversal plan in the expression's local runtime state. */
+    auto schemaPlan(Context const& ctx, SchemaType const& schema) const -> SchemaPlan const*;
+    /** Derive pruning without replacing the schema's ordered runtime traversal. */
+    auto buildSchemaPlan(Context const& ctx, SchemaType const& schema, StringId field) const -> SchemaPlan;
+    /** Translate selected object child names once into the execution dictionary. */
+    auto buildObjectSchemaPlan(Context const& ctx, SchemaType const& schema, StringId field) const -> SchemaPlan;
+
 };
 
 }

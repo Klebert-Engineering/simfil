@@ -36,8 +36,8 @@ struct Completion
         return candidates.size();
     }
 
-    /** Walk a relaxed AST over schema domains, without constructing ModelNodes. */
-    void completeDomain(Context ctx, const Expr& expression, SchemaId root);
+    /** Walk a relaxed AST over schema types, without constructing ModelNodes. */
+    void completeType(Context ctx, const Expr& expression, SchemaType root);
 
     std::size_t point;
     std::size_t limit = 1000;
@@ -45,19 +45,19 @@ struct Completion
     CompletionOptions options;
 
 private:
-    /** Bounded domain inference visits unknown expressions conservatively. */
-    auto walkDomain(Context& ctx, const Expr& expression, const std::vector<SchemaId>& input,
-                    const std::vector<SchemaId>& expected, std::size_t depth, bool insidePath = false) -> std::vector<SchemaId>;
-    /** Expand logical alternatives, optionally including reachable descendant domains. */
-    auto expandDomains(Context& ctx, const std::vector<SchemaId>& input, bool recursive) -> std::vector<SchemaId>;
+    /** Bounded type inference visits unknown expressions conservatively. */
+    auto walkType(Context& ctx, const Expr& expression, const std::vector<TypeId>& input,
+                    const std::vector<TypeId>& expected, std::size_t depth, bool insidePath = false) -> std::vector<TypeId>;
+    /** Expand logical alternatives, optionally including reachable descendant types. */
+    auto expandTypes(Context& ctx, const std::vector<TypeId>& input, bool recursive) -> std::vector<TypeId>;
     /** Collect field/function/enum candidates in the current operand context. */
-    void suggestDomain(Context& ctx, const std::vector<SchemaId>& input,
-                       const std::vector<SchemaId>& expected, std::string_view prefix,
+    void suggestType(Context& ctx, const std::vector<TypeId>& input,
+                       const std::vector<TypeId>& expected, std::string_view prefix,
                        SourceLocation location, bool inPath, bool literalsOnly);
     /** Consume shared work allowance for AST and graph traversal. */
-    auto visitDomain(Context& ctx) -> bool;
-    std::size_t domainVisits_ = 0;
-    SchemaId rootSchema_ = NoSchemaId;
+    auto visitType(Context& ctx) -> bool;
+    std::size_t typeVisits_ = 0;
+    SchemaType rootSchema_;
 };
 
 class CompletionFieldOrWordExpr : public Expr

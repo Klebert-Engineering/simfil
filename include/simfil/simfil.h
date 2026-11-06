@@ -16,7 +16,7 @@
 #include "simfil/diagnostics.h"
 #include "simfil/value.h"
 #include "simfil/error.h"
-#include "simfil/model/schema.h"
+#include "simfil/model/schema-type.h"
 
 namespace simfil
 {
@@ -77,7 +77,7 @@ struct CompileOptions
 {
     bool any = true;
     RewriteMode rewriteMode = RewriteMode::None;
-    SchemaId rootSchema = NoSchemaId;
+    SchemaType rootSchema;
 };
 
 /**
@@ -167,7 +167,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
  * `and`/`or` are inspected, and schema-aware rewrites are resolved to the exact
  * paths they can touch.
  */
-auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
+auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaType rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
 
 /**
  * Return the symbol represented by a whole-query bare field or string literal.
@@ -176,6 +176,16 @@ auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema
  * handling should not re-tokenize the source string with ad-hoc rules.
  */
 auto standaloneQuerySymbol(Environment& env, std::string_view query) -> tl::expected<std::optional<std::string>, Error>;
+
+/** A bare or quoted symbol used as a predicate, not as a comparison operand.
+ * Locations refer to the original, unsimplified input so a consumer can bind
+ * its meaning before any(...) or boolean composition changes its AST role. */
+struct QueryPredicateSymbol {
+  std::string name;
+  SourceLocation location;
+};
+auto predicateQuerySymbols(Environment &env, std::string_view query)
+    -> tl::expected<std::vector<QueryPredicateSymbol>, Error>;
 
 /**
  * Collect schema-independent terms referenced by a compiled query AST.
@@ -234,11 +244,11 @@ auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Diagnostic
 auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node, CompletionOptions const& options) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 /**
- * Complete a represented domain directly, without evaluating dummy model values.
- * The environment must bind the schema and its field/enum StringIds to one local
- * string namespace. Custom functions are never executed by this overload.
+ * Complete a represented type directly, without evaluating dummy model values.
+ * Schema paths and names use the root pool's independent dictionary; completion
+ * results own their strings and never mutate the datasource dictionary. Custom functions are never executed by this overload.
  */
-auto complete(Environment& env, std::string_view query, size_t point, SchemaId rootSchema,
+auto complete(Environment& env, std::string_view query, size_t point, SchemaType rootSchema,
               CompletionOptions const& options = {}) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 }

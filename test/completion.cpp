@@ -6,7 +6,7 @@
 
 #include "common.hpp"
 #include "simfil/environment.h"
-#include "simfil/model/schema.h"
+#include "simfil/model/schema-pool.h"
 #include "src/expected.h"
 
 const auto model = R"json(
@@ -61,49 +61,27 @@ auto CompleteSchemaQuery(std::string_view query, std::optional<size_t> point = {
 
     auto model = std::move(*parsed);
     auto strings = model->strings();
-    auto schemaOnlyField = strings->emplace("schemaOnlyField").value();
-    auto specialField = strings->emplace("schema field").value();
-    auto enumCarrier = strings->emplace("Carrier").value();
-    auto enumFast = strings->emplace("FAST_MODE").value();
-    auto nested = strings->emplace("nested").value();
-
-    auto valueSchema = std::make_unique<ValueSchema>();
-    valueSchema->addEnumSymbol(enumCarrier);
-    valueSchema->addEnumSymbol(enumFast);
-
-    auto objectSchema = std::make_unique<ObjectSchema>();
-    objectSchema->addField(schemaOnlyField, {SchemaId{2}});
-    objectSchema->addField(specialField);
-    objectSchema->addField(nested, {SchemaId{3}});
-
-    auto nestedSchema = std::make_unique<ObjectSchema>();
-    nestedSchema->addField(enumFast);
-
-    auto registry = std::make_shared<std::map<SchemaId, std::unique_ptr<Schema>>>();
-    (*registry)[SchemaId{1}] = std::move(objectSchema);
-    (*registry)[SchemaId{2}] = std::move(valueSchema);
-    (*registry)[SchemaId{3}] = std::move(nestedSchema);
-
-    auto lookup = [registry](SchemaId schemaId) -> Schema* {
-        if (auto it = registry->find(schemaId); it != registry->end())
-            return it->second.get();
-        return nullptr;
-    };
-    for (auto const& [_, schema] : *registry)
-        schema->finalize(lookup);
+    auto graph = std::make_shared<SchemaPool>();
+    auto object = graph->newObjectType();
+    auto enumeration = graph->newEnumType();
+    enumeration.addSymbol("Carrier");
+    enumeration.addSymbol("FAST_MODE");
+    auto nested = graph->newObjectType();
+    nested.addField("FAST_MODE");
+    object.addField("schemaOnlyField", enumeration);
+    object.addField("schema field");
+    object.addField("nested", nested);
+    graph->finalize("completion-fixture");
+    model->setSchemaPool(graph);
 
     auto root = model->root(0);
     REQUIRE(root);
     auto rootObj = model->resolve<Object>(**root);
     REQUIRE(rootObj);
-    REQUIRE(rootObj->setSchema(SchemaId{1}));
+    REQUIRE(rootObj->setSchema(TypeId{1}));
 
     Environment env(strings);
-    env.querySchemaCallback = [registry](SchemaId schemaId) -> const Schema* {
-        if (auto it = registry->find(schemaId); it != registry->end())
-            return it->second.get();
-        return nullptr;
-    };
+    env.setSchema(object);
 
     CompletionOptions opts;
     opts.showWildcardHints = false;

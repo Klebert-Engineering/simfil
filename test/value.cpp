@@ -6,7 +6,6 @@
 
 #include "simfil/value.h"
 #include "simfil/model/model.h"
-#include "simfil/model/schema.h"
 #include "simfil/token.h"
 #include "simfil/transient.h"
 

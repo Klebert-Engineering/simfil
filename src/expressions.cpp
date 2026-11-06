@@ -4,7 +4,8 @@
 #include "simfil/environment.h"
 #include "simfil/expression.h"
 #include "simfil/model/string-pool.h"
-#include "simfil/model/schema.h"
+#include "simfil/model/schema-pool.h"
+#include "simfil/model/model.h"
 #include "simfil/result.h"
 #include "simfil/sourcelocation.h"
 #include "simfil/value.h"
@@ -22,6 +23,45 @@ namespace simfil
 {
 namespace
 {
+
+/** One stack-linked graph traversal position; scope exit restores the caller's ancestry.
+ * Repeated siblings remain independent and entering a position never allocates. */
+class GraphTraversalFrame
+{
+public:
+    /** Reject an active-path back-edge without changing the current path head. */
+    GraphTraversalFrame(GraphTraversalFrame const*& head, ModelNode const& node) noexcept
+        : head_(head), previous_(head), owner_(node.borrowedModel()),
+          key_(owner_ ? owner_->recursiveTraversalKey(node) : node.addr())
+    {
+        for (auto previous = head; previous; previous = previous->previous_)
+            if (previous->owner_ == owner_ && previous->key_ == key_)
+                return;
+        head = this;
+        entered_ = true;
+    }
+
+    /** Restore the previous frame on normal, short-circuit and error returns. */
+    ~GraphTraversalFrame()
+    {
+        if (entered_)
+            head_ = previous_;
+    }
+
+    /** A frame cannot be copied while another scope points to its stack address. */
+    GraphTraversalFrame(GraphTraversalFrame const&) = delete;
+    GraphTraversalFrame& operator=(GraphTraversalFrame const&) = delete;
+
+    /** Distinguish a new active vertex from a suppressed recursive reference. */
+    explicit operator bool() const noexcept { return entered_; }
+
+private:
+    GraphTraversalFrame const*& head_;
+    GraphTraversalFrame const* previous_;
+    Model const* owner_;
+    ModelNodeAddress key_;
+    bool entered_ = false;
+};
 
 /**
  * Track emissions and synthesize null/undef only after successful empty traversal.
@@ -85,28 +125,34 @@ auto boolify(const Value& v) -> bool
 
 WildcardExpr::WildcardExpr() = default;
 
-SchemaEnumExpr::SchemaEnumExpr(SchemaId root, std::string symbol, SourceLocation location)
-    : Expr(location), root_(root), symbol_(std::move(symbol)) {}
+SchemaEnumExpr::SchemaEnumExpr(SchemaType root, std::string symbol,
+                               SourceLocation location, bool named,
+                               std::string schemaIdentity, TypeId symbolType)
+    : Expr(location), root_(root.retain()), symbol_(std::move(symbol)), named_(named),
+      schemaIdentity_(std::move(schemaIdentity)), symbolType_(symbolType) {}
 
 auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Compilation)
         return result(ctx, Value::undef());
-    if (!value.nodePtr())
-        return result(ctx, Value::f());
-    auto lookup = [&](SchemaId id) { return ctx.env->querySchema(id); };
-    std::vector<std::tuple<ModelNode::Ptr, std::vector<SchemaId>, std::size_t>> pending;
-    pending.emplace_back(*value.nodePtr(), std::vector<SchemaId>{root_}, 0);
+    std::vector<std::tuple<Value, std::vector<TypeId>, std::size_t, SchemaType>> pending;
+    pending.emplace_back(value, std::vector<TypeId>{root_.id()}, 0, root_);
     while (!pending.empty()) {
         if (ctx.canceled())
             return Result::Stop;
-        auto [node, domains, depth] = std::move(pending.back());
+        auto [nodeValue, types, depth, binding] = std::move(pending.back());
         pending.pop_back();
         if (ctx.evaluation && !ctx.step(depth))
             return Result::Stop;
-        auto nodeValue = Value::field(*node);
-        if (nodeValue.isa(ValueType::String) && nodeValue.as<ValueType::String>() == symbol_) {
-            std::vector<SchemaId> alternatives = domains, visited;
+        auto concrete = nodeValue.schemaType();
+        if (concrete) {
+            types = {concrete.id()};
+            binding = concrete;
+        }
+        // Candidate types retain their namespace even when the child has no unique provenance.
+        auto lookup = [&](TypeId id) { return binding ? binding.pool()->schemaType(id) : SchemaType{}; };
+        if (named_ || (nodeValue.isa(ValueType::String) && nodeValue.as<ValueType::String>() == symbol_)) {
+            std::vector<TypeId> alternatives = types, visited;
             while (!alternatives.empty()) {
                 if (ctx.evaluation && !ctx.step())
                     return Result::Stop;
@@ -118,12 +164,26 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
                 auto schema = lookup(id);
                 if (!schema)
                     continue;
-                if (schema->hasDirectEnumSymbol(symbol_, *ctx.env->strings()))
+                auto selectedType =
+                    !symbolType_ ||
+                    (binding && binding.pool()->identity() == schemaIdentity_ &&
+                     id == symbolType_);
+                if (selectedType && named_ && schema.namedValue(symbol_)) {
+                  auto match =
+                      SchemaSymbolExpr::compare(nodeValue, symbol_, "member");
+                  TRY_EXPECTED(match);
+                  if (match->isa(ValueType::Bool) &&
+                      match->as<ValueType::Bool>())
                     return result(ctx, Value::t());
-                alternatives.insert(alternatives.end(), schema->alternatives().begin(), schema->alternatives().end());
+                }
+                if (selectedType && !named_ &&
+                    schema.hasDirectEnumSymbol(symbol_))
+                  return result(ctx, Value::t());
+                alternatives.insert(alternatives.end(), schema.alternatives().begin(), schema.alternatives().end());
             }
         }
-        auto type = node->type();
+        auto node = nodeValue.node();
+        auto type = nodeValue.type;
         if (type != ValueType::Object && type != ValueType::Array)
             continue;
         // Carry schema state along actual finite data paths, not a truncated list
@@ -131,23 +191,99 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
         for (std::int64_t i = node->size(); i-- > 0;) {
             if (ctx.evaluation && !ctx.step(depth + 1))
                 return Result::Stop;
-            std::vector<SchemaId> children;
-            for (auto domain : domains) {
-                auto next = type == ValueType::Object
-                    ? Schema::fieldSchemas(domain, lookup, node->keyAt(i))
-                    : Schema::itemSchemas(domain, lookup);
-                children.insert(children.end(), next.begin(), next.end());
+            std::vector<TypeId> children;
+            std::optional<StringId> field = node->keyAt(i);
+            if (binding && type == ValueType::Object) {
+                auto owner = node->owningModel();
+                auto name = owner ? owner->lookupStringId(*field) : std::nullopt;
+                if (!name)
+                    continue;
+                field = binding.pool()->dictionary().get(*name);
+                // A missing name is not the valid empty-string field (whose id is also zero).
+                if (*field == StringPool::Empty && !name->empty())
+                    field.reset();
             }
-            if (!children.empty())
-                if (auto child = node->at(i))
-                    pending.emplace_back(child, std::move(children), depth + 1);
+            for (auto typeRef : types) {
+                auto schema = lookup(typeRef);
+                if (!schema || (type == ValueType::Object && !field))
+                    children.push_back(NoTypeId);
+                else
+                {
+                    auto next = type != ValueType::Object ? schema.itemTypes() : schema.fieldTypes(*field);
+                    children.insert(children.end(), next.begin(), next.end());
+                }
+            }
+            // Explicit hasSymbol starts without a compile-time root. A
+            // runtime overlay may itself be untyped while retaining typed
+            // descendants; those declarations must remain discoverable.
+            if (!children.empty() || !root_)
+              if (auto child = node->at(i))
+                pending.emplace_back(Value::at(*node, *child, i),
+                                     std::move(children), depth + 1, binding);
         }
     }
     return result(ctx, Value::f());
 }
 
 void SchemaEnumExpr::accept(ExprVisitor& visitor) const { visitor.visit(static_cast<const Expr&>(*this)); }
-auto SchemaEnumExpr::toString() const -> std::string { return fmt::format("(schema-enum {} {})", root_, symbol_); }
+auto SchemaEnumExpr::toString() const -> std::string { return fmt::format("({} {} {})", named_ ? "schema-symbol" : "schema-enum", root_.id(), symbol_); }
+
+SchemaSymbolExpr::SchemaSymbolExpr(ExprPtr input, std::string symbol, std::string operation, bool symbolOnLeft,
+                                 SourceLocation location)
+    : Expr(location), input_(std::move(input)), symbol_(std::move(symbol)),
+      operation_(std::move(operation)), symbolOnLeft_(symbolOnLeft) {}
+
+auto SchemaSymbolExpr::compare(Value const& value, std::string_view symbol, std::string_view operation,
+                               bool symbolOnLeft) -> tl::expected<Value, Error>
+{
+    if (value.type == ValueType::Undef)
+        return Value::undef();
+    if (value.type == ValueType::Null)
+        return Value::make(operation == "!=");
+    auto definition = value.schemaType();
+    // A standalone shorthand may visit several types at the same path. Only the actual type decides.
+    if (operation == "member" && definition && !definition.namedValue(symbol))
+        return Value::f();
+    if (operation == "member" && value.type == ValueType::Bitmask) {
+        auto result = value.as<ValueType::Bitmask>().hasFlag(symbol);
+        TRY_EXPECTED(result);
+        return Value::make(*result);
+    }
+    auto literal = value.namedValue(symbol);
+    TRY_EXPECTED(literal);
+    auto const& left = symbolOnLeft ? *literal : value;
+    auto const& right = symbolOnLeft ? value : *literal;
+    if (operation == "==" || operation == "member")
+        return BinaryOperatorDispatcher<OperatorEq>::dispatch(left, right);
+    if (operation == "!=")
+        return BinaryOperatorDispatcher<OperatorNeq>::dispatch(left, right);
+    if (operation == "<")
+        return BinaryOperatorDispatcher<OperatorLt>::dispatch(left, right);
+    if (operation == "<=")
+        return BinaryOperatorDispatcher<OperatorLtEq>::dispatch(left, right);
+    if (operation == ">")
+        return BinaryOperatorDispatcher<OperatorGt>::dispatch(left, right);
+    if (operation == ">=")
+        return BinaryOperatorDispatcher<OperatorGtEq>::dispatch(left, right);
+    return tl::unexpected(Error{Error::InvalidOperands, "Unsupported symbolic comparison"});
+}
+
+auto SchemaSymbolExpr::ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error>
+{
+    if (ctx.phase == Context::Compilation)
+        return result(ctx, Value::undef());
+    return input_->eval(ctx, value, LambdaResultFn([&](Context selectedContext, Value selected) -> tl::expected<Result, Error> {
+        auto matched = compare(selected, symbol_, operation_, symbolOnLeft_);
+        TRY_EXPECTED(matched);
+        return result(selectedContext, std::move(*matched));
+    }));
+}
+
+void SchemaSymbolExpr::accept(ExprVisitor& visitor) const { visitor.visit(static_cast<const Expr&>(*this)); }
+auto SchemaSymbolExpr::toString() const -> std::string
+{
+    return fmt::format("(schema-symbol {} {} {}{})", operation_, input_->toString(), symbolOnLeft_ ? "left:" : "", symbol_);
+}
 
 WildcardExpr::WildcardExpr(SourceLocation location)
     : Expr(location)
@@ -158,6 +294,65 @@ auto WildcardExpr::type() const -> Type
     return Type::PATH;
 }
 
+/** Traverse one wildcard evaluation with compile-time optional graph ancestry. */
+template <bool TrackCycles>
+struct WildcardExpr::Traversal
+{
+    Context& ctx;
+    ResultFn& res;
+
+    [[no_unique_address]] std::conditional_t<TrackCycles, GraphTraversalFrame const*, std::monostate> ancestry{};
+
+    [[nodiscard]] auto iterate(ModelNode const& val, std::size_t depth = 0,
+                               ModelNode const* parent = nullptr, std::int64_t index = 0) noexcept -> tl::expected<Result, Error>
+    {
+        // Even a suppressed back-edge consumes cooperative work and observes cancellation.
+        if (ctx.evaluation && !ctx.step(depth))
+            return Result::Stop;
+        if constexpr (TrackCycles)
+        {
+            GraphTraversalFrame frame(ancestry, val);
+            if (!frame)
+                return Result::Continue;
+            return visit(val, depth, parent, index);
+        }
+        else
+            return visit(val, depth, parent, index);
+    }
+
+    [[nodiscard]] auto visit(ModelNode const& val, std::size_t depth = 0,
+                               ModelNode const* parent = nullptr, std::int64_t index = 0) noexcept -> tl::expected<Result, Error>
+    {
+        const auto valType = val.type();
+        if (valType == ValueType::Null) [[unlikely]]
+            return Result::Continue;
+
+        auto result = res(ctx, parent ? Value::at(*parent, val, index) : Value::field(val));
+        TRY_EXPECTED(result);
+        if (*result == Result::Stop) [[unlikely]]
+            return *result;
+
+        tl::expected<Result, Error> finalResult = Result::Continue;
+        std::int64_t childIndex = 0;
+        val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
+            auto subResult = iterate(subNode, depth + 1, &val, childIndex++);
+            if (!subResult) {
+                finalResult = std::move(subResult);
+                return false;
+            }
+
+            if (*subResult == Result::Stop) {
+                finalResult = Result::Stop;
+                return false;
+            }
+
+            return true;
+        }));
+
+        return finalResult;
+    }
+};
+
 auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
     if (ctx.phase == Context::Phase::Compilation)
@@ -165,45 +360,14 @@ auto WildcardExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) co
 
     CountedResultFn<const ResultFn&> res(ores, ctx);
 
-    struct Iterate
+    tl::expected<Result, Error> r = Result::Continue;
+    if (auto node = val.nodePtr())
     {
-        Context& ctx;
-        ResultFn& res;
-
-        [[nodiscard]] auto iterate(ModelNode const& val, std::size_t depth = 0) noexcept -> tl::expected<Result, Error>
-        {
-            if (ctx.evaluation && !ctx.step(depth))
-                return Result::Stop;
-            const auto valType = val.type();
-            if (valType == ValueType::Null) [[unlikely]]
-                return Result::Continue;
-
-            auto result = res(ctx, Value::field(val));
-            TRY_EXPECTED(result);
-            if (*result == Result::Stop) [[unlikely]]
-                return *result;
-
-            tl::expected<Result, Error> finalResult = Result::Continue;
-            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
-                auto subResult = iterate(subNode, depth + 1);
-                if (!subResult) {
-                    finalResult = std::move(subResult);
-                    return false;
-                }
-
-                if (*subResult == Result::Stop) {
-                    finalResult = Result::Stop;
-                    return false;
-                }
-
-                return true;
-            }));
-
-            return finalResult;
-        }
-    };
-
-    auto r = val.nodePtr() ? Iterate{ctx, res}.iterate(**val.nodePtr()) : tl::expected<Result, Error>(Result::Continue);
+        auto owner = (*node)->borrowedModel();
+        r = owner && owner->supportsRecursiveCycles()
+            ? Traversal<true>{ctx, res}.iterate(**node)
+            : Traversal<false>{ctx, res}.iterate(**node);
+    }
     return res.finish(std::move(r));
 }
 
@@ -233,8 +397,9 @@ auto AnyChildExpr::ieval(Context ctx, const Value& val, const ResultFn& res) con
         return res(ctx, Value::null());
 
     tl::expected<Result, Error> result = Result::Continue;
-    val.node()->iterate(ModelNode::IterLambda([&result, &ctx, &res](auto subNode) -> bool {
-        result = res(ctx, Value::field(std::move(subNode)));
+    std::int64_t childIndex = 0;
+    val.node()->iterate(ModelNode::IterLambda([&](auto subNode) -> bool {
+        result = res(ctx, Value::at(*val.node(), subNode, childIndex++));
         return result && *result == Result::Continue;
     }));
     return result;
@@ -307,7 +472,8 @@ auto FieldExpr::ieval(Context ctx, Value&& val, const ResultFn& res) const -> tl
     if (auto sub = val.node()->get(nameId)) {
         if (diag)
             diag->hits++;
-        return res(ctx, Value::field(*sub));
+        return res(ctx, ctx.runtime ? ctx.runtime->fieldValue(id(), name_, *val.node(), *sub)
+            : Value::field(*val.node(), *sub, nameId));
     }
 
     if (ctx.phase == Context::Phase::Compilation)
@@ -438,6 +604,7 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) c
             /* Field subscript */
             if (lval.node()) {
                 ModelNode::Ptr node;
+                StringId field = StringPool::Empty;
 
                 /* Array subscript */
                 if (ival.isa(ValueType::Int)) {
@@ -452,12 +619,15 @@ auto SubscriptExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) c
                 /* String subscript */
                 else if (ival.isa(ValueType::String)) {
                     auto key = ival.as<ValueType::String>();
-                    if (auto keyStrId = ctx.env->strings()->get(key))
-                        node = lval.node()->get(keyStrId);
+                    field = ctx.env->strings()->get(key);
+                    if (field)
+                        node = lval.node()->get(field);
                 }
 
                 if (node)
-                    return res(ctx, Value::field(*node));
+                    return res(ctx, ival.isa(ValueType::Int)
+                        ? Value::at(*lval.node(), *node, ival.as<ValueType::Int>())
+                        : Value::field(*lval.node(), *node, field));
                 else
                     ctx.env->warn("Invalid subscript index type "s + valueType2String(ival.type), this->toString());
             } else {
@@ -1242,24 +1412,9 @@ WildcardFieldExpr::WildcardFieldExpr(bool recurse, std::string name, SourceLocat
     , recurse_(recurse)
 {}
 
-auto WildcardFieldExpr::childSchemaMayHaveField(
-    const Context& ctx,
-    SchemaId schemaId,
-    StringId fieldId) const -> bool
-{
-    if (schemaId == NoSchemaId)
-        return true;
-
-    const auto* childSchema = ctx.env->querySchema(schemaId);
-    if (!childSchema || !childSchema->finalized())
-        return true;
-
-    return childSchema->canHaveField(fieldId);
-}
-
 auto WildcardFieldExpr::buildObjectSchemaPlan(
     const Context& ctx,
-    const Schema& schema,
+    const SchemaType& schema,
     StringId fieldId) const -> SchemaPlan
 {
     SchemaPlan plan;
@@ -1267,17 +1422,31 @@ auto WildcardFieldExpr::buildObjectSchemaPlan(
     plan.directField = false;
 
     std::size_t fieldCount = 0;
+    bool unknownNames = false;
     const auto canonical = schema.canonicalField(fieldId);
-    schema.forEachDirectField([&](StringId field, std::span<const SchemaId> children) {
+    schema.forEachField([&](SchemaField const& occurrence) {
+        auto field = occurrence.nameId();
+        auto children = occurrence.types();
         ++fieldCount;
         if (field == canonical)
             plan.directField = true;
+        // Context members are addressable explicitly, but are absent from the
+        // runtime child's enumerated stream (for example an OverlayNode).
+        if (schema.fieldRole(field) == SchemaType::FieldRole::Context)
+            return;
         const auto descendsToTarget = children.empty() ||
-            std::ranges::any_of(children, [this, &ctx, fieldId](auto id) {
-                return childSchemaMayHaveField(ctx, id, fieldId);
+            std::ranges::any_of(children, [&schema, fieldId](auto id) {
+                auto child = schema.pool()->schemaType(id);
+                return !child || child.canHaveField(fieldId);
             });
-        if (descendsToTarget)
+        if (descendsToTarget) {
+            auto name = schema.pool()->dictionary().resolve(field);
+            auto runtimeField = name ? ctx.env->strings()->get(*name) : StringPool::Empty;
+            if (runtimeField == StringPool::Empty && (!name || !name->empty()))
+                unknownNames = true;
+            field = runtimeField;
             plan.objectChildFields.push_back(field);
+        }
     });
 
     std::ranges::sort(plan.objectChildFields);
@@ -1286,7 +1455,7 @@ auto WildcardFieldExpr::buildObjectSchemaPlan(
 
     const auto sparseChildPlan = plan.objectChildFields.size() * 2 < fieldCount;
     const auto skipsLargeDirectLookup = !plan.directField && fieldCount > 4;
-    if (!sparseChildPlan && !skipsLargeDirectLookup) {
+    if (unknownNames || (!sparseChildPlan && !skipsLargeDirectLookup)) {
         plan.kind = SchemaPlan::Kind::Unknown;
         plan.directField = true;
         plan.objectChildFields.clear();
@@ -1295,7 +1464,7 @@ auto WildcardFieldExpr::buildObjectSchemaPlan(
     return plan;
 }
 
-auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema, StringId fieldId)
+auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const SchemaType& schema, StringId fieldId)
     const -> SchemaPlan
 {
     SchemaPlan plan;
@@ -1306,35 +1475,227 @@ auto WildcardFieldExpr::buildSchemaPlan(const Context& ctx, const Schema& schema
     }
 
     // Alternatives and open objects cannot be reduced to one exhaustive field list.
-    if (schema.composition() != Schema::Composition::None || schema.open())
+    if (schema.composition() != SchemaType::Composition::None || schema.open())
         return plan;
     if (schema.hasAffinity(ValueType::Object) && !schema.hasAffinity(ValueType::Array))
         return buildObjectSchemaPlan(ctx, schema, fieldId);
     if (schema.hasAffinity(ValueType::Array) && !schema.hasAffinity(ValueType::Object)) {
         plan.kind = SchemaPlan::Kind::Array;
+        // Named array lookups are terminals too, including Context edges. Only
+        // elements are traversed below; lookup-only children must not be descended.
         plan.directField = false;
+        const auto canonical = schema.canonicalField(fieldId);
+        schema.forEachField([&](SchemaField const& field) {
+            plan.directField |= field.nameId() == canonical;
+        });
     }
 
     return plan;
 }
 
-auto WildcardFieldExpr::schemaPlan(const Context& ctx, SchemaId schemaId, const Schema& schema) const -> const SchemaPlan*
+auto WildcardFieldExpr::schemaPlan(Context const& ctx, SchemaType const& schema) const -> SchemaPlan const*
 {
     if (!ctx.runtime)
         return nullptr;
-
-    const auto fieldId = ctx.runtime->fieldId(id(), name_);
-    return ctx.runtime->wildcardSchemaPlan(
-        id(),
-        schemaId,
-        schema,
-        [this, &ctx, &schema, fieldId] { return buildSchemaPlan(ctx, schema, fieldId); });
+    return ctx.runtime->wildcardSchemaPlan(id(), schema, [this, &ctx, &schema] {
+        auto field = ctx.runtime->schemaFieldId(id(), name_, schema);
+        return buildSchemaPlan(ctx, schema, field);
+    });
 }
 
 auto WildcardFieldExpr::type() const -> Type
 {
     return Type::PATH;
 }
+
+/** Traverse one wildcard evaluation with compile-time optional graph ancestry. */
+template <bool TrackCycles>
+struct WildcardFieldExpr::Traversal
+{
+    Context& ctx;
+    ResultFn& res;
+    const WildcardFieldExpr& expr;
+    StringId field;
+    Diagnostics::FieldExprData* diag;
+    size_t maxDepth = 0; // 0 = recurse inf.
+    bool pruneRoot = true;
+
+    struct SchemaDecision {
+        bool canHaveField = true;
+        const SchemaPlan* plan = nullptr;
+    };
+
+    [[no_unique_address]] std::conditional_t<TrackCycles, GraphTraversalFrame const*, std::monostate> ancestry{};
+
+    [[nodiscard]] auto iterate(ModelNode const& val, size_t depth) noexcept -> tl::expected<Result, Error>
+    {
+        // Even a suppressed back-edge consumes cooperative work and observes cancellation.
+        if (ctx.evaluation && !ctx.step(depth))
+            return Result::Stop;
+        if constexpr (TrackCycles)
+        {
+            GraphTraversalFrame frame(ancestry, val);
+            if (!frame)
+                return Result::Continue;
+            return visit(val, depth);
+        }
+        else
+            return visit(val, depth);
+    }
+
+    [[nodiscard]] auto visit(ModelNode const& val, size_t depth) noexcept -> tl::expected<Result, Error>
+    {
+        if (maxDepth > 0 && depth > maxDepth) {
+            return Result::Continue;
+        }
+
+        if (field == StringPool::StaticStringIds::Empty)
+            return Result::Continue;
+
+        const auto valType = val.type();
+        if (valType == ValueType::Null) [[unlikely]]
+            return Result::Continue;
+
+        const auto schemaDecision = decideBySchema(val, depth);
+        if (!schemaDecision.canHaveField)
+            return Result::Continue;
+
+        if (diag)
+            diag->evaluations++;
+
+        const auto plan = matchingPlan(schemaDecision.plan, valType);
+        auto directResult = emitDirectField(val, plan, depth);
+        TRY_EXPECTED(directResult);
+        if (*directResult == Result::Stop)
+            return Result::Stop;
+
+        // Once the requested non-recursive depth has been processed, avoid
+        // descending just to let the next call reject the child by depth.
+        if (maxDepth > 0 && depth >= maxDepth)
+            return Result::Continue;
+
+        if (plan && plan->kind == SchemaPlan::Kind::Object) {
+            return iterateObjectFields(val, *plan, depth);
+        }
+
+        return iterateAllChildren(val, depth);
+    }
+
+    [[nodiscard]] auto decideBySchema(ModelNode const& val, size_t depth) const noexcept -> SchemaDecision
+    {
+        if (!(depth > 0 || pruneRoot))
+            return {};
+
+        auto schema = val.schemaType();
+        if (!schema && val.schema())
+            if (auto root = ctx.env->schema())
+                schema = root.pool()->schemaType(val.schema());
+        if (!schema)
+            return {};
+        if (ctx.env->enableWildcardFieldPlans)
+            if (auto plan = expr.schemaPlan(ctx, schema))
+                return {plan->canHaveField, plan};
+
+        // Basic pruning shares the same canonical graph and dictionary cache,
+        // but continues with generic child enumeration instead of a field plan.
+        auto schemaField = ctx.runtime ? ctx.runtime->schemaFieldId(expr.id(), expr.name_, schema)
+            : schema.pool()->dictionary().get(expr.name_);
+        if (schema.canHaveField(schemaField))
+            return {};
+
+        return {false, nullptr};
+    }
+
+    [[nodiscard]] static auto matchingPlan(const SchemaPlan* plan, ValueType valType) noexcept -> const SchemaPlan*
+    {
+        if (!plan)
+            return nullptr;
+
+        if (plan->kind == SchemaPlan::Kind::Object && valType == ValueType::Object)
+            return plan;
+
+        if (plan->kind == SchemaPlan::Kind::Array && valType == ValueType::Array)
+            return plan;
+
+        return nullptr;
+    }
+
+    [[nodiscard]] auto emitDirectField(ModelNode const& val,
+                                       const SchemaPlan* plan,
+                                       size_t depth) noexcept -> tl::expected<Result, Error>
+    {
+        const auto directFieldPossible = !plan || plan->directField;
+        if (!directFieldPossible || (maxDepth > 0 && depth == 0))
+            return Result::Continue;
+
+        auto sub = val.get(field);
+        if (!sub)
+            return Result::Continue;
+
+        if (diag)
+            diag->hits++;
+
+        auto result = res(ctx, ctx.runtime ? ctx.runtime->fieldValue(expr.id(), expr.name_, val, *sub)
+            : Value::field(val, *sub, field));
+        TRY_EXPECTED(result);
+        return *result;
+    }
+
+    [[nodiscard]] auto iterateObjectFields(ModelNode const& val,
+                                           const SchemaPlan& plan,
+                                           size_t depth) noexcept -> tl::expected<Result, Error>
+    {
+        if (plan.objectChildFields.empty())
+            return Result::Continue;
+
+        // For dense plans the normal iterator is cheaper because it resolves
+        // each child once and lets that child's schema reject irrelevant paths.
+        if (plan.objectChildFields.size() * 2 >= val.size())
+            return iterateAllChildren(val, depth);
+
+        tl::expected<Result, Error> finalResult = Result::Continue;
+        for (auto i = 0u; i < val.size(); ++i) {
+            if (ctx.evaluation && !ctx.step(depth))
+                return Result::Stop;
+            if (!std::ranges::binary_search(plan.objectChildFields, val.keyAt(i)))
+                continue;
+
+            auto child = val.at(i);
+            if (!child)
+                continue;
+
+            auto subResult = iterate(*child, depth + 1);
+            if (!subResult)
+                return subResult;
+
+            if (*subResult == Result::Stop)
+                return Result::Stop;
+        }
+
+        return finalResult;
+    }
+
+    [[nodiscard]] auto iterateAllChildren(ModelNode const& val, size_t depth) noexcept -> tl::expected<Result, Error>
+    {
+        tl::expected<Result, Error> finalResult = Result::Continue;
+        val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
+            auto subResult = iterate(subNode, depth + 1);
+            if (!subResult) {
+                finalResult = std::move(subResult);
+                return false;
+            }
+
+            if (*subResult == Result::Stop) {
+                finalResult = Result::Stop;
+                return false;
+            }
+
+            return true;
+        }));
+
+        return finalResult;
+    }
+};
 
 auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ores) const -> tl::expected<Result, Error>
 {
@@ -1364,179 +1725,15 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
         return res.finish();
     }
 
-    struct Iterate
+    tl::expected<Result, Error> r = Result::Continue;
+    if (auto node = val.nodePtr())
     {
-        Context& ctx;
-        ResultFn& res;
-        const WildcardFieldExpr& expr;
-        StringId field;
-        Diagnostics::FieldExprData* diag;
-        size_t maxDepth = 0; // 0 = recurse inf.
-        bool pruneRoot = true;
-
-        struct SchemaDecision {
-            bool canHaveField = true;
-            const SchemaPlan* plan = nullptr;
-        };
-
-        [[nodiscard]] auto iterate(ModelNode const& val, size_t depth) noexcept -> tl::expected<Result, Error>
-        {
-            if (ctx.evaluation && !ctx.step(depth))
-                return Result::Stop;
-            if (maxDepth > 0 && depth > maxDepth) {
-                return Result::Continue;
-            }
-
-            if (field == StringPool::StaticStringIds::Empty)
-                return Result::Continue;
-
-            const auto valType = val.type();
-            if (valType == ValueType::Null) [[unlikely]]
-                return Result::Continue;
-
-            const auto schemaDecision = decideBySchema(val, depth);
-            if (!schemaDecision.canHaveField)
-                return Result::Continue;
-
-            if (diag)
-                diag->evaluations++;
-
-            const auto plan = matchingPlan(schemaDecision.plan, valType);
-            auto directResult = emitDirectField(val, plan, depth);
-            TRY_EXPECTED(directResult);
-            if (*directResult == Result::Stop)
-                return Result::Stop;
-
-            // Once the requested non-recursive depth has been processed, avoid
-            // descending just to let the next call reject the child by depth.
-            if (maxDepth > 0 && depth >= maxDepth)
-                return Result::Continue;
-
-            if (plan && plan->kind == SchemaPlan::Kind::Object) {
-                return iterateObjectFields(val, *plan, depth);
-            }
-
-            return iterateAllChildren(val, depth);
-        }
-
-        [[nodiscard]] auto decideBySchema(ModelNode const& val, size_t depth) const noexcept -> SchemaDecision
-        {
-            if (!(depth > 0 || pruneRoot))
-                return {};
-
-            const auto schemaId = val.schema();
-            const auto* schema = ctx.env->querySchema(schemaId);
-            if (!schema)
-                return {};
-
-            if (ctx.env->enableWildcardFieldPlans) {
-                if (const auto* plan = expr.schemaPlan(ctx, schemaId, *schema))
-                    return {plan->canHaveField, plan};
-            }
-
-            // This is the original schema-pruning path: the current node can be
-            // rejected, but child iteration is still generic when it may match.
-            if (schema->canHaveField(field))
-                return {};
-
-            return {false, nullptr};
-        }
-
-        [[nodiscard]] static auto matchingPlan(const SchemaPlan* plan, ValueType valType) noexcept -> const SchemaPlan*
-        {
-            if (!plan)
-                return nullptr;
-
-            if (plan->kind == SchemaPlan::Kind::Object && valType == ValueType::Object)
-                return plan;
-
-            if (plan->kind == SchemaPlan::Kind::Array && valType == ValueType::Array)
-                return plan;
-
-            return nullptr;
-        }
-
-        [[nodiscard]] auto emitDirectField(ModelNode const& val,
-                                           const SchemaPlan* plan,
-                                           size_t depth) noexcept -> tl::expected<Result, Error>
-        {
-            const auto directFieldPossible = !plan
-                || (plan->kind == SchemaPlan::Kind::Object && plan->directField);
-            if (!directFieldPossible || (maxDepth > 0 && depth == 0))
-                return Result::Continue;
-
-            auto sub = val.get(field);
-            if (!sub)
-                return Result::Continue;
-
-            if (diag)
-                diag->hits++;
-
-            auto result = res(ctx, Value::field(*sub));
-            TRY_EXPECTED(result);
-            return *result;
-        }
-
-        [[nodiscard]] auto iterateObjectFields(ModelNode const& val,
-                                               const SchemaPlan& plan,
-                                               size_t depth) noexcept -> tl::expected<Result, Error>
-        {
-            if (plan.objectChildFields.empty())
-                return Result::Continue;
-
-            // For dense plans the normal iterator is cheaper because it resolves
-            // each child once and lets that child's schema reject irrelevant paths.
-            if (plan.objectChildFields.size() * 2 >= val.size())
-                return iterateAllChildren(val, depth);
-
-            tl::expected<Result, Error> finalResult = Result::Continue;
-            for (auto i = 0u; i < val.size(); ++i) {
-                if (ctx.evaluation && !ctx.step(depth))
-                    return Result::Stop;
-                if (!std::ranges::binary_search(plan.objectChildFields, val.keyAt(i)))
-                    continue;
-
-                auto child = val.at(i);
-                if (!child)
-                    continue;
-
-                auto subResult = iterate(*child, depth + 1);
-                if (!subResult)
-                    return subResult;
-
-                if (*subResult == Result::Stop)
-                    return Result::Stop;
-            }
-
-            return finalResult;
-        }
-
-        [[nodiscard]] auto iterateAllChildren(ModelNode const& val, size_t depth) noexcept -> tl::expected<Result, Error>
-        {
-            tl::expected<Result, Error> finalResult = Result::Continue;
-            val.iterate(ModelNode::IterLambda([&, this](const auto& subNode) {
-                auto subResult = iterate(subNode, depth + 1);
-                if (!subResult) {
-                    finalResult = std::move(subResult);
-                    return false;
-                }
-
-                if (*subResult == Result::Stop) {
-                    finalResult = Result::Stop;
-                    return false;
-                }
-
-                return true;
-            }));
-
-            return finalResult;
-        }
-    };
-
-    auto r = val.nodePtr() ?
-        Iterate{ctx, res, *this, nameId, diag, recurse_ ? 0ul : 1ul, recurse_}
-            .iterate(**val.nodePtr(), 0) :
-        tl::expected<Result, Error>(Result::Continue);
+        auto owner = (*node)->borrowedModel();
+        r = recurse_ && owner && owner->supportsRecursiveCycles()
+            ? Traversal<true>{ctx, res, *this, nameId, diag, 0, true}.iterate(**node, 0)
+            : Traversal<false>{ctx, res, *this, nameId, diag, recurse_ ? 0ul : 1ul, recurse_}
+                  .iterate(**node, 0);
+    }
     return res.finish(std::move(r));
 }
 

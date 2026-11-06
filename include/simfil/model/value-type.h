@@ -1,13 +1,15 @@
 #pragma once
 
-#include "simfil/byte-array.h"
 #include <cstdint>
-#include <string>
-#include <string_view>
-#include <variant>
+#include <limits>
 
 namespace simfil
 {
+
+/** Graph-local type identity; a nonzero ID is meaningful only with its schema pool. */
+using TypeId = std::uint16_t;
+inline constexpr TypeId NoTypeId = TypeId{0};
+inline constexpr TypeId MaxTypeId = std::numeric_limits<TypeId>::max();
 
 /** Runtime value categories, also used for schema structural-affinity bits. */
 enum class ValueType
@@ -19,6 +21,7 @@ enum class ValueType
     Float,
     String,
     Bytes,
+    Bitmask,
     TransientObject,
     Object,
     Array,
@@ -32,9 +35,5 @@ constexpr auto valueTypeAffinity(ValueType type) -> std::uint16_t
 }
 
 static_assert(unsigned(ValueType::LAST_) <= 16);
-
-/** Scalar payload shared by model nodes and schema enum/constant metadata. */
-using ScalarValueType = std::variant<
-    std::monostate, bool, int64_t, double, std::string, std::string_view, ByteArray>;
 
 }

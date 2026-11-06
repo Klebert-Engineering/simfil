@@ -1,6 +1,38 @@
 #include "common.hpp"
 #include "simfil/types.h"
 
+TEST_CASE("Optional diagnostics preserve streaming values and traces", "[evaluation.bounded][diag.optional]")
+{
+    auto model = json::parse(R"({"items":[{"value":1},{"value":3}]})").value();
+    Environment env(model->strings());
+    auto ast = compile(env, "trace(items.*.value > 2, -1, 'sample')", false);
+    REQUIRE(ast);
+    BoundExpression bound(SharedAST(std::move(*ast)), env);
+    std::vector<std::string> expectedValues;
+    size_t expectedTraceCalls = 0;
+    for (bool collect : {false, true, false}) {
+        env.traces.clear();
+        Diagnostics diagnostics;
+        std::vector<std::string> values;
+        auto result = bound.eval(**model->root(0),
+            LambdaResultFn([&](Context, Value value) {
+                values.push_back(value.toString());
+                return Result::Continue;
+            }), EvaluationOptions{}, collect ? &diagnostics : nullptr);
+        REQUIRE(result);
+        CHECK(result->reason == EvaluationSummary::Reason::Complete);
+        REQUIRE(env.traces.contains("sample"));
+        if (expectedValues.empty()) {
+            expectedValues = values;
+            expectedTraceCalls = env.traces.at("sample").calls;
+        }
+        CHECK(values == std::vector<std::string>{"false", "true"});
+        CHECK(values == expectedValues);
+        CHECK(env.traces.at("sample").calls == expectedTraceCalls);
+        CHECK(diagnostics.fieldData_.empty() == !collect);
+    }
+}
+
 TEST_CASE("Streaming evaluation bounds results before collecting a vector", "[evaluation.bounded]")
 {
     auto model = json::parse(R"({"limit":10000000})").value();

@@ -1,4 +1,5 @@
 #include "simfil/model/model.h"
+#include "simfil/model/schema-pool.h"
 #include "simfil/value.h"
 
 #include <algorithm>
@@ -40,7 +41,10 @@ public:
             return failure("Result sequence copy budget exceeded");
         ++nodes_;
         // The exact count is known: singleton slots use compact arena storage.
-        auto result = target_.newArray(std::max(size_t{1}, values.size()), true);
+        auto created = target_.tryNewArray(std::max(size_t{1}, values.size()), true);
+        if (!created)
+            return tl::unexpected(created.error());
+        auto result = *created;
         for (auto const& value : values) {
             tl::expected<ModelNode::Ptr, Error> copied;
             if (auto node = value.node()) {
@@ -54,6 +58,13 @@ public:
                 value.type == ValueType::TransientObject || value.type == ValueType::LAST_) {
                 return failure("Unsupported result value in native copy");
             }
+            else if (auto typeRef = value.schemaType()) {
+                if (options_.maxDepth < 1 || nodes_ >= options_.maxNodes || !charge(sizeof(ModelNodeAddress)))
+                    return failure("Node copy node/depth/byte budget exceeded");
+                ++nodes_;
+                // Qualification follows captured Value provenance, never destination-schema inference.
+                copied = copyQualified(value.getScalar(), typeRef);
+            }
             else {
                 auto scalar = model_ptr<ValueNode>::make(value.getScalar(), target_.shared_from_this());
                 copied = copy(*scalar, 1);
@@ -66,11 +77,30 @@ public:
     }
 
 private:
+    /** Apply an explicitly requested graph migration without discarding known provenance. */
+    auto remapSchema(SchemaType const& source) const -> tl::expected<SchemaType, Error>
+    {
+        if (!options_.schemaRemap)
+            return source;
+        try {
+            auto mapped = options_.schemaRemap(source);
+            if (!mapped)
+                return failure("Schema remapping returned an unresolved type");
+            return mapped;
+        }
+        catch (std::exception const& error) {
+            return failure(error.what());
+        }
+    }
+
     /** Copy scalars directly; collections use protocol order, not a JSON serialization override. */
     auto copyResolved(ModelNode const& source, size_t depth) -> tl::expected<ModelNode::Ptr, Error>
     {
         if (!charge(sizeof(ModelNodeAddress)))
             return failure("Node copy byte budget exceeded");
+        if (source.type() != ValueType::Object && source.type() != ValueType::Array)
+            if (auto typeRef = source.schemaType())
+                return copyQualified(source.value(), typeRef);
         switch (source.type()) {
         case ValueType::Undef: return target_.newUndefined();
         case ValueType::Null: return target_.resolve(ModelNodeAddress{Model::Null, 1});
@@ -78,11 +108,11 @@ private:
         case ValueType::Int:
             if (!charge(sizeof(int64_t)))
                 return failure("Node copy byte budget exceeded");
-            return target_.newValue(std::get<int64_t>(source.value()));
+            return target_.tryNewValue(std::get<int64_t>(source.value()));
         case ValueType::Float:
             if (!charge(sizeof(double)))
                 return failure("Node copy byte budget exceeded");
-            return target_.newValue(std::get<double>(source.value()));
+            return target_.tryNewValue(std::get<double>(source.value()));
         case ValueType::String: {
             auto value = source.value();
             auto view = std::holds_alternative<std::string>(value)
@@ -90,14 +120,16 @@ private:
             if (!charge(view.size()) || !charge(2 * sizeof(uint32_t)))
                 return failure("Node copy byte budget exceeded");
             // newValue owns bytes, even when the source uses a pooled or borrowed string.
-            return target_.newValue(view);
+            return target_.tryNewValue(view);
         }
         case ValueType::Bytes: {
             auto value = std::get<simfil::ByteArray>(source.value());
             if (!charge(value.bytes.size()) || !charge(2 * sizeof(uint32_t)))
                 return failure("Node copy byte budget exceeded");
-            return target_.newValue(value);
+            return target_.tryNewValue(value);
         }
+        case ValueType::Bitmask:
+            return failure("Bitmask has no resolved schema type");
         case ValueType::Array:
         case ValueType::Object:
             return copyCollection(source, depth);
@@ -106,6 +138,36 @@ private:
             return failure("Unsupported node type in native copy");
         }
         return failure("Invalid node type in native copy");
+    }
+
+    /** Persist one already-typed scalar; raw numeric leaves copied inside compounds stay compact. */
+    auto copyQualified(ScalarValueType const& value, SchemaType const& sourceType)
+        -> tl::expected<ModelNode::Ptr, Error>
+    {
+        if (!sourceType)
+            return failure("Scalar has no resolved schema definition");
+        auto mapped = remapSchema(sourceType);
+        if (!mapped)
+            return tl::unexpected(mapped.error());
+        auto const& typeRef = *mapped;
+        // Charge conservatively for raw storage, qualifier and common schema-owner metadata.
+        size_t bytes = sizeof(std::uint64_t) + sizeof(TypeId) + sizeof(ModelNodeAddress);
+        if (auto text = std::get_if<std::string>(&value))
+            bytes += text->size() + 2 * sizeof(std::uint32_t);
+        else if (auto view = std::get_if<std::string_view>(&value))
+            bytes += view->size() + 2 * sizeof(std::uint32_t);
+        else if (auto data = std::get_if<simfil::ByteArray>(&value))
+            bytes += data->bytes.size() + 2 * sizeof(std::uint32_t);
+        if (!charge(bytes) || !charge(typeRef.pool()->identity().size()))
+            return failure("Node copy byte budget exceeded");
+        try {
+            if (auto mask = std::get_if<simfil::Bitmask>(&value))
+                return target_.newBitmask(mask->bits, typeRef);
+            return target_.newQualifiedValue(value, typeRef);
+        }
+        catch (std::exception const& error) {
+            return failure(error.what());
+        }
     }
 
     /** Copy repeated keys and shared children without conflating shared subtrees with cycles. */
@@ -122,8 +184,38 @@ private:
 
         active_.push_back(identity);
         auto capacity = std::max(uint32_t{1}, count);
-        auto array = source.type() == ValueType::Array ? target_.newArray(capacity, true) : model_ptr<Array>{};
-        auto object = source.type() == ValueType::Object ? target_.newObject(capacity, true) : model_ptr<Object>{};
+        model_ptr<Array> array;
+        model_ptr<Object> object;
+        if (source.type() == ValueType::Array) {
+            auto created = target_.tryNewArray(capacity, true);
+            if (!created)
+                return tl::unexpected(created.error());
+            array = *created;
+        } else {
+            auto created = target_.tryNewObject(capacity, true);
+            if (!created)
+                return tl::unexpected(created.error());
+            object = *created;
+        }
+        if (auto sourceType = source.schemaType()) {
+            auto mapped = remapSchema(sourceType);
+            if (!mapped)
+                return tl::unexpected(mapped.error());
+            auto const& typeRef = *mapped;
+            // Graph composition may widen a container, but must not turn it into a scalar.
+            if (options_.schemaRemap && !typeRef.hasAffinity(source.type()))
+                return failure("Remapped schema is incompatible with the copied container");
+            if (!charge(typeRef.pool()->identity().size() + sizeof(TypeId)))
+                return failure("Node copy byte budget exceeded");
+            auto imported = target_.importSchema(typeRef);
+            if (!imported)
+                return tl::unexpected(imported.error());
+            auto attached = array ? array->setSchema(*imported) : object->setSchema(*imported);
+            if (!attached)
+                return tl::unexpected(attached.error());
+        }
+        else if (source.schema() != NoTypeId)
+            return failure("Cannot copy an unbound source schema id");
         for (uint32_t i = 0; i < count; ++i) {
             std::optional<std::string_view> name;
             if (object) {
