@@ -31,7 +31,7 @@ flowchart LR
 | Meta types | `typed-meta-type.h`, `types.*` | Custom operator/unpack implementations on transient values; not part of the environment. | `MetaType`, `TypedMetaType`, `TransientObject`, `IRangeType`, `ReType` |
 | Parser | `parser.cpp`, `expression-patterns.h`, `token.cpp` | Pratt parser building `Expr` trees from tokens. | `Token`, `AST` |
 | Completion | `completion.cpp` | Partial parser that offers path/function suggestions. | `CompletionOptions`, `CompletionCandidate` |
-| Schema types | `model/schema.h`, `model/schema-pool.h`, `model/schema-model.h` | Typed type graph, optional compact ownership/codec, conservative indexes, and lazy metadata query views. | `Schema`, `SchemaPool`, `CombinedSchema`, `SchemaModel` |
+| Schema types | `model/schema-type.h`, `model/schema-pool.h`, `model/schema-node.h` | Canonical column/arena graph, typed borrowed/owning views, conservative indexes, native codec and direct metadata nodes. | `SchemaType`, `SchemaPool`, `SchemaCompositionType`, `SchemaTypeModelNode` |
 | Diagnostics | `diagnostics.*`, `error.*` | Parser/runtime errors with source spans. | `Diagnostics`, `Error`, `SourceLocation` |
 | Extensibility | `function.*`, `typed-meta-type.h`, `overlay.*` | Register new functions/meta types or overlay nodes. | `Function`, `TypedMetaType`, `OverlayNode` |
 
@@ -304,10 +304,12 @@ env.functions.emplace("myfn", new MyFn());
 
 Use this in UIs (e.g., erdblick feature search) to propose valid paths and functions while a user types; operators are not completed.
 
-For metadata-only completion, use `complete(env, query, caret, rootSchemaId, options)`.
-It walks the typed type graph directly, without synthetic sample nodes or
-function execution. `SchemaModel` is the separate lazy descriptor view for
-ordinary schema queries. See [Schema Types And Query Views](schema-types.md)
+For metadata-only completion, use `complete(env, query, caret, rootType, options)`
+with a `SchemaType`. It walks canonical schema records directly, without sample
+nodes or function execution. Use a temporary completion dictionary; returned
+candidates own their strings. `SchemaTypeModelNode` provides ordinary metadata
+queries over the same pool, not another graph or owner. See
+[Schema Types And Query Views](schema-domains.md)
 for ownership, packed kinds, extension contracts, recursion, and the bounded
 callback evaluation overloads.
 

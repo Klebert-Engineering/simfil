@@ -3,7 +3,6 @@
 
 #include "simfil/model/string-pool.h"
 #include "simfil/model/memory.h"
-#include "simfil/model/schema.h"
 #include "simfil/byte-array.h"
 #include "tl/expected.hpp"
 #if defined(SIMFIL_WITH_MODEL_JSON)
@@ -11,6 +10,7 @@
 #endif
 
 #include <memory>
+#include <functional>
 #include <string_view>
 #include <vector>
 #include <type_traits>
@@ -49,6 +49,7 @@ template<typename Target, typename ModelType>
 model_ptr<Target> resolveInternal(res::tag<Target>, ModelType const&, ModelNode const&) = delete;
 
 class ModelPool;
+class SchemaPool;
 
 // Built-in resolve hooks for core node types. Declared here so ADL sees them
 // across translation units without relying on friend injection.
@@ -180,14 +181,22 @@ public:
      */
     virtual std::optional<std::string_view> lookupStringId(StringId id) const;
 
+    /** Opt into active-ancestor suppression for recursive wildcards, not global deduplication. */
+    virtual auto supportsRecursiveCycles() const noexcept -> bool { return false; }
+    /** Identify a traversal position; graph owners may canonicalize multiple views of one vertex. */
+    virtual auto recursiveTraversalKey(ModelNode const& node) const noexcept -> ModelNodeAddress
+    {
+        return node.addr();
+    }
+
     /** Read a node's type; the default preserves custom models' resolution protocol. */
     virtual auto type(ModelNode const& node) const -> ValueType;
     /** Read a node's stored schema id; custom models may use their normal resolution protocol. */
     virtual auto schema(ModelNode const& node) const -> TypeId;
     /** Resolve a model-local schema id into an owning graph-qualified type. */
-    virtual auto schemaReference(TypeId id) const -> SchemaReference;
+    virtual auto resolveSchemaType(TypeId id) const -> SchemaType;
     /** Custom/overlay models may resolve an occurrence without inventing persistent local ids. */
-    virtual auto schemaReference(ModelNode const& node) const -> SchemaReference;
+    virtual auto resolveSchemaType(ModelNode const& node) const -> SchemaType;
 
 protected:
     // Shared passkey for direct node construction in Model/ModelPool implementations.
@@ -206,7 +215,7 @@ class ModelPool : public Model
 public:
     // Keep Model::resolve<T> overloads visible alongside the virtual resolve override.
     using Model::resolve;
-    using Model::schemaReference;
+    using Model::resolveSchemaType;
     /**
      * The pool consists of multiple ModelNode columns,
      * each for a different data type. Each column
@@ -289,32 +298,34 @@ public:
     ModelNode::Ptr newValue(StringId handle);
 
     /** Persist an existing scalar type; validate storage bounds and throw on invalid input. */
-    auto newQualifiedValue(ScalarValueType value, SchemaReference const& typeRef) -> ModelNode::Ptr;
+    auto newQualifiedValue(ScalarValueType value, SchemaType const& typeRef) -> ModelNode::Ptr;
     /** Persist full-width bits and their intrinsic type; reject invalid width, binding or storage size. */
-    auto newBitmask(std::uint64_t bits, SchemaReference const& typeRef) -> ModelNode::Ptr;
+    auto newBitmask(std::uint64_t bits, SchemaType const& typeRef) -> ModelNode::Ptr;
+    /** Resolve an artifact identity to its exact immutable schema owner. */
+    using SchemaResolver = std::function<std::shared_ptr<SchemaPool const>(std::string_view)>;
     /** Bind a single graph directly, preserving its numeric ids; incompatible rebinding is rejected. */
-    void setSchemaBinding(std::shared_ptr<const SchemaBinding> binding);
+    void setSchemaPool(std::shared_ptr<const SchemaPool> pool);
     /** Rebind core schema columns transactionally to one exact graph without copying payloads.
      * Unknown leaves stay unqualified. Reject unresolved/incompatible mappings before mutation;
      * derived pools must separately prevalidate and update their custom schema columns. */
-    void remapSchemas(std::shared_ptr<const SchemaBinding> target,
-                      std::function<SchemaReference(SchemaReference const&)> const& remap);
+    void remapSchemas(std::shared_ptr<const SchemaPool> target,
+                      std::function<SchemaType(SchemaType const&)> const& remap);
     /** Install the external lookup required to hydrate every identity in a binary model. */
-    void setSchemaResolver(SchemaBinding::Resolver resolver);
-    /** Find an installed or externally supplied binding, accepting only the exact requested identity. */
-    auto schemaBinding(std::string_view identity) const -> std::shared_ptr<const SchemaBinding>;
+    void setSchemaResolver(SchemaResolver resolver);
+    /** Resolve a nonempty artifact identity; conflicting local owners make the lookup ambiguous. */
+    auto schemaPool(std::string_view identity) const -> std::shared_ptr<const SchemaPool>;
     /** Check a native single-graph payload binding without invoking its external resolver. */
-    auto hasDirectSchemaBinding(std::string_view identity) const noexcept -> bool;
+    auto hasDirectSchemaPool(std::string_view identity) const noexcept -> bool;
     /** Resolve a single-graph id or a result pool's common remapped type id. */
-    auto schemaReference(TypeId id) const -> SchemaReference override;
+    auto resolveSchemaType(TypeId id) const -> SchemaType override;
     /** Read core schema columns directly, retaining custom-node and foreign-owner dispatch. */
     auto schema(ModelNode const& node) const -> TypeId override;
     /** Classify core columns without materializing wrappers; custom columns still resolve normally. */
     auto type(ModelNode const& node) const -> ValueType override;
     /** Avoid resolving node schemas when this model has no semantic graph binding. */
-    auto schemaReference(ModelNode const& node) const -> SchemaReference override;
+    auto resolveSchemaType(ModelNode const& node) const -> SchemaType override;
     /** Import an exact type into this pool's common binding namespace, retaining its graph once. */
-    auto importSchema(SchemaReference const& typeRef) -> tl::expected<TypeId, Error>;
+    auto importSchema(SchemaType const& typeRef) -> tl::expected<TypeId, Error>;
 
     /** Checked creation for untrusted inputs; size errors and frozen pools return errors without mutation. */
     [[nodiscard]] auto tryNewObject(size_t initialFieldCapacity = 2, bool fixedSize = false)
@@ -336,7 +347,7 @@ public:
          * An absent callback preserves source bindings. A callback must return a
          * resolved type; removing provenance or coercing the payload is not allowed.
          * Ordinary unqualified scalar leaves do not invoke it. */
-        std::function<SchemaReference(SchemaReference const&)> schemaRemap;
+        std::function<SchemaType(SchemaType const&)> schemaRemap;
     };
 
     /**
@@ -416,14 +427,14 @@ public:
         MemoryUsage arraySchemas;
         MemoryUsage qualifiedScalars;
         MemoryUsage bitmasks;
-        MemoryUsage schemaBindings;
+        MemoryUsage schemaOwners;
 
         /** Sum all independently owned model-pool storage. */
         [[nodiscard]] MemoryUsage total() const
         {
             return implementation + roots + int64Values + doubleValues + stringData +
                 stringRanges + byteArrayRanges + objectMembers + objectSchemas +
-                arrayMembers + arraySchemas + qualifiedScalars + bitmasks + schemaBindings;
+                arrayMembers + arraySchemas + qualifiedScalars + bitmasks + schemaOwners;
         }
     };
 
@@ -436,6 +447,35 @@ public:
 #endif
 
 protected:
+    /** Logical tails of plain scalar appends, including roots and shared byte storage. */
+    struct ScalarAppendCheckpoint
+    {
+        ScalarAppendCheckpoint(ScalarAppendCheckpoint const&) = default;
+        ScalarAppendCheckpoint& operator=(ScalarAppendCheckpoint const&) = default;
+
+        size_t roots = 0;
+        size_t int64Values = 0;
+        size_t doubleValues = 0;
+        size_t stringBytes = 0;
+        size_t stringRows = 0;
+        size_t byteArrayRows = 0;
+
+    private:
+        friend class ModelPool;
+        ScalarAppendCheckpoint() = default;
+        ModelPool const* owner_ = nullptr;
+    };
+
+    /**
+     * Exclusive construction only: append plain scalars and roots without
+     * modifying existing values, containers, bindings, or tagged scalar columns.
+     * Dictionary appends need their owner's separate checkpoint. No freeze,
+     * clear, read, or pool replacement is permitted while the checkpoint is active.
+     */
+    [[nodiscard]] ScalarAppendCheckpoint scalarAppendCheckpoint() const;
+    /** Restore logical scalar tails without allocating or shrinking capacity. */
+    void rollbackScalarAppends(ScalarAppendCheckpoint const& checkpoint) noexcept;
+
     /** Fail before mutation through factories or retained nodes of a published immutable pool. */
     void requireMutable() const;
     struct Impl;

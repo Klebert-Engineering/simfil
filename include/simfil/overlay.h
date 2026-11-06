@@ -1,8 +1,8 @@
 #pragma once
 
-#include "simfil.h"
 #include "value.h"
 #include "model/model.h"
+#include <map>
 
 namespace simfil
 {
@@ -19,7 +19,7 @@ struct OverlayNodeStorage final : public Model
     /** Overlay keys share the wrapped model's namespace, including native subtree copies. */
     std::optional<std::string_view> lookupStringId(StringId id) const override;
     /** Return the exact Value's provenance for root or overlay occurrences, without a side table. */
-    auto schemaReference(ModelNode const& node) const -> SchemaReference override;
+    auto resolveSchemaType(ModelNode const& node) const -> SchemaType override;
 };
 
 /** Node for injecting member fields */

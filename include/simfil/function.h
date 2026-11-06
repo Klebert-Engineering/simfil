@@ -160,6 +160,18 @@ public:
 };
 
 /** Explicit all-bits membership using the mask's exact type and declared flag name. */
+/**
+ * Explicit schema-declared enum/named-value membership below a value. Unlike
+ * shorthand, this predicate keeps its meaning inside generated boolean filters.
+ */
+class HasSymbolFn : public Function {
+public:
+  static HasSymbolFn Fn;
+  auto ident() const -> const FnInfo & override;
+  auto eval(Context, const Value &, const std::vector<ExprPtr> &,
+            const ResultFn &) const -> tl::expected<Result, Error> override;
+};
+
 class HasFlagFn : public Function
 {
 public:

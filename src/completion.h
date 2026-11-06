@@ -37,7 +37,7 @@ struct Completion
     }
 
     /** Walk a relaxed AST over schema types, without constructing ModelNodes. */
-    void completeType(Context ctx, const Expr& expression, TypeId root);
+    void completeType(Context ctx, const Expr& expression, SchemaType root);
 
     std::size_t point;
     std::size_t limit = 1000;
@@ -57,7 +57,7 @@ private:
     /** Consume shared work allowance for AST and graph traversal. */
     auto visitType(Context& ctx) -> bool;
     std::size_t typeVisits_ = 0;
-    TypeId rootSchema_ = NoTypeId;
+    SchemaType rootSchema_;
 };
 
 class CompletionFieldOrWordExpr : public Expr

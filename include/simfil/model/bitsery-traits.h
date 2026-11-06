@@ -59,20 +59,43 @@ struct ArrayArenaExt
     {
         (void)fnc;
 
-        // If the arena is already compact, we can simply dump out heads and data
+        using CompactHeadsStorage = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactHeadStorage;
+        using DataStorage = typename std::remove_cv_t<std::remove_reference_t<decltype(arena.data_)>>;
+        using CompactChunk = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactArrayChunk;
+
+        // Truncating a compact array preserves the other arrays' offsets. Only
+        // densely packed heads may reuse the stored payload without compaction.
         if (arena.is_compact()) {
-            s.object(*arena.compactHeads_);
-            s.object(arena.data_);
+            size_t end = 0;
+            bool dense = true;
+            for (auto const& head : *arena.compactHeads_) {
+                dense = dense && head.offset == end;
+                end += head.size;
+            }
+            dense = dense && end == arena.data_.size();
+            if (dense) {
+                s.object(*arena.compactHeads_);
+                s.object(arena.data_);
+            } else {
+                CompactHeadsStorage heads;
+                DataStorage data;
+                heads.reserve(arena.compactHeads_->size());
+                data.resize(end);
+                size_t position = 0;
+                for (auto const& head : *arena.compactHeads_) {
+                    heads.push_back(CompactChunk{static_cast<uint32_t>(position), head.size});
+                    for (size_t i = 0; i < head.size; ++i)
+                        data[position++] = arena.data_[head.offset + i];
+                }
+                s.object(heads);
+                s.object(data);
+            }
             s.object(arena.singletonValues_);
             s.object(arena.singletonOccupied_);
             return;
         }
 
         // Otherwise: Build compact temporary heads/data, then serialize those buffers.
-        using CompactHeadsStorage = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactHeadStorage;
-        using DataStorage = typename std::remove_cv_t<std::remove_reference_t<decltype(arena.data_)>>;
-        using CompactChunk = typename simfil::ArrayArena<ElementType, PageSize, ChunkPageSize>::CompactArrayChunk;
-
         CompactHeadsStorage compactHeads;
         DataStorage compactData;
         compactHeads.reserve(arena.heads_.size());
@@ -130,15 +153,32 @@ struct ArrayArenaExt
         s.object(arena.singletonValues_);
         s.object(arena.singletonOccupied_);
 
+        // A compact stream must describe disjoint consecutive slices. Validate
+        // before publishing its heads: otherwise malformed offsets reach unchecked
+        // column access during ordinary arena traversal.
+        size_t end = 0;
+        bool valid = compactHeads.size() < simfil::SingletonArrayHandleMask &&
+            arena.singletonValues_.size() <= simfil::SingletonArrayHandlePayloadMask &&
+            arena.singletonOccupied_.size() == arena.singletonValues_.size();
+        for (auto const& head : compactHeads) {
+            if (head.offset != end || end > arena.data_.size() ||
+                head.size > arena.data_.size() - end) {
+                valid = false;
+                break;
+            }
+            end += head.size;
+        }
+        valid = valid && end == arena.data_.size();
+        for (auto occupied : arena.singletonOccupied_)
+            valid = valid && occupied <= 1;
+        if (!valid) {
+            s.adapter().error(ReaderError::InvalidData);
+            return;
+        }
+
         arena.heads_.clear();
         arena.continuations_.clear();
         arena.compactHeads_ = std::move(compactHeads);
-        if (arena.singletonOccupied_.size() < arena.singletonValues_.size()) {
-            auto const missing = arena.singletonValues_.size() - arena.singletonOccupied_.size();
-            for (size_t i = 0; i < missing; ++i) {
-                arena.singletonOccupied_.emplace_back(static_cast<uint8_t>(1));
-            }
-        }
     }
 };
 

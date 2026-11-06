@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iterator>
+#include <memory>
 #include <vector>
 #include <optional>
 #include <shared_mutex>
@@ -42,7 +44,7 @@ constexpr static ArrayIndex SingletonArrayHandleMask = 0x00800000u;
 constexpr static ArrayIndex SingletonArrayHandlePayloadMask = 0x007fffffu;
 
 /**
- * ArrayArena - An arena allocator for append-only vectors.
+ * ArrayArena - An arena allocator for append-oriented, truncatable vectors.
  *
  * The ArrayArena is a wrapper around paged model columns. It keeps track of
  * forward-linked array chunks for regular growable arrays, optional singleton
@@ -61,6 +63,7 @@ template <
     typename SizeType_ = uint32_t>
 class ArrayArena
 {
+    struct Chunk;
     friend struct bitsery::ext::ArrayArenaExt;
 
 public:
@@ -96,6 +99,31 @@ public:
         }
     };
     using CompactHeadStorage = ModelColumn<CompactArrayChunk, ChunkPageSize>;
+
+    /** Opaque logical tails for appends to newly allocated arrays only. */
+    class AppendCheckpoint
+    {
+    public:
+        AppendCheckpoint(AppendCheckpoint const&) = default;
+        AppendCheckpoint& operator=(AppendCheckpoint const&) = default;
+
+    private:
+        friend class ArrayArena;
+
+        explicit AppendCheckpoint(ArrayArena const& arena)
+            : owner_(&arena), heads_(arena.heads_.size()), continuations_(arena.continuations_.size()),
+              data_(arena.data_.size()), singletons_(arena.singletonValues_.size()),
+              occupancy_(arena.singletonOccupied_.size())
+        {
+        }
+
+        ArrayArena const* owner_;
+        size_t heads_;
+        size_t continuations_;
+        size_t data_;
+        size_t singletons_;
+        size_t occupancy_;
+    };
 
     ArrayArena()
     {
@@ -189,6 +217,43 @@ public:
         }
         compactHeads_.reset();
         return index;
+    }
+
+    /**
+     * Snapshot append-only allocation tails without allocating.
+     * Until rollback/discard, only arrays allocated after this checkpoint may
+     * be populated: old arrays must remain untouched, with no concurrent
+     * mutation, clear, read, or arena replacement. Compact storage is rejected
+     * before any mutation rather than materializing runtime heads here.
+     */
+    [[nodiscard]] AppendCheckpoint checkpointAppends() const
+    {
+        if (is_compact()) {
+            raise<std::logic_error>("Cannot checkpoint appends to a compact ArrayArena.");
+        }
+        return AppendCheckpoint(*this);
+    }
+
+    /**
+     * Restore this arena's checkpoint tails; never repair edits to old arrays.
+     * The checkpoint must belong to this arena and still precede its logical
+     * tails. New handles/references become invalid and may be reused by later
+     * appends. Backing capacity is not shrunk. Requires exclusive construction.
+     */
+    void rollbackAppends(AppendCheckpoint const& checkpoint) noexcept
+    {
+        assert(checkpoint.owner_ == this && !is_compact());
+        assert(checkpoint.heads_ <= heads_.size());
+        assert(checkpoint.continuations_ <= continuations_.size());
+        assert(checkpoint.data_ <= data_.size());
+        assert(checkpoint.singletons_ <= singletonValues_.size());
+        assert(checkpoint.occupancy_ <= singletonOccupied_.size());
+        heads_.resize(checkpoint.heads_);
+        continuations_.resize(checkpoint.continuations_);
+        data_.resize(checkpoint.data_);
+        singletonValues_.resize(checkpoint.singletons_);
+        singletonOccupied_.resize(checkpoint.occupancy_);
+        compactHeads_.reset();
     }
 
     /**
@@ -294,7 +359,13 @@ public:
             singletonValues_.byte_size() +
             singletonOccupied_.byte_size();
         if (heads_.empty() && compactHeads_) {
-            return compactHeads_->byte_size() + data_.byte_size() + singletonBytes;
+            // Compact truncation leaves retained holes; serialization repacks
+            // only the live slices, so unused payload is not a wire-size cost.
+            auto result = compactHeads_->byte_size() + singletonBytes;
+            for (auto const& head : *compactHeads_) {
+                result += head.size * DataStorage::record_size;
+            }
+            return result;
         }
         auto result = heads_.size() * sizeof(CompactArrayChunk);
         for (auto const& head : heads_) {
@@ -334,8 +405,8 @@ public:
      *
      * @param a The index of the array.
      * @param i The index of the element within the array.
-     * @return A reference to the element at the specified index.
-     * @throws std::out_of_range if the index is out of the array bounds.
+     * @return A wrapped reference/proxy, or Error::IndexOutOfRange for an
+     *         invalid array handle or element index.
      */
     tl::expected<AtValue, Error>
     at(ArrayIndex a, size_t i) {
@@ -371,7 +442,8 @@ public:
             }
             singletonValues_.at(singletonIndex) = data;
             occupied = 1;
-            compactHeads_.reset();
+            // Singleton writes leave the regular heads, including compact-only
+            // heads, intact.
             return singletonValues_.at(singletonIndex);
         }
 
@@ -415,7 +487,6 @@ public:
             }
             singletonValues_.at(singletonIndex) = ElementType_(std::forward<Args>(args)...);
             occupied = 1;
-            compactHeads_.reset();
             return singletonValues_.at(singletonIndex);
         }
 
@@ -430,6 +501,71 @@ public:
             ++updatedLast.size;
         compactHeads_.reset();
         return elem;
+    }
+
+    /**
+     * Keep the first count elements without allocating or changing the handle.
+     * Removed payload and detached chunks remain retained in memory_usage().
+     * Appending afterwards reuses the surviving tail's capacity before growing.
+     * Invalid handles or counts greater than size(a) throw std::out_of_range.
+     * Structural changes invalidate previously obtained ranges and iterators.
+     */
+    void truncate(ArrayIndex a, size_t count)
+    {
+        #ifdef ARRAY_ARENA_THREAD_SAFE
+        std::unique_lock guard(lock_);
+        #endif
+        if (is_singleton_handle(a)) {
+            auto const index = singleton_payload(a);
+            if (index >= singletonValues_.size() || index >= singletonOccupied_.size()) {
+                raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+            }
+            auto& occupied = singletonOccupied_[index];
+            if (count > (occupied == 0 ? 0U : 1U)) {
+                raise<std::out_of_range>("ArrayArena truncate count out of range.");
+            }
+            occupied = static_cast<uint8_t>(count);
+            return;
+        }
+
+        if (heads_.empty() && compactHeads_) {
+            if (a >= compactHeads_->size()) {
+                raise<std::out_of_range>("ArrayArena head index out of range.");
+            }
+            auto& head = (*compactHeads_)[a];
+            if (count > head.size) {
+                raise<std::out_of_range>("ArrayArena truncate count out of range.");
+            }
+            // Keep compact heads authoritative: materializing runtime heads
+            // here would allocate. Other arrays' offsets must not move.
+            head.size = static_cast<uint32_t>(count);
+            return;
+        }
+
+        if (a >= heads_.size()) {
+            raise<std::out_of_range>("ArrayArena head index out of range.");
+        }
+        auto& head = heads_[a];
+        if (count > head.size) {
+            raise<std::out_of_range>("ArrayArena truncate count out of range.");
+        }
+        if (count == head.size) {
+            return;
+        }
+
+        auto* tail = &head;
+        auto tailIndex = InvalidArrayIndex;
+        auto remaining = count;
+        while (remaining > tail->capacity) {
+            remaining -= tail->capacity;
+            tailIndex = tail->next;
+            tail = &continuations_[tailIndex];
+        }
+        tail->size = static_cast<SizeType_>(remaining);
+        tail->next = InvalidArrayIndex;
+        head.last = tailIndex;
+        head.size = static_cast<SizeType_>(count);
+        compactHeads_.reset();
     }
 
     /**
@@ -491,71 +627,255 @@ public:
     using arena_iterator = BasicArrayArenaIterator<false>;
     using const_arena_iterator = BasicArrayArenaIterator<true>;
 
+    /**
+     * Multipass cursor over one array. Dereference and increment are O(1);
+     * construction at an arbitrary index walks the preceding chunks.
+     * Structural arena mutations invalidate cursors, even when payload addresses
+     * survive: paged column iterators can retain a relocated page table.
+     */
     template<typename T, bool is_const>
     class ArrayIterator {
-        using ArrayArenaRef = std::conditional_t<is_const, const ArrayArena&, ArrayArena&>;
-        using AtExpected = decltype(std::declval<ArrayArenaRef>().at(std::declval<ArrayIndex>(), std::declval<size_t>()));
-        using ElementAccess = std::remove_cvref_t<decltype(std::declval<AtExpected&>().value())>;
+        using Arena = std::conditional_t<is_const, const ArrayArena, ArrayArena>;
+        using Storage = std::conditional_t<is_const, const DataStorage, DataStorage>;
+        using ColumnIterator = std::conditional_t<
+            is_const, typename DataStorage::const_iterator, typename DataStorage::iterator>;
+        template <typename, bool>
+        friend class ArrayIterator;
         template <bool>
         friend class BasicArrayRange;
 
     public:
-        using iterator_category = std::input_iterator_tag;
         using value_type = T;
         using difference_type = std::ptrdiff_t;
-        using pointer = void;
-        using reference = ElementAccess;
+        using reference = std::conditional_t<is_const, DataReadRef, DataWriteRef>;
+        using pointer = std::conditional_t<
+            std::is_lvalue_reference_v<reference>, std::add_pointer_t<reference>, void>;
+        using iterator_concept = std::forward_iterator_tag;
+        // Legacy forward iterators require actual references; C++20 permits proxies.
+        using iterator_category = std::conditional_t<
+            std::is_lvalue_reference_v<reference>, std::forward_iterator_tag, std::input_iterator_tag>;
 
-        ArrayIterator(ArrayArenaRef arena, ArrayIndex array_index, size_t elem_index)
-            : arena_(arena), array_index_(array_index), elem_index_(elem_index) {}
+        ArrayIterator() = default;
 
-        reference operator*() noexcept {
-            auto res = arena_.at(array_index_, elem_index_);
-            assert(res);
-            // Unchecked access!
-            return *res;
+        /** The handle must be valid and elem_index must be at most size(array_index). */
+        ArrayIterator(Arena& arena, ArrayIndex array_index, size_t elem_index)
+            : arena_(&arena), array_index_(array_index), elem_index_(elem_index)
+        {
+            #ifdef ARRAY_ARENA_THREAD_SAFE
+            std::shared_lock guard(arena.lock_);
+            #endif
+            if (is_singleton_handle(array_index)) {
+                auto const index = singleton_payload(array_index);
+                if (index >= arena.singletonValues_.size() || index >= arena.singletonOccupied_.size()) {
+                    raise<std::out_of_range>("ArrayArena singleton handle index out of range.");
+                }
+                auto const count = arena.singletonOccupied_[index] == 0 ? 0U : 1U;
+                assert(elem_index <= count);
+                if (elem_index < count) {
+                    set_cursor(arena.singletonValues_, index);
+                    remaining_ = 1;
+                }
+                return;
+            }
+
+            if (arena.heads_.empty() && arena.compactHeads_) {
+                if (array_index >= arena.compactHeads_->size()) {
+                    raise<std::out_of_range>("ArrayArena head index out of range.");
+                }
+                auto const& head = (*arena.compactHeads_)[array_index];
+                assert(elem_index <= head.size);
+                if (elem_index < head.size) {
+                    set_cursor(arena.data_, static_cast<size_t>(head.offset) + elem_index);
+                    remaining_ = head.size - elem_index;
+                }
+                return;
+            }
+
+            if (array_index >= arena.heads_.size()) {
+                raise<std::out_of_range>("ArrayArena head index out of range.");
+            }
+            auto const* chunk = &arena.heads_[array_index];
+            assert(elem_index <= chunk->size);
+            if (elem_index == chunk->size) {
+                return;
+            }
+
+            auto offset = elem_index;
+            while (offset >= chunk->capacity) {
+                offset -= chunk->capacity;
+                assert(chunk->next != InvalidArrayIndex);
+                chunk = &arena.continuations_[chunk->next];
+            }
+            set_chunk(*chunk, offset);
         }
 
-        ArrayIterator& operator++() {
+        template <bool OtherIsConst>
+            requires (is_const && !OtherIsConst)
+        ArrayIterator(ArrayIterator<T, OtherIsConst> const& other)
+            : arena_(other.arena_), array_index_(other.array_index_), elem_index_(other.elem_index_),
+              storage_(other.storage_), cursor_(other.cursor_), remaining_(other.remaining_), next_(other.next_)
+        {
+        }
+
+        reference operator*() const noexcept
+        {
+            assert(remaining_ != 0);
+            if constexpr (std::is_lvalue_reference_v<reference>) {
+                return *cursor_;
+            } else {
+                return (*storage_)[cursor_];
+            }
+        }
+
+        pointer operator->() const noexcept
+            requires std::is_lvalue_reference_v<reference>
+        {
+            return std::addressof(**this);
+        }
+
+        ArrayIterator& operator++()
+        {
+            assert(remaining_ != 0);
             ++elem_index_;
+            if (--remaining_ != 0) {
+                ++cursor_;
+            } else if (next_ != InvalidArrayIndex) {
+                // Follow each link once, never restart from the array's head.
+                set_chunk(arena_->continuations_[next_]);
+            }
             return *this;
         }
 
-        bool operator==(const ArrayIterator& other) const {
-            return &arena_ == &other.arena_ &&
+        ArrayIterator operator++(int)
+        {
+            auto previous = *this;
+            ++*this;
+            return previous;
+        }
+
+        template <bool OtherIsConst>
+        bool operator==(ArrayIterator<T, OtherIsConst> const& other) const noexcept
+        {
+            return arena_ == other.arena_ &&
                 array_index_ == other.array_index_ &&
                 elem_index_ == other.elem_index_;
         }
 
-        bool operator!=(const ArrayIterator& other) const {
-            return !(*this == other);  // NOLINT
+    private:
+        void set_cursor(Storage& storage, size_t index)
+        {
+            storage_ = &storage;
+            if constexpr (std::is_lvalue_reference_v<reference>) {
+                // The column iterator caches the current page and local pointer.
+                cursor_ = storage.begin() + static_cast<difference_type>(index);
+            } else {
+                // Split proxies use O(1) indexing of their two child columns;
+                // advancing the split column's forward iterator to index is linear.
+                cursor_ = index;
+            }
         }
 
-    private:
-        ArrayArenaRef arena_;
-        ArrayIndex array_index_;
-        size_t elem_index_;
+        void set_chunk(Chunk const& chunk, size_t offset = 0)
+        {
+            set_cursor(arena_->data_, static_cast<size_t>(chunk.offset) + offset);
+            remaining_ = std::min(chunk.size, chunk.capacity) - offset;
+            next_ = chunk.next;
+        }
+
+        Arena* arena_ = nullptr;
+        ArrayIndex array_index_ = InvalidArrayIndex;
+        size_t elem_index_ = 0;
+        Storage* storage_ = nullptr;
+        std::conditional_t<std::is_lvalue_reference_v<reference>, ColumnIterator, size_t> cursor_{};
+        size_t remaining_ = 0;
+        ArrayIndex next_ = InvalidArrayIndex;
     };
 
+    /**
+     * Allocation-free, sized forward range borrowing an array (or iterator slice).
+     * Constness follows the arena, not the range object, as with std::span.
+     * Size is a snapshot; structural arena mutations invalidate the range.
+     * Indexing/back walk chunks and are not constant-time random access.
+     */
     template <bool T_IsConst>
     class BasicArrayRange
     {
+        using Arena = std::conditional_t<T_IsConst, const ArrayArena, ArrayArena>;
+        friend class ArrayArena;
+        template <bool>
+        friend class BasicArrayRange;
+
     public:
         using element_iterator = std::conditional_t<T_IsConst, const_iterator, iterator>;
+        using value_type = ElementType;
+        using reference = typename element_iterator::reference;
+        using size_type = size_t;
+        using checked_result = tl::expected<std::conditional_t<T_IsConst, ConstAtValue, AtValue>, Error>;
+
+        BasicArrayRange() = default;
 
         BasicArrayRange(element_iterator begin, element_iterator end)
-            : begin_(begin), end_(end)
+            : begin_(begin), size_(end.elem_index_ - begin.elem_index_)
+        {
+            assert(begin.arena_ == end.arena_ && begin.array_index_ == end.array_index_);
+            assert(begin.elem_index_ <= end.elem_index_);
+        }
+
+        template <bool OtherIsConst>
+            requires (T_IsConst && !OtherIsConst)
+        BasicArrayRange(BasicArrayRange<OtherIsConst> const& other)
+            : begin_(other.begin_), size_(other.size_)
         {
         }
 
-        element_iterator begin() const { return begin_; }
-        element_iterator end() const { return end_; }
-        [[nodiscard]] size_t size() const { return begin_.arena_.size(begin_.array_index_); }
-        decltype(auto) operator[](size_t i) const { return begin_.arena_.at(begin_.array_index_, i); }
+        element_iterator begin() const
+        {
+            // Preserve the starting cursor so even a slice beginning in a late
+            // chunk has constant-time begin(), as required of forward ranges.
+            return begin_;
+        }
+
+        element_iterator end() const
+        {
+            // End carries identity/position only; it must not walk the chunks.
+            element_iterator result;
+            result.arena_ = begin_.arena_;
+            result.array_index_ = begin_.array_index_;
+            result.elem_index_ = begin_.elem_index_ + size_;
+            return result;
+        }
+
+        [[nodiscard]] size_type size() const noexcept { return size_; }
+        [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+
+        checked_result at(size_type i) const
+        {
+            if (i >= size_) {
+                return tl::unexpected<Error>(Error::IndexOutOfRange, "index out of range");
+            }
+            return begin_.arena_->at(begin_.array_index_, begin_.elem_index_ + i);
+        }
+
+        reference operator[](size_type i) const
+        {
+            assert(i < size_);
+            if (i == 0) {
+                return *begin_;
+            }
+            return *element_iterator(*begin_.arena_, begin_.array_index_, begin_.elem_index_ + i);
+        }
+
+        reference front() const { return (*this)[0]; }
+        reference back() const { return (*this)[size_ - 1]; }
 
     private:
+        BasicArrayRange(Arena& arena, ArrayIndex array)
+            : begin_(arena, array, 0), size_(arena.size(array))
+        {
+        }
+
         element_iterator begin_;
-        element_iterator end_;
+        size_type size_ = 0;
     };
 
     template <bool T_IsConst>
@@ -582,7 +902,7 @@ public:
 
         value_type operator*() const
         {
-            return value_type(begin(), end());
+            return arena_.range(index_);
         }
 
         BasicArrayArenaIterator& operator++() {
@@ -671,8 +991,8 @@ public:
             visibleRegularCount + singleton_handle_count());
     }
 
-    BasicArrayRange<false> range(ArrayIndex array) { return BasicArrayRange<false>(begin(array), end(array)); }
-    BasicArrayRange<true> range(ArrayIndex array) const { return BasicArrayRange<true>(begin(array), end(array)); }
+    BasicArrayRange<false> range(ArrayIndex array) { return BasicArrayRange<false>(*this, array); }
+    BasicArrayRange<true> range(ArrayIndex array) const { return BasicArrayRange<true>(*this, array); }
 
     /// Support fast iteration via callback. The passed lambda needs to return true,
     /// as long as the iteration is supposed to continue.

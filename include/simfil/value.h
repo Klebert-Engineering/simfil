@@ -315,19 +315,28 @@ public:
     /** An annotated primitive fits inside the existing variant instead of enlarging every Value. */
     struct QualifiedScalar {
         ScalarValueType value;
-        SchemaReference type;
+        SchemaType type;
+
+        QualifiedScalar() = default;
+        /** Escaping scalar values retain the graph, preserving an existing local owner group. */
+        QualifiedScalar(ScalarValueType value, SchemaType type)
+            : value(std::move(value)), type(type.ownsPool() ? std::move(type) : type.retain())
+        {
+            if (auto text = std::get_if<std::string_view>(&this->value))
+                this->value = std::string(*text);
+        }
     };
 
     /** Return this value's exact retained type, including intrinsic mask identity. */
-    auto schemaReference() const -> SchemaReference;
+    auto schemaType() const -> SchemaType;
     /** Resolve a symbolic literal from this value's exact type, never from its raw numeric code. */
     auto namedValue(std::string_view name) const -> tl::expected<Value, Error>;
     /** Attach known primitive provenance; null/undefined never inherit a caller's type. */
-    auto withSchema(SchemaReference typeRef) const -> Value;
+    auto withSchemaType(SchemaType typeRef) const -> Value;
     /** Extract a child using the actual parent's schema field edge before scalarization. */
     static auto field(ModelNode const& parent, ModelNode const& child, StringId field) -> Value
     {
-        return Value::field(child, [&] { return fieldTypeReference(parent, field); });
+        return Value::field(child, [&] { return fieldType(parent, field); });
     }
     /** Extract a child, inferring a type only for primitives without intrinsic provenance. */
     template <class TypeFn>
@@ -382,7 +391,7 @@ public:
 
     static auto field(const ModelNode& node) -> Value
     {
-        return field(node, [] { return SchemaReference{}; });
+        return field(node, [] { return SchemaType{}; });
     }
 
     static auto field(ModelNode&& node) -> Value
@@ -393,7 +402,7 @@ public:
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(std::move(node))};
         } else {
-            return scalarNode(node, [] { return SchemaReference{}; });
+            return scalarNode(node, [] { return SchemaType{}; });
         }
     }
 
@@ -406,7 +415,7 @@ public:
         if (type == ValueType::Object || type == ValueType::Array) {
             return {type, model_ptr<ModelNode>(node)};
         } else {
-            return scalarNode(*node, [] { return SchemaReference{}; });
+            return scalarNode(*node, [] { return SchemaType{}; });
         }
     }
 
@@ -581,13 +590,15 @@ public:
 
 private:
     /** Construct a primitive once, retaining its type and any borrowed string bytes. */
-    static auto fromScalar(ScalarValueType scalar, SchemaReference typeRef) -> Value
+    static auto fromScalar(ScalarValueType scalar, SchemaType typeRef) -> Value
     {
         if (auto view = std::get_if<std::string_view>(&scalar))
             scalar = std::string(*view);
         if (auto mask = std::get_if<Bitmask>(&scalar)) {
             if (typeRef && typeRef != mask->type)
                 throw std::invalid_argument("Cannot rebind a bitmask to a different type");
+            if (!mask->type.ownsPool())
+                mask->type = mask->type.retain();
         }
         else if (typeRef && !std::holds_alternative<std::monostate>(scalar)) {
             auto type = std::visit([](auto const& raw) {
@@ -603,7 +614,7 @@ private:
     static auto scalarNode(ModelNode const& node, TypeFn&& inferType) -> Value
     {
         auto scalar = node.value();
-        auto typeRef = node.schemaReference();
+        auto typeRef = node.schemaType();
         if (auto mask = std::get_if<Bitmask>(&scalar); mask && !typeRef)
             typeRef = mask->type;
         if (!typeRef && !std::holds_alternative<std::monostate>(scalar))
@@ -612,7 +623,7 @@ private:
     }
 
     /** Resolve a parent's declared field type without constructing an intermediate Value. */
-    static auto fieldTypeReference(ModelNode const& parent, StringId field) -> SchemaReference;
+    static auto fieldType(ModelNode const& parent, StringId field) -> SchemaType;
 };
 
 template <typename ResultT, typename ValueT>

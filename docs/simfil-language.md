@@ -327,6 +327,12 @@ The `!=` operator will always return `true` in such cases.
 
 <!-- --8<-- [end:operators] -->
 
+## Explicit schema-symbol membership
+
+`hasSymbol(value, 'ANIMALS')` tests whether the value or its descendants contain a matching enum or named value declared by their schemas. Equal untyped strings or numbers do not count as declared symbols. The result is one boolean and remains the same when composed with `any(...)`, `and`, or `or`.
+
+Prepared searches may use `hasSymbol(value, name, schemaIdentity, typeId)` to select one exact declaring type. The type ID belongs to that immutable schema artifact. An identically named symbol from another type or artifact does not match. This qualified form lets a search client resolve ambiguity before dispatch without expanding recursive schemas into incomplete lists of paths.
+
 ## Functions
 
 <!-- --8<-- [start:functions] -->

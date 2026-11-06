@@ -2,8 +2,8 @@
 
 `schema-runtime-benchmark.cpp` is one fixture compiled against both the original
 `77fe792588ce34653998984b0df967f59b84ec04` revision and the candidate. The reference
-uses its callback interface; candidate modes retain exact schema bindings, using
-either the independent `ObjectSchema` registry or compact `SchemaPool`. Ordinary
+uses its callback interface; candidate modes retain exact canonical `SchemaPool`
+owners through typed views. There is no second candidate registry backend. Ordinary
 leaves remain untagged in every mode. The original reference has no scalar-type
 provenance, so this measures the total implementation cost, not just one lookup.
 
@@ -13,7 +13,7 @@ warmup are outside timing. Each worker owns its model, environment and retained
 single-worker case executes in a real thread, activating normal threaded-process
 reference counting. Every evaluation checks the expected result count.
 Untimed proof queries additionally check scalar provenance against the exact
-binding and verify that separate dictionaries really have different field IDs.
+pool and verify that separate dictionaries really have different field IDs.
 The main thread pins to the first requested CPU before constructing the graph
 or any main-thread models; early workers wait until peers finish before teardown.
 
@@ -87,10 +87,13 @@ python3 docs/performance/schema-runtime-benchmark.py run \
 
 Defaults are seven rounds, 2,000 objects, 32 branches, three warmups and 200 queries
 per worker. The matrix contains basic pruning, field plans and exact paths for
-each of `bound`, `separate`, `pool` and `pool-separate`. The latter two use compact
-SchemaPool. Separate modes have independent runtime/schema dictionaries; their
-reference still uses the original shared dictionary. `callback` is an optional
-candidate control, not a substitute for bound provenance.
+each of `pool` and `pool-separate`. Both use the sole canonical SchemaPool;
+`pool-separate` has independent runtime/schema dictionaries, while its reference
+uses the original shared dictionary. The optional `environment` control attaches
+only an Environment fallback root, not model-owned scalar provenance. It is not a
+substitute for either owner-retaining mode. The historical `bound`/`separate`
+candidate registry modes were removed with that implementation, not relabeled
+as additional independent backends.
 
 Each candidate row gets its own interleaved reference samples, reversing order
 in odd rounds. All worker latencies are flushed to an append-only JSONL journal
@@ -104,7 +107,7 @@ threshold crossing as statistical certainty.
 
 Each subprocess also records the existing retained-capacity lower bounds for
 model columns and dictionaries, after timing. Shared schema dictionaries count
-once; separate runtime dictionaries count per model. Compact-pool modes report
+once; separate runtime dictionaries count per model. Candidate pool modes report
 generic type/index storage and primitive columns separately. The independent
 `ObjectSchema` registry has no complete retained-memory API, so its graph value
 is explicitly `null`, not zero. Model-column comparisons are useful but **do not

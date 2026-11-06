@@ -19,12 +19,12 @@ tl::expected<void, Error> OverlayNodeStorage::resolve(ModelNode const& n, Resolv
     return {};
 }
 
-auto OverlayNodeStorage::schemaReference(ModelNode const& node) const -> SchemaReference
+auto OverlayNodeStorage::resolveSchemaType(ModelNode const& node) const -> SchemaType
 {
     if (node.addr().column() != Model::Scalar)
-        return value_.schemaReference();
+        return value_.schemaType();
     auto found = overlayChildren_.find(static_cast<StringId>(node.addr().index()));
-    return found == overlayChildren_.end() ? SchemaReference{} : found->second.schemaReference();
+    return found == overlayChildren_.end() ? SchemaType{} : found->second.schemaType();
 }
 
 OverlayNode::OverlayNode(Value const& val, detail::mp_key key)

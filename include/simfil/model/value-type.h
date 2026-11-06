@@ -1,55 +1,15 @@
 #pragma once
 
-#include "simfil/byte-array.h"
-#include "simfil/error.h"
-#include <tl/expected.hpp>
 #include <cstdint>
-#include <memory>
-#include <string>
-#include <string_view>
-#include <variant>
-#if defined(SIMFIL_WITH_MODEL_JSON)
-#include <nlohmann/json_fwd.hpp>
-#endif
+#include <limits>
 
 namespace simfil
 {
 
-class Schema;
-class SchemaBinding;
+/** Graph-local type identity; a nonzero ID is meaningful only with its schema pool. */
 using TypeId = std::uint16_t;
-
-/** An exact type identity retaining its immutable graph independently of a source model. */
-struct SchemaReference
-{
-    std::shared_ptr<const SchemaBinding> binding;
-    TypeId id = 0;
-
-    /** Empty references carry no semantic interpretation. */
-    explicit operator bool() const noexcept { return binding && id != 0; }
-    /** Resolve the definition without transferring ownership to a borrowed view. */
-    auto definition() const -> const Schema*;
-    /** Equal content identities and local type ids denote the same type. */
-    auto operator==(SchemaReference const& other) const noexcept -> bool;
-};
-
-/** Full-width flag bits with intrinsic type identity; persistent rows store only bits and an id. */
-struct Bitmask
-{
-    std::uint64_t bits = 0;
-    SchemaReference type;
-
-    /** Exact bits and type equality, never flag membership. */
-    bool operator==(Bitmask const&) const = default;
-    /** Parse unsigned decimal/hexadecimal bits with no lossy signed or floating conversion. */
-    static auto parseBits(std::string_view text) -> tl::expected<std::uint64_t, Error>;
-    /** Resolve a declared flag and test all its bits; a named zero means exactly zero. */
-    auto hasFlag(std::string_view name) const -> tl::expected<bool, Error>;
-#if defined(SIMFIL_WITH_MODEL_JSON)
-    /** Emit the exact, lossless mask tag shared by model and bounded result serializers. */
-    auto toJson() const -> nlohmann::json;
-#endif
-};
+inline constexpr TypeId NoTypeId = TypeId{0};
+inline constexpr TypeId MaxTypeId = std::numeric_limits<TypeId>::max();
 
 /** Runtime value categories, also used for schema structural-affinity bits. */
 enum class ValueType
@@ -75,9 +35,5 @@ constexpr auto valueTypeAffinity(ValueType type) -> std::uint16_t
 }
 
 static_assert(unsigned(ValueType::LAST_) <= 16);
-
-/** Scalar payload shared by model nodes and schema enum/constant metadata. */
-using ScalarValueType = std::variant<
-    std::monostate, bool, int64_t, double, std::string, std::string_view, ByteArray, Bitmask>;
 
 }

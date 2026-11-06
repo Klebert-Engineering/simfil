@@ -1,11 +1,16 @@
 #include "simfil/operator.h"
-#include "simfil/model/schema.h"
+#include "simfil/model/scalar-value.h"
 
 #include <limits>
 #include <charconv>
+#include <utility>
 
 namespace simfil
 {
+
+Bitmask::Bitmask(std::uint64_t bits, SchemaType type)
+    : bits(bits), type(type.ownsPool() ? std::move(type) : type.retain())
+{}
 
 auto Bitmask::parseBits(std::string_view text) -> tl::expected<std::uint64_t, Error>
 {
@@ -25,17 +30,17 @@ auto Bitmask::parseBits(std::string_view text) -> tl::expected<std::uint64_t, Er
 
 auto Bitmask::hasFlag(std::string_view name) const -> tl::expected<bool, Error>
 {
-    auto schema = type.definition();
-    auto flag = schema ? schema->namedValue(name) : std::nullopt;
-    if (!flag || flag->role != Schema::NamedValue::Role::Flag)
+    auto const& schema = type;
+    auto flag = schema ? schema.namedValue(name) : std::nullopt;
+    if (!flag || flag->role != SchemaType::NamedValue::Role::Flag)
         return tl::unexpected(Error{Error::InvalidArguments, "Unknown flag in bitmask type: " + std::string(name)});
     std::optional<std::uint64_t> mask;
     if (auto value = std::get_if<std::uint64_t>(&flag->value))
         mask = *value;
     else if (auto value = std::get_if<std::int64_t>(&flag->value); value && *value >= 0)
         mask = static_cast<std::uint64_t>(*value);
-    if (!mask || !schema->isBitmask() || !schema->bitWidth() || schema->bitWidth() > 64 ||
-        (schema->bitWidth() < 64 && ((*mask | bits) >> schema->bitWidth())))
+    if (!mask || !schema.isBitmask() || !schema.bitWidth() || schema.bitWidth() > 64 ||
+        (schema.bitWidth() < 64 && ((*mask | bits) >> schema.bitWidth())))
         return tl::unexpected(Error{Error::InvalidArguments, "Flag or value exceeds its bitmask type encoding"});
     return *mask ? (bits & *mask) == *mask : bits == 0;
 }
@@ -56,10 +61,10 @@ auto bitmaskUnary(std::string_view operation, Bitmask const& value) -> tl::expec
         return Value::t();
     if (operation == "not")
         return Value::f();
-    auto typeRef = value.type.definition();
-    if (!typeRef || !typeRef->isBitmask() || typeRef->bitWidth() == 0 || typeRef->bitWidth() > 64)
+    auto const& typeRef = value.type;
+    if (!typeRef || !typeRef.isBitmask() || typeRef.bitWidth() == 0 || typeRef.bitWidth() > 64)
         return tl::unexpected(Error{Error::InvalidOperands, "Bitmask has no valid type"});
-    auto width = typeRef->bitWidth();
+    auto width = typeRef.bitWidth();
     auto mask = width == 64 ? std::numeric_limits<std::uint64_t>::max() : (std::uint64_t{1} << width) - 1;
     if (operation == "~")
         return Value::make(Bitmask{~value.bits & mask, value.type});
@@ -80,8 +85,8 @@ auto bitmaskBinary(std::string_view operation, Value const& left, Value const& r
     auto leftMask = left.type == ValueType::Bitmask;
     auto rightMask = right.type == ValueType::Bitmask;
     auto const& typed = leftMask ? left.as<ValueType::Bitmask>() : right.as<ValueType::Bitmask>();
-    auto definition = typed.type.definition();
-    if (!definition || !definition->isBitmask() || definition->bitWidth() == 0 || definition->bitWidth() > 64)
+    auto const& definition = typed.type;
+    if (!definition || !definition.isBitmask() || definition.bitWidth() == 0 || definition.bitWidth() > 64)
         return tl::unexpected(Error{Error::InvalidOperands, "Bitmask has no valid type"});
     if (leftMask && rightMask && left.as<ValueType::Bitmask>().type != right.as<ValueType::Bitmask>().type)
         return tl::unexpected(Error{Error::InvalidOperands, "Incompatible bitmask types"});
@@ -101,7 +106,7 @@ auto bitmaskBinary(std::string_view operation, Value const& left, Value const& r
     if (operation == "!=")
         return Value::make(*a != *b);
 
-    auto width = definition->bitWidth();
+    auto width = definition.bitWidth();
     auto widthMask = width == 64 ? std::numeric_limits<std::uint64_t>::max() : (std::uint64_t{1} << width) - 1;
     if ((leftMask && (*a & ~widthMask)) || (rightMask && (*b & ~widthMask)))
         return tl::unexpected(Error{Error::InvalidOperands, "Bitmask exceeds its encoding width"});

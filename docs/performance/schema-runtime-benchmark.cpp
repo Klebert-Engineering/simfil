@@ -1,7 +1,8 @@
 #include "simfil/simfil.h"
 #include "simfil/model/model.h"
+#ifdef SIMFIL_PERF_REFERENCE
 #include "simfil/model/schema.h"
-#ifndef SIMFIL_PERF_REFERENCE
+#else
 #include "simfil/model/schema-pool.h"
 #endif
 
@@ -35,13 +36,14 @@ class RuntimeBenchmark
     {
     public:
         std::shared_ptr<StringPool> strings = std::make_shared<StringPool>();
-        std::map<TypeId, std::unique_ptr<Schema>> types;
         std::vector<std::string> branches;
-#ifndef SIMFIL_PERF_REFERENCE
-        std::shared_ptr<SchemaPool> compact;
+#ifdef SIMFIL_PERF_REFERENCE
+        std::map<TypeId, std::unique_ptr<Schema>> types;
+#else
+        std::shared_ptr<SchemaPool> pool;
 #endif
         /** Build declarations once, outside model construction and all timed regions. */
-        explicit Graph(size_t width, bool useCompact)
+        explicit Graph(size_t width)
         {
             auto target = strings->emplace("target").value();
             auto payload = strings->emplace("payload").value();
@@ -52,26 +54,21 @@ class RuntimeBenchmark
                 strings->emplace(branches.back()).value();
             }
 #ifndef SIMFIL_PERF_REFERENCE
-            if (useCompact)
-            {
-                compact = std::make_shared<SchemaPool>(strings);
-                for (size_t i = 0; i < 4; ++i)
-                    compact->addSchema(Schema::Kind::Object);
-                compact->addSchema(Schema::Kind::Array);
-                auto scalar = compact->addSchema(Schema::Kind::Value);
-                compact->addFieldSchema(1, "payload", 2);
-                compact->addFieldSchema(2, "target", scalar);
-                compact->addFieldSchema(3, "noise", scalar);
-                for (size_t i = 0; i < width; ++i)
-                    compact->addFieldSchema(4, branches[i], i == 0 ? 1 : 3);
-                compact->addElementSchema(5, 4);
-                compact->finalize();
-                return;
-            }
+            pool = std::make_shared<SchemaPool>(strings);
+            auto targetBranch = pool->newObjectType();
+            auto targetPayload = pool->newObjectType();
+            auto noiseBranch = pool->newObjectType();
+            auto rootObject = pool->newObjectType();
+            auto rootArray = pool->newArrayType();
+            auto scalar = pool->newScalarType(SchemaType::Kind::Value);
+            targetBranch.addField("payload", targetPayload);
+            targetPayload.addField("target", scalar);
+            noiseBranch.addField("noise", scalar);
+            for (size_t i = 0; i < width; ++i)
+                rootObject.addField(branches[i], i == 0 ? targetBranch : noiseBranch);
+            rootArray.addElement(rootObject);
+            pool->finalize("runtime-benchmark-pool");
 #else
-            if (useCompact)
-                throw std::invalid_argument("The reference has no compact pool");
-#endif
             for (TypeId id = 1; id <= 4; ++id)
                 types[id] = std::make_unique<ObjectSchema>();
             auto object = [&](TypeId id) -> ObjectSchema&
@@ -87,26 +84,22 @@ class RuntimeBenchmark
             types[5] = std::move(array);
             for (auto& [id, typeRef] : types)
                 typeRef->finalize([&](TypeId id) { return types.at(id).get(); });
+#endif
         }
-        /** The reference and ordinary candidate retain the original map lookup shape. */
+#ifdef SIMFIL_PERF_REFERENCE
+        /** Only the unchanged historical baseline resolves the former virtual schema graph. */
         Schema const* lookup(TypeId id) const
         {
-#ifndef SIMFIL_PERF_REFERENCE
-            if (compact)
-                return compact->type(id);
-#endif
             auto found = types.find(id);
             return found == types.end() ? nullptr : found->second.get();
         }
+#endif
     };
 
     std::string representation_ = "callback", query_ = "basic", construction_ = "main";
     size_t objects_ = 2000, width_ = 32, queries_ = 200, warmups_ = 3;
     std::vector<int> cpus_;
     std::shared_ptr<Graph> graph_;
-#ifndef SIMFIL_PERF_REFERENCE
-    std::shared_ptr<const SchemaBinding> binding_;
-#endif
 
     /** Fail on invalid fixture operations rather than measuring a silently reduced workload. */
     template <class T> static void check(T const& result)
@@ -133,15 +126,15 @@ class RuntimeBenchmark
     std::shared_ptr<ModelPool> model() const
     {
         auto strings = graph_->strings;
-        if (representation_ == "separate" || representation_ == "pool-separate")
+        if (representation_ == "pool-separate")
         {
             strings = std::make_shared<StringPool>();
             strings->emplace("runtime-padding").value();
         }
         auto pool = std::make_shared<ModelPool>(strings);
 #ifndef SIMFIL_PERF_REFERENCE
-        if (binding_)
-            pool->setSchemaBinding(binding_);
+        if (representation_ != "environment")
+            pool->setSchemaPool(graph_->pool);
 #endif
         auto root = pool->newArray(objects_);
         for (size_t i = 0; i < objects_; ++i)
@@ -178,10 +171,11 @@ class RuntimeBenchmark
         if (values->size() != objects_)
             throw std::runtime_error("Incorrect proof query cardinality");
 #ifndef SIMFIL_PERF_REFERENCE
-        auto rootDomain = root->schemaReference();
-        if (binding_ && (rootDomain.id != 5 || rootDomain.binding.get() != binding_.get()))
+        auto rootDomain = root->schemaType();
+        if (representation_ != "environment" &&
+            (rootDomain.id() != 5 || rootDomain.pool() != graph_->pool.get()))
             throw std::runtime_error("Model does not retain the intended exact graph");
-        auto separate = representation_ == "separate" || representation_ == "pool-separate";
+        auto separate = representation_ == "pool-separate";
         if ((pool.strings().get() != graph_->strings.get()) != separate ||
             (separate && pool.strings()->get("target") == graph_->strings->get("target")))
             throw std::runtime_error("Incorrect dictionary namespace separation");
@@ -191,9 +185,9 @@ class RuntimeBenchmark
             if (value.as<ValueType::Int>() != 1)
                 throw std::runtime_error("Incorrect proof query value");
 #ifndef SIMFIL_PERF_REFERENCE
-            auto typeRef = value.schemaReference();
-            if (binding_ && (typeRef.id != (graph_->compact ? 6 : 65000) ||
-                             typeRef.binding.get() != binding_.get()))
+            auto typeRef = value.schemaType();
+            if (representation_ != "environment" &&
+                (typeRef.id() != 6 || typeRef.pool() != graph_->pool.get()))
                 throw std::runtime_error("Bound query lost scalar provenance");
 #endif
         }
@@ -235,13 +229,12 @@ public:
             (construction_ != "main" && construction_ != "worker") ||
             (query_ != "basic" && query_ != "plans" && query_ != "exact"))
             throw std::invalid_argument("Invalid workload parameters");
-        if (representation_ != "callback" && representation_ != "bound" &&
-            representation_ != "separate" && representation_ != "pool" &&
-            representation_ != "pool-separate")
-            throw std::invalid_argument("Unknown schema representation");
 #ifdef SIMFIL_PERF_REFERENCE
         if (representation_ != "callback")
             throw std::invalid_argument("Reference must use callback mode");
+#else
+        if (representation_ != "environment" && representation_ != "pool" && representation_ != "pool-separate")
+            throw std::invalid_argument("Candidate requires a canonical pool or explicit environment fallback");
 #endif
     }
     /** Warm independently, synchronize only the start, and report every worker's latency. */
@@ -249,16 +242,7 @@ public:
     {
         // Deterministic first-touch placement also matters on NUMA machines.
         pin(cpus_.front());
-        graph_ = std::make_shared<Graph>(width_, representation_.starts_with("pool"));
-#ifndef SIMFIL_PERF_REFERENCE
-        if (representation_ != "callback")
-            binding_ = graph_->compact
-                           ? graph_->compact->binding("runtime-benchmark-pool")
-                           : std::make_shared<SchemaBinding>(
-                                 "runtime-benchmark-graph", graph_,
-                                 [graph = graph_](TypeId id) { return graph->lookup(id); },
-                                 graph_->strings);
-#endif
+        graph_ = std::make_shared<Graph>(width_);
         Environment compiler(graph_->strings);
         auto source =
             query_ == "exact" ? "count(*.branch0.payload.target == 1)" : "count(**.target == 1)";
@@ -288,9 +272,13 @@ public:
                         if (!models[worker])
                             models[worker] = model();
                         Environment env(models[worker]->strings());
-                        if (representation_ == "callback" || representation_ == "bound")
-                            env.querySchemaCallback = [graph = graph_](TypeId id)
-                            { return graph->lookup(id); };
+#ifdef SIMFIL_PERF_REFERENCE
+                        env.querySchemaCallback = [graph = graph_](TypeId id)
+                        { return graph->lookup(id); };
+#else
+                        if (representation_ == "environment")
+                            env.setSchema(graph_->pool->schemaType(5));
+#endif
                         verifyModel(*models[worker], env, proof);
                         env.enableWildcardFieldPlans = query_ == "plans";
                         BoundExpression query(ast, env);
@@ -361,7 +349,7 @@ public:
                                               ? memory({})
                                               : memory(model->strings()->memoryUsage());
 #ifndef SIMFIL_PERF_REFERENCE
-            entry["schema_binding_storage"] = memory(stats.schemaBindings);
+            entry["schema_owner_storage"] = memory(stats.schemaOwners);
 #endif
             usage["models"].push_back(std::move(entry));
         }
@@ -369,10 +357,9 @@ public:
         // Null is an explicit evidence gap, never an invented zero-byte graph.
         usage["graph"] = nullptr;
 #ifndef SIMFIL_PERF_REFERENCE
-        if (graph_->compact)
-            usage["graph"] = {
-                {"type_columns_and_indexes", memory(graph_->compact->schemaMemoryUsage())},
-                {"primitive_columns", memory(graph_->compact->memoryUsageStats().total())}};
+        usage["graph"] = {
+            {"type_columns_and_indexes", memory(graph_->pool->schemaMemoryUsage())},
+            {"primitive_columns", memory(graph_->pool->memoryUsageStats().total())}};
 #endif
         return result;
     }

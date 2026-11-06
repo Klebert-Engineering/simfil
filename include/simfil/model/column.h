@@ -631,7 +631,8 @@ public:
         [[nodiscard]] first_ref first() const noexcept { return first_; }
         [[nodiscard]] second_ref second() const noexcept { return second_; }
         [[nodiscard]] value_type to_value() const { return value_type{first_, second_}; }
-        [[nodiscard]] explicit operator value_type() const { return to_value(); }
+        /** Materialize the two-field value so proxy iterators satisfy indirectly_readable. */
+        [[nodiscard]] operator value_type() const { return to_value(); }
 
         [[nodiscard]] bool operator==(value_type const& other) const
         {

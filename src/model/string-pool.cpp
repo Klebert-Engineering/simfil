@@ -9,6 +9,7 @@
 #include <bitsery/traits/vector.h>
 #include <fmt/core.h>
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -86,6 +87,7 @@ StringPool::StringPool()
     addStaticKey(SchemaDeprecated, "deprecated");
     addStaticKey(SchemaRemoved, "removed");
     addStaticKey(SchemaRawValue, "rawValue");
+    addStaticKey(SchemaMultimap, "multimap");
     addStaticKey(SchemaEncoding, "encoding");
     addStaticKey(SchemaUnit, "unit");
     addStaticKey(SchemaMinimum, "minimum");
@@ -169,15 +171,58 @@ auto StringPool::emplace(std::string_view const& str) -> tl::expected<StringId, 
         if (nextId_ > std::numeric_limits<StringId>::max()) {
             return tl::unexpected<Error>(Error::StringPoolOverflow, "StringPool id overflow!");
         }
-        auto& storedString = storedStrings_.emplace_back(str);
-        auto id = static_cast<StringId>(nextId_++);
-        idForString_.emplace(storedString, id);
-        stringForId_.emplace(id, storedString);
-        byteSize_ += static_cast<int64_t>(storedString.size());
-        ++cacheMisses_;
-
-        return id;
+        auto const checkpoint = appendCheckpoint();
+        try {
+            auto& storedString = storedStrings_.emplace_back(str);
+            auto const id = static_cast<StringId>(nextId_);
+            idForString_.emplace(storedString, id);
+            stringForId_.emplace(id, storedString);
+            // Publish the next ID only after both indexes exist. Either map
+            // allocation can fail after the owned string has been appended.
+            ++nextId_;
+            byteSize_ += static_cast<int64_t>(storedString.size());
+            ++cacheMisses_;
+            return id;
+        } catch (...) {
+            rollbackAppends(checkpoint);
+            throw;
+        }
     }
+}
+
+auto StringPool::appendCheckpoint() const -> AppendCheckpoint
+{
+    if (frozen_) {
+        throw std::logic_error("Cannot checkpoint appends to a frozen StringPool");
+    }
+    return {this, nextId_, storedStrings_.size(), byteSize_.load()};
+}
+
+void StringPool::rollbackAppends(AppendCheckpoint const& checkpoint) noexcept
+{
+    assert(checkpoint.owner == this && !frozen_);
+    assert(checkpoint.nextId <= nextId_);
+    assert(checkpoint.storedStrings <= storedStrings_.size());
+
+    // emplace publishes the name index first. Its reverse entry may be absent
+    // if the second allocation failed, and nextId_ may not have advanced yet.
+    while (storedStrings_.size() > checkpoint.storedStrings) {
+        auto const& string = storedStrings_.back();
+        auto name = idForString_.find(string);
+        if (name != idForString_.end() && name->first.data() == string.data()) {
+            auto id = stringForId_.find(name->second);
+            // Match the owned view, not just the numeric ID: pre-existing
+            // static mappings must survive even if their ID lies above nextId_.
+            if (id != stringForId_.end() && id->second.data() == string.data()) {
+                stringForId_.erase(id);
+            }
+            idForString_.erase(name);
+        }
+        storedStrings_.pop_back();
+    }
+    nextId_ = checkpoint.nextId;
+    byteSize_ = checkpoint.byteSize;
+    // Hit/miss counters remain observational statistics, not dictionary state.
 }
 
 StringId StringPool::get(std::string_view const& str) const

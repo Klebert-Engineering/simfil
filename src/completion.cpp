@@ -1,7 +1,7 @@
 #include "completion.h"
 
 #include "expressions.h"
-#include "simfil/model/schema.h"
+#include "simfil/model/schema-pool.h"
 #include "simfil/model/string-pool.h"
 #include "simfil/result.h"
 #include "simfil/simfil.h"
@@ -131,13 +131,13 @@ auto completeSchemaFields(
     simfil::Completion& comp,
     simfil::SourceLocation loc) -> simfil::Result
 {
-    const auto* schema = ctx.env->querySchema(node.schema());
+    auto schema = node.schemaType();
     if (!schema)
         return simfil::Result::Continue;
 
     const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
-    for (auto fieldId : schema->directFields()) {
-        auto fieldName = ctx.env->strings()->resolve(fieldId);
+    for (auto fieldId : schema.directFields()) {
+        auto fieldName = schema.pool()->dictionary().resolve(fieldId);
         if (!fieldName || fieldName->empty())
             continue;
 
@@ -156,24 +156,24 @@ auto completeSchemaShorthandFields(
     simfil::Completion& comp,
     simfil::SourceLocation loc) -> simfil::Result
 {
-    const auto* schema = ctx.env->querySchema(node.schema());
+    auto schema = node.schemaType();
     if (!schema)
         return simfil::Result::Continue;
 
-    const auto directFields = schema->directFields();
+    const auto directFields = schema.directFields();
     const auto isDirectField = [&](simfil::StringId fieldId) {
         return std::ranges::find(directFields, fieldId) != directFields.end();
     };
 
     const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
-    for (auto fieldId : schema->nestedFields()) {
+    for (auto fieldId : schema.nestedFields()) {
         if (comp.size() >= comp.limit)
             return simfil::Result::Stop;
         if (isDirectField(fieldId)) {
             continue;
         }
 
-        auto fieldName = ctx.env->strings()->resolve(fieldId);
+        auto fieldName = schema.pool()->dictionary().resolve(fieldId);
         if (!fieldName || fieldName->empty())
             continue;
 
@@ -192,20 +192,20 @@ auto completeSchemaEnumSymbols(
     simfil::Completion& comp,
     simfil::SourceLocation loc) -> simfil::Result
 {
-    const auto* schema = ctx.env->querySchema(node.schema());
+    auto schema = node.schemaType();
     if (!schema)
         return simfil::Result::Continue;
 
     const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
-    for (auto symbolId : schema->nestedEnumSymbols()) {
+    for (auto symbolId : schema.nestedEnumSymbols()) {
         if (comp.size() >= comp.limit)
             return simfil::Result::Stop;
 
-        auto symbol = ctx.env->strings()->resolve(symbolId);
+        auto symbol = schema.pool()->dictionary().resolve(symbolId);
         if (!symbol || symbol->empty() || !startsWith(*symbol, prefix, caseSensitive))
             continue;
         // Unknown descendants are not evidence of an actual field-name collision.
-        if (std::ranges::find(schema->nestedFields(), symbolId) != schema->nestedFields().end()) {
+        if (std::ranges::binary_search(schema.nestedFields(), symbolId)) {
             continue;
         }
 
@@ -247,7 +247,7 @@ auto completeWords(
     // later proves that a token is an enum-like operand.
     auto stringPool = ctx.env->strings();
     const auto& strings = stringPool->strings();
-    const auto* schema = node ? ctx.env->querySchema(node->schema()) : nullptr;
+    auto schema = node ? node->schemaType() : simfil::SchemaType{};
 
     const auto caseSensitive = comp.options.smartCase && containsUppercaseCharacter(prefix);
     for (const auto& str : strings) {
@@ -260,8 +260,8 @@ auto completeWords(
         });
 
         if (isWORD && str.size() >= prefix.size() && startsWith(str, prefix, caseSensitive)) {
-            auto const stringId = stringPool->get(str);
-            if (schema && stringId != simfil::StringPool::Empty && schema->canHaveEnumSymbol(stringId)) {
+            auto const stringId = schema ? schema.pool()->dictionary().get(str) : simfil::StringPool::Empty;
+            if (schema && stringId != simfil::StringPool::Empty && schema.canHaveEnumSymbol(stringId)) {
                 // Schema enum values are completed below from schema metadata,
                 // which also prevents datasource string-pool duplicates.
                 continue;
@@ -311,24 +311,28 @@ auto Completion::expandTypes(Context& ctx, const std::vector<TypeId>& input, boo
         if (std::ranges::find(visited, id) != visited.end())
             continue;
         visited.push_back(id);
-        auto schema = ctx.env->querySchema(id);
+        auto schema = rootSchema_.pool()->schemaType(id);
         if (!schema) {
             result.push_back(NoTypeId);
             continue;
         }
-        if (!Schema::affinities(schema->kind()))
+        if (!SchemaType::affinities(schema.kind()))
             continue;
-        if (schema->composition() == Schema::Composition::None)
+        if (schema.composition() == SchemaType::Composition::None)
             result.push_back(id);
-        auto alternatives = schema->alternatives();
-        for (auto child = alternatives.rbegin(); child != alternatives.rend(); ++child)
-            append(*child);
+        auto alternatives = schema.alternatives();
+        for (size_t i = alternatives.size(); i-- > 0;)
+            append(alternatives[i]);
         if (recursive) {
-            schema->forEachEnumerableField([&](StringId, std::span<const TypeId> children) {
-                for (auto child = children.rbegin(); child != children.rend(); ++child)
-                    append(*child);
+            schema.forEachField([&](SchemaField const& occurrence) {
+                if (occurrence.role() == SchemaType::FieldRole::Context)
+                    return;
+                auto children = occurrence.types();
+                for (size_t i = children.size(); i-- > 0;)
+                    append(children[i]);
             });
-            schema->forEachElementSchema(append);
+            for (auto child : schema.elements())
+                append(child);
         }
     }
     return result;
@@ -342,8 +346,8 @@ void Completion::suggestType(Context& ctx, const std::vector<TypeId>& input,
     auto types = expandTypes(ctx, input, false);
     const bool shorthand = !inPath && expected.empty();
     if (shorthand && std::ranges::any_of(types, [&](TypeId id) {
-            auto schema = ctx.env->querySchema(id);
-            return schema && !schema->reachabilityComplete();
+            auto schema = rootSchema_.pool()->schemaType(id);
+            return schema && !schema.reachabilityComplete();
         }))
         types = expandTypes(ctx, input, true);
     auto isKnownField = [&](std::string_view text) {
@@ -355,21 +359,22 @@ void Completion::suggestType(Context& ctx, const std::vector<TypeId>& input,
     };
     if (!literalsOnly) {
         for (auto id : types) {
-            auto schema = ctx.env->querySchema(id);
+            auto schema = rootSchema_.pool()->schemaType(id);
             if (!schema)
                 continue;
-            auto fields = shorthand ? schema->nestedFields() : schema->directFields();
+            auto fields = shorthand ? schema.nestedFields() : schema.directFields();
             // Dirty or custom schemas may only provide direct field enumeration.
             for (auto field : fields) {
                 if (!visitType(ctx) || size() >= limit)
                     return;
-                if (auto name = ctx.env->strings()->resolve(field))
+                if (auto name = rootSchema_.pool()->dictionary().resolve(field))
                     completeFieldName(*name, prefix, caseSensitive, *this, location);
             }
             if (fields.empty())
-                schema->forEachDirectField([&](StringId field, auto) {
+                schema.forEachField([&](SchemaField const& occurrence) {
+                    auto field = occurrence.nameId();
                     if (visitType(ctx) && size() < limit)
-                        if (auto name = ctx.env->strings()->resolve(field))
+                        if (auto name = rootSchema_.pool()->dictionary().resolve(field))
                             completeFieldName(*name, prefix, caseSensitive, *this, location);
                 });
         }
@@ -379,30 +384,30 @@ void Completion::suggestType(Context& ctx, const std::vector<TypeId>& input,
 
     auto enumTypes = expandTypes(ctx, expected.empty() ? input : expected, expected.empty());
     for (auto id : enumTypes) {
-        auto schema = ctx.env->querySchema(id);
+        auto schema = rootSchema_.pool()->schemaType(id);
         if (!schema)
             continue;
-        for (auto symbol : schema->directEnumSymbols()) {
+        for (auto symbol : schema.directEnumSymbols()) {
             if (!visitType(ctx) || size() >= limit)
                 return;
-            auto text = ctx.env->strings()->resolve(symbol);
+            auto text = rootSchema_.pool()->dictionary().resolve(symbol);
             // Reuse field candidates for precedence instead of building a second
             // complete field-name set on every keystroke.
             if (text && startsWith(*text, prefix, caseSensitive) && !isKnownField(*text))
                 add(escapeStringLiteral(*text), location, CompletionCandidate::Type::CONSTANT);
         }
-        for (const auto& literal : schema->enumValues()) {
+        schema.forEachEnumValue([&](SchemaType::EnumValue const& literal) {
             if (!visitType(ctx) || size() >= limit)
                 return;
-            auto value = Value(ScalarValueType(literal));
+            auto value = std::visit([](auto const& item) { return Value(ScalarValueType(item)); }, literal);
             auto text = value.isa(ValueType::String) ? std::string(value.as<ValueType::String>()) : value.toString();
             if (isKnownField(text))
-                continue;
+                return;
             if (startsWith(text, prefix, caseSensitive))
                 add(value.isa(ValueType::String) ? escapeStringLiteral(text) : text,
                     location, CompletionCandidate::Type::CONSTANT);
-        }
-        schema->forEachNamedValue([&](Schema::NamedValue const& value) {
+        });
+        schema.forEachNamedValue([&](SchemaType::NamedValue const& value) {
             if (!visitType(ctx) || size() >= limit || value.removed || isKnownField(value.name))
                 return;
             // Completing inside quotes must not turn a numeric symbol into a string-valued comparison.
@@ -424,7 +429,6 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
 {
     if (depth >= options.maxSchemaDepth || !visitType(ctx))
         return {NoTypeId};
-    auto lookup = [&](TypeId id) { return ctx.env->querySchema(id); };
     auto walk = [&](const Expr& child, const std::vector<TypeId>& types,
                     const std::vector<TypeId>& expectedTypes = std::vector<TypeId>{},
                     std::optional<bool> childInsidePath = {}) {
@@ -442,17 +446,17 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
         if (field->isCurrent())
             return input;
         auto types = expandTypes(ctx, input, false);
-        auto name = ctx.env->strings()->get(field->name_);
+        auto name = rootSchema_.pool()->dictionary().get(field->name_);
         std::vector<TypeId> result;
         std::vector<SchemaPath> aliases;
         // Match compile-time operand rewriting: root-owned hooks win over direct
         // fields, but neither whole tokens nor explicit paths reinterpret members.
         if (depth > 0 && !insidePath)
-            if (auto root = lookup(rootSchema_))
-                aliases = root->scalarFieldPathsForSymbol(name, lookup);
+            if (auto root = rootSchema_)
+                aliases = root.scalarFieldPathsForSymbol(name);
         for (auto id : types) {
             if (aliases.empty()) {
-                auto children = Schema::fieldSchemas(id, lookup, name);
+                auto children = rootSchema_.pool()->schemaType(id).fieldTypes(name);
                 result.insert(result.end(), children.begin(), children.end());
             }
             else {
@@ -467,8 +471,8 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
                             if (!visitType(ctx))
                                 return result;
                             auto children = segment.kind == SchemaPathSegment::Kind::Field
-                                ? Schema::fieldSchemas(current, lookup, segment.field)
-                                : Schema::itemSchemas(current, lookup);
+                                ? rootSchema_.pool()->schemaType(current).fieldTypes(segment.field)
+                                : rootSchema_.pool()->schemaType(current).itemTypes();
                             next.insert(next.end(), children.begin(), children.end());
                         }
                         selected = std::move(next);
@@ -493,11 +497,12 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
             // A quoted subscript completes member names, not enum values.
             const bool smartCase = options.smartCase && containsUppercaseCharacter(key->prefix_);
             for (auto id : expandTypes(ctx, types, false))
-                if (auto schema = lookup(id))
-                    schema->forEachDirectField([&](StringId field, auto) {
+                if (auto schema = rootSchema_.pool()->schemaType(id))
+                    schema.forEachField([&](SchemaField const& occurrence) {
+                    auto field = occurrence.nameId();
                         if (!visitType(ctx) || size() >= limit)
                             return;
-                        auto name = ctx.env->strings()->resolve(field);
+                        auto name = rootSchema_.pool()->dictionary().resolve(field);
                         if (name && startsWith(*name, key->prefix_, smartCase))
                             add(escapeStringLiteral(*name), key->sourceLocation(), CompletionCandidate::Type::FIELD);
                     });
@@ -512,11 +517,11 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
             return {NoTypeId};
         std::vector<TypeId> result;
         for (auto id : types) {
-            std::vector<TypeId> children;
+            SchemaType::TypeIds children;
             if (index->value().isa(ValueType::Int))
-                children = Schema::itemSchemas(id, lookup);
+                children = rootSchema_.pool()->schemaType(id).itemTypes();
             else if (index->value().isa(ValueType::String))
-                children = Schema::fieldSchemas(id, lookup, ctx.env->strings()->get(index->value().as<ValueType::String>()));
+                children = rootSchema_.pool()->schemaType(id).fieldTypes(rootSchema_.pool()->dictionary().get(index->value().as<ValueType::String>()));
             else
                 return {NoTypeId};
             result.insert(result.end(), children.begin(), children.end());
@@ -528,16 +533,18 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
     if (dynamic_cast<const AnyChildExpr*>(&expression)) {
         std::vector<TypeId> result;
         for (auto id : expandTypes(ctx, input, false)) {
-            if (auto schema = lookup(id)) {
-                schema->forEachEnumerableField([&](StringId, std::span<const TypeId> children) {
+            if (auto schema = rootSchema_.pool()->schemaType(id)) {
+                schema.forEachField([&](SchemaField const& occurrence) {
+                if (occurrence.role() == SchemaType::FieldRole::Context)
+                    return;
+                auto children = occurrence.types();
                     for (auto child : children)
                         if (visitType(ctx))
                             result.push_back(child);
                 });
-                schema->forEachElementSchema([&](TypeId child) {
+                for (auto child : schema.elements())
                     if (visitType(ctx))
                         result.push_back(child);
-                });
             }
             else
                 result.push_back(NoTypeId);
@@ -579,9 +586,9 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
         if (prefix) {
             const bool sensitive = options.smartCase && containsUppercaseCharacter(*prefix);
             for (auto id : expandTypes(ctx, types, false))
-                if (auto schema = lookup(id))
-                    schema->forEachNamedValue([&](auto const& value) {
-                        if (visitType(ctx) && size() < limit && value.role == Schema::NamedValue::Role::Flag &&
+                if (auto schema = rootSchema_.pool()->schemaType(id))
+                    schema.forEachNamedValue([&](auto const& value) {
+                        if (visitType(ctx) && size() < limit && value.role == SchemaType::NamedValue::Role::Flag &&
                             !value.removed && startsWith(value.name, *prefix, sensitive))
                             add(escapeStringLiteral(value.name), call->args_[1]->sourceLocation(), CompletionCandidate::Type::CONSTANT);
                     });
@@ -595,11 +602,12 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
     return dynamic_cast<const ConstExpr*>(&expression) ? std::vector<TypeId>{} : std::vector<TypeId>{NoTypeId};
 }
 
-void Completion::completeType(Context ctx, const Expr& expression, TypeId root)
+void Completion::completeType(Context ctx, const Expr& expression, SchemaType root)
 {
     typeVisits_ = 0;
-    rootSchema_ = root;
-    walkType(ctx, expression, {root}, {}, 0);
+    rootSchema_ = root.retain();
+    if (rootSchema_)
+        walkType(ctx, expression, {root.id()}, {}, 0);
 }
 
 CompletionFieldOrWordExpr::CompletionFieldOrWordExpr(std::string prefix, Completion* comp, const Token& token, bool inPath)

@@ -1,4 +1,5 @@
 #include "simfil/model/model.h"
+#include "simfil/model/schema-pool.h"
 #include "simfil/value.h"
 
 #include <algorithm>
@@ -57,7 +58,7 @@ public:
                 value.type == ValueType::TransientObject || value.type == ValueType::LAST_) {
                 return failure("Unsupported result value in native copy");
             }
-            else if (auto typeRef = value.schemaReference()) {
+            else if (auto typeRef = value.schemaType()) {
                 if (options_.maxDepth < 1 || nodes_ >= options_.maxNodes || !charge(sizeof(ModelNodeAddress)))
                     return failure("Node copy node/depth/byte budget exceeded");
                 ++nodes_;
@@ -77,13 +78,13 @@ public:
 
 private:
     /** Apply an explicitly requested graph migration without discarding known provenance. */
-    auto remapSchema(SchemaReference const& source) const -> tl::expected<SchemaReference, Error>
+    auto remapSchema(SchemaType const& source) const -> tl::expected<SchemaType, Error>
     {
         if (!options_.schemaRemap)
             return source;
         try {
             auto mapped = options_.schemaRemap(source);
-            if (!mapped || !mapped.definition())
+            if (!mapped)
                 return failure("Schema remapping returned an unresolved type");
             return mapped;
         }
@@ -98,7 +99,7 @@ private:
         if (!charge(sizeof(ModelNodeAddress)))
             return failure("Node copy byte budget exceeded");
         if (source.type() != ValueType::Object && source.type() != ValueType::Array)
-            if (auto typeRef = source.schemaReference())
+            if (auto typeRef = source.schemaType())
                 return copyQualified(source.value(), typeRef);
         switch (source.type()) {
         case ValueType::Undef: return target_.newUndefined();
@@ -128,7 +129,7 @@ private:
             return target_.tryNewValue(value);
         }
         case ValueType::Bitmask:
-            return failure("Bitmask has no resolved schema binding");
+            return failure("Bitmask has no resolved schema type");
         case ValueType::Array:
         case ValueType::Object:
             return copyCollection(source, depth);
@@ -140,16 +141,16 @@ private:
     }
 
     /** Persist one already-typed scalar; raw numeric leaves copied inside compounds stay compact. */
-    auto copyQualified(ScalarValueType const& value, SchemaReference const& sourceType)
+    auto copyQualified(ScalarValueType const& value, SchemaType const& sourceType)
         -> tl::expected<ModelNode::Ptr, Error>
     {
-        if (!sourceType.definition())
+        if (!sourceType)
             return failure("Scalar has no resolved schema definition");
         auto mapped = remapSchema(sourceType);
         if (!mapped)
             return tl::unexpected(mapped.error());
         auto const& typeRef = *mapped;
-        // Charge conservatively for raw storage, qualifier and common binding metadata.
+        // Charge conservatively for raw storage, qualifier and common schema-owner metadata.
         size_t bytes = sizeof(std::uint64_t) + sizeof(TypeId) + sizeof(ModelNodeAddress);
         if (auto text = std::get_if<std::string>(&value))
             bytes += text->size() + 2 * sizeof(std::uint32_t);
@@ -157,7 +158,7 @@ private:
             bytes += view->size() + 2 * sizeof(std::uint32_t);
         else if (auto data = std::get_if<simfil::ByteArray>(&value))
             bytes += data->bytes.size() + 2 * sizeof(std::uint32_t);
-        if (!charge(bytes) || !charge(typeRef.binding->identity().size()))
+        if (!charge(bytes) || !charge(typeRef.pool()->identity().size()))
             return failure("Node copy byte budget exceeded");
         try {
             if (auto mask = std::get_if<simfil::Bitmask>(&value))
@@ -196,15 +197,15 @@ private:
                 return tl::unexpected(created.error());
             object = *created;
         }
-        if (auto sourceType = source.schemaReference()) {
+        if (auto sourceType = source.schemaType()) {
             auto mapped = remapSchema(sourceType);
             if (!mapped)
                 return tl::unexpected(mapped.error());
             auto const& typeRef = *mapped;
             // Graph composition may widen a container, but must not turn it into a scalar.
-            if (options_.schemaRemap && !typeRef.definition()->hasAffinity(source.type()))
+            if (options_.schemaRemap && !typeRef.hasAffinity(source.type()))
                 return failure("Remapped schema is incompatible with the copied container");
-            if (!charge(typeRef.binding->identity().size() + sizeof(TypeId)))
+            if (!charge(typeRef.pool()->identity().size() + sizeof(TypeId)))
                 return failure("Node copy byte budget exceeded");
             auto imported = target_.importSchema(typeRef);
             if (!imported)

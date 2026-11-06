@@ -19,6 +19,8 @@
 namespace simfil
 {
 
+class SchemaPool;
+
 using StringId = uint16_t;
 static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
 
@@ -81,6 +83,7 @@ struct StringPool
         SchemaOffset,
         SchemaComplete,
         SchemaRawValue,
+        SchemaMultimap,
 
         NextStaticId,
         FirstDynamicId = 256
@@ -141,6 +144,22 @@ struct StringPool
     const std::deque<std::string>& strings() const;
 
 private:
+    friend class SchemaPool;
+
+    /** Logical dictionary tails for SchemaPool's exclusive dynamic-string appends. */
+    struct AppendCheckpoint
+    {
+        StringPool const* owner;
+        std::uint32_t nextId;
+        size_t storedStrings;
+        int64_t byteSize;
+    };
+
+    /** No concurrent access, static-key insertion, read, or freeze while active. */
+    [[nodiscard]] AppendCheckpoint appendCheckpoint() const;
+    /** Erase both indexes before destroying their string views, including partial inserts. */
+    void rollbackAppends(AppendCheckpoint const& checkpoint) noexcept;
+
     bool frozen_ = false;
     mutable std::shared_mutex stringStoreMutex_;
     std::unordered_map<

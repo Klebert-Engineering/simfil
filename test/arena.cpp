@@ -1,5 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
+#include <array>
+#include <concepts>
+#include <iterator>
+#include <numeric>
+#include <ranges>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <bitsery/bitsery.h>
 #include <bitsery/adapter/buffer.h>
 #include <bitsery/traits/vector.h>
@@ -395,7 +403,7 @@ TEST_CASE("ArrayArena singleton-handle storage", "[ArrayArena]")
         for (auto const& arr : arena) {
             int value = -1;
             if (arr.size() > 0) {
-                value = arr[0].value();
+                value = arr[0];
             }
             valuesByArray.push_back(value);
         }
@@ -481,4 +489,513 @@ TEST_CASE("ArrayArena supports TwoPart element storage", "[ArrayArena][TwoPart]"
         return true;
     });
     REQUIRE(visited == 3);
+}
+
+TEST_CASE("ArrayArena ranges satisfy forward range contracts", "[ArrayArena][ranges]")
+{
+    using Arena = ArrayArena<int32_t, 4, 2>;
+    using Range = Arena::BasicArrayRange<false>;
+    using ConstRange = Arena::BasicArrayRange<true>;
+
+    STATIC_REQUIRE(std::forward_iterator<Arena::iterator>);
+    STATIC_REQUIRE(std::forward_iterator<Arena::const_iterator>);
+    STATIC_REQUIRE(std::semiregular<Arena::iterator>);
+    STATIC_REQUIRE(std::semiregular<Arena::const_iterator>);
+    STATIC_REQUIRE(std::semiregular<Range>);
+    STATIC_REQUIRE(std::semiregular<ConstRange>);
+    STATIC_REQUIRE(std::ranges::forward_range<Range>);
+    STATIC_REQUIRE(std::ranges::forward_range<ConstRange>);
+    STATIC_REQUIRE(std::ranges::forward_range<Range const>);
+    STATIC_REQUIRE(std::ranges::sized_range<Range>);
+    STATIC_REQUIRE(std::ranges::sized_range<ConstRange>);
+    STATIC_REQUIRE(std::ranges::common_range<Range>);
+    STATIC_REQUIRE_FALSE(std::ranges::random_access_range<Range>);
+    STATIC_REQUIRE_FALSE(std::ranges::contiguous_range<Range>);
+    STATIC_REQUIRE(std::same_as<std::ranges::range_reference_t<Range>, int32_t&>);
+    STATIC_REQUIRE(std::same_as<std::ranges::range_reference_t<Range const>, int32_t&>);
+    STATIC_REQUIRE(std::same_as<std::ranges::range_reference_t<ConstRange>, int32_t const&>);
+    STATIC_REQUIRE(std::same_as<decltype(*std::declval<Arena::iterator const&>()), int32_t&>);
+    STATIC_REQUIRE(std::convertible_to<Arena::iterator, Arena::const_iterator>);
+    STATIC_REQUIRE_FALSE(std::convertible_to<Arena::const_iterator, Arena::iterator>);
+    STATIC_REQUIRE(std::convertible_to<Range, ConstRange>);
+    STATIC_REQUIRE_FALSE(std::convertible_to<ConstRange, Range>);
+
+    Range empty;
+    ConstRange constEmpty = empty;
+    REQUIRE(empty.empty());
+    REQUIRE(empty.size() == 0);
+    REQUIRE(empty.begin() == empty.end());
+    REQUIRE(std::ranges::distance(empty) == 0);
+    REQUIRE(std::ranges::equal(empty, constEmpty));
+    REQUIRE(std::ranges::find(empty, 1) == empty.end());
+    REQUIRE_FALSE(empty.at(0));
+    REQUIRE(empty.at(0).error().type == Error::IndexOutOfRange);
+    REQUIRE_FALSE(constEmpty.at(std::numeric_limits<size_t>::max()));
+
+    Arena::iterator defaultIterator;
+    Arena::iterator assigned;
+    assigned = defaultIterator;
+    Arena::const_iterator constAssigned;
+    constAssigned = assigned;
+    REQUIRE(assigned == defaultIterator);
+    REQUIRE(assigned == constAssigned);
+    REQUIRE(assigned == empty.end());
+    empty = Range(assigned, assigned);
+    REQUIRE(empty.empty());
+
+    Arena arena;
+    auto const emptyZeroCapacity = arena.new_array(0);
+    auto const emptyReserved = arena.new_array(9);
+    auto const emptySingleton = arena.new_array(1, true);
+    for (auto const handle : {ArrayIndex{0}, emptyZeroCapacity, emptyReserved, emptySingleton}) {
+        auto const range = arena.range(handle);
+        auto const readOnly = std::as_const(arena).range(handle);
+        REQUIRE(range.empty());
+        REQUIRE(range.begin() == range.end());
+        REQUIRE(arena.begin(handle) == arena.end(handle));
+        REQUIRE(std::ranges::equal(range, readOnly));
+        REQUIRE_FALSE(range.at(0));
+    }
+    for (auto const handle : {InvalidArrayIndex, std::numeric_limits<ArrayIndex>::max(),
+             static_cast<ArrayIndex>(arena.size()),
+             SingletonArrayHandleMask | static_cast<ArrayIndex>(arena.singleton_handle_count())}) {
+        REQUIRE_FALSE(arena.valid(handle));
+        REQUIRE_THROWS_AS(arena.range(handle), std::out_of_range);
+        REQUIRE_THROWS_AS(std::as_const(arena).range(handle), std::out_of_range);
+        REQUIRE_THROWS_AS(arena.begin(handle), std::out_of_range);
+        REQUIRE_THROWS_AS(arena.end(handle), std::out_of_range);
+        REQUIRE_FALSE(arena.at(handle, 0));
+    }
+
+    arena.push_back(emptySingleton, 42);
+    auto const singleton = arena.range(emptySingleton);
+    REQUIRE(singleton.size() == 1);
+    REQUIRE_FALSE(singleton.empty());
+    REQUIRE(&singleton.front() == &singleton.back());
+    REQUIRE(&singleton[0] == &singleton.at(0)->get());
+    singleton.front() = 43;
+    auto cursor = singleton.begin();
+    REQUIRE(*cursor++ == 43);
+    REQUIRE(cursor == singleton.end());
+    REQUIRE_FALSE(singleton.at(1));
+    constEmpty = singleton;
+    REQUIRE(constEmpty.front() == 43);
+
+    std::array<ArrayIndex, 9> singletons;
+    for (size_t i = 0; i < singletons.size(); ++i) {
+        singletons[i] = arena.new_array(1, true);
+        if (i % 3 != 0) {
+            arena.push_back(singletons[i], static_cast<int32_t>(100 + i));
+        }
+    }
+    for (size_t i = 0; i < singletons.size(); ++i) {
+        auto const range = arena.range(singletons[i]);
+        REQUIRE(range.empty() == (i % 3 == 0));
+        REQUIRE(std::ranges::equal(range, std::as_const(arena).range(singletons[i])));
+        if (!range.empty()) {
+            REQUIRE(range.front() == 100 + i);
+            REQUIRE(std::ranges::next(range.begin()) == range.end());
+        }
+    }
+}
+
+TEST_CASE("ArrayArena forward cursors cross fragmented chunks and pages", "[ArrayArena][ranges]")
+{
+    using Arena = ArrayArena<int32_t, 4, 2>;
+    constexpr size_t count = 97;
+    Arena arena;
+    std::array handles{arena.new_array(0), arena.new_array(1), arena.new_array(2),
+        arena.new_array(7), arena.new_array(19)};
+
+    // Interleaving separates consecutive chunks physically. Tiny payload and
+    // chunk pages force both cached cursors and continuation indices across pages.
+    for (size_t i = 0; i < count; ++i) {
+        for (size_t j = 0; j < handles.size(); ++j) {
+            arena.push_back(handles[j], static_cast<int32_t>(j * 1000 + i));
+        }
+    }
+    auto const allocated = arena.memory_usage().allocatedBytes;
+    for (size_t j = 0; j < handles.size(); ++j) {
+        auto const range = arena.range(handles[j]);
+        Arena::BasicArrayRange<false> copiedRange;
+        copiedRange = range;
+        Arena::BasicArrayRange<true> readOnly = copiedRange;
+        REQUIRE(std::ranges::size(range) == count);
+        REQUIRE(std::ranges::distance(range) == count);
+        REQUIRE(std::ranges::equal(range, readOnly));
+
+        std::array<int32_t, count> expected;
+        std::iota(expected.begin(), expected.end(), static_cast<int32_t>(j * 1000));
+        std::array<int32_t, count> copied{};
+        auto const result = std::ranges::copy(readOnly, copied.begin());
+        REQUIRE(result.in == readOnly.end());
+        REQUIRE(result.out == copied.end());
+        REQUIRE(copied == expected);
+        REQUIRE(*std::ranges::lower_bound(range, expected[57]) == expected[57]);
+        REQUIRE(std::ranges::find(range, -1) == range.end());
+
+        auto current = range.begin();
+        for (size_t i = 0; i < count; ++i) {
+            auto const stationary = current;
+            Arena::iterator assigned;
+            assigned = current;
+            Arena::const_iterator converted = current;
+            REQUIRE(&*stationary == &range[i]);
+            REQUIRE(stationary.operator->() == &range.at(i)->get());
+            REQUIRE(&*converted == &readOnly[i]);
+            REQUIRE(*assigned++ == expected[i]);
+            REQUIRE(*stationary == expected[i]);
+            ++current;
+            REQUIRE(assigned == current);
+            ++converted;
+            REQUIRE(converted == current);
+        }
+        REQUIRE(current == range.end());
+        REQUIRE_FALSE(range.at(count));
+        REQUIRE_FALSE(range.at(std::numeric_limits<size_t>::max()));
+
+        Arena::BasicArrayRange<false> slice{
+            std::ranges::next(range.begin(), 3), std::ranges::next(range.begin(), 73)};
+        REQUIRE(slice.size() == 70);
+        REQUIRE(slice.front() == expected[3]);
+        REQUIRE(slice.back() == expected[72]);
+        REQUIRE(slice.at(69)->get() == expected[72]);
+        REQUIRE_FALSE(slice.at(70));
+        REQUIRE(std::ranges::equal(slice, expected | std::views::drop(3) | std::views::take(70)));
+        Arena::BasicArrayRange<false> emptySlice{slice.end(), slice.end()};
+        REQUIRE(emptySlice.empty());
+        REQUIRE(emptySlice.begin() == emptySlice.end());
+        REQUIRE_FALSE(emptySlice.at(0));
+
+        std::ranges::for_each(range, [](int32_t& value) { ++value; });
+        REQUIRE(readOnly.front() == expected.front() + 1);
+        REQUIRE(readOnly.back() == expected.back() + 1);
+    }
+    REQUIRE(arena.memory_usage().allocatedBytes == allocated);
+}
+
+TEST_CASE("ArrayArena split proxies are const-correct forward references", "[ArrayArena][ranges][TwoPart]")
+{
+    using Pair = TwoPart<uint16_t, uint32_t>;
+    using Arena = ArrayArena<Pair, 4, 2>;
+    using Range = Arena::BasicArrayRange<false>;
+    using ConstRange = Arena::BasicArrayRange<true>;
+    STATIC_REQUIRE(std::forward_iterator<Arena::iterator>);
+    STATIC_REQUIRE(std::forward_iterator<Arena::const_iterator>);
+    STATIC_REQUIRE(std::ranges::forward_range<Range>);
+    STATIC_REQUIRE(std::ranges::forward_range<ConstRange>);
+    STATIC_REQUIRE(std::ranges::sized_range<Range>);
+    STATIC_REQUIRE(std::ranges::sized_range<ConstRange>);
+    STATIC_REQUIRE_FALSE(std::ranges::random_access_range<Range>);
+    STATIC_REQUIRE(std::same_as<std::ranges::range_value_t<Range>, Pair>);
+    STATIC_REQUIRE(std::same_as<std::ranges::range_reference_t<Range>, Arena::DataWriteRef>);
+    STATIC_REQUIRE(std::same_as<std::ranges::range_reference_t<ConstRange>, Arena::DataReadRef>);
+    STATIC_REQUIRE(std::same_as<decltype(std::declval<ConstRange>()[0].first()), uint16_t const&>);
+    STATIC_REQUIRE(std::same_as<decltype(std::declval<ConstRange>().back().second()), uint32_t const&>);
+    STATIC_REQUIRE_FALSE(std::assignable_from<decltype(std::declval<ConstRange>()[0].first()), uint16_t>);
+
+    constexpr size_t count = 41;
+    Arena arena;
+    auto const values = arena.new_array(1);
+    auto const interleaved = arena.new_array(1);
+    auto const singleton = arena.new_array(1, true);
+    std::array<Pair, count> expected;
+    for (size_t i = 0; i < count; ++i) {
+        expected[i] = Pair{static_cast<uint16_t>(i), static_cast<uint32_t>(i * 10)};
+        arena.push_back(values, expected[i]);
+        arena.push_back(interleaved, Pair{999u, 999u});
+    }
+    arena.emplace_back(singleton, 7u, 70u);
+    auto const range = arena.range(values);
+    ConstRange readOnly;
+    readOnly = range;
+    std::array<Pair, count> copied{};
+    REQUIRE(std::ranges::copy(readOnly, copied.begin()).out == copied.end());
+    REQUIRE(copied == expected);
+    // Forward iteration does not require the column proxies themselves to be
+    // equality_comparable; compare their logical values through a projection.
+    auto pairValue = [](auto const& pair) { return Pair{pair.first(), pair.second()}; };
+    REQUIRE(std::ranges::equal(range, expected, {}, pairValue));
+    auto const lower = std::ranges::lower_bound(readOnly, uint16_t{27}, {},
+        [](auto const& pair) { return pair.first(); });
+    REQUIRE(lower != readOnly.end());
+    REQUIRE((*lower).first() == 27);
+
+    auto current = range.begin();
+    for (size_t i = 0; i < count; ++i) {
+        Arena::iterator assigned;
+        assigned = current;
+        Arena::const_iterator converted;
+        converted = current;
+        auto const stationary = current;
+        REQUIRE((*assigned++).to_value() == expected[i]);
+        REQUIRE((*stationary).to_value() == expected[i]);
+        REQUIRE(&(*converted).first() == &range[i].first());
+        ++current;
+        ++converted;
+        REQUIRE(assigned == current);
+        REQUIRE(converted == current);
+    }
+    REQUIRE(current == range.end());
+    range.front().first() = 101;
+    range.back() = Pair{102u, 1020u};
+    range.at(3)->second() = 333;
+    REQUIRE(readOnly.front().first() == 101);
+    REQUIRE(readOnly.back().second() == 1020);
+    REQUIRE(readOnly[3].second() == 333);
+    REQUIRE_FALSE(readOnly.at(count));
+    auto const found = std::ranges::find_if(readOnly, [](auto const& pair) { return pair.second() == 333; });
+    REQUIRE(found != readOnly.end());
+    REQUIRE((*found).first() == 3);
+
+    auto const singleRange = arena.range(singleton);
+    singleRange.front().second() = 71;
+    REQUIRE(std::as_const(arena).range(singleton).back().second() == 71);
+    REQUIRE(std::ranges::next(singleRange.begin()) == singleRange.end());
+}
+
+TEST_CASE("ArrayArena ranges preserve compact serialization", "[ArrayArena][ranges][serialization]")
+{
+    // Exercise the same cursor/codec contract with physical references and split proxies.
+    auto check = []<typename Value>() {
+        using Arena = ArrayArena<Value, 4, 2>;
+        auto value = [](uint32_t i) {
+            if constexpr (std::same_as<Value, uint32_t>) return i;
+            else return Value{static_cast<uint16_t>(i), i * 10};
+        };
+        auto asValue = [](auto const& item) { return static_cast<Value>(item); };
+        Arena arena;
+        auto const empty = arena.new_array(0);
+        auto const values = arena.new_array(1);
+        auto const interleaved = arena.new_array(3);
+        auto const singleton = arena.new_array(1, true);
+        auto const emptySingleton = arena.new_array(1, true);
+        for (uint32_t i = 0; i < 43; ++i) {
+            arena.push_back(values, value(i));
+            arena.push_back(interleaved, value(100 + i));
+        }
+        arena.push_back(singleton, value(99));
+
+        using Buffer = std::vector<uint8_t>;
+        using Output = bitsery::OutputBufferAdapter<Buffer>;
+        using Input = bitsery::InputBufferAdapter<Buffer>;
+        Buffer bytes;
+        auto const written = bitsery::quickSerialization<Output>(bytes, arena);
+        Arena restored;
+        auto const state = bitsery::quickDeserialization<Input>({bytes.begin(), written}, restored);
+        REQUIRE(state.first == bitsery::ReaderError::NoError);
+        REQUIRE(state.second);
+        REQUIRE(restored.is_compact());
+        auto const allocated = restored.memory_usage().allocatedBytes;
+        for (auto const handle : {empty, values, interleaved, singleton, emptySingleton}) {
+            auto const range = restored.range(handle);
+            auto const readOnly = std::as_const(restored).range(handle);
+            REQUIRE(std::ranges::equal(range, arena.range(handle), {}, asValue, asValue));
+            REQUIRE(std::ranges::equal(range, readOnly, {}, asValue, asValue));
+            REQUIRE(std::ranges::distance(range) == arena.size(handle));
+            REQUIRE_FALSE(range.at(range.size()));
+            if (!range.empty()) {
+                REQUIRE(range.front() == value(handle == singleton ? 99 : handle == values ? 0 : 100));
+                REQUIRE(asValue(range.back()) == asValue(arena.range(handle).back()));
+                auto copy = range.begin();
+                typename Arena::const_iterator converted;
+                converted = copy;
+                REQUIRE(asValue(*copy++) == asValue(*converted));
+                ++converted;
+                REQUIRE(copy == converted);
+            }
+        }
+        REQUIRE(restored.memory_usage().allocatedBytes == allocated);
+        REQUIRE(restored.is_compact());
+        REQUIRE_THROWS_AS(restored.range(InvalidArrayIndex), std::out_of_range);
+
+        Buffer rewritten;
+        REQUIRE(bitsery::quickSerialization<Output>(rewritten, restored) == written);
+        REQUIRE(rewritten == bytes);
+    };
+    check.template operator()<uint32_t>();
+    check.template operator()<TwoPart<uint16_t, uint32_t>>();
+}
+
+TEST_CASE("ArrayArena truncation preserves handles and retained chunk storage", "[ArrayArena][truncate]")
+{
+    using Arena = ArrayArena<uint32_t, 4, 2>;
+    constexpr size_t count = 97;
+    for (size_t const keep : {0, 1, 2, 3, 6, 7, 14, 15, 30, 31, 62, 63, 96, 97}) {
+        CAPTURE(keep);
+        Arena arena;
+        auto const values = arena.new_array(2);
+        auto const other = arena.new_array(1);
+        for (size_t i = 0; i < count; ++i) {
+            arena.push_back(values, static_cast<uint32_t>(i));
+            arena.push_back(other, static_cast<uint32_t>(1000 + i));
+        }
+        auto const before = arena.memory_usage();
+        auto const handles = arena.size();
+        arena.truncate(values, keep);
+        REQUIRE(arena.valid(values));
+        REQUIRE(arena.size() == handles);
+        REQUIRE(arena.size(values) == keep);
+        REQUIRE(arena.memory_usage().allocatedBytes == before.allocatedBytes);
+        REQUIRE(arena.memory_usage().logicalBytes == before.logicalBytes - (count - keep) * sizeof(uint32_t));
+        REQUIRE(std::ranges::equal(arena.range(values), std::views::iota(uint32_t{0}, static_cast<uint32_t>(keep))));
+        REQUIRE_FALSE(arena.at(values, keep));
+        size_t visited = 0;
+        arena.iterate(values, [&](uint32_t value) { REQUIRE(value == visited++); });
+        REQUIRE(visited == keep);
+
+        // Invalid truncations must not detach links or change the surviving tail.
+        REQUIRE_THROWS_AS(arena.truncate(values, keep + 1), std::out_of_range);
+        REQUIRE_THROWS_AS(arena.truncate(values, std::numeric_limits<size_t>::max()), std::out_of_range);
+        REQUIRE(arena.size(values) == keep);
+        REQUIRE(arena.memory_usage().allocatedBytes == before.allocatedBytes);
+        for (size_t i = keep; i < count + 13; ++i) {
+            arena.push_back(values, static_cast<uint32_t>(i));
+        }
+        REQUIRE(std::ranges::equal(arena.range(values), std::views::iota(uint32_t{0}, uint32_t{count + 13})));
+        REQUIRE(std::ranges::equal(arena.range(other), std::views::iota(uint32_t{1000}, uint32_t{1000 + count})));
+        arena.truncate(values, 0);
+        arena.emplace_back(values, 123u);
+        REQUIRE(arena.range(values).front() == 123);
+        REQUIRE(arena.range(values).size() == 1);
+    }
+}
+
+TEST_CASE("ArrayArena truncation handles empty singleton and invalid arrays", "[ArrayArena][truncate]")
+{
+    ArrayArena<uint32_t, 4, 2> arena;
+    auto const empty = arena.new_array(0);
+    auto const reserved = arena.new_array(9);
+    auto const singleton = arena.new_array(1, true);
+    auto const allocated = arena.memory_usage().allocatedBytes;
+    for (auto const handle : {ArrayIndex{0}, empty, reserved, singleton}) {
+        arena.truncate(handle, 0);
+        REQUIRE(arena.range(handle).empty());
+        REQUIRE_THROWS_AS(arena.truncate(handle, 1), std::out_of_range);
+    }
+    REQUIRE(arena.memory_usage().allocatedBytes == allocated);
+    for (auto const handle : {InvalidArrayIndex, static_cast<ArrayIndex>(arena.size()),
+             SingletonArrayHandleMask | static_cast<ArrayIndex>(arena.singleton_handle_count())}) {
+        REQUIRE_THROWS_AS(arena.truncate(handle, 0), std::out_of_range);
+    }
+    arena.push_back(singleton, 17);
+    arena.truncate(singleton, 1);
+    REQUIRE(arena.range(singleton).front() == 17);
+    REQUIRE_THROWS_AS(arena.truncate(singleton, 2), std::out_of_range);
+    arena.truncate(singleton, 0);
+    REQUIRE(arena.singleton_occupied_count() == 0);
+    REQUIRE_FALSE(arena.at(singleton, 0));
+    arena.emplace_back(singleton, 18);
+    REQUIRE(arena.range(singleton).front() == 18);
+    REQUIRE(arena.singleton_occupied_count() == 1);
+    REQUIRE(arena.memory_usage().allocatedBytes == allocated);
+    arena.push_back(empty, 19);
+    arena.push_back(reserved, 20);
+    REQUIRE(arena.range(empty).back() == 19);
+    REQUIRE(arena.range(reserved).back() == 20);
+}
+
+TEST_CASE("ArrayArena compact truncation roundtrips and permits appending", "[ArrayArena][truncate][serialization]")
+{
+    auto check = []<typename Value>() {
+        using Arena = ArrayArena<Value, 4, 2>;
+        auto value = [](uint32_t i) {
+            if constexpr (std::same_as<Value, uint32_t>) return i;
+            else return Value{static_cast<uint16_t>(i), i * 10};
+        };
+        auto asValue = [](auto const& item) { return static_cast<Value>(item); };
+        Arena source;
+        auto const prefix = source.new_array(2);
+        auto const values = source.new_array(1);
+        auto const other = source.new_array(2);
+        auto const tail = source.new_array(1);
+        auto const empty = source.new_array(0);
+        auto const singleton = source.new_array(1, true);
+        auto const emptySingleton = source.new_array(1, true);
+        for (uint32_t i = 0; i < 47; ++i) {
+            source.push_back(values, value(i));
+            source.push_back(other, value(100 + i));
+        }
+        for (uint32_t i = 0; i < 3; ++i) {
+            source.push_back(prefix, value(800 + i));
+        }
+        for (uint32_t i = 0; i < 7; ++i) {
+            source.push_back(tail, value(900 + i));
+        }
+        source.push_back(singleton, value(17));
+
+        using Buffer = std::vector<uint8_t>;
+        using Output = bitsery::OutputBufferAdapter<Buffer>;
+        using Input = bitsery::InputBufferAdapter<Buffer>;
+        Buffer bytes;
+        auto const written = bitsery::quickSerialization<Output>(bytes, source);
+        Arena arena;
+        auto state = bitsery::quickDeserialization<Input>({bytes.begin(), written}, arena);
+        REQUIRE(state.first == bitsery::ReaderError::NoError);
+        REQUIRE(state.second);
+        REQUIRE(arena.is_compact());
+        auto const before = arena.memory_usage();
+
+        // Trim a middle array while preserving both neighbors, and remove a
+        // populated tail to exercise both internal holes and trailing payload.
+        arena.truncate(values, 11);
+        arena.truncate(tail, 0);
+        arena.truncate(empty, 0);
+        arena.truncate(singleton, 0);
+        arena.truncate(emptySingleton, 0);
+        REQUIRE(arena.is_compact());
+        REQUIRE(arena.size(values) == 11);
+        REQUIRE(arena.range(tail).empty());
+        REQUIRE(arena.range(prefix).front() == value(800));
+        REQUIRE(arena.range(prefix).back() == value(802));
+        REQUIRE(arena.range(other).front() == value(100));
+        REQUIRE(arena.range(other).back() == value(146));
+        REQUIRE(arena.range(singleton).empty());
+        REQUIRE(arena.memory_usage().allocatedBytes == before.allocatedBytes);
+        REQUIRE(arena.memory_usage().logicalBytes == before.logicalBytes - 43 * Arena::DataStorage::record_size);
+        REQUIRE_THROWS_AS(arena.truncate(values, 12), std::out_of_range);
+        REQUIRE_THROWS_AS(arena.truncate(InvalidArrayIndex, 0), std::out_of_range);
+        REQUIRE_THROWS_AS(arena.truncate(static_cast<ArrayIndex>(arena.size()), 0), std::out_of_range);
+
+        // Singleton writes must not discard the still-authoritative compact heads.
+        arena.push_back(singleton, value(18));
+        arena.emplace_back(emptySingleton, value(19));
+        REQUIRE(arena.is_compact());
+        REQUIRE(arena.range(values).back() == value(10));
+        REQUIRE(arena.range(singleton).front() == value(18));
+        REQUIRE(arena.range(emptySingleton).front() == value(19));
+        REQUIRE(arena.memory_usage().allocatedBytes == before.allocatedBytes);
+
+        // The wire codec must repack holes left by compact truncation into its
+        // canonical contiguous layout before the validating reader accepts it.
+        Buffer truncated;
+        auto const truncatedSize = bitsery::quickSerialization<Output>(truncated, arena);
+        Arena restored;
+        state = bitsery::quickDeserialization<Input>({truncated.begin(), truncatedSize}, restored);
+        REQUIRE(state.first == bitsery::ReaderError::NoError);
+        REQUIRE(state.second);
+        for (auto const handle : {prefix, values, other, tail, empty, singleton, emptySingleton}) {
+            REQUIRE(std::ranges::equal(arena.range(handle), restored.range(handle), {}, asValue, asValue));
+        }
+
+        for (uint32_t i = 11; i < 61; ++i) {
+            arena.push_back(values, value(i));
+        }
+        arena.push_back(other, value(200));
+        arena.push_back(empty, value(201));
+        arena.push_back(tail, value(202));
+        REQUIRE_FALSE(arena.is_compact());
+        auto const range = arena.range(values);
+        REQUIRE(range.size() == 61);
+        for (uint32_t i = 0; i < 61; ++i) {
+            REQUIRE(range[i] == value(i));
+        }
+        REQUIRE(arena.range(prefix).back() == value(802));
+        REQUIRE(arena.range(other).front() == value(100));
+        REQUIRE(arena.range(other).back() == value(200));
+        REQUIRE(arena.range(empty).front() == value(201));
+        REQUIRE(arena.range(tail).front() == value(202));
+    };
+    check.template operator()<uint32_t>();
+    check.template operator()<TwoPart<uint16_t, uint32_t>>();
 }

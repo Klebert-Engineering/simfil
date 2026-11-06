@@ -8,8 +8,7 @@
 #include <utility>
 
 #include "arena.h"
-#include "schema.h"
-#include "value-type.h"
+#include "scalar-value.h"
 #include "string-pool.h"
 #include "simfil/byte-array.h"
 #include "simfil/error.h"
@@ -265,7 +264,7 @@ struct ModelNode
     [[nodiscard]] virtual TypeId schema() const;
 
     /** Retain the graph defining this node's explicit schema; plain leaves use their parent edge. */
-    [[nodiscard]] auto schemaReference() const -> SchemaReference;
+    [[nodiscard]] auto schemaType() const -> SchemaType;
 
     /// Get the number of children
     [[nodiscard]] virtual uint32_t size() const;
@@ -281,6 +280,8 @@ struct ModelNode
 
     /// Return the model that owns this node address.
     [[nodiscard]] inline ModelConstPtr owningModel() const {return model_;}
+    /** Borrow the owner already retained by this node, without touching its ownership counter. */
+    [[nodiscard]] auto borrowedModel() const noexcept -> Model const* { return model_.get(); }
 
     /// Virtual destructor to allow polymorphism
     virtual ~ModelNode() = default;
@@ -428,6 +429,11 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] TypeId schema() const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+    /** Default structural/scalar export after resolution; special nodes may override it. */
+    [[nodiscard]] nlohmann::json toJson() const override;
+#endif
 
 public:
     explicit ModelNodeBase(detail::mp_key key) : ModelNode(key) {}

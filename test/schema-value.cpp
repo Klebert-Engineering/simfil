@@ -1,39 +1,27 @@
 #include "common.hpp"
-#include "simfil/model/schema-model.h"
+#include "simfil/model/schema-pool.h"
+#include "simfil/model/schema-node.h"
 
-#include <map>
+#include <algorithm>
+#include <array>
+#include <functional>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <utility>
 
 namespace
 {
-/** Exercise the public borrowed-type adapter rather than duplicating MapSchema storage in tests. */
-class ScalarType : public ValueSchema
-{
-public:
-    explicit ScalarType(Kind kind) : ValueSchema(kind) {}
-    std::vector<NamedValue> names;
-    std::optional<NumericDomain> numeric;
-    std::uint8_t width = 64;
-    void forEachNamedValue(const std::function<void(NamedValue const&)>& fn) const override
-    {
-        for (auto const& name : names)
-            fn(name);
-    }
-    auto numericDomain() const -> std::optional<NumericDomain> override { return numeric; }
-    auto bitWidth() const -> std::uint8_t override { return width; }
-};
-
-/** Reproduce derived model readers that deserialize before shared ownership is established. */
+/** Reproduce derived readers that deserialize before shared ownership is established. */
 class ConstructorReadPool final : public ModelPool
 {
 public:
-    /** Install the exact graph resolver and read without constructing any owning nodes. */
     ConstructorReadPool(std::vector<std::uint8_t> const& bytes,
-                        std::shared_ptr<const SchemaBinding> binding, std::shared_ptr<StringPool> strings)
+                        std::shared_ptr<SchemaPool const> pool, std::shared_ptr<StringPool> strings)
         : ModelPool(std::move(strings))
     {
-        setSchemaResolver([binding = std::move(binding)](auto identity) {
-            return binding->identity() == identity ? binding : nullptr;
+        setSchemaResolver([pool = std::move(pool)](auto identity) {
+            return pool->identity() == identity ? pool : nullptr;
         });
         loaded = read(bytes);
     }
@@ -41,52 +29,52 @@ public:
     tl::expected<void, Error> loaded;
 };
 
-/** Own graph definitions independently from runtime field ids and source model lifetime. */
+/** Publish a native graph before binding runtime nodes; all test customization precedes freezing. */
 struct TypedFixture
 {
-    using Graph = std::map<TypeId, std::unique_ptr<Schema>>;
-    std::shared_ptr<Graph> graph = std::make_shared<Graph>();
     std::shared_ptr<StringPool> strings = std::make_shared<StringPool>();
-    std::shared_ptr<const SchemaBinding> binding;
+    std::shared_ptr<SchemaPool> pool = std::make_shared<SchemaPool>(strings);
     std::shared_ptr<ModelPool> model = std::make_shared<ModelPool>();
     model_ptr<Object> root;
 
-    /** Use a deliberately different runtime dictionary; both fields share one inline address. */
-    explicit TypedFixture(std::string identity = "test-graph-v1", unsigned schemaPadding = 0)
+    explicit TypedFixture(std::string identity = "test-graph-v1", unsigned schemaPadding = 0,
+                          std::function<void(SchemaPool&)> configure = {}, int64_t speedCode = 255)
     {
         for (unsigned i = 0; i < schemaPadding; ++i)
             REQUIRE(strings->emplace("schema-padding-" + std::to_string(i)));
-        auto object = std::make_unique<ObjectSchema>();
-        for (auto [name, id] : {std::pair{"speed", 2}, {"count", 3}, {"flags", 4}, {"items", 5}})
-            object->addField(strings->emplace(name).value(), {TypeId(id)});
-        (*graph)[1] = std::move(object);
-        auto speed = std::make_unique<ScalarType>(Schema::Kind::Int);
-        speed->names = {{"SPEED_UNLIMITED", std::int64_t{255}, Schema::NamedValue::Role::Special,
-                        Schema::NamedValue::Meaning::Unbounded}};
-        speed->numeric = Schema::NumericDomain{.encoding = "uint8", .unit = "km/h",
-            .minimum = std::int64_t{0}, .maximum = std::int64_t{255}, .complete = true};
-        (*graph)[2] = std::move(speed);
-        (*graph)[3] = std::make_unique<ValueSchema>(Schema::Kind::Int);
-        auto flags = std::make_unique<ScalarType>(Schema::Kind::Bitmask);
-        flags->names = {{"NONE", std::uint64_t{0}, Schema::NamedValue::Role::Flag},
-            {"PAIR", std::uint64_t{3}, Schema::NamedValue::Role::Flag},
-            {"HIGH", std::uint64_t{1} << 63, Schema::NamedValue::Role::Flag},
-            {"ALIAS", std::uint64_t{3}, Schema::NamedValue::Role::Flag}};
-        (*graph)[4] = std::move(flags);
-        auto array = std::make_unique<ArraySchema>();
-        array->addElementSchemas({2});
-        (*graph)[5] = std::move(array);
-        for (auto& [id, schema] : *graph)
-            schema->finalize([this](TypeId child) { return graph->contains(child) ? graph->at(child).get() : nullptr; });
-        binding = std::make_shared<SchemaBinding>(std::move(identity), graph,
-            [graph = graph](TypeId id) { return graph->contains(id) ? graph->at(id).get() : nullptr; }, strings);
+        auto object = pool->newObjectType();
+        auto speed = pool->newScalarType(SchemaType::Kind::Int);
+        auto count = pool->newScalarType(SchemaType::Kind::Int);
+        auto flags = pool->newBitmaskType();
+        auto array = pool->newArrayType();
+        REQUIRE(object.id() == 1);
+        REQUIRE(speed.id() == 2);
+        REQUIRE(count.id() == 3);
+        REQUIRE(flags.id() == 4);
+        REQUIRE(array.id() == 5);
+        speed.addNamedValue({"SPEED_UNLIMITED", speedCode, SchemaType::NamedValue::Role::Special,
+                            SchemaType::NamedValue::Meaning::Unbounded});
+        speed.setNumericDomain({.encoding = "uint8", .unit = "km/h",
+            .minimum = std::int64_t{0}, .maximum = std::int64_t{255}, .complete = true});
+        flags.addFlag("NONE", 0);
+        flags.addFlag("PAIR", 3);
+        flags.addFlag("HIGH", std::uint64_t{1} << 63);
+        flags.addFlag("ALIAS", 3);
+        object.addField("speed", speed);
+        object.addField("count", count);
+        object.addField("flags", flags);
+        object.addField("items", array);
+        array.addElement(speed);
+        if (configure)
+            configure(*pool);
+        pool->finalize(std::move(identity));
         REQUIRE(model->strings()->emplace("runtime-padding"));
-        model->setSchemaBinding(binding);
+        model->setSchemaPool(pool);
         root = model->newObject();
         REQUIRE(root->setSchema(1));
         REQUIRE(root->addField("speed", std::int64_t{255}));
         REQUIRE(root->addField("count", std::int64_t{255}));
-        REQUIRE(root->addField("flags", model->newBitmask((std::uint64_t{1} << 63) | 3, {binding, 4})));
+        REQUIRE(root->addField("flags", model->newBitmask((std::uint64_t{1} << 63) | 3, pool->schemaType(4))));
         auto values = model->newArray();
         REQUIRE(values->setSchema(5));
         values->append(std::int64_t{255});
@@ -104,19 +92,20 @@ struct TypedFixture
         return eval(env, **ast, *root, nullptr);
     }
 
-    /** Compile against schema-owned names, then bind the portable AST to the separate runtime namespace. */
+    /** Query-local interning never mutates the published schema or datasource dictionary. */
     auto schemaQuery(std::string_view text) -> tl::expected<std::vector<Value>, Error>
     {
-        Environment compiler(strings);
-        compiler.querySchemaCallback = [binding = binding](TypeId id) { return binding->lookup(id); };
-        auto ast = compile(compiler, text, CompileOptions{.any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = 1});
+        Environment compiler(std::make_shared<StringPool>(*strings));
+        compiler.setSchema(pool->schemaType(1));
+        auto ast = compile(compiler, text, CompileOptions{.any = false, .rewriteMode = RewriteMode::Schema,
+                                                        .rootSchema = pool->schemaType(1)});
         if (!ast)
             return tl::unexpected(ast.error());
         Environment runtime(model->strings());
         return eval(runtime, **ast, *root, nullptr);
     }
 
-    /** Serialize the native storage, including common exact graph bindings. */
+    /** Serialize native payloads together with exact artifact resolver keys. */
     static auto bytes(ModelPool& source) -> std::vector<std::uint8_t>
     {
         std::stringstream out;
@@ -142,19 +131,19 @@ TEST_CASE("Scalar types survive selection but not numerical construction", "[mod
         INFO(result->front().toString());
         REQUIRE(result->front().type == ValueType::Int);
         REQUIRE(result->front().as<ValueType::Int>() == 255);
-        REQUIRE(result->front().schemaReference() == SchemaReference{f.binding, 2});
+        REQUIRE(result->front().schemaType() == f.pool->schemaType(2));
     }
     for (auto text : {"speed + 0", "speed * 1", "speed as int", "speed = 255", "count(speed)", "sum(speed)", "255"}) {
         INFO(text);
         auto result = f.query(text);
         REQUIRE(result);
         REQUIRE(result->size() == 1);
-        REQUIRE_FALSE(result->front().schemaReference());
+        REQUIRE_FALSE(result->front().schemaType());
     }
-    REQUIRE(f.query("min(count, speed)")->front().schemaReference() == SchemaReference{f.binding, 3});
+    REQUIRE(f.query("min(count, speed)")->front().schemaType() == f.pool->schemaType(3));
 }
 
-TEST_CASE("Retained expressions bind field types per graph and observe later declarations", "[model.schema-value][evaluation.binding]")
+TEST_CASE("Retained expressions bind field types per graph and observe replacement graphs", "[model.schema-value][evaluation.binding]")
 {
     std::vector<Value> retained;
     {
@@ -174,7 +163,7 @@ TEST_CASE("Retained expressions bind field types per graph and observe later dec
                     auto values = expression.eval(*fixture->root);
                     REQUIRE(values);
                     REQUIRE(values->size() == 1);
-                    CHECK(values->front().schemaReference() == SchemaReference{fixture->binding, 2});
+                    CHECK(values->front().schemaType() == fixture->pool->schemaType(2));
                     retained.push_back(values->front());
                 }
             }
@@ -183,28 +172,32 @@ TEST_CASE("Retained expressions bind field types per graph and observe later dec
         auto dynamic = a.query("_[arr('speed', 'count')]");
         REQUIRE(dynamic);
         REQUIRE(dynamic->size() == 2);
-        CHECK((*dynamic)[0].schemaReference() == SchemaReference{a.binding, 2});
-        CHECK((*dynamic)[1].schemaReference() == SchemaReference{a.binding, 3});
+        CHECK((*dynamic)[0].schemaType() == a.pool->schemaType(2));
+        CHECK((*dynamic)[1].schemaType() == a.pool->schemaType(3));
 
         REQUIRE(a.root->addField("late", int64_t{255}));
         auto ast = compile(env, "late", false);
         REQUIRE(ast);
         BoundExpression expression(SharedAST(std::move(*ast)), env);
-        CHECK_FALSE(expression.eval(*a.root)->front().schemaReference());
-        // Missing translations are not cached forever while an unpublished graph is growing.
-        auto& parent = static_cast<ObjectSchema&>(*a.graph->at(1));
-        parent.addField(a.strings->emplace("late").value(), {2});
-        CHECK(expression.eval(*a.root)->front().schemaReference() == SchemaReference{a.binding, 2});
-        auto replacement = std::make_unique<ObjectSchema>();
-        replacement->addField(a.strings->get("late"), {3});
-        (*a.graph)[1] = std::move(replacement);
-        CHECK(expression.eval(*a.root)->front().schemaReference() == SchemaReference{a.binding, 3});
+        CHECK_FALSE(expression.eval(*a.root)->front().schemaType());
+        // Published graphs do not mutate; a retained expression must bind a fresh
+        // owner even when graph-local IDs and the runtime dictionary are unchanged.
+        for (auto id : {TypeId{2}, TypeId{3}}) {
+            TypedFixture replacement("replacement-" + std::to_string(id), 0, [id](SchemaPool& pool) {
+                pool.schemaType(1).asObject().addField("late", pool.schemaType(id));
+            });
+            REQUIRE(replacement.model->setStrings(a.model->strings()));
+            REQUIRE(replacement.root->addField("late", int64_t{255}));
+            auto values = expression.eval(*replacement.root);
+            REQUIRE(values);
+            CHECK(values->front().schemaType() == replacement.pool->schemaType(id));
+        }
     }
     // Neither the runtime cache, environment nor source model owns these results now.
     for (auto const& value : retained) {
         CHECK(value.as<ValueType::Int>() == 255);
-        REQUIRE(value.schemaReference().definition());
-        CHECK(value.schemaReference().definition()->namedValue("SPEED_UNLIMITED"));
+        REQUIRE(value.schemaType());
+        CHECK(value.schemaType().namedValue("SPEED_UNLIMITED"));
     }
 }
 
@@ -215,7 +208,7 @@ TEST_CASE("Native copies keep compact compounds and qualify detached occurrences
     auto destination = std::make_shared<ModelPool>(std::make_shared<StringPool>(*a.model->strings()));
     auto compound = destination->copyNode(*a.root);
     REQUIRE(compound);
-    REQUIRE((*compound)->schemaReference() == SchemaReference{a.binding, 1});
+    REQUIRE((*compound)->schemaType() == a.pool->schemaType(1));
     REQUIRE((*compound)->at(0)->schema() == NoTypeId);
     REQUIRE((*compound)->at(0)->addr().column() != ModelPool::QualifiedScalar);
     auto values = std::vector<Value>{a.query("speed")->front(), a.query("count")->front(), b.query("speed")->front()};
@@ -223,69 +216,68 @@ TEST_CASE("Native copies keep compact compounds and qualify detached occurrences
     REQUIRE(copied);
     destination->addRoot(*copied);
     REQUIRE((*copied)->at(0)->addr() != (*copied)->at(1)->addr());
-    REQUIRE((*copied)->at(0)->schemaReference() == values[0].schemaReference());
-    REQUIRE((*copied)->at(2)->schemaReference() == values[2].schemaReference());
+    REQUIRE((*copied)->at(0)->schemaType() == values[0].schemaType());
+    REQUIRE((*copied)->at(2)->schemaType() == values[2].schemaType());
     REQUIRE(destination->serializationSizeStats().qualifiedScalarBytes == 3 * (sizeof(ModelNodeAddress) + sizeof(TypeId)));
     auto bytes = TypedFixture::bytes(*destination);
     auto restored = std::make_shared<ModelPool>(destination->strings());
     REQUIRE_FALSE(restored->read(bytes));
-    restored->setSchemaResolver([one = a.binding, two = b.binding](std::string_view identity) {
+    restored->setSchemaResolver([one = a.pool, two = b.pool](std::string_view identity) {
         return identity == one->identity() ? one : identity == two->identity() ? two : nullptr;
     });
     REQUIRE(restored->read(bytes));
     auto root = restored->root(0).value();
-    REQUIRE(root->at(0)->schemaReference() == SchemaReference{a.binding, 2});
-    REQUIRE(root->at(2)->schemaReference() == SchemaReference{b.binding, 2});
-    a.root = {}; a.model.reset(); a.graph.reset(); a.binding.reset();
-    b.root = {}; b.model.reset(); b.graph.reset(); b.binding.reset();
+    REQUIRE(root->at(0)->schemaType() == a.pool->schemaType(2));
+    REQUIRE(root->at(2)->schemaType() == b.pool->schemaType(2));
+    a.root = {}; a.model.reset(); a.pool.reset();
+    b.root = {}; b.model.reset(); b.pool.reset();
     destination.reset(); values.clear();
     REQUIRE(std::get<int64_t>(root->at(0)->value()) == 255);
-    REQUIRE(root->at(0)->schemaReference().definition()->namedValue("SPEED_UNLIMITED"));
+    REQUIRE(root->at(0)->schemaType().namedValue("SPEED_UNLIMITED"));
     REQUIRE(restored->validate());
 }
 
 TEST_CASE("Models isolate schema reference counts without duplicating graph identity", "[model.schema-value]")
 {
     TypedFixture f;
-    auto source = f.model->schemaReference(1).binding;
+    auto source = f.model->schemaPool(f.pool->identity());
     auto target = std::make_shared<ModelPool>();
-    target->setSchemaBinding(source);
-    auto other = target->schemaReference(1).binding;
-    REQUIRE(source.get() == f.binding.get());
+    target->setSchemaPool(source);
+    auto other = target->schemaPool(f.pool->identity());
+    REQUIRE(source.get() == f.pool.get());
     REQUIRE(other.get() == source.get());
     REQUIRE(source.owner_before(other) != other.owner_before(source));
-    REQUIRE(source.owner_before(f.binding) != f.binding.owner_before(source));
+    REQUIRE(source.owner_before(f.pool) != f.pool.owner_before(source));
 
-    auto canonicalCount = f.binding.use_count();
+    auto canonicalCount = f.pool.use_count();
     auto otherCount = other.use_count();
     auto sourceCount = source.use_count();
     auto result = f.query("speed");
     REQUIRE(result);
     std::vector<Value> retained(256, result->front());
-    CHECK(f.binding.use_count() == canonicalCount);
+    CHECK(f.pool.use_count() == canonicalCount);
     CHECK(other.use_count() == otherCount);
     CHECK(source.use_count() == sourceCount + 257);
-    REQUIRE(retained.front().schemaReference() == SchemaReference{f.binding, 2});
+    REQUIRE(retained.front().schemaType() == f.pool->schemaType(2));
 }
 
 TEST_CASE("Imported schema owners outlive their sources without retaining ownership chains", "[model.schema-value]")
 {
-    std::weak_ptr<const SchemaBinding> sourceGroup;
-    std::weak_ptr<const SchemaBinding> targetGroup;
-    std::weak_ptr<const SchemaBinding> canonical;
-    std::weak_ptr<TypedFixture::Graph> graph;
+    std::weak_ptr<SchemaPool const> sourceGroup, targetGroup, canonical;
+    std::weak_ptr<StringPool const> dictionary;
     std::vector<Value> retained;
     {
         TypedFixture f;
-        auto local = f.model->schemaReference(1).binding;
+        auto local = f.model->schemaPool(f.pool->identity());
+        auto localType = f.model->resolveSchemaType(2);
         sourceGroup = local;
-        canonical = f.binding;
-        graph = f.graph;
+        canonical = f.pool;
+        dictionary = f.strings;
         auto target = std::make_shared<ModelPool>(f.model->strings());
-        SECTION("Direct binding")
+        SECTION("Direct pool")
         {
-            target->setSchemaBinding(local);
-            target->addRoot(target->newQualifiedValue(std::int64_t{255}, {local, 2}));
+            target->setSchemaPool(local);
+            target->addRoot(target->newQualifiedValue(std::int64_t{255}, localType));
         }
         SECTION("Copied scalar imports")
         {
@@ -298,55 +290,53 @@ TEST_CASE("Imported schema owners outlive their sources without retaining owners
         SECTION("Native reader resolver")
         {
             auto serialized = std::make_shared<ModelPool>();
-            serialized->addRoot(serialized->newQualifiedValue(std::int64_t{255}, {local, 2}));
+            serialized->addRoot(serialized->newQualifiedValue(std::int64_t{255}, localType));
             target->setSchemaResolver([local](auto) { return local; });
             REQUIRE(target->read(TypedFixture::bytes(*serialized)));
             // The resolver's explicit capture must not mask a retained import chain.
             target->setSchemaResolver({});
         }
         auto node = target->root(0).value();
-        auto typeRef = node->schemaReference();
-        REQUIRE(typeRef == SchemaReference{f.binding, 2});
-        REQUIRE(typeRef.binding.get() == local.get());
-        targetGroup = typeRef.binding;
+        auto type = node->schemaType();
+        REQUIRE(type == f.pool->schemaType(2));
+        REQUIRE(type.pool() == local.get());
+        targetGroup = target->schemaPool(f.pool->identity());
         retained.push_back(Value::field(*node));
     }
     CHECK(sourceGroup.expired());
     CHECK_FALSE(targetGroup.expired());
     CHECK_FALSE(canonical.expired());
-    CHECK_FALSE(graph.expired());
+    CHECK_FALSE(dictionary.expired());
     CHECK(retained.front().as<ValueType::Int>() == 255);
-    REQUIRE(retained.front().schemaReference().definition()->namedValue("SPEED_UNLIMITED"));
+    REQUIRE(retained.front().schemaType().namedValue("SPEED_UNLIMITED"));
     retained.clear();
     CHECK(targetGroup.expired());
     // Weak observers retain control blocks, never the graph hidden in their deleter.
     CHECK(canonical.expired());
-    CHECK(graph.expired());
+    CHECK(dictionary.expired());
 }
 
 TEST_CASE("Model-local owners preserve alias pointers when flattening imports", "[model.schema-value]")
 {
-    std::shared_ptr<ModelPool> target = std::make_shared<ModelPool>();
-    std::weak_ptr<const SchemaBinding> sourceGroup;
-    std::weak_ptr<const SchemaBinding> targetGraph;
+    auto target = std::make_shared<ModelPool>();
+    std::weak_ptr<SchemaPool const> sourceGroup, targetGraph;
     {
-        TypedFixture first("first-graph");
-        TypedFixture second("second-graph");
-        auto keeper = std::make_shared<std::array<std::shared_ptr<const SchemaBinding>, 2>>(
-            std::array{first.binding, second.binding});
+        TypedFixture first("first-graph"), second("second-graph");
+        auto keeper = std::make_shared<std::array<std::shared_ptr<SchemaPool const>, 2>>(
+            std::array<std::shared_ptr<SchemaPool const>, 2>{first.pool, second.pool});
         auto source = std::make_shared<ModelPool>();
-        source->setSchemaBinding({keeper, first.binding.get()});
-        auto local = source->schemaReference(1).binding;
+        source->setSchemaPool({keeper, first.pool.get()});
+        auto local = source->schemaPool(first.pool->identity());
         sourceGroup = local;
-        targetGraph = second.binding;
-        // A valid external alias can point at a different binding held by the same owner.
-        target->setSchemaBinding({local, second.binding.get()});
-        REQUIRE(target->schemaReference(2).binding.get() == second.binding.get());
+        targetGraph = second.pool;
+        // External aliases may name a different graph retained by the same control block.
+        target->setSchemaPool({local, second.pool.get()});
+        REQUIRE(target->resolveSchemaType(2).pool() == second.pool.get());
     }
     CHECK(sourceGroup.expired());
     CHECK_FALSE(targetGraph.expired());
-    REQUIRE(target->schemaReference(2).binding->identity() == "second-graph");
-    REQUIRE(target->schemaReference(2).definition()->namedValue("SPEED_UNLIMITED"));
+    REQUIRE(target->resolveSchemaType(2).pool()->identity() == "second-graph");
+    REQUIRE(target->resolveSchemaType(2).namedValue("SPEED_UNLIMITED"));
     target.reset();
     CHECK(targetGraph.expired());
 }
@@ -365,7 +355,7 @@ TEST_CASE("Concurrent models share schema definitions but retain independent que
             auto& model = models[worker];
             model = std::make_shared<ModelPool>();
             REQUIRE(model->strings()->emplace("worker-" + std::to_string(worker)));
-            model->setSchemaBinding(f.binding);
+            model->setSchemaPool(f.pool);
             auto object = model->newObject();
             REQUIRE(object->setSchema(1));
             REQUIRE(object->addField("speed", int64_t{255} + static_cast<int64_t>(worker)));
@@ -380,7 +370,7 @@ TEST_CASE("Concurrent models share schema definitions but retain independent que
                 env.enableWildcardFieldPlans = iteration % 2 == 0;
                 auto result = expression.eval(*models[worker]->root(0).value());
                 if (!result || result->size() != 1 || result->front().as<ValueType::Int>() != int64_t{255} + worker ||
-                    result->front().schemaReference() != SchemaReference{f.binding, 2})
+                    result->front().schemaType() != f.pool->schemaType(2))
                     return false;
                 retained[worker] = result->front();
             }
@@ -390,65 +380,69 @@ TEST_CASE("Concurrent models share schema definitions but retain independent que
     }
     for (size_t worker = 0; worker < retained.size(); ++worker) {
         CHECK(retained[worker].as<ValueType::Int>() == int64_t{255} + worker);
-        REQUIRE(retained[worker].schemaReference().definition()->namedValue("SPEED_UNLIMITED"));
+        REQUIRE(retained[worker].schemaType().namedValue("SPEED_UNLIMITED"));
     }
 }
 
 TEST_CASE("Open objects retain declared scalar types without guessing unknown alternatives", "[model.schema-value]")
 {
-    TypedFixture f;
-    f.graph->at(1)->setOpen(true);
-    auto lookup = [&](TypeId id) { return f.binding->lookup(id); };
+    TypedFixture f("open-graph", 0, [](SchemaPool& pool) {
+        pool.schemaType(1).asObject().setOpen(true);
+        REQUIRE(pool.strings()->emplace("extra"));
+    });
     auto speed = f.strings->get("speed");
-    auto extra = f.strings->emplace("extra").value();
+    auto extra = f.strings->get("extra");
     REQUIRE(f.root->addField("extra", std::int64_t{255}));
-    REQUIRE(Schema::fieldSchemas(1, lookup, speed) == std::vector<TypeId>{2});
-    REQUIRE(Schema::fieldSchemas(1, lookup, extra) == std::vector<TypeId>{NoTypeId});
+    REQUIRE(std::ranges::equal(f.pool->schemaType(1).fieldTypes(speed), std::array<TypeId, 1>{2}));
+    REQUIRE(std::ranges::equal(f.pool->schemaType(1).fieldTypes(extra), std::array<TypeId, 1>{NoTypeId}));
     for (auto query : {"speed", "_['speed']", "**.speed"}) {
         INFO(query);
         auto values = f.query(query);
         REQUIRE(values);
-        REQUIRE(values->front().schemaReference() == SchemaReference{f.binding, 2});
+        REQUIRE(values->front().schemaType() == f.pool->schemaType(2));
     }
-    REQUIRE_FALSE(f.query("extra")->front().schemaReference());
+    REQUIRE_FALSE(f.query("extra")->front().schemaType());
     REQUIRE(f.schemaQuery("speed = SPEED_UNLIMITED")->front().as<ValueType::Bool>());
-
     auto destination = std::make_shared<ModelPool>(std::make_shared<StringPool>(*f.model->strings()));
     auto compound = destination->copyNode(*f.root);
     REQUIRE(compound);
     REQUIRE((*compound)->at(0)->schema() == NoTypeId);
-    REQUIRE(Value::at(**compound, *(*compound)->at(0), 0).schemaReference() == SchemaReference{f.binding, 2});
+    REQUIRE(Value::at(**compound, *(*compound)->at(0), 0).schemaType() == f.pool->schemaType(2));
     auto scalar = destination->copySequence(*f.query("speed"));
     REQUIRE(scalar);
-    REQUIRE((*scalar)->at(0)->schemaReference() == SchemaReference{f.binding, 2});
+    REQUIRE((*scalar)->at(0)->schemaType() == f.pool->schemaType(2));
 
-    auto other = std::make_unique<ObjectSchema>();
-    other->setOpen(true);
-    (*f.graph)[6] = std::move(other);
-    auto finalize = [&] {
-        // Publish a fresh combiner after changing a branch's declarations.
-        auto alternatives = std::make_unique<CombinedSchema>(Schema::Composition::AnyOf);
-        alternatives->addAlternative(1);
-        alternatives->addAlternative(6);
-        alternatives->finalize([&](TypeId id) { return f.graph->at(id).get(); });
-        (*f.graph)[7] = std::move(alternatives);
-    };
-    finalize();
-    REQUIRE(f.root->setSchema(7));
-    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<TypeId>{NoTypeId, 2});
-    REQUIRE_FALSE(f.query("speed")->front().schemaReference());
-    // Differently declared alternatives are still ambiguous, even with identical raw values.
-    static_cast<ObjectSchema&>(*f.graph->at(6)).addField(speed, {3});
-    finalize();
-    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<TypeId>{2, 3});
-    REQUIRE_FALSE(f.query("speed")->front().schemaReference());
-    auto matching = std::make_unique<ObjectSchema>();
-    matching->setOpen(true);
-    matching->addField(speed, {2});
-    (*f.graph)[6] = std::move(matching);
-    finalize();
-    REQUIRE(Schema::fieldSchemas(7, lookup, speed) == std::vector<TypeId>{2});
-    REQUIRE(f.query("speed")->front().schemaReference() == SchemaReference{f.binding, 2});
+    for (auto child : {NoTypeId, TypeId{3}, TypeId{2}}) {
+        TypedFixture alternative("open-alternative-" + std::to_string(child), 0, [child](SchemaPool& pool) {
+            pool.schemaType(1).asObject().setOpen(true);
+            auto other = pool.newObjectType();
+            other.setOpen(true);
+            if (child)
+                other.addField("speed", pool.schemaType(child));
+            auto combined = pool.newCompositionType(SchemaType::Composition::AnyOf);
+            combined.addAlternative(pool.schemaType(1));
+            combined.addAlternative(other);
+            REQUIRE(combined.id() == 7);
+        });
+        REQUIRE(alternative.root->setSchema(7));
+        auto choices = alternative.pool->schemaType(7).fieldTypes(alternative.strings->get("speed"));
+        auto observed = std::vector<TypeId>(choices.begin(), choices.end());
+        CAPTURE(child, observed);
+        // Retain one entry per alternative in declaration order, including equal IDs.
+        // Provenance is unambiguous only when every retained entry agrees.
+        REQUIRE(std::ranges::equal(choices, std::array<TypeId, 2>{2, child}));
+        auto effective = alternative.pool->schemaType(7).fieldType(alternative.strings->get("speed"));
+        if (child == 2)
+            REQUIRE(effective == alternative.pool->schemaType(2));
+        else
+            REQUIRE_FALSE(effective);
+        auto selected = alternative.query("speed");
+        REQUIRE(selected);
+        if (child == 2)
+            REQUIRE(selected->front().schemaType() == alternative.pool->schemaType(2));
+        else
+            REQUIRE_FALSE(selected->front().schemaType());
+    }
 }
 
 TEST_CASE("Bitmasks preserve high and unknown bits through query JSON and binary", "[model.schema-value][bitmask]")
@@ -484,14 +478,14 @@ TEST_CASE("Bitmasks preserve high and unknown bits through query JSON and binary
     golden["application"] = true;
     REQUIRE(json::buildModelNode(golden, *unrelated).value()->type() == ValueType::Object);
     auto restored = std::make_shared<ModelPool>(f.model->strings());
-    restored->setSchemaBinding(f.binding);
+    restored->setSchemaPool(f.pool);
     auto read = restored->read(TypedFixture::bytes(*f.model));
     INFO((read ? "success" : read.error().message));
     REQUIRE(read);
     REQUIRE(restored->root(0).value()->at(2)->toJson() == mask->toJson());
-    REQUIRE_THROWS(f.model->newBitmask(0, {f.binding, 2}));
+    REQUIRE_THROWS(f.model->newBitmask(0, f.pool->schemaType(2)));
     auto other = TypedFixture("foreign");
-    REQUIRE_THROWS(f.model->newQualifiedValue(std::get<Bitmask>(mask->value()), {other.binding, 4}));
+    REQUIRE_THROWS(f.model->newQualifiedValue(std::get<Bitmask>(mask->value()), other.pool->schemaType(4)));
 }
 
 TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", "[model.schema-value][model.freeze]")
@@ -516,14 +510,14 @@ TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", 
     REQUIRE_FALSE(f.model->tryNewValue(std::string_view("new-string")));
     REQUIRE_FALSE(f.model->tryNewValue(ByteArray{"new-bytes"}));
     REQUIRE_FALSE(f.model->tryNewValue(f.model->strings()->get("speed")));
-    REQUIRE_THROWS(f.model->newQualifiedValue(int64_t{3}, {f.binding, 2}));
-    REQUIRE_THROWS(f.model->newBitmask(3, {f.binding, 4}));
+    REQUIRE_THROWS(f.model->newQualifiedValue(int64_t{3}, f.pool->schemaType(2)));
+    REQUIRE_THROWS(f.model->newBitmask(3, f.pool->schemaType(4)));
     REQUIRE_FALSE(f.model->copyNode(*f.root));
     REQUIRE_FALSE(json::buildModelNode(nlohmann::json(2.5), *f.model));
     REQUIRE_FALSE(json::buildModelNode(f.root->at(2)->toJson(), *f.model));
     REQUIRE_THROWS(f.model->addRoot(f.root));
     REQUIRE_THROWS(f.model->clear());
-    REQUIRE_THROWS(f.model->setSchemaBinding(f.binding));
+    REQUIRE_THROWS(f.model->setSchemaPool(f.pool));
     REQUIRE_THROWS(f.model->setSchemaResolver({}));
     REQUIRE_FALSE(f.model->read(before));
     REQUIRE_FALSE(f.model->setStrings(std::make_shared<StringPool>()));
@@ -544,18 +538,19 @@ TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", 
 
 TEST_CASE("Qualified string copying preserves aliased storage and exact types", "[model.schema-value][model.growth]")
 {
-    TypedFixture f;
-    (*f.graph)[6] = std::make_unique<ValueSchema>(Schema::Kind::String);
+    TypedFixture f("string-copy", 0, [](SchemaPool& pool) {
+        REQUIRE(pool.newScalarType(SchemaType::Kind::String).id() == 6);
+    });
     std::string text(65536, 'x');
     text.front() = 'a';
     text.back() = 'z';
     auto original = f.model->tryNewValue(std::string_view(text));
     REQUIRE(original);
     // Qualification appends into the same byte buffer that owns this borrowed view.
-    auto qualified = f.model->newQualifiedValue(std::get<std::string_view>((*original)->value()), {f.binding, 6});
+    auto qualified = f.model->newQualifiedValue(std::get<std::string_view>((*original)->value()), f.pool->schemaType(6));
     auto copied = f.model->copyNode(*qualified);
     REQUIRE(copied);
-    REQUIRE((*copied)->schemaReference() == SchemaReference{f.binding, 6});
+    REQUIRE((*copied)->schemaType() == f.pool->schemaType(6));
     REQUIRE(std::get<std::string_view>((*original)->value()) == text);
     REQUIRE(std::get<std::string_view>(qualified->value()) == text);
     REQUIRE(std::get<std::string_view>((*copied)->value()) == text);
@@ -564,17 +559,17 @@ TEST_CASE("Qualified string copying preserves aliased storage and exact types", 
     auto detached = target->copyNode(**copied);
     REQUIRE(detached);
     target->addRoot(*detached);
-    auto restored = std::make_shared<ConstructorReadPool>(TypedFixture::bytes(*target), f.binding, target->strings());
+    auto restored = std::make_shared<ConstructorReadPool>(TypedFixture::bytes(*target), f.pool, target->strings());
     REQUIRE(restored->loaded);
     auto node = restored->root(0).value();
-    REQUIRE(node->schemaReference() == SchemaReference{f.binding, 6});
+    REQUIRE(node->schemaType() == f.pool->schemaType(6));
     REQUIRE(std::get<std::string_view>(node->value()) == text);
     REQUIRE(restored->validate());
 
     auto before = TypedFixture::bytes(*target);
-    REQUIRE_THROWS_AS(target->newQualifiedValue(std::string_view(text), {f.binding, 2}), std::invalid_argument);
-    REQUIRE_THROWS_AS(target->newQualifiedValue(ScalarValueType{}, {f.binding, 6}), std::invalid_argument);
-    REQUIRE_THROWS_AS(target->newBitmask(1, {f.binding, 6}), std::invalid_argument);
+    REQUIRE_THROWS_AS(target->newQualifiedValue(std::string_view(text), f.pool->schemaType(2)), std::invalid_argument);
+    REQUIRE_THROWS_AS(target->newQualifiedValue(ScalarValueType{}, f.pool->schemaType(6)), std::invalid_argument);
+    REQUIRE_THROWS_AS(target->newBitmask(1, f.pool->schemaType(6)), std::invalid_argument);
     REQUIRE(TypedFixture::bytes(*target) == before);
 }
 
@@ -597,34 +592,35 @@ TEST_CASE("Unbound copied schemas and overflowing integer literals fail explicit
 TEST_CASE("Native copies explicitly remap exact types without qualifying ordinary leaves", "[model.copy][model.schema-value]")
 {
     TypedFixture source;
-    auto graph = std::make_shared<TypedFixture::Graph>();
-    auto object = std::make_unique<ObjectSchema>();
-    for (auto [name, id] : {std::pair{"speed", 12}, {"count", 13}, {"flags", 14}, {"items", 15}})
-        object->addField(source.strings->get(name), {TypeId(id)});
-    (*graph)[11] = std::move(object);
-    (*graph)[12] = std::make_unique<ValueSchema>(Schema::Kind::Int);
-    (*graph)[13] = std::make_unique<ValueSchema>(Schema::Kind::Int);
-    (*graph)[14] = std::make_unique<ScalarType>(Schema::Kind::Bitmask);
-    auto array = std::make_unique<ArraySchema>();
-    array->addElementSchemas({12});
-    (*graph)[15] = std::move(array);
-    auto lookup = [graph](TypeId id) { return graph->contains(id) ? graph->at(id).get() : nullptr; };
-    for (auto& [_, schema] : *graph)
-        schema->finalize(lookup);
-    auto binding = std::make_shared<SchemaBinding>("composed-graph", graph, lookup, source.strings);
+    auto pool = std::make_shared<SchemaPool>();
+    for (size_t i = 0; i < 10; ++i)
+        pool->newType(SchemaType::Kind::Unknown);
+    auto object = pool->newObjectType();
+    auto speed = pool->newScalarType(SchemaType::Kind::Int);
+    auto count = pool->newScalarType(SchemaType::Kind::Int);
+    auto flags = pool->newBitmaskType();
+    auto array = pool->newArrayType();
+    REQUIRE(object.id() == 11);
+    REQUIRE(array.id() == 15);
+    object.addField("speed", speed);
+    object.addField("count", count);
+    object.addField("flags", flags);
+    object.addField("items", array);
+    array.addElement(speed);
+    pool->finalize("composed-graph");
     auto destination = std::make_shared<ModelPool>(std::make_shared<StringPool>(*source.model->strings()));
     std::vector<TypeId> mapped;
     ModelPool::CopyOptions options;
-    options.schemaRemap = [&](SchemaReference const& typeRef) {
-        REQUIRE(typeRef.binding->identity() == source.binding->identity());
-        mapped.push_back(typeRef.id);
-        return SchemaReference{binding, TypeId(typeRef.id + 10)};
+    options.schemaRemap = [&](SchemaType const& typeRef) {
+        REQUIRE(typeRef.pool() == source.pool.get());
+        mapped.push_back(typeRef.id());
+        return pool->schemaType(TypeId(typeRef.id() + 10));
     };
     auto copied = destination->copyNode(*source.root, options);
     REQUIRE(copied);
-    REQUIRE((*copied)->schemaReference() == SchemaReference{binding, 11});
-    REQUIRE((*copied)->at(2)->schemaReference() == SchemaReference{binding, 14});
-    REQUIRE((*copied)->at(3)->schemaReference() == SchemaReference{binding, 15});
+    REQUIRE((*copied)->schemaType() == pool->schemaType(11));
+    REQUIRE((*copied)->at(2)->schemaType() == pool->schemaType(14));
+    REQUIRE((*copied)->at(3)->schemaType() == pool->schemaType(15));
     REQUIRE(mapped == std::vector<TypeId>{1, 4, 5});
     REQUIRE((*copied)->at(0)->schema() == NoTypeId);
     REQUIRE((*copied)->at(3)->at(0)->schema() == NoTypeId);
@@ -633,13 +629,13 @@ TEST_CASE("Native copies explicitly remap exact types without qualifying ordinar
     REQUIRE(expression);
     auto value = eval(env, **expression, **copied, nullptr);
     REQUIRE(value);
-    REQUIRE(value->front().schemaReference() == SchemaReference{binding, 12});
+    REQUIRE(value->front().schemaType() == pool->schemaType(12));
 
     auto selected = source.query("speed");
     REQUIRE(selected);
     auto sequence = destination->copySequence(*selected, options);
     REQUIRE(sequence);
-    REQUIRE((*sequence)->at(0)->schemaReference() == SchemaReference{binding, 12});
+    REQUIRE((*sequence)->at(0)->schemaType() == pool->schemaType(12));
     REQUIRE(mapped == std::vector<TypeId>{1, 4, 5, 2});
     destination->addRoot(*copied);
     destination->addRoot(*sequence);
@@ -647,61 +643,61 @@ TEST_CASE("Native copies explicitly remap exact types without qualifying ordinar
 
     SECTION("In-place remapping preserves payload addresses and detached old values") {
         auto address = source.root->addr();
-        auto scalar = source.model->newQualifiedValue(std::int64_t{255}, {source.binding, 2});
+        auto scalar = source.model->newQualifiedValue(std::int64_t{255}, source.pool->schemaType(2));
         source.model->addRoot(scalar);
         mapped.clear();
-        source.model->remapSchemas(binding, options.schemaRemap);
-        REQUIRE(source.model->hasDirectSchemaBinding(binding->identity()));
+        source.model->remapSchemas(pool, options.schemaRemap);
+        REQUIRE(source.model->hasDirectSchemaPool(pool->identity()));
         REQUIRE(source.root->addr() == address);
-        REQUIRE(source.root->schemaReference() == SchemaReference{binding, 11});
-        REQUIRE(source.root->at(2)->schemaReference() == SchemaReference{binding, 14});
-        REQUIRE(source.root->at(3)->schemaReference() == SchemaReference{binding, 15});
+        REQUIRE(source.root->schemaType() == pool->schemaType(11));
+        REQUIRE(source.root->at(2)->schemaType() == pool->schemaType(14));
+        REQUIRE(source.root->at(3)->schemaType() == pool->schemaType(15));
         REQUIRE(source.root->at(0)->schema() == NoTypeId);
-        REQUIRE(scalar->schemaReference() == SchemaReference{binding, 12});
-        REQUIRE(selected->front().schemaReference() == SchemaReference{source.binding, 2});
-        REQUIRE(source.query("speed")->front().schemaReference() == SchemaReference{binding, 12});
+        REQUIRE(scalar->schemaType() == pool->schemaType(12));
+        REQUIRE(selected->front().schemaType() == source.pool->schemaType(2));
+        REQUIRE(source.query("speed")->front().schemaType() == pool->schemaType(12));
         REQUIRE(mapped.size() == 4);
         auto restored = std::make_shared<ModelPool>(source.model->strings());
-        restored->setSchemaResolver([binding](std::string_view id) {
-            return id == binding->identity() ? binding : nullptr;
+        restored->setSchemaResolver([pool](std::string_view id) {
+            return id == pool->identity() ? pool : nullptr;
         });
         REQUIRE(restored->read(TypedFixture::bytes(*source.model)));
-        REQUIRE(restored->hasDirectSchemaBinding(binding->identity()));
+        REQUIRE(restored->hasDirectSchemaPool(pool->identity()));
         REQUIRE(restored->validate());
     }
     SECTION("In-place validation failure leaves all bytes and bindings unchanged") {
         auto before = TypedFixture::bytes(*source.model);
-        auto fail = [&](SchemaReference const& typeRef) {
-            return SchemaReference{binding, TypeId(typeRef.id == 4 ? 12 : typeRef.id + 10)};
+        auto fail = [&](SchemaType const& typeRef) {
+            return pool->schemaType(TypeId(typeRef.id() == 4 ? 12 : typeRef.id() + 10));
         };
-        REQUIRE_THROWS_AS(source.model->remapSchemas(binding, fail), std::invalid_argument);
+        REQUIRE_THROWS_AS(source.model->remapSchemas(pool, fail), std::invalid_argument);
         REQUIRE(TypedFixture::bytes(*source.model) == before);
-        REQUIRE(source.model->hasDirectSchemaBinding(source.binding->identity()));
-        REQUIRE_THROWS_AS(source.model->remapSchemas(binding, [](auto const& typeRef) { return typeRef; }),
+        REQUIRE(source.model->hasDirectSchemaPool(source.pool->identity()));
+        REQUIRE_THROWS_AS(source.model->remapSchemas(pool, [](auto const& typeRef) { return typeRef; }),
                           std::invalid_argument);
         REQUIRE(TypedFixture::bytes(*source.model) == before);
     }
     SECTION("An unqualified or empty pool still installs the effective artifact") {
         auto empty = std::make_shared<ModelPool>();
         empty->addRoot(empty->newValue(std::int64_t{42}));
-        empty->remapSchemas(binding, [](auto const&) -> SchemaReference {
+        empty->remapSchemas(pool, [](auto const&) -> SchemaType {
             FAIL("Unqualified leaves must not invoke schema remapping");
             return {};
         });
-        REQUIRE(empty->hasDirectSchemaBinding(binding->identity()));
+        REQUIRE(empty->hasDirectSchemaPool(pool->identity()));
         REQUIRE(empty->root(0).value()->schema() == NoTypeId);
         empty->freeze();
-        REQUIRE_THROWS_AS(empty->remapSchemas(binding, options.schemaRemap), std::logic_error);
+        REQUIRE_THROWS_AS(empty->remapSchemas(pool, options.schemaRemap), std::logic_error);
     }
     SECTION("Missing or invalid replacement types fail instead of dropping provenance") {
-        options.schemaRemap = [](auto const&) { return SchemaReference{}; };
+        options.schemaRemap = [](auto const&) { return SchemaType{}; };
         REQUIRE_FALSE(destination->copyNode(*source.root, options));
         REQUIRE_FALSE(destination->copySequence(*selected, options));
-        options.schemaRemap = [binding](auto const&) { return SchemaReference{binding, 60000}; };
+        options.schemaRemap = [pool](auto const&) { return pool->schemaType(60000); };
         REQUIRE_FALSE(destination->copyNode(*source.root, options));
     }
     SECTION("Callback failures become copy errors") {
-        options.schemaRemap = [](auto const&) -> SchemaReference {
+        options.schemaRemap = [](auto const&) -> SchemaType {
             throw std::invalid_argument("incompatible contribution");
         };
         auto failed = destination->copyNode(*source.root, options);
@@ -709,9 +705,9 @@ TEST_CASE("Native copies explicitly remap exact types without qualifying ordinar
         REQUIRE(failed.error().message == "incompatible contribution");
     }
     SECTION("A replacement cannot change the physical payload type") {
-        options.schemaRemap = [binding](auto const&) { return SchemaReference{binding, 12}; };
+        options.schemaRemap = [pool](auto const&) { return pool->schemaType(12); };
         REQUIRE_FALSE(destination->copyNode(*source.root, options));
-        options.schemaRemap = [binding](auto const&) { return SchemaReference{binding, 11}; };
+        options.schemaRemap = [pool](auto const&) { return pool->schemaType(11); };
         REQUIRE_FALSE(destination->copySequence(*selected, options));
     }
 }
@@ -733,35 +729,35 @@ TEST_CASE("Named queries use the actual numeric or flag type rather than common 
     REQUIRE_FALSE(f.schemaQuery("speed = 'SPEED_UNLIMITED'")->front().as<ValueType::Bool>());
     REQUIRE_FALSE(f.schemaQuery("count = SPEED_UNLIMITED"));
 
-    auto& other = static_cast<ScalarType&>(*f.graph->at(2));
-    other.names.front().value = std::int64_t{0};
-    REQUIRE_FALSE(f.schemaQuery("speed = SPEED_UNLIMITED")->front().as<ValueType::Bool>());
-    REQUIRE_FALSE(f.schemaQuery("SPEED_UNLIMITED")->front().as<ValueType::Bool>());
-    static_cast<ObjectSchema&>(*f.graph->at(1)).setOpen(true);
-    REQUIRE_FALSE(f.schemaQuery("SPEED_UNLIMITED")->front().as<ValueType::Bool>());
-    other.names.front().value = std::int64_t{255};
-    REQUIRE(f.schemaQuery("SPEED_UNLIMITED")->front().as<ValueType::Bool>());
+    TypedFixture changed("changed-symbol", 0, {}, 0);
+    REQUIRE_FALSE(changed.schemaQuery("speed = SPEED_UNLIMITED")->front().as<ValueType::Bool>());
+    REQUIRE_FALSE(changed.schemaQuery("SPEED_UNLIMITED")->front().as<ValueType::Bool>());
+    for (auto code : {int64_t{0}, int64_t{255}}) {
+        TypedFixture open("open-symbol-" + std::to_string(code), 0, [](SchemaPool& pool) {
+            pool.schemaType(1).asObject().setOpen(true);
+        }, code);
+        REQUIRE(open.schemaQuery("SPEED_UNLIMITED")->front().as<ValueType::Bool>() == (code == 255));
+    }
 }
 
 TEST_CASE("Open string enum traversal retains the owning dictionary across unbound descendants", "[model.schema-value][schema.symbol]")
 {
-    TypedFixture f;
-    auto& root = static_cast<ObjectSchema&>(*f.graph->at(1));
-    root.setOpen(true);
-    auto symbol = f.strings->emplace("LEGACY_ENUM").value();
-    auto values = std::make_unique<ValueSchema>(Schema::Kind::String);
-    values->addEnumSymbol(symbol);
-    (*f.graph)[6] = std::move(values);
-    auto nested = std::make_unique<ObjectSchema>();
-    nested->addField(f.strings->emplace("text").value(), {6});
-    (*f.graph)[7] = std::move(nested);
-    root.addField(f.strings->emplace("nested").value(), {7});
+    TypedFixture f("open-string-enum", 0, [](SchemaPool& pool) {
+        auto root = pool.schemaType(1).asObject();
+        root.setOpen(true);
+        auto values = pool.newEnumType();
+        values.addSymbol("LEGACY_ENUM");
+        auto nested = pool.newObjectType();
+        REQUIRE(values.id() == 6);
+        REQUIRE(nested.id() == 7);
+        nested.addField("text", values);
+        root.addField("nested", nested);
+        root.addField("", values);
+    });
     auto object = f.model->newObject();
     REQUIRE(object->addField("text", "LEGACY_ENUM"));
     REQUIRE(f.root->addField("nested", object));
     REQUIRE(f.model->strings()->get("LEGACY_ENUM") == StringPool::Empty);
-    for (auto& [id, schema] : *f.graph)
-        schema->finalize([&](TypeId child) { return f.graph->contains(child) ? f.graph->at(child).get() : nullptr; });
     for (auto bindChild : {false, true}) {
         if (bindChild)
             REQUIRE(object->setSchema(7));
@@ -771,8 +767,7 @@ TEST_CASE("Open string enum traversal retains the owning dictionary across unbou
         REQUIRE(result->front().as<ValueType::Bool>());
     }
     REQUIRE(f.model->strings()->get("LEGACY_ENUM") == StringPool::Empty);
-    // An undeclared field must not borrow the schema of the genuinely empty field name.
-    root.addField(StringPool::Empty, {6});
+    // An undeclared spelling must not borrow the genuinely empty field's schema.
     f.root = f.model->newObject();
     REQUIRE(f.root->setSchema(1));
     REQUIRE(f.root->addField("undeclared", "LEGACY_ENUM"));
@@ -784,69 +779,68 @@ TEST_CASE("Open string enum traversal retains the owning dictionary across unbou
 TEST_CASE("Schema descriptors and completion expose borrowed named numeric metadata", "[model.schema-value][schema.symbol]")
 {
     TypedFixture f;
-    auto descriptors = std::make_shared<SchemaModel>(f.strings,
-        [binding = f.binding](TypeId id) { return binding->lookup(id); });
+    auto descriptor = f.pool->schemaType(1).modelNode();
     auto before = f.strings->size();
-    auto json = descriptors->root(1)->toJson();
+    auto json = descriptor->toJson();
     REQUIRE(json["fields"]["speed"]["numericDomain"]["unit"] == "km/h");
     REQUIRE(json["fields"]["speed"]["namedValues"][0]["value"] == 255);
     REQUIRE(json["fields"]["speed"]["namedValues"][0]["meaning"] == "unbounded");
     REQUIRE(json["fields"]["flags"]["bitWidth"] == 64);
     REQUIRE(json["fields"]["flags"]["namedValues"][2]["value"] == "0x8000000000000000");
     REQUIRE(f.strings->size() == before);
-    Environment env(f.strings);
-    env.querySchemaCallback = [binding = f.binding](TypeId id) { return binding->lookup(id); };
+    Environment env(std::make_shared<StringPool>(*f.strings));
+    env.setSchema(f.pool->schemaType(1));
     for (auto query : {"SPEED_", "speed = SPEED_", "flags = HI"}) {
         INFO(query);
-        auto candidates = complete(env, query, std::string_view(query).size(), TypeId{1});
+        auto candidates = complete(env, query, std::string_view(query).size(), f.pool->schemaType(1));
         REQUIRE(candidates);
         auto wanted = std::string_view(query) == "flags = HI" ? "HIGH" : "SPEED_UNLIMITED";
         REQUIRE(std::ranges::any_of(*candidates, [&](auto const& candidate) { return candidate.text == wanted; }));
     }
-    auto candidates = complete(env, "count = SPEED_", 14, TypeId{1});
+    auto candidates = complete(env, "count = SPEED_", 14, f.pool->schemaType(1));
     REQUIRE(candidates);
     REQUIRE_FALSE(std::ranges::any_of(*candidates, [](auto const& candidate) { return candidate.text == "SPEED_UNLIMITED"; }));
     auto quoted = std::string("speed = 'SPEED_");
-    candidates = complete(env, quoted, quoted.size(), TypeId{1});
+    candidates = complete(env, quoted, quoted.size(), f.pool->schemaType(1));
     REQUIRE(candidates);
     REQUIRE_FALSE(std::ranges::any_of(*candidates, [](auto const& candidate) {
         return candidate.text.find("SPEED_UNLIMITED") != std::string::npos;
     }));
     auto flag = std::string("hasFlag(flags, 'PA");
-    candidates = complete(env, flag, flag.size(), TypeId{1});
+    candidates = complete(env, flag, flag.size(), f.pool->schemaType(1));
     REQUIRE(candidates);
     REQUIRE(std::ranges::any_of(*candidates, [](auto const& candidate) { return candidate.text == "\"PAIR\""; }));
 }
 
 TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.schema-value][limits]")
 {
-    TypedFixture f;
-    (*f.graph)[6] = std::make_unique<ValueSchema>(Schema::Kind::Bool);
-    (*f.graph)[7] = std::make_unique<ValueSchema>(Schema::Kind::Float);
-    (*f.graph)[8] = std::make_unique<ValueSchema>(Schema::Kind::String);
-    (*f.graph)[9] = std::make_unique<ValueSchema>(Schema::Kind::Bytes);
+    TypedFixture f("constructor-types", 0, [](SchemaPool& pool) {
+        for (auto kind : {SchemaType::Kind::Bool, SchemaType::Kind::Float,
+                          SchemaType::Kind::String, SchemaType::Kind::Bytes})
+            pool.newScalarType(kind);
+    });
     std::vector<std::pair<ScalarValueType, TypeId>> values{
         {std::int64_t{255}, 2}, {std::int64_t{-1}, 2}, {std::int64_t{65536}, 2},
         {true, 6}, {2.5, 7}, {std::string("qualified text"), 8}, {ByteArray("raw bytes"), 9}};
     for (auto direct : {false, true}) {
         auto source = std::make_shared<ModelPool>();
         if (direct)
-            source->setSchemaBinding(f.binding);
+            source->setSchemaPool(f.pool);
         for (auto const& [raw, typeRef] : values)
-            source->addRoot(source->newQualifiedValue(raw, {f.binding, typeRef}));
-        auto restored = std::make_shared<ConstructorReadPool>(TypedFixture::bytes(*source), f.binding, source->strings());
+            source->addRoot(source->newQualifiedValue(raw, f.pool->schemaType(typeRef)));
+        auto restored = std::make_shared<ConstructorReadPool>(TypedFixture::bytes(*source), f.pool, source->strings());
         REQUIRE(restored->loaded);
         REQUIRE(restored->numRoots() == values.size());
         for (std::size_t i = 0; i < values.size(); ++i) {
             auto node = restored->root(i).value();
             REQUIRE(node->type() == Value(ScalarValueType(values[i].first)).type);
             REQUIRE(node->toJson() == source->root(i).value()->toJson());
-            REQUIRE(node->schemaReference() == SchemaReference{f.binding, values[i].second});
+            REQUIRE(node->schemaType() == f.pool->schemaType(values[i].second));
         }
     }
 
     auto source = std::make_shared<ModelPool>();
-    source->addRoot(source->newQualifiedValue(std::int64_t{255}, {f.binding, 2}));
+    source->addRoot(source->newQualifiedValue(std::int64_t{255}, f.pool->schemaType(2)));
     auto original = TypedFixture::bytes(*source);
     std::array<std::uint8_t, 4> raw{Model::UInt16, 255, 0, 0};
     auto position = std::search(original.begin(), original.end(), raw.begin(), raw.end());
@@ -863,7 +857,7 @@ TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.
         auto malformed = original;
         for (unsigned i = 0; i < raw.size(); ++i)
             malformed[offset + i] = std::uint8_t(address.value_ >> (i * 8));
-        auto restored = std::make_shared<ConstructorReadPool>(malformed, f.binding, source->strings());
+        auto restored = std::make_shared<ConstructorReadPool>(malformed, f.pool, source->strings());
         REQUIRE_FALSE(restored->loaded);
     }
 }
@@ -879,12 +873,12 @@ TEST_CASE("Native readers bound allocations and reject malformed qualified refer
     REQUIRE(target->memoryUsageStats().stringData.allocatedBytes <= before);
 
     TypedFixture f;
-    REQUIRE(f.model->hasDirectSchemaBinding("test-graph-v1"));
-    REQUIRE_FALSE(f.model->hasDirectSchemaBinding("foreign"));
+    REQUIRE(f.model->hasDirectSchemaPool("test-graph-v1"));
+    REQUIRE_FALSE(f.model->hasDirectSchemaPool("foreign"));
     auto qualified = std::make_shared<ModelPool>();
-    auto node = qualified->newQualifiedValue(std::int64_t{255}, {f.binding, 2});
+    auto node = qualified->newQualifiedValue(std::int64_t{255}, f.pool->schemaType(2));
     qualified->addRoot(node);
-    REQUIRE_FALSE(qualified->hasDirectSchemaBinding(f.binding->identity()));
+    REQUIRE_FALSE(qualified->hasDirectSchemaPool(f.pool->identity()));
     auto bytes = TypedFixture::bytes(*qualified);
     std::array<std::uint8_t, 4> raw{Model::UInt16, 255, 0, 0};
     auto position = std::search(bytes.begin(), bytes.end(), raw.begin(), raw.end());
@@ -893,37 +887,45 @@ TEST_CASE("Native readers bound allocations and reject malformed qualified refer
     *position = ModelPool::QualifiedScalar;
     *(position + 1) = 0;
     auto restored = std::make_shared<ModelPool>();
-    restored->setSchemaResolver([binding = f.binding](auto) { return binding; });
+    restored->setSchemaResolver([pool = f.pool](auto) { return pool; });
     REQUIRE_FALSE(restored->read(bytes));
     restored = std::make_shared<ModelPool>();
-    restored->setSchemaResolver([binding = TypedFixture("wrong-graph").binding](auto) { return binding; });
+    restored->setSchemaResolver([pool = TypedFixture("wrong-graph").pool](auto) { return pool; });
     REQUIRE_FALSE(restored->read(TypedFixture::bytes(*qualified)));
 
-    // A resolver's token must identify the same graph, including structural affinities.
-    for (auto kind : {Schema::Kind::Null, Schema::Kind::Bytes}) {
-        static_cast<ValueSchema&>(*f.graph->at(2)).setKind(kind);
+    // A matching resolver key does not replace structural validation of the wire rows.
+    auto incompatible = [&](TypeId changed, SchemaType::Kind replacement) {
+        auto pool = std::make_shared<SchemaPool>();
+        std::array kinds{SchemaType::Kind::Object, SchemaType::Kind::Int, SchemaType::Kind::Int,
+                         SchemaType::Kind::Bitmask, SchemaType::Kind::Array};
+        for (TypeId id = 1; id <= kinds.size(); ++id) {
+            auto kind = id == changed ? replacement : kinds[id - 1];
+            if (kind == SchemaType::Kind::Bitmask)
+                pool->newBitmaskType();
+            else
+                pool->newType(kind);
+        }
+        pool->finalize(std::string(f.pool->identity()));
+        return pool;
+    };
+    for (auto kind : {SchemaType::Kind::Null, SchemaType::Kind::Bytes}) {
         restored = std::make_shared<ModelPool>();
-        restored->setSchemaResolver([binding = f.binding](auto) { return binding; });
+        restored->setSchemaResolver([pool = incompatible(2, kind)](auto) { return pool; });
         REQUIRE_FALSE(restored->read(TypedFixture::bytes(*qualified)));
     }
     for (auto id : {TypeId{1}, TypeId{5}}) {
-        f.graph->at(id)->setKind(Schema::Kind::Int);
         restored = std::make_shared<ModelPool>();
-        restored->setSchemaBinding(f.binding);
+        restored->setSchemaPool(incompatible(id, SchemaType::Kind::Int));
         REQUIRE_FALSE(restored->read(TypedFixture::bytes(*f.model)));
-        f.graph->at(id)->setKind(id == 1 ? Schema::Kind::Object : Schema::Kind::Array);
     }
 }
 
 TEST_CASE("Bound wildcard plans separate graphs and schema dictionary namespaces", "[model.schema-value]")
 {
     TypedFixture one;
-    TypedFixture two("second-graph");
-    auto& root = static_cast<ObjectSchema&>(*two.graph->at(1));
-    auto& speed = static_cast<ScalarType&>(*two.graph->at(2));
-    speed.names.front().value = std::int64_t{0};
-    root.addField(two.strings->emplace("unique").value(), {2});
-    root.finalize([&](TypeId id) { return two.graph->contains(id) ? two.graph->at(id).get() : nullptr; });
+    TypedFixture two("second-graph", 0, [](SchemaPool& pool) {
+        pool.schemaType(1).asObject().addField("unique", pool.schemaType(2));
+    }, 0);
     REQUIRE(two.root->addField("unique", std::int64_t{9}));
     auto strings = std::make_shared<StringPool>(*one.model->strings());
     REQUIRE(strings->emplace("unique"));
@@ -932,8 +934,8 @@ TEST_CASE("Bound wildcard plans separate graphs and schema dictionary namespaces
     auto sequence = output->copySequence(values);
     REQUIRE(sequence);
     Environment env(strings);
-    // Deliberately wrong callback: concrete model bindings must take precedence over bare numeric ids.
-    env.querySchemaCallback = [binding = one.binding](TypeId id) { return binding->lookup(id); };
+    // A deliberately wrong default root must not override a concrete model's exact pool.
+    env.setSchema(one.pool->schemaType(1));
     for (auto plans : {false, true}) {
         env.enableWildcardFieldPlans = plans;
         auto ast = compile(env, "**.unique", false);
@@ -942,29 +944,28 @@ TEST_CASE("Bound wildcard plans separate graphs and schema dictionary namespaces
         REQUIRE(result);
         REQUIRE(result->size() == 1);
         REQUIRE(result->front().as<ValueType::Int>() == 9);
-        REQUIRE(result->front().schemaReference() == SchemaReference{two.binding, 2});
+        REQUIRE(result->front().schemaType() == two.pool->schemaType(2));
     }
 }
 
 TEST_CASE("Symbol alternatives at one path use concrete provenance and survive traces", "[model.schema-value][schema.symbol]")
 {
-    TypedFixture f;
-    auto other = std::make_unique<ScalarType>(Schema::Kind::Int);
-    other->names = {{"SPEED_UNLIMITED", std::int64_t{0}, Schema::NamedValue::Role::Special}};
-    (*f.graph)[7] = std::move(other);
-    auto second = std::make_unique<ObjectSchema>();
-    second->addField(f.strings->get("speed"), {7});
-    (*f.graph)[6] = std::move(second);
-    auto alternatives = std::make_unique<CombinedSchema>(Schema::Composition::AnyOf);
-    alternatives->addAlternative(1);
-    alternatives->addAlternative(6);
-    (*f.graph)[8] = std::move(alternatives);
-    for (auto& [id, schema] : *f.graph)
-        schema->finalize([&](TypeId child) { return f.graph->contains(child) ? f.graph->at(child).get() : nullptr; });
-    Environment compiler(f.strings);
-    compiler.querySchemaCallback = [binding = f.binding](TypeId id) { return binding->lookup(id); };
+    TypedFixture f("symbol-alternatives", 0, [](SchemaPool& pool) {
+        auto second = pool.newObjectType();
+        auto other = pool.newScalarType(SchemaType::Kind::Int);
+        REQUIRE(second.id() == 6);
+        REQUIRE(other.id() == 7);
+        other.addNamedValue({"SPEED_UNLIMITED", std::int64_t{0}, SchemaType::NamedValue::Role::Special});
+        second.addField("speed", other);
+        auto alternatives = pool.newCompositionType(SchemaType::Composition::AnyOf);
+        alternatives.addAlternative(pool.schemaType(1));
+        alternatives.addAlternative(second);
+        REQUIRE(alternatives.id() == 8);
+    });
+    Environment compiler(std::make_shared<StringPool>(*f.strings));
+    compiler.setSchema(f.pool->schemaType(8));
     auto ast = compile(compiler, "speed = SPEED_UNLIMITED",
-        CompileOptions{.any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = 8});
+        CompileOptions{.any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = f.pool->schemaType(8)});
     REQUIRE(ast);
     Environment runtime(f.model->strings());
     for (auto [typeRef, raw, expected] : {std::tuple{1, 255, true}, {6, 255, false}, {6, 0, true}}) {
@@ -985,25 +986,27 @@ TEST_CASE("Symbol alternatives at one path use concrete provenance and survive t
     auto results = std::make_shared<ModelPool>();
     auto copy = results->copySequence(runtime.traces.at("selected").values);
     REQUIRE(copy);
-    REQUIRE((*copy)->at(0)->schemaReference() == SchemaReference{f.binding, 2});
+    REQUIRE((*copy)->at(0)->schemaType() == f.pool->schemaType(2));
     REQUIRE((*copy)->at(0)->toJson() == 255);
 }
 
 TEST_CASE("Narrow masks retain unknown bits and constrain complement and mixing", "[model.schema-value][bitmask]")
 {
-    TypedFixture f;
-    auto typeRef = std::make_unique<ScalarType>(Schema::Kind::Bitmask);
-    typeRef->width = 8;
-    typeRef->names = {{"PAIR", std::uint64_t{3}, Schema::NamedValue::Role::Flag}};
-    (*f.graph)[9] = std::move(typeRef);
-    auto narrow = f.model->newBitmask(0x81, {f.binding, 9});
+    TypedFixture f("narrow-mask", 0, [](SchemaPool& pool) {
+        for (size_t i = 0; i < 3; ++i)
+            pool.newType(SchemaType::Kind::Unknown);
+        auto type = pool.newBitmaskType(8);
+        REQUIRE(type.id() == 9);
+        type.addFlag("PAIR", 3);
+    });
+    auto narrow = f.model->newBitmask(0x81, f.pool->schemaType(9));
     REQUIRE(f.root->addField("narrow", narrow));
     for (auto [query, expected] : {std::pair{"~narrow", 0x7e}, {"narrow >> 7", 1}, {"narrow << 7", 0x80}}) {
         INFO(query);
         auto values = f.query(query);
         REQUIRE(values);
         REQUIRE(values->front().as<ValueType::Bitmask>().bits == expected);
-        REQUIRE(values->front().schemaReference() == SchemaReference{f.binding, 9});
+        REQUIRE(values->front().schemaType() == f.pool->schemaType(9));
     }
     for (auto query : {"narrow << 8", "narrow | 256", "narrow & flags", "narrow = flags", "narrow as float"}) {
         INFO(query);
@@ -1012,19 +1015,78 @@ TEST_CASE("Narrow masks retain unknown bits and constrain complement and mixing"
     REQUIRE(f.query("narrow != null")->front().as<ValueType::Bool>());
     REQUIRE_FALSE(f.query("null = narrow")->front().as<ValueType::Bool>());
     REQUIRE(f.query("bitmask(narrow, '0')?")->front().as<ValueType::Bool>());
-    REQUIRE_THROWS(f.model->newBitmask(256, {f.binding, 9}));
+    REQUIRE_THROWS(f.model->newBitmask(256, f.pool->schemaType(9)));
     auto tag = narrow->toJson();
     tag["bits"] = "0x100";
     REQUIRE_FALSE(json::buildModelNode(tag, *f.model));
     tag["bits"] = "-1";
     REQUIRE_FALSE(json::buildModelNode(tag, *f.model));
 
-    auto descriptors = std::make_shared<SchemaModel>(f.strings,
-        [binding = f.binding](TypeId id) { return binding->lookup(id); });
-    for (auto kind : {Schema::Kind::Unknown, Schema::Kind::Any, Schema::Kind::Value}) {
-        f.graph->at(9)->setKind(kind);
-        REQUIRE_FALSE(f.graph->at(9)->isBitmask());
-        REQUIRE_FALSE(descriptors->root(9)->toJson().contains("bitWidth"));
-        REQUIRE_THROWS(f.model->newBitmask(1, {f.binding, 9}));
+    for (auto kind : {SchemaType::Kind::Unknown, SchemaType::Kind::Any, SchemaType::Kind::Value}) {
+        auto pool = std::make_shared<SchemaPool>();
+        auto generic = pool->newType(kind);
+        pool->finalize("generic-mask-kind");
+        REQUIRE_FALSE(generic.isBitmask());
+        REQUIRE_FALSE(generic.modelNode()->toJson().contains("bitWidth"));
+        REQUIRE_THROWS(f.model->newBitmask(1, generic));
     }
+}
+
+TEST_CASE("Explicit symbol membership survives predicate composition",
+          "[model.schema-value][search-preparation]") {
+  TypedFixture fixture;
+  for (auto expression :
+       {"hasSymbol(_, 'SPEED_UNLIMITED')",
+        "any(hasSymbol(_, 'SPEED_UNLIMITED'))",
+        "true and hasSymbol(speed, 'SPEED_UNLIMITED')",
+        "hasSymbol(_, 'SPEED_UNLIMITED', 'test-graph-v1', 2)"}) {
+    CAPTURE(expression);
+    auto result = fixture.query(expression);
+    REQUIRE(result);
+    REQUIRE(result->size() == 1);
+    CHECK(result->front().as<ValueType::Bool>());
+  }
+  // An equal untyped number and an unknown enum name are never matches.
+  for (auto expression :
+       {"hasSymbol(count, 'SPEED_UNLIMITED')", "hasSymbol(_, 'MISSING')",
+        "hasSymbol(_, 'SPEED_UNLIMITED', 'different-graph', 2)",
+        "hasSymbol(_, 'SPEED_UNLIMITED', 'test-graph-v1', 3)"}) {
+    auto result = fixture.query(expression);
+    REQUIRE(result);
+    REQUIRE(result->size() == 1);
+    CHECK_FALSE(result->front().as<ValueType::Bool>());
+  }
+}
+
+TEST_CASE(
+    "Explicit symbol membership finds typed descendants below an untyped root",
+    "[search-preparation]") {
+  TypedFixture fixture;
+  REQUIRE(fixture.root->setSchema(NoTypeId));
+  auto result =
+      fixture.query("hasSymbol(_, 'SPEED_UNLIMITED', 'test-graph-v1', 2)");
+  REQUIRE(result);
+  REQUIRE(result->size() == 1);
+  CHECK(result->front().as<ValueType::Bool>());
+}
+
+TEST_CASE("Predicate symbol discovery preserves wrappers and excludes "
+          "comparison literals",
+          "[search-preparation]") {
+  Environment env(std::make_shared<StringPool>());
+  for (auto expression :
+       {"ANIMALS", "any(ANIMALS)", "any(\"ANIMALS\")", "not ANIMALS"}) {
+    auto symbols = predicateQuerySymbols(env, expression);
+    REQUIRE(symbols);
+    REQUIRE(symbols->size() == 1);
+    CHECK(symbols->front().name == "ANIMALS");
+    auto location = symbols->front().location;
+    CHECK(std::string_view(expression)
+              .substr(location.offset, location.size)
+              .find("ANIMALS") != std::string_view::npos);
+  }
+  auto explicitQuery =
+      predicateQuerySymbols(env, "**.warningSign == \"ANIMALS\"");
+  REQUIRE(explicitQuery);
+  CHECK(explicitQuery->empty());
 }

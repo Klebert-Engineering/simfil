@@ -54,7 +54,9 @@ def manifest(args):
     source, build, binary = args.source.resolve(), args.build.resolve(), args.binary.resolve()
     paths = ["include", "src", "CMakeLists.txt", "cmake/deps.cmake"]
     names = command(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *paths], source)
-    files = {name: digest(source / name) for name in sorted(set(names.split("\0"))) if name}
+    # Tracked deletions are part of the candidate, not missing evidence to ignore.
+    files = {name: digest(source / name) if (source / name).exists() else None
+             for name in sorted(set(names.split("\0"))) if name}
     cache = {}
     for line in (build / "CMakeCache.txt").read_text().splitlines():
         if "=" in line and not line.startswith(("#", "//")):
@@ -112,11 +114,20 @@ class MatrixRunner:
             if reference["configuration"].get(key) != candidate["configuration"].get(key):
                 raise ValueError(f"Reference and candidate differ in {key}")
         common = reference["compiler_options"].keys() & candidate["compiler_options"].keys()
-        if not {"src/model/model.cpp", "src/model/schema.cpp", "src/expressions.cpp"} <= common:
+        if not {"src/model/model.cpp", "src/expressions.cpp"} <= common:
             raise ValueError("Missing core compilation commands in build manifest")
         for source in common:
             if reference["compiler_options"][source] != candidate["compiler_options"][source]:
                 raise ValueError(f"Reference and candidate compile {source} with different options")
+        # The graph implementation moved; compare its flags without pretending
+        # the removed virtual-schema file still exists in the candidate.
+        schema_sources = ("src/model/schema-pool.cpp", "src/model/schema-index.cpp", "src/model/schema-query.cpp")
+        reference_schema = reference["compiler_options"].get("src/model/schema.cpp")
+        if reference_schema is None or not set(schema_sources) <= candidate["compiler_options"].keys():
+            raise ValueError("Missing schema compilation commands in build manifest")
+        for source in schema_sources:
+            if candidate["compiler_options"][source] != reference_schema:
+                raise ValueError(f"Reference and candidate schema sources compile with different options: {source}")
         self.layouts = []
         available = os.sched_getaffinity(0)
         for entry in args.layout or ["single:main:4", "smt:main:4,5,6,7", "physical:main:4,6,8,10",
@@ -228,8 +239,8 @@ def main():
     for name in ("reference", "candidate", "output"):
         run.add_argument("--" + name, required=True, type=Path)
     run.add_argument("--layout", action="append", help="Repeat NAME:main|worker:CPU[,CPU...]; defaults to original five layouts")
-    run.add_argument("--representation", nargs="+", choices=["callback", "bound", "separate", "pool", "pool-separate"],
-                     default=["bound", "separate", "pool", "pool-separate"])
+    run.add_argument("--representation", nargs="+", choices=["environment", "pool", "pool-separate"],
+                     default=["pool", "pool-separate"])
     run.add_argument("--query", nargs="+", choices=["basic", "plans", "exact"], default=["basic", "plans", "exact"])
     for name, default in (("rounds", 7), ("objects", 2000), ("branches", 32), ("queries", 200), ("warmups", 3), ("timeout", 180)):
         run.add_argument("--" + name, type=int, default=default)

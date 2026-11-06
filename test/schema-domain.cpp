@@ -1,5 +1,5 @@
 #include "common.hpp"
-#include "simfil/model/schema-model.h"
+#include "simfil/model/schema-node.h"
 #include "simfil/model/schema-pool.h"
 #include "simfil/function.h"
 #include "simfil/overlay.h"
@@ -8,65 +8,23 @@
 #include <bitsery/adapter/buffer.h>
 #include <bitsery/bitsery.h>
 #include <bitsery/traits/string.h>
-#include <map>
 
 using namespace simfil;
 
 namespace
 {
 
-/** Own a small graph and its namespace exactly as an external registry binding would. */
-struct TypeGraph
-{
-    std::shared_ptr<StringPool> strings = std::make_shared<StringPool>();
-    std::shared_ptr<std::map<TypeId, std::unique_ptr<Schema>>> graph =
-        std::make_shared<std::map<TypeId, std::unique_ptr<Schema>>>();
-
-    /** Add a named field/enum string to this fixture's private namespace. */
-    auto name(std::string_view name) -> StringId { return strings->emplace(name).value(); }
-
-    /** Construct a definition without imposing another registry implementation on the API. */
-    template<class T, class... Args>
-    auto add(TypeId id, Args&&... args) -> T&
-    {
-        auto schema = std::make_unique<T>(std::forward<Args>(args)...);
-        auto& result = *schema;
-        (*graph)[id] = std::move(schema);
-        return result;
-    }
-
-    /** Capture graph ownership rather than a temporary Environment reference. */
-    auto lookup() const -> Schema::Lookup
-    {
-        return [graph = graph](TypeId id) -> const Schema* {
-            auto found = graph->find(id);
-            return found == graph->end() ? nullptr : found->second.get();
-        };
-    }
-
-    /** Prepare reachability once, outside completion/evaluation hot loops. */
-    void finalize()
-    {
-        for (auto& [id, schema] : *graph)
-            schema->finalize([this](TypeId id) -> Schema* {
-                auto found = graph->find(id);
-                return found == graph->end() ? nullptr : found->second.get();
-            });
-    }
-
-    /** Return owning completion strings without ever creating sample ModelNodes. */
-    auto complete(std::string_view query, TypeId root = 1, CompletionOptions options = {},
+/** Complete against a canonical root without executing sample values or functions. */
+auto completeType(SchemaType root, std::string_view query, CompletionOptions options = {},
                   std::optional<std::size_t> cursor = {}) -> std::vector<CompletionCandidate>
-    {
-        Environment env(strings);
-        env.querySchemaCallback = lookup();
-        options.showWildcardHints = false;
-        auto result = simfil::complete(env, query, cursor.value_or(query.size()), root, options);
-        INFO(query);
-        REQUIRE(result);
-        return *result;
-    }
-};
+{
+    Environment env(root.pool()->strings());
+    options.showWildcardHints = false;
+    auto result = simfil::complete(env, query, cursor.value_or(query.size()), root, options);
+    INFO(query);
+    REQUIRE(result);
+    return *result;
+}
 
 /** Model an array whose named lookups do not participate in element iteration. */
 class NamedArrayPool : public ModelPool
@@ -112,28 +70,6 @@ auto contains(const std::vector<CompletionCandidate>& candidates, std::string_vi
     return std::ranges::any_of(candidates, [&](const auto& candidate) { return candidate.text == text; });
 }
 
-/** Emulate a registry binding that does not inherit the builtin ObjectSchema implementation. */
-class ForeignSchema : public Schema
-{
-public:
-    ObjectSchema definition;
-    bool indexed = true;
-    auto kind() const -> Kind override { return definition.kind(); }
-    auto canHaveField(StringId name) const -> bool override { return !indexed || definition.canHaveField(name); }
-    auto reachabilityComplete() const -> bool override { return indexed && definition.reachabilityComplete(); }
-    auto nestedFields() const & -> std::span<const StringId> override
-    {
-        return indexed ? definition.nestedFields() : std::span<const StringId>{};
-    }
-    auto directFields() const & -> std::span<const StringId> override { return definition.directFields(); }
-    auto fieldSchema(StringId field) const -> TypeId override { return definition.fieldSchema(field); }
-    auto finalize(const std::function<Schema*(TypeId)>& lookup) -> State override { return definition.finalize(lookup); }
-    void forEachDirectField(const std::function<void(StringId, std::span<const TypeId>)>& fn) const override
-    {
-        definition.forEachDirectField(fn);
-    }
-};
-
 /** Verify that completion does not invoke even registered constant-looking functions. */
 class InvocationProbe : public Function
 {
@@ -152,42 +88,27 @@ public:
     }
 };
 
-/** Keep operand alias behavior on the root schema, as registry-backed attribute bindings do. */
-class AliasSchema : public ObjectSchema
+/** Supply a domain-specific operand alias from the actual canonical owner. */
+class AliasPool : public SchemaPool
 {
-public:
-    StringId alias = 0;
-    SchemaPath path;
-    auto scalarFieldPathsForSymbol(StringId name, const Lookup&) const -> std::vector<SchemaPath> override
+protected:
+    auto scalarFieldPathsForSymbol(TypeId root, StringId name) const -> std::vector<SchemaPath> override
     {
-        return name == alias ? std::vector<SchemaPath>{path} : std::vector<SchemaPath>{};
+        if (root != TypeId{1} || name != dictionary().get("alias"))
+            return {};
+        return {{{SchemaPathSegment::Kind::Field, dictionary().get("child")},
+                 {SchemaPathSegment::Kind::Field, dictionary().get("mode")}}};
     }
 };
 
-/** A lookup-only alias stays out of canonical field enumeration and yields to real members. */
-class LookupAliasSchema : public ObjectSchema
+/** Exercise malformed owner storage that cannot be created through typed public edges. */
+class MalformedSchemaPool : public SchemaPool
 {
 public:
-    StringId alias = 0, target = 0;
-    auto canonicalField(StringId field) const -> StringId override
+    /** Inject an unresolved nonzero ID for publication's reference validator. */
+    void addDanglingField(SchemaObjectType parent)
     {
-        return field == alias && std::ranges::find(directFields(), field) == directFields().end()
-            ? target : field;
-    }
-    auto canHaveField(StringId field) const -> bool override
-    {
-        return ObjectSchema::canHaveField(canonicalField(field));
-    }
-};
-
-/** Runtime adapter whose declared literals intentionally are not interned in its data pool. */
-class TextEnumDomain : public ValueSchema
-{
-public:
-    /** Match the producer-owned literal without writing it to the data dictionary. */
-    auto hasDirectEnumSymbol(std::string_view symbol, StringPool const&) const -> bool override
-    {
-        return symbol == "READY";
+        addFieldSchema(parent.id(), "bad", MaxTypeId);
     }
 };
 
@@ -195,32 +116,34 @@ public:
 
 TEST_CASE("Packed schema kinds preserve extension affinity and concrete names", "[model.schema-type]")
 {
-    TypeGraph d;
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"identifier", "missing"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
     constexpr StringId featureName = 200;
-    d.strings->addStaticKey(featureName, "Feature");
-    auto kind = Schema::makeKind(featureName, valueTypeAffinity(ValueType::Object));
-    auto& root = d.add<ObjectSchema>(1);
-    root.setKind(kind);
+    graph->strings()->addStaticKey(featureName, "Feature");
+    auto kind = SchemaType::makeKind(featureName, valueTypeAffinity(ValueType::Object));
+    root.setKindName(featureName);
+    REQUIRE(root.kind() == kind);
     root.setTypeName("RoadLink");
-    root.addField(d.name("identifier"), {2}, true);
-    d.add<ValueSchema>(2, Schema::Kind::Int);
-    d.finalize();
-    REQUIRE(Schema::kindNameId(root.kind()) == featureName);
+    root.addField("identifier", integer).setRequired(true);
+    graph->finalize();
+    REQUIRE(SchemaType::kindNameId(root.kind()) == featureName);
     REQUIRE(root.hasAffinity(ValueType::Object));
     REQUIRE_FALSE(root.hasAffinity(ValueType::Array));
-    REQUIRE(root.fieldRequired(d.name("identifier")) == true);
-    REQUIRE_FALSE(root.fieldRequired(d.name("missing")).has_value());
-    auto path = Schema::firstScalarFieldPath(1, d.lookup());
+    REQUIRE(root.field(graph->dictionary().get("identifier")).required() == true);
+    REQUIRE_FALSE(root.field(graph->dictionary().get("missing")).required().has_value());
+    auto path = root.firstScalarFieldPath();
     REQUIRE(path);
-    REQUIRE(path->front().field == d.name("identifier"));
-    REQUIRE(contains(d.complete("iden"), "identifier"));
+    REQUIRE(path->front().field == graph->dictionary().get("identifier"));
+    REQUIRE(contains(completeType(root, "iden"), "identifier"));
 
-    auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
-    auto node = model->root(1);
+    auto node = root.modelNode();
     REQUIRE(node->type() == ValueType::Object);
     REQUIRE(node->schema() == NoTypeId);
-    REQUIRE(model->materializedNodeCount() == 2);
-    REQUIRE(std::get<std::string>(node->get(StringPool::SchemaKind)->value()) == "Feature");
+    REQUIRE(node->describedType() == root);
+    REQUIRE(std::get<std::string_view>(node->get(StringPool::SchemaKind)->value()) == "Feature");
     auto json = node->toJson();
     REQUIRE(json["kind"] == "Feature");
     REQUIRE(json["typename"] == "RoadLink");
@@ -231,59 +154,68 @@ TEST_CASE("Packed schema kinds preserve extension affinity and concrete names", 
 
 TEST_CASE("Portable enum predicates do not require runtime enum dictionary entries", "[model.schema-type]")
 {
-    TypeGraph compileDomains;
-    auto& root = compileDomains.add<ObjectSchema>(1);
-    root.addField(compileDomains.name("mode"), {2});
-    root.setOpen(true);
-    compileDomains.add<ValueSchema>(2, Schema::Kind::String).addEnumSymbol(compileDomains.name("READY"));
-    compileDomains.finalize();
-    Environment compileEnv(compileDomains.strings);
-    compileEnv.querySchemaCallback = compileDomains.lookup();
+    auto compileGraph = std::make_shared<SchemaPool>();
+    auto compileRoot = compileGraph->newObjectType();
+    auto compileEnum = compileGraph->newEnumType();
+    compileRoot.addField("mode", compileEnum);
+    compileRoot.setOpen(true);
+    compileEnum.addSymbol("READY");
+    compileGraph->finalize();
+    Environment compileEnv(compileGraph->strings());
     auto ast = compile(compileEnv, "READY", CompileOptions{
-        .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = 1});
+        .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = compileRoot});
     REQUIRE(ast);
     REQUIRE((*ast)->expr().toString().find("schema-enum") != std::string::npos);
 
-    TypeGraph runtimeDomains;
-    runtimeDomains.add<ObjectSchema>(1).addField(runtimeDomains.name("mode"), {2});
-    runtimeDomains.add<TextEnumDomain>(2);
-    runtimeDomains.finalize();
-    Environment runtimeEnv(runtimeDomains.strings);
-    runtimeEnv.querySchemaCallback = runtimeDomains.lookup();
-    auto model = std::make_shared<ModelPool>(runtimeDomains.strings);
+    auto runtimeGraph = std::make_shared<SchemaPool>();
+    REQUIRE(runtimeGraph->strings()->emplace("padding"));
+    auto runtimeRoot = runtimeGraph->newObjectType();
+    auto runtimeEnum = runtimeGraph->newEnumType();
+    runtimeRoot.addField("mode", runtimeEnum);
+    runtimeEnum.addSymbol("READY");
+    runtimeGraph->finalize();
+    auto model = std::make_shared<ModelPool>();
+    model->setSchemaPool(runtimeGraph);
     auto matching = model->newObject();
+    REQUIRE(matching->setSchema(runtimeRoot.id()));
     REQUIRE(matching->addField("mode", std::string_view("READY")));
     model->addRoot(matching);
-    auto before = runtimeDomains.strings->size();
-    auto values = eval(runtimeEnv, **ast, *model->root(0).value(), nullptr);
+    Environment runtimeEnv(model->strings());
+    auto before = model->strings()->size();
+    auto values = eval(runtimeEnv, **ast, *matching, nullptr);
     REQUIRE(values);
     REQUIRE(values->size() == 1);
     REQUIRE(values->front().as<ValueType::Bool>());
-    REQUIRE(runtimeDomains.strings->get("READY") == StringPool::Empty);
-    REQUIRE(runtimeDomains.strings->size() == before);
+    REQUIRE(model->strings()->get("READY") == StringPool::Empty);
+    REQUIRE(model->strings()->size() == before);
     auto unrelated = model->newObject();
+    REQUIRE(unrelated->setSchema(runtimeRoot.id()));
     REQUIRE(unrelated->addField("unrelated", std::string_view("READY")));
-    model->addRoot(unrelated);
-    values = eval(runtimeEnv, **ast, *model->root(1).value(), nullptr);
+    values = eval(runtimeEnv, **ast, *unrelated, nullptr);
     REQUIRE(values);
     REQUIRE_FALSE(values->front().as<ValueType::Bool>());
 }
 
 TEST_CASE("Descriptor nodes query metadata and retain graph ownership", "[model.schema-type]")
 {
-    TypeGraph d;
-    d.add<ObjectSchema>(1).addField(d.name("items"), {2});
-    d.add<ArraySchema>(2).addElementSchemas({3});
-    d.add<ObjectSchema>(3).addField(d.name("name"), {4}, false);
-    auto& value = d.add<ValueSchema>(4, Schema::Kind::String);
-    value.addEnumSymbol(d.name("urban"));
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"items", "name", "urban"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto items = graph->newArrayType();
+    auto item = graph->newObjectType();
+    auto value = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("items", items);
+    items.addElement(item);
+    item.addField("name", value).setRequired(false);
+    value.asEnum().addSymbol("urban");
     value.setNullable(true);
-    d.finalize();
-    auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
-    auto node = model->root(1);
-    std::weak_ptr owner = d.graph;
-    d.graph.reset();
-    Environment env(model->strings());
+    graph->finalize();
+    auto node = root.modelNode();
+    std::weak_ptr owner = graph;
+    auto strings = graph->strings();
+    graph.reset();
+    Environment env(strings);
     auto query = compile(env, "fields.items.elements[0].fields.name.kind", false);
     REQUIRE(query);
     auto values = eval(env, **query, *node, nullptr);
@@ -294,7 +226,6 @@ TEST_CASE("Descriptor nodes query metadata and retain graph ownership", "[model.
     REQUIRE(json["fields"]["items"]["elements"][0]["fields"]["name"]["required"] == false);
     REQUIRE(json["fields"]["items"]["elements"][0]["fields"]["name"]["nullable"] == true);
     REQUIRE_FALSE(owner.expired());
-    model.reset();
     REQUIRE(node->toJson() == json);
     node = {};
     REQUIRE(owner.expired());
@@ -302,85 +233,102 @@ TEST_CASE("Descriptor nodes query metadata and retain graph ownership", "[model.
 
 TEST_CASE("Schema descriptors bound recursion and expansion explicitly", "[model.schema-type]")
 {
-    TypeGraph d;
-    d.add<ObjectSchema>(1).addField(d.name("next"), {1});
-    d.finalize();
-    auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
-    auto json = model->root(1)->toJson();
-    REQUIRE(json["$ref"] == 1);
-    REQUIRE(json["fields"]["next"]["$ref"] == 1);
+    auto graph = std::make_shared<SchemaPool>();
+    auto root = graph->newObjectType();
+    root.addField("next", root);
+    graph->finalize();
+    auto node = root.modelNode();
+    auto json = node->toJson();
+    REQUIRE(json["$ref"] == root.id());
+    REQUIRE(json["fields"]["next"]["$ref"] == root.id());
     REQUIRE(json["fields"]["next"]["truncated"] == "cycle");
-    REQUIRE_FALSE(model->exhausted());
-    auto tiny = std::make_shared<SchemaModel>(d.strings, d.lookup(), 2);
-    REQUIRE(tiny->root(1)->toJson()["fields"]["truncated"] == "node-budget");
-    REQUIRE(tiny->materializedNodeCount() == 2);
-    REQUIRE(tiny->exhausted());
+    REQUIRE_THROWS_AS(node->toJson({.maxNodes = 2}), std::length_error);
+    // A failed export cannot poison subsequent navigation or serialization.
+    REQUIRE(node->toJson() == json);
+    auto next = node->get(StringPool::SchemaFields)->get(graph->dictionary().get("next"));
+    REQUIRE(next->get(StringPool::SchemaFields));
 }
 
 TEST_CASE("Implicit schema unions retain all type references",
           "[model.schema-type]")
 {
-    TypeGraph d;
-    d.add<ObjectSchema>(1).addField(d.name("choice"), {2, 3});
-    d.add<ValueSchema>(2, Schema::Kind::Int);
-    d.add<ValueSchema>(3, Schema::Kind::String);
-    d.finalize();
-    auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
-    auto json = model->root(1)->toJson();
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"choice"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("choice", integer).addType(text);
+    graph->finalize();
+    auto json = root.modelNode()->toJson();
     REQUIRE(json["fields"]["choice"]["kind"] == "union");
     REQUIRE(json["fields"]["choice"]["$ref"] == nlohmann::json::array({2, 3}));
     REQUIRE(json["fields"]["choice"]["alternatives"][0]["kind"] == "integer");
     REQUIRE(json["fields"]["choice"]["alternatives"][1]["kind"] == "string");
 }
 
-TEST_CASE("Schema projections do not hide deep matches or allocation exhaustion", "[model.schema-type]")
+TEST_CASE("Schema projections report traversal exhaustion without hiding deep matches", "[model.schema-type]")
 {
-    TypeGraph d;
-    for (TypeId id = 1; id < 80; ++id)
-        d.add<ObjectSchema>(id).addField(d.name("next"), {TypeId(id + 1)});
-    d.add<ValueSchema>(80, Schema::Kind::String).setTypeName("DeepTarget");
-    d.finalize();
-    Environment env(d.strings);
+    auto graph = std::make_shared<SchemaPool>();
+    std::vector<SchemaObjectType> chain;
+    for (size_t i = 0; i < 79; ++i)
+        chain.push_back(graph->newObjectType());
+    auto leaf = graph->newScalarType(SchemaType::Kind::String);
+    leaf.setTypeName("DeepTarget");
+    for (size_t i = 0; i < chain.size(); ++i)
+        chain[i].addField("next", i + 1 == chain.size() ? SchemaType(leaf) : chain[i + 1]);
+    graph->finalize();
+    auto node = chain.front().modelNode();
+    Environment env(graph->strings());
     auto ast = compile(env, "**.typename", false);
     REQUIRE(ast);
-    auto model = std::make_shared<SchemaModel>(d.strings, d.lookup());
-    auto values = eval(env, **ast, *model->root(1), nullptr);
+    auto values = eval(env, **ast, *node, nullptr);
     REQUIRE(values);
     REQUIRE(values->size() == 1);
     REQUIRE(values->front().as<ValueType::String>() == "DeepTarget");
-    REQUIRE_FALSE(model->exhausted());
 
-    auto tiny = std::make_shared<SchemaModel>(d.strings, d.lookup(), 10);
-    REQUIRE(eval(env, **ast, *tiny->root(1), nullptr));
-    // A scalar projection never emits the terminal marker. The caller still needs the signal.
-    REQUIRE(tiny->exhausted());
+    size_t emitted = 0;
+    auto bounded = eval(env, **ast, *node,
+        LambdaResultFn([&](Context, Value const&) { ++emitted; return Result::Continue; }),
+        EvaluationOptions{.maxWork = 10});
+    REQUIRE(bounded);
+    REQUIRE(bounded->reason == EvaluationSummary::Reason::WorkLimit);
+    REQUIRE(emitted == 0);
+    values = eval(env, **ast, *node, nullptr);
+    REQUIRE(values);
+    REQUIRE(values->front().as<ValueType::String>() == "DeepTarget");
 }
 
 TEST_CASE("Type completion follows array indices and logical alternatives", "[completion.type]")
 {
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("items"), {2});
-    root.addField(d.name("choice"), {5});
-    d.add<ArraySchema>(2).addElementSchemas({3, 4});
-    d.add<ObjectSchema>(3).addField(d.name("name"), {4});
-    d.add<ValueSchema>(4, Schema::Kind::String);
-    auto& choice = d.add<CombinedSchema>(5, Schema::Composition::AnyOf);
-    choice.addAlternative(3);
-    choice.addAlternative(4);
-    d.finalize();
-    REQUIRE(contains(d.complete("items[17].na"), "name"));
-    REQUIRE(contains(d.complete("items[-1].na"), "name"));
-    REQUIRE(contains(d.complete("items.*.na"), "name"));
-    REQUIRE(contains(d.complete("items.*{name == \"x\"}.na"), "name"));
-    REQUIRE(contains(d.complete("choice.na"), "name"));
-    REQUIRE(contains(d.complete("false and choice.na"), "name"));
-    REQUIRE(contains(d.complete("true or choice.na"), "name"));
-    REQUIRE(contains(d.complete("missing_function(choice.na)"), "name") == false);
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"items", "choice", "name"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto items = graph->newArrayType();
+    auto item = graph->newObjectType();
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    auto choice = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    root.addField("items", items);
+    root.addField("choice", choice);
+    items.addElement(item);
+    items.addElement(text);
+    item.addField("name", text);
+    choice.addAlternative(item);
+    choice.addAlternative(text);
+    graph->finalize();
+    REQUIRE(contains(completeType(root, "items[17].na"), "name"));
+    REQUIRE(contains(completeType(root, "items[-1].na"), "name"));
+    REQUIRE(contains(completeType(root, "items.*.na"), "name"));
+    REQUIRE(contains(completeType(root, "items.*{name == \"x\"}.na"), "name"));
+    REQUIRE(contains(completeType(root, "choice.na"), "name"));
+    REQUIRE(contains(completeType(root, "false and choice.na"), "name"));
+    REQUIRE(contains(completeType(root, "true or choice.na"), "name"));
+    REQUIRE(contains(completeType(root, "missing_function(choice.na)"), "name") == false);
     auto query = std::string("missing_function(choice.na)");
-    REQUIRE(contains(d.complete(query, 1, {}, query.size() - 1), "name"));
-    REQUIRE(contains(d.complete(""), "items"));
-    auto json = std::make_shared<SchemaModel>(d.strings, d.lookup())->root(1)->toJson();
+    REQUIRE(contains(completeType(root, query, {}, query.size() - 1), "name"));
+    REQUIRE(contains(completeType(root, ""), "items"));
+    auto json = root.modelNode()->toJson();
     REQUIRE(json["fields"]["choice"]["kind"] == "union");
     REQUIRE(json["fields"]["choice"]["alternatives"].size() == 2);
     REQUIRE_FALSE(json["fields"]["choice"].contains("elements"));
@@ -388,67 +336,76 @@ TEST_CASE("Type completion follows array indices and logical alternatives", "[co
 
 TEST_CASE("Type completion scopes enums to the compared operand", "[completion.type]")
 {
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("mode"), {2});
-    root.addField(d.name("other"), {3});
-    auto& mode = d.add<ValueSchema>(2, Schema::Kind::String);
-    mode.addEnumSymbol(d.name("urban"));
-    mode.addEnumSymbol(d.name("rural"));
-    d.add<ValueSchema>(3, Schema::Kind::String).addEnumSymbol(d.name("unrelated"));
-    d.finalize();
-    auto suggestions = d.complete("mode == u");
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"mode", "other", "urban", "rural", "unrelated"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto mode = graph->newScalarType(SchemaType::Kind::String);
+    auto other = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("mode", mode);
+    root.addField("other", other);
+    mode.asEnum().addSymbol("urban");
+    mode.asEnum().addSymbol("rural");
+    other.asEnum().addSymbol("unrelated");
+    graph->finalize();
+    auto suggestions = completeType(root, "mode == u");
     REQUIRE(contains(suggestions, "\"urban\""));
     REQUIRE_FALSE(contains(suggestions, "\"unrelated\""));
-    REQUIRE(contains(d.complete("mode == "), "\"urban\""));
-    REQUIRE(contains(d.complete("mode == 'u"), "\"urban\""));
-    REQUIRE(contains(d.complete("mode == r'u"), "\"urban\""));
-    REQUIRE(contains(d.complete("ur"), "\"urban\""));
+    REQUIRE(contains(completeType(root, "mode == "), "\"urban\""));
+    REQUIRE(contains(completeType(root, "mode == 'u"), "\"urban\""));
+    REQUIRE(contains(completeType(root, "mode == r'u"), "\"urban\""));
+    REQUIRE(contains(completeType(root, "ur"), "\"urban\""));
     CompletionOptions limited;
     limited.limit = 1;
-    REQUIRE(d.complete("", 1, limited).size() <= 1);
+    REQUIRE(completeType(root, "", limited).size() <= 1);
     limited.maxSchemaVisits = 0;
-    REQUIRE(d.complete("", 1, limited).empty());
+    REQUIRE(completeType(root, "", limited).empty());
 }
 
 TEST_CASE("Open and unresolved descendants do not prove fields absent", "[model.schema-type]")
 {
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("known"), {2});
-    d.add<ValueSchema>(2, Schema::Kind::Int);
-    d.finalize();
-    REQUIRE(root.reachabilityComplete());
-    REQUIRE_FALSE(root.canHaveField(d.name("missing")));
-    root.addField(d.name("unknown"));
-    d.finalize();
-    REQUIRE_FALSE(root.reachabilityComplete());
-    REQUIRE(root.canHaveField(d.name("missing")));
-    auto& open = d.add<ObjectSchema>(3);
+    auto graph = std::make_shared<SchemaPool>();
+    auto closed = graph->newObjectType();
+    auto unknown = graph->newObjectType();
+    auto open = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    closed.addField("known", integer);
+    unknown.addField("known", integer);
+    unknown.addField("unknown");
     open.setOpen(true);
-    d.finalize();
-    REQUIRE(open.canHaveField(d.name("anything")));
-    REQUIRE(Schema::fieldSchemas(3, d.lookup(), d.name("anything")) == std::vector<TypeId>{NoTypeId});
+    auto missing = graph->strings()->emplace("missing").value();
+    auto anything = graph->strings()->emplace("anything").value();
+    graph->finalize();
+    REQUIRE(closed.reachabilityComplete());
+    REQUIRE_FALSE(closed.canHaveField(missing));
+    REQUIRE_FALSE(unknown.reachabilityComplete());
+    REQUIRE(unknown.canHaveField(missing));
+    REQUIRE(open.canHaveField(anything));
+    REQUIRE(std::ranges::equal(open.fieldTypes(anything), std::vector<TypeId>{NoTypeId}));
+    REQUIRE_THROWS(closed.addField("unknown"));
 }
 
 TEST_CASE("Recursive enum rewrites follow real paths without unrelated string matches", "[model.schema-type]")
 {
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("status"), {2});
-    root.addField(d.name("next"), {1});
-    root.addField(d.name("unrelated"), {3});
-    d.add<ValueSchema>(2, Schema::Kind::String).addEnumSymbol(d.name("READY"));
-    d.add<ValueSchema>(3, Schema::Kind::String);
-    d.finalize();
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"status", "next", "unrelated", "READY"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto status = graph->newScalarType(SchemaType::Kind::String);
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("status", status);
+    root.addField("next", root);
+    root.addField("unrelated", text);
+    status.asEnum().addSymbol("READY");
+    graph->finalize();
     bool complete = true;
-    REQUIRE_FALSE(Schema::enumSymbolPaths(1, d.lookup(), d.name("READY"), &complete).empty());
+    REQUIRE_FALSE(root.enumSymbolPaths(graph->dictionary().get("READY"), &complete).empty());
     REQUIRE_FALSE(complete);
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
-    auto ast = compile(env, "READY", CompileOptions{false, RewriteMode::Schema, 1});
+    Environment env(graph->strings());
+    env.setSchema(root);
+    auto ast = compile(env, "READY", CompileOptions{false, RewriteMode::Schema, root});
     REQUIRE(ast);
-    auto model = std::make_shared<ModelPool>(d.strings);
+    auto model = std::make_shared<ModelPool>(graph->strings());
     auto first = model->newObject();
     auto second = model->newObject();
     auto third = model->newObject();
@@ -462,30 +419,29 @@ TEST_CASE("Recursive enum rewrites follow real paths without unrelated string ma
     result = eval(env, **ast, *first, nullptr);
     REQUIRE(result);
     REQUIRE(result->front().isBool(true));
-    auto references = referencedSchemaPaths(env, **ast, 1);
+    auto references = referencedSchemaPaths(env, **ast, root);
     REQUIRE(references);
     REQUIRE(references->hasUnresolvedAccess);
     REQUIRE(referencedQueryTerms(**ast).stringLiterals.contains("READY"));
-    REQUIRE(contains(d.complete("next.next.st"), "status"));
+    REQUIRE(contains(completeType(root, "next.next.st"), "status"));
 }
 
 TEST_CASE("Combined types retain intersection and exclusive union semantics", "[model.schema-type]")
 {
-    TypeGraph d;
-    auto& combined = d.add<CombinedSchema>(1, Schema::Composition::AllOf);
-    combined.addAlternative(2);
-    combined.addAlternative(3);
-    d.add<ValueSchema>(2, Schema::Kind::Int);
-    d.add<ValueSchema>(3, Schema::Kind::String);
-    d.finalize();
-    REQUIRE(Schema::affinities(combined.kind()) == 0);
-    auto json = std::make_shared<SchemaModel>(d.strings, d.lookup())->root(1)->toJson();
+    auto graph = std::make_shared<SchemaPool>();
+    auto combined = graph->newCompositionType(SchemaType::Composition::AllOf);
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    auto exclusive = graph->newCompositionType(SchemaType::Composition::OneOf);
+    combined.addAlternative(integer);
+    combined.addAlternative(text);
+    exclusive.addAlternative(integer);
+    exclusive.addAlternative(text);
+    graph->finalize();
+    REQUIRE(SchemaType::affinities(combined.kind()) == 0);
+    auto json = combined.modelNode()->toJson();
     REQUIRE(json["kind"] == "intersection");
     REQUIRE(json["alternatives"].size() == 2);
-    auto& exclusive = d.add<CombinedSchema>(4, Schema::Composition::OneOf);
-    exclusive.addAlternative(2);
-    exclusive.addAlternative(3);
-    d.finalize();
     REQUIRE(exclusive.hasAffinity(ValueType::Int));
     REQUIRE(exclusive.hasAffinity(ValueType::String));
     REQUIRE_FALSE(exclusive.hasAffinity(ValueType::Object));
@@ -493,25 +449,28 @@ TEST_CASE("Combined types retain intersection and exclusive union semantics", "[
 
 TEST_CASE("Unrestricted and impossible types do not share pruning semantics", "[model.schema-type]")
 {
-    TypeGraph d;
-    d.add<CombinedSchema>(1, Schema::Composition::AllOf);
-    d.add<CombinedSchema>(2, Schema::Composition::AnyOf);
-    d.add<Schema>(3).setKind(Schema::Kind::Never);
-    d.add<CombinedSchema>(4, Schema::Composition::AllOf).addAlternative(1);
-    d.finalize();
-    auto name = d.name("x");
-    REQUIRE(d.lookup()(1)->canHaveField(name));
-    REQUIRE(d.lookup()(4)->canHaveField(name));
-    REQUIRE_FALSE(d.lookup()(2)->canHaveField(name));
-    REQUIRE_FALSE(d.lookup()(3)->canHaveField(name));
-    REQUIRE(Schema::fieldSchemas(1, d.lookup(), name) == std::vector<TypeId>{NoTypeId});
-    REQUIRE(Schema::itemSchemas(1, d.lookup()) == std::vector<TypeId>{NoTypeId});
-    auto model = std::make_shared<ModelPool>(d.strings);
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"x"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto unrestricted = graph->newCompositionType(SchemaType::Composition::AllOf);
+    auto emptyUnion = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    auto never = graph->newType(SchemaType::Kind::Never);
+    auto nestedIntersection = graph->newCompositionType(SchemaType::Composition::AllOf);
+    nestedIntersection.addAlternative(unrestricted);
+    graph->finalize();
+    auto name = graph->dictionary().get("x");
+    REQUIRE(unrestricted.canHaveField(name));
+    REQUIRE(nestedIntersection.canHaveField(name));
+    REQUIRE_FALSE(emptyUnion.canHaveField(name));
+    REQUIRE_FALSE(never.canHaveField(name));
+    REQUIRE(std::ranges::equal(unrestricted.fieldTypes(name), std::vector<TypeId>{NoTypeId}));
+    REQUIRE(std::ranges::equal(unrestricted.itemTypes(), std::vector<TypeId>{NoTypeId}));
+    auto model = std::make_shared<ModelPool>(graph->strings());
     auto root = model->newObject();
     root->addField("x", int64_t{42});
     root->setSchema(1);
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
+    Environment env(graph->strings());
+    env.setSchema(unrestricted);
     auto ast = compile(env, "**.x", false);
     REQUIRE(ast);
     auto result = eval(env, **ast, *root, nullptr);
@@ -521,111 +480,113 @@ TEST_CASE("Unrestricted and impossible types do not share pruning semantics", "[
 
 TEST_CASE("Type completion preserves source ranges escaping and literal enums", "[completion.type]")
 {
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("weird.field"), {2});
-    root.addField(d.name("mode"), {2});
-    root.addField(d.name("READY"), {3});
-    auto& value = d.add<ValueSchema>(2);
-    value.addEnumSymbol(d.name("READY"));
-    value.addEnumSymbol(d.name("a\"b\\c"));
-    value.addEnumValue(int64_t{42});
-    value.addEnumValue(true);
-    value.addEnumValue(std::monostate{});
-    d.add<ValueSchema>(3, Schema::Kind::Int);
-    d.finalize();
-    auto stringsBefore = d.strings->size();
-    REQUIRE(contains(d.complete("we"), "[\"weird.field\"]"));
-    REQUIRE(contains(d.complete("READY"), "READY"));
-    REQUIRE_FALSE(contains(d.complete("READY"), "\"READY\""));
-    REQUIRE(contains(d.complete("mode == R"), "\"READY\""));
-    REQUIRE(contains(d.complete("mode == "), "42"));
-    REQUIRE(contains(d.complete("mode == "), "true"));
-    REQUIRE(contains(d.complete("mode == "), "null"));
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"weird.field", "mode", "READY", "a\"b\\c"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto value = graph->newScalarType(SchemaType::Kind::Value);
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    root.addField("weird.field", value);
+    root.addField("mode", value);
+    root.addField("READY", integer);
+    value.asEnum().addSymbol("READY");
+    value.asEnum().addSymbol("a\"b\\c");
+    value.asEnum().addValue(int64_t{42});
+    value.asEnum().addValue(true);
+    value.asEnum().addValue(std::monostate{});
+    graph->finalize();
+    auto stringsBefore = graph->strings()->size();
+    REQUIRE(contains(completeType(root, "we"), "[\"weird.field\"]"));
+    REQUIRE(contains(completeType(root, "READY"), "READY"));
+    REQUIRE_FALSE(contains(completeType(root, "READY"), "\"READY\""));
+    REQUIRE(contains(completeType(root, "mode == R"), "\"READY\""));
+    REQUIRE(contains(completeType(root, "mode == "), "42"));
+    REQUIRE(contains(completeType(root, "mode == "), "true"));
+    REQUIRE(contains(completeType(root, "mode == "), "null"));
 
     auto query = std::string("mode == 'a' and true");
-    auto candidates = d.complete(query, 1, {}, query.find("a'") + 1);
+    auto candidates = completeType(root, query, {}, query.find("a'") + 1);
     auto escaped = std::ranges::find(candidates, "\"a\\\"b\\\\c\"", &CompletionCandidate::text);
     REQUIRE(escaped != candidates.end());
     REQUIRE(escaped->location.offset == 8);
     REQUIRE(escaped->location.size == 3);
-    Environment env(d.strings);
+    Environment env(graph->strings());
     REQUIRE(compile(env, query.replace(escaped->location.offset, escaped->location.size, escaped->text), false));
 
-    candidates = d.complete("[\"we\"]", 1, {}, 4);
+    candidates = completeType(root, "[\"we\"]", {}, 4);
     auto field = std::ranges::find(candidates, "\"weird.field\"", &CompletionCandidate::text);
     REQUIRE(field != candidates.end());
     REQUIRE(field->location.offset == 1);
     REQUIRE(field->location.size == 4);
-    REQUIRE(d.strings->size() == stringsBefore);
+    REQUIRE(graph->strings()->size() == stringsBefore);
     REQUIRE_FALSE(compile(env, "mode == 'a", false));
 }
 
 TEST_CASE("SchemaPool owns one compact graph across native transport and imports", "[model.schema-pool]")
 {
     auto pool = std::make_shared<SchemaPool>();
-    auto object = pool->addSchema(Schema::Kind::Object);
-    auto array = pool->addSchema(Schema::Kind::Array);
-    auto number = pool->addSchema(Schema::Kind::Int);
-    auto mask = pool->addSchema(Schema::Kind::Bitmask);
-    auto context = pool->addSchema(Schema::Kind::Object);
-    pool->setTypeName(object, "Measurement");
-    pool->addFieldSchema(object, "samples", array);
-    pool->addFieldSchema(object, "flags", mask);
-    pool->addFieldSchema(object, "context", context);
-    pool->setFieldRole(object, "context", Schema::FieldRole::Context);
-    pool->setFieldRequired(object, "samples", true);
-    pool->addFieldAlias(object, "values", "samples");
-    pool->addElementSchema(array, number);
-    pool->addFieldSchema(context, "parent", object);
-    pool->addFieldSchema(context, "secret", number);
-    pool->setOpen(context, true);
-    std::vector<Schema::NumericRange> intervals{{int64_t{0}, int64_t{254}}};
-    pool->setNumericDomain(number, {.encoding="uint8", .unit="km/h", .minimum=int64_t{0},
-        .maximum=int64_t{255}, .ordinaryRanges=intervals, .complete=true});
-    pool->addNamedValue(number, {"UNLIMITED", int64_t{255}, Schema::NamedValue::Role::Special,
-        Schema::NamedValue::Meaning::Unbounded});
-    pool->addNamedValue(mask, {"HIGH", uint64_t{1} << 63, Schema::NamedValue::Role::Flag});
-    pool->setBitWidth(mask, 64);
+    auto object = pool->newObjectType();
+    auto array = pool->newArrayType();
+    auto number = pool->newScalarType(SchemaType::Kind::Int);
+    auto mask = pool->newBitmaskType();
+    auto context = pool->newObjectType();
+    object.setTypeName("Measurement");
+    object.addField("samples", array);
+    object.addField("flags", mask);
+    object.addField("context", context);
+    object.field("context").setRole(SchemaType::FieldRole::Context);
+    object.field("samples").setRequired(true);
+    object.addAlias("values", "samples");
+    array.addElement(number);
+    context.addField("parent", object);
+    context.addField("secret", number);
+    context.setOpen(true);
+    std::vector<SchemaType::NumericRange> intervals{{int64_t{0}, int64_t{254}}};
+    number.setNumericDomain({.encoding="uint8", .unit="km/h", .minimum=int64_t{0},
+        .maximum=int64_t{255}, .ordinaryRanges=std::span<SchemaType::NumericRange const>(intervals), .complete=true});
+    number.addNamedValue({"UNLIMITED", int64_t{255}, SchemaType::NamedValue::Role::Special,
+        SchemaType::NamedValue::Meaning::Unbounded});
+    mask.asScalar().addNamedValue({"HIGH", uint64_t{1} << 63, SchemaType::NamedValue::Role::Flag});
+    mask.setBitWidth(64);
     pool->finalize();
     REQUIRE(pool->typeCount() == 5);
     REQUIRE(pool->frozen());
     REQUIRE(pool->strings()->frozen());
-    REQUIRE_THROWS_AS(pool->addSchema(Schema::Kind::Null), std::logic_error);
+    REQUIRE_THROWS_AS(pool->newScalarType(SchemaType::Kind::Null), std::logic_error);
     std::ostringstream stream;
     REQUIRE(pool->write(stream));
     auto bytes = stream.str();
     auto decoded = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
     auto imported = std::make_shared<SchemaPool>();
-    REQUIRE(imported->addSchema(Schema::Kind::Bool) == 1);
+    REQUIRE(imported->newScalarType(SchemaType::Kind::Bool).id() == 1);
     auto remap = imported->importGraph(*decoded);
     imported->finalize();
     REQUIRE(remap == std::vector<TypeId>{0, 2, 3, 4, 5, 6});
     for (auto const& owner : {SchemaPool::ConstPtr(pool), decoded}) {
-        auto const* root = owner->type(object);
-        REQUIRE(root->typeName() == "Measurement");
-        REQUIRE(root->fieldSchema(owner->strings()->get("values")) == array);
-        REQUIRE(root->reachabilityComplete());
-        REQUIRE_FALSE(root->canHaveField(owner->strings()->get("secret")));
-        REQUIRE(root->fieldRole(owner->strings()->get("context")) == Schema::FieldRole::Context);
-        REQUIRE(root->fieldRequired(owner->strings()->get("samples")) == true);
-        REQUIRE(owner->type(array)->itemSchema() == number);
-        REQUIRE(owner->type(mask)->bitWidth() == 64);
-        REQUIRE(std::get<uint64_t>(owner->type(mask)->namedValue("HIGH")->value) == uint64_t{1} << 63);
-        REQUIRE(owner->type(number)->numericDomain()->unit == "km/h");
-        REQUIRE(owner->type(number)->numericDomain()->ordinaryRanges.size() == 1);
+        auto root = owner->schemaType(object.id());
+        REQUIRE(root.typeName() == "Measurement");
+        REQUIRE(root.fieldSchema(owner->strings()->get("values")) == array.id());
+        REQUIRE(root.reachabilityComplete());
+        REQUIRE_FALSE(root.canHaveField(owner->strings()->get("secret")));
+        REQUIRE(root.fieldRole(owner->strings()->get("context")) == SchemaType::FieldRole::Context);
+        REQUIRE(root.field(owner->strings()->get("samples")).required() == true);
+        REQUIRE(owner->schemaType(array.id()).itemSchema() == number.id());
+        REQUIRE(owner->schemaType(mask.id()).bitWidth() == 64);
+        REQUIRE(std::get<uint64_t>(owner->schemaType(mask.id()).namedValue("HIGH")->value) == uint64_t{1} << 63);
+        REQUIRE(owner->schemaType(number.id()).numericDomain()->unit == "km/h");
+        REQUIRE(owner->schemaType(number.id()).numericDomain()->ordinaryRanges.size() == 1);
         REQUIRE(owner->schemaMemoryUsage().allocatedBytes >= owner->schemaMemoryUsage().logicalBytes);
     }
-    REQUIRE(imported->type(remap[object])->fieldSchema(imported->strings()->get("samples")) == remap[array]);
-    REQUIRE(imported->type(remap[context])->fieldSchema(imported->strings()->get("parent")) == remap[object]);
-    auto binding = pool->binding("test-schema-pool");
-    auto descriptor = pool->typeNode(object);
+    REQUIRE(imported->schemaType(remap[object.id()]).fieldSchema(imported->strings()->get("samples")) == remap[array.id()]);
+    REQUIRE(imported->schemaType(remap[context.id()]).fieldSchema(imported->strings()->get("parent")) == remap[object.id()]);
+    auto retained = pool->schemaType(object.id()).retain();
+    auto descriptor = pool->typeNode(object.id());
     std::weak_ptr<SchemaPool> weak = pool;
     pool.reset();
     REQUIRE_FALSE(weak.expired());
-    REQUIRE(binding->lookup(object)->typeName() == "Measurement");
-    REQUIRE(descriptor->get(StringPool::SchemaTypeName)->value() == ScalarValueType{std::string("Measurement")});
-    descriptor = {}; binding.reset();
+    REQUIRE(retained.typeName() == "Measurement");
+    REQUIRE(descriptor->get(StringPool::SchemaTypeName)->value() == ScalarValueType{std::string_view("Measurement")});
+    descriptor = {}; retained = {};
     REQUIRE(weak.expired());
     for (auto length : {size_t{0}, size_t{3}, bytes.size() - 1})
         REQUIRE_THROWS(SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), length)));
@@ -633,17 +594,17 @@ TEST_CASE("SchemaPool owns one compact graph across native transport and imports
 
 TEST_CASE("SchemaPool preserves null enum literals across transport and imports", "[model.schema-pool]")
 {
-    std::vector<ScalarValueType> expected{std::monostate{}};
+    std::vector<SchemaType::EnumValue> expected{std::monostate{}};
     SECTION("Null-only enum") {}
     SECTION("Nulls mixed with other primitive values") {
         expected.insert(expected.end(), {false, true, int64_t{0}, int64_t{-17},
             int64_t{1} << 40, 0.5, ByteArray(std::string(1024, 'x')), std::monostate{}});
     }
     auto pool = std::make_shared<SchemaPool>();
-    auto id = pool->addSchema(Schema::Kind::Value);
+    auto id = pool->newScalarType(SchemaType::Kind::Value);
     for (auto const& value : expected)
-        pool->addEnumValue(id, value);
-    pool->addEnumSymbol(id, "");
+        id.asEnum().addValue(value);
+    id.asEnum().addSymbol("");
     pool->finalize();
 
     std::ostringstream encoded;
@@ -651,31 +612,35 @@ TEST_CASE("SchemaPool preserves null enum literals across transport and imports"
     auto bytes = encoded.str();
     auto decoded = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
     for (auto const& current : {SchemaPool::ConstPtr(pool), decoded}) {
-        REQUIRE(std::ranges::equal(current->type(id)->enumValues(), expected));
-        REQUIRE(std::ranges::equal(current->enumNames(id), std::vector<std::string_view>{""}));
-        auto descriptor = current->typeNode(id)->toJson();
+        std::vector<SchemaType::EnumValue> actual;
+        current->schemaType(id.id()).forEachEnumValue([&](auto const& value) { actual.push_back(value); });
+        REQUIRE(actual == expected);
+        REQUIRE(std::ranges::equal(current->schemaType(id.id()).directEnumSymbols(), std::vector<StringId>{StringPool::Empty}));
+        auto descriptor = current->typeNode(id.id())->toJson();
         REQUIRE(descriptor["enum"].size() == expected.size() + 1);
         REQUIRE(std::ranges::count(descriptor["enum"], nlohmann::json(nullptr)) ==
-            std::ranges::count(expected, ScalarValueType{std::monostate{}}));
+            std::ranges::count(expected, SchemaType::EnumValue{std::monostate{}}));
     }
     std::ostringstream reencoded;
     REQUIRE(decoded->write(reencoded));
     REQUIRE(reencoded.str() == bytes);
 
     auto imported = std::make_shared<SchemaPool>();
-    imported->addSchema(Schema::Kind::Bool);
+    imported->newScalarType(SchemaType::Kind::Bool).id();
     auto remap = imported->importGraph(*decoded);
     imported->finalize();
-    REQUIRE(remap.at(id) != id);
-    REQUIRE(std::ranges::equal(imported->type(remap.at(id))->enumValues(), expected));
-    REQUIRE(std::ranges::equal(imported->enumNames(remap.at(id)), std::vector<std::string_view>{""}));
+    REQUIRE(remap.at(id.id()) != id.id());
+    std::vector<SchemaType::EnumValue> actual;
+    imported->schemaType(remap.at(id.id())).forEachEnumValue([&](auto const& value) { actual.push_back(value); });
+    REQUIRE(actual == expected);
+    REQUIRE(std::ranges::equal(imported->schemaType(remap.at(id.id())).directEnumSymbols(), std::vector<StringId>{StringPool::Empty}));
 }
 
 TEST_CASE("SchemaPool preserves raw ordinals separately from named runtime values", "[model.schema-pool]")
 {
     auto pool = std::make_shared<SchemaPool>();
-    auto id = pool->addSchema(Schema::Kind::String);
-    std::vector<Schema::NamedValue> values{
+    auto id = pool->newScalarType(SchemaType::Kind::String);
+    std::vector<SchemaType::NamedValue> values{
         {.name="UNENCODED", .value=std::string_view("ready")},
         {.name="ZERO", .value=std::string_view("ready"), .rawValue=int64_t{0}},
         {.name="UNSIGNED_ZERO", .value=std::string_view("ready"), .rawValue=uint64_t{0}},
@@ -686,11 +651,11 @@ TEST_CASE("SchemaPool preserves raw ordinals separately from named runtime value
         {.name="ALIAS", .value=std::string_view("ready"), .deprecated=true, .removed=true, .rawValue=int64_t{-7}},
     };
     for (auto const& value : values)
-        pool->addNamedValue(id, value);
-    auto flags = pool->addSchema(Schema::Kind::Bitmask);
-    pool->setBitWidth(flags, 64);
-    pool->addNamedValue(flags, {.name="FLAG", .value=uint64_t{1},
-        .role=Schema::NamedValue::Role::Flag, .rawValue=uint64_t{17}});
+        id.addNamedValue(value);
+    auto flags = pool->newBitmaskType();
+    flags.setBitWidth(64);
+    flags.asScalar().addNamedValue({.name="FLAG", .value=uint64_t{1},
+        .role=SchemaType::NamedValue::Role::Flag, .rawValue=uint64_t{17}});
     pool->finalize();
 
     std::ostringstream encoded;
@@ -698,17 +663,17 @@ TEST_CASE("SchemaPool preserves raw ordinals separately from named runtime value
     auto bytes = encoded.str();
     auto decoded = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
     auto imported = std::make_shared<SchemaPool>();
-    imported->addSchema(Schema::Kind::Bool);
+    imported->newScalarType(SchemaType::Kind::Bool).id();
     auto remap = imported->importGraph(*decoded);
     imported->finalize();
     for (auto const& current : {SchemaPool::ConstPtr(pool), decoded, SchemaPool::ConstPtr(imported)}) {
-        auto typeId = current == imported ? remap.at(id) : id;
+        auto typeId = current == imported ? remap.at(id.id()) : id.id();
         auto descriptor = current->typeNode(typeId)->get(StringPool::SchemaNamedValues);
         REQUIRE(descriptor);
         REQUIRE(descriptor->size() == values.size());
         for (size_t i = 0; i < values.size(); ++i) {
             auto const& expected = values[i];
-            auto actual = current->type(typeId)->namedValue(expected.name);
+            auto actual = current->schemaType(typeId).namedValue(expected.name);
             REQUIRE(actual);
             REQUIRE(actual->value == expected.value);
             REQUIRE(actual->rawValue == expected.rawValue);
@@ -730,12 +695,11 @@ TEST_CASE("SchemaPool preserves raw ordinals separately from named runtime value
                     REQUIRE(json["rawValue"] == raw);
                 }, *expected.rawValue);
         }
-        auto flagType = current == imported ? remap.at(flags) : flags;
+        auto flagType = current == imported ? remap.at(flags.id()) : flags.id();
         auto flag = current->typeNode(flagType)->toJson()["namedValues"][0];
         REQUIRE(flag["value"] == "0x0000000000000001");
         REQUIRE(flag["rawValue"] == 17);
-        auto binding = current->binding("raw-ordinal-fixture");
-        auto runtime = Value::make(std::string("ready")).withSchema({binding, typeId});
+        auto runtime = Value::make(std::string("ready")).withSchemaType(current->schemaType(typeId));
         auto resolved = runtime.namedValue("NEGATIVE");
         REQUIRE(resolved);
         REQUIRE(resolved->toString() == "ready");
@@ -748,8 +712,8 @@ TEST_CASE("SchemaPool preserves raw ordinals separately from named runtime value
 TEST_CASE("SchemaPool rejects old codecs and malformed raw ordinal storage", "[model.schema-pool]")
 {
     auto pool = std::make_shared<SchemaPool>();
-    auto id = pool->addSchema(Schema::Kind::String);
-    pool->addNamedValue(id, {.name="READY", .value=std::string_view("ready"), .rawValue=int64_t{7}});
+    auto id = pool->newScalarType(SchemaType::Kind::String);
+    id.addNamedValue({.name="READY", .value=std::string_view("ready"), .rawValue=int64_t{7}});
     pool->finalize();
     std::ostringstream encoded;
     REQUIRE(pool->write(encoded));
@@ -760,25 +724,28 @@ TEST_CASE("SchemaPool rejects old codecs and malformed raw ordinal storage", "[m
     uint64_t typesSize = 0;
     input.value4b(version);
     input.value8b(typesSize);
-    REQUIRE(version == 2);
+    REQUIRE(version == 4);
     input.adapter().currentReadPos(input.adapter().currentReadPos() + typesSize);
-    // Fields, edges, symbols and literals precede the codec-v2 named-value column.
-    for (auto width : {12u, 2u, 2u, 4u}) {
-        size_t count = 0;
-        bitsery::details::readSize(input.adapter(), count, 4 * 1024 * 1024, std::true_type{});
-        input.adapter().currentReadPos(input.adapter().currentReadPos() + count * width);
+    // Fixed field rows and four membership arenas precede fixed named rows.
+    auto skipColumn = [&] {
+        uint64_t size = 0;
+        input.value8b(size);
+        input.adapter().currentReadPos(input.adapter().currentReadPos() + size);
+    };
+    for (size_t column = 0; column < 17; ++column) {
+        skipColumn();
     }
-    size_t count = 0;
-    bitsery::details::readSize(input.adapter(), count, 4 * 1024 * 1024, std::true_type{});
-    REQUIRE(count == 1);
+    uint64_t namedSize = 0;
+    input.value8b(namedSize);
+    REQUIRE(namedSize == 32);
     auto named = input.adapter().currentReadPos();
     // A named row has a 16-byte scalar, eight raw ordinal bytes, then its tag.
     constexpr size_t rawTypeOffset = 24;
     SECTION("Old generic payloads are not interpreted with the new row layout") {
-        bytes[0] = 1;
+        bytes[0] = 2;
     }
     SECTION("Unknown future payloads are rejected") {
-        bytes[0] = 3;
+        bytes[0] = 5;
     }
     SECTION("Unknown ordinal tags are rejected") {
         bytes.at(named + rawTypeOffset) = 3;
@@ -794,31 +761,31 @@ TEST_CASE("SchemaPool rejects old codecs and malformed raw ordinal storage", "[m
 
 TEST_CASE("SchemaPool rejects dangling types and inherited cycles before publication", "[model.schema-pool]")
 {
-    auto pool = std::make_shared<SchemaPool>();
-    auto root = pool->addSchema(Schema::Kind::Object);
-    SECTION("Dangling edge") { pool->addFieldSchema(root, "bad", 42); }
-    SECTION("Inheritance cycle") { pool->setBaseSchema(root, root); }
+    auto pool = std::make_shared<MalformedSchemaPool>();
+    auto root = pool->newObjectType();
+    SECTION("Dangling edge") { pool->addDanglingField(root); }
+    SECTION("Inheritance cycle") { root.setBase(root); }
     REQUIRE_THROWS_AS(pool->finalize(), std::invalid_argument);
     REQUIRE_FALSE(pool->finalized());
-    REQUIRE_THROWS_AS(pool->addSchema(Schema::Kind::Int), std::logic_error);
+    REQUIRE_THROWS_AS(pool->newScalarType(SchemaType::Kind::Int), std::logic_error);
 }
 
 TEST_CASE("SchemaPool preserves empty names unknown alternatives and local combiner context", "[model.schema-pool]")
 {
     auto pool = std::make_shared<SchemaPool>();
-    auto object = pool->addSchema(Schema::Kind::Object);
-    auto text = pool->addSchema(Schema::Kind::String);
-    auto choice = pool->addSchema(Schema::Kind::Union);
-    pool->addFieldSchema(object, "z", text);
-    pool->addFieldSchema(object, "a", text);
-    pool->addFieldSchema(object, "", text);
-    pool->addFieldSchema(object, "partial", text);
-    pool->addFieldSchema(object, "partial", NoTypeId);
-    pool->addEnumSymbol(text, "Z"); pool->addEnumSymbol(text, "A"); pool->addEnumSymbol(text, "");
-    pool->setComposition(choice, Schema::Composition::AnyOf);
-    pool->addAlternative(choice, object);
-    pool->addFieldSchema(choice, "context", object);
-    pool->setFieldRole(choice, "context", Schema::FieldRole::Context);
+    auto object = pool->newObjectType();
+    auto text = pool->newScalarType(SchemaType::Kind::String);
+    auto choice = pool->newCompositionType(SchemaType::Composition::AnyOf);
+    object.addField("z", text);
+    object.addField("a", text);
+    object.addField("", text);
+    object.addField("partial", text);
+    object.addField("partial");
+    text.asEnum().addSymbol("Z"); text.asEnum().addSymbol("A"); text.asEnum().addSymbol("");
+    choice.setComposition(SchemaType::Composition::AnyOf);
+    choice.addAlternative(object);
+    choice.asObject().addField("context", object);
+    choice.field("context").setRole(SchemaType::FieldRole::Context);
     pool->finalize();
     std::ostringstream encoded;
     REQUIRE(pool->write(encoded));
@@ -829,21 +796,30 @@ TEST_CASE("SchemaPool preserves empty names unknown alternatives and local combi
     REQUIRE(remap == std::vector<TypeId>{0, 1, 2, 3});
     imported->finalize();
     for (auto const& current : {SchemaPool::ConstPtr(pool), decoded, SchemaPool::ConstPtr(imported)}) {
-        REQUIRE(current->type(object)->fieldSchema(StringPool::Empty) == text);
-        REQUIRE(current->type(object)->fieldSchema(current->strings()->get("partial")) == NoTypeId);
-        REQUIRE(current->type(choice)->fieldRole(current->strings()->get("context")) == Schema::FieldRole::Context);
-        REQUIRE_FALSE(current->type(object)->reachabilityComplete());
-        REQUIRE(std::ranges::equal(current->fieldNames(object), std::vector<std::string_view>{"z", "a", "", "partial"}));
-        REQUIRE(std::ranges::equal(current->fieldNames(object, true), std::vector<std::string_view>{"", "a", "partial", "z"}));
-        REQUIRE(std::ranges::equal(current->enumNames(text), std::vector<std::string_view>{"Z", "A", ""}));
-        REQUIRE(std::ranges::equal(current->enumNames(text, true), std::vector<std::string_view>{"", "A", "Z"}));
-        auto descriptor = current->typeNode(choice);
+        REQUIRE(current->schemaType(object.id()).fieldSchema(StringPool::Empty) == text.id());
+        REQUIRE(current->schemaType(object.id()).fieldSchema(current->strings()->get("partial")) == NoTypeId);
+        REQUIRE(current->schemaType(choice.id()).fieldRole(current->strings()->get("context")) == SchemaType::FieldRole::Context);
+        REQUIRE_FALSE(current->schemaType(object.id()).reachabilityComplete());
+        auto fieldsInOrder = current->schemaType(object.id()).directFields();
+        REQUIRE(std::ranges::equal(fieldsInOrder, std::vector<StringId>{
+            current->dictionary().get("z"), current->dictionary().get("a"),
+            StringPool::Empty, current->dictionary().get("partial")}));
+        auto sortedFields = std::vector<StringId>(fieldsInOrder.begin(), fieldsInOrder.end());
+        std::ranges::sort(sortedFields);
+        REQUIRE(std::ranges::equal(current->schemaType(object.id()).nestedFields(), sortedFields));
+        auto symbolsInOrder = current->schemaType(text.id()).directEnumSymbols();
+        REQUIRE(std::ranges::equal(symbolsInOrder, std::vector<StringId>{
+            current->dictionary().get("Z"), current->dictionary().get("A"), StringPool::Empty}));
+        auto sortedSymbols = std::vector<StringId>(symbolsInOrder.begin(), symbolsInOrder.end());
+        std::ranges::sort(sortedSymbols);
+        REQUIRE(std::ranges::equal(current->schemaType(text.id()).nestedEnumSymbols(), sortedSymbols));
+        auto descriptor = current->typeNode(choice.id());
         REQUIRE(descriptor->get(StringPool::SchemaAlternatives));
         auto fields = descriptor->get(StringPool::SchemaFields);
         REQUIRE(fields);
         auto context = fields->get(current->strings()->get("context"));
         REQUIRE(context);
-        REQUIRE(context->get(StringPool::SchemaRole)->value() == ScalarValueType{std::string("context")});
+        REQUIRE(context->get(StringPool::SchemaRole)->value() == ScalarValueType{std::string_view("context")});
         REQUIRE(current->schemaStatistics().contextFields == 1);
         REQUIRE(current->schemaStatistics().types == 3);
     }
@@ -852,63 +828,67 @@ TEST_CASE("SchemaPool preserves empty names unknown alternatives and local combi
 TEST_CASE("SchemaPool numeric replacements remain canonical and flags respect their encoding", "[model.schema-pool]")
 {
     auto pool = std::make_shared<SchemaPool>();
-    auto first = pool->addSchema(Schema::Kind::Int);
-    auto second = pool->addSchema(Schema::Kind::Int);
-    std::vector<Schema::NumericRange> oldRanges{{int64_t{0}, int64_t{100}}};
-    std::vector<Schema::NumericRange> ranges{{int64_t{1}, int64_t{5}}, {int64_t{10}, int64_t{15}}};
+    auto first = pool->newScalarType(SchemaType::Kind::Int);
+    auto second = pool->newScalarType(SchemaType::Kind::Int);
+    std::vector<SchemaType::NumericRange> oldRanges{{int64_t{0}, int64_t{100}}};
+    std::vector<SchemaType::NumericRange> ranges{{int64_t{1}, int64_t{5}}, {int64_t{10}, int64_t{15}}};
     // Setter order does not dictate wire ownership, and overwritten ranges are discarded.
-    pool->setNumericDomain(second, {.unit="old", .ordinaryRanges=oldRanges});
-    pool->setNumericDomain(first, {.unit="count", .ordinaryRanges=ranges});
-    pool->setNumericDomain(second, {.unit="m", .ordinaryRanges=ranges});
+    second.setNumericDomain({.unit="old", .ordinaryRanges=std::span<SchemaType::NumericRange const>(oldRanges)});
+    first.setNumericDomain({.unit="count", .ordinaryRanges=std::span<SchemaType::NumericRange const>(ranges)});
+    second.setNumericDomain({.unit="m", .ordinaryRanges=std::span<SchemaType::NumericRange const>(ranges)});
     pool->finalize();
     REQUIRE(pool->schemaStatistics().numericDomains == 2);
     std::ostringstream encoded;
     REQUIRE(pool->write(encoded));
     auto bytes = encoded.str();
     auto restored = SchemaPool::read(std::span(reinterpret_cast<uint8_t const*>(bytes.data()), bytes.size()));
-    REQUIRE(restored->type(second)->numericDomain()->unit == "m");
-    REQUIRE(restored->type(second)->numericDomain()->ordinaryRanges.size() == 2);
+    REQUIRE(restored->schemaType(second.id()).numericDomain()->unit == "m");
+    REQUIRE(restored->schemaType(second.id()).numericDomain()->ordinaryRanges.size() == 2);
     std::ostringstream roundtrip;
     REQUIRE(restored->write(roundtrip));
     REQUIRE(roundtrip.str() == bytes);
 
-    Schema::NamedValue flag{"FLAG", uint64_t{1}, Schema::NamedValue::Role::Flag};
+    SchemaType::NamedValue flag{"FLAG", uint64_t{1}, SchemaType::NamedValue::Role::Flag};
     SECTION("String mask") { flag.value = std::string_view("not-a-mask"); }
     SECTION("Boolean mask") { flag.value = true; }
     SECTION("Negative mask") { flag.value = int64_t{-1}; }
     SECTION("Floating mask") { flag.value = 1.; }
     SECTION("Out-of-width mask") { flag.value = uint64_t{256}; }
     auto invalid = std::make_shared<SchemaPool>();
-    auto mask = invalid->addSchema(Schema::Kind::Bitmask);
-    invalid->setBitWidth(mask, 8);
-    invalid->addNamedValue(mask, flag);
+    auto mask = invalid->newBitmaskType();
+    mask.setBitWidth(8);
+    mask.asScalar().addNamedValue(flag);
     REQUIRE_THROWS_AS(invalid->finalize(), std::invalid_argument);
 }
 
 TEST_CASE("SchemaPool inherited shadows preserve declaration order and member metadata", "[model.schema-pool]")
 {
     auto pool = std::make_shared<SchemaPool>();
-    auto base = pool->addSchema(Schema::Kind::Object);
-    auto derived = pool->addSchema(Schema::Kind::Object);
-    auto integer = pool->addSchema(Schema::Kind::Int);
-    auto text = pool->addSchema(Schema::Kind::String);
-    pool->setBaseSchema(derived, base);
+    auto base = pool->newObjectType();
+    auto derived = pool->newObjectType();
+    auto integer = pool->newScalarType(SchemaType::Kind::Int);
+    auto text = pool->newScalarType(SchemaType::Kind::String);
+    derived.setBase(base);
     for (size_t i = 0; i < 2048; ++i)
-        pool->addFieldSchema(base, "field" + std::to_string(i), integer);
+        base.addField("field" + std::to_string(i), integer);
     for (size_t i = 2048; i-- > 0;)
-        pool->addFieldSchema(derived, "field" + std::to_string(i), text);
-    pool->setFieldRole(derived, "field0", Schema::FieldRole::Context);
+        derived.addField("field" + std::to_string(i), text);
+    derived.field("field0").setRole(SchemaType::FieldRole::Context);
     pool->finalize();
-    auto view = pool->type(derived);
-    REQUIRE(view->directFields().size() == 2048);
-    REQUIRE(pool->fieldNames(derived).front() == "field2047");
-    REQUIRE(pool->fieldNames(derived).back() == "field0");
-    REQUIRE(view->fieldSchema(pool->strings()->get("field0")) == text);
+    auto view = pool->schemaType(derived.id());
+    REQUIRE(view.directFields().size() == 2048);
+    REQUIRE(*pool->dictionary().resolve(view.directFields().front()) == "field2047");
+    REQUIRE(*pool->dictionary().resolve(view.directFields().back()) == "field0");
+    REQUIRE(view.fieldSchema(pool->strings()->get("field0")) == text.id());
     size_t enumerable = 0;
-    view->forEachEnumerableField([&](StringId name, auto children) {
+    view.forEachField([&](SchemaField const& field) {
+        if (field.role() == SchemaType::FieldRole::Context)
+            return;
+        auto name = field.nameId();
+        auto children = field.types();
         REQUIRE(name != pool->strings()->get("field0"));
         REQUIRE(children.size() == 1);
-        REQUIRE(children.front() == text);
+        REQUIRE(children.front() == text.id());
         ++enumerable;
     });
     REQUIRE(enumerable == 2047);
@@ -916,48 +896,55 @@ TEST_CASE("SchemaPool inherited shadows preserve declaration order and member me
 
 TEST_CASE("Context edges support explicit access without implicit discovery", "[model.schema-type][schema.context]")
 {
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("$payload"), {2});
-    root.addField(d.name("context"), {3}, true, Schema::FieldRole::Context);
-    root.addField(d.name("$feature"), {3}, true, Schema::FieldRole::Context);
-    d.add<ValueSchema>(2, Schema::Kind::Int);
-    auto& context = d.add<ObjectSchema>(3);
-    context.addField(d.name("secret"), {2});
-    context.addField(d.name("hiddenSymbol"), {4});
-    d.add<ValueSchema>(4, Schema::Kind::String).addEnumSymbol(d.name("CONTEXT_ONLY"));
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"$payload", "context", "$feature", "secret", "hiddenSymbol", "CONTEXT_ONLY", "fields", "role", "$ref"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto context = graph->newObjectType();
+    auto enumeration = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("$payload", integer);
+    root.addField("context", context).setRequired(true);
+    root.field("context").setRole(SchemaType::FieldRole::Context);
+    root.addField("$feature", context).setRequired(true);
+    root.field("$feature").setRole(SchemaType::FieldRole::Context);
+    context.addField("secret", integer);
+    context.addField("hiddenSymbol", enumeration);
+    enumeration.asEnum().addSymbol("CONTEXT_ONLY");
     // Unknown metadata behind a context link cannot make the data index incomplete.
     context.setOpen(true);
-    d.finalize();
+    graph->finalize();
     REQUIRE(root.reachabilityComplete());
-    REQUIRE_FALSE(root.canHaveField(d.name("secret")));
-    REQUIRE(root.canHaveField(d.name("context")));
-    REQUIRE(root.fieldSchema(d.name("context")) == 3);
-    REQUIRE(root.fieldRole(d.name("context")) == Schema::FieldRole::Context);
-    REQUIRE(root.fieldRole(d.name("$payload")) == Schema::FieldRole::Data);
+    REQUIRE_FALSE(root.canHaveField(graph->dictionary().get("secret")));
+    REQUIRE(root.canHaveField(graph->dictionary().get("context")));
+    REQUIRE(root.fieldSchema(graph->dictionary().get("context")) == 3);
+    REQUIRE(root.fieldRole(graph->dictionary().get("context")) == SchemaType::FieldRole::Context);
+    REQUIRE(root.fieldRole(graph->dictionary().get("$payload")) == SchemaType::FieldRole::Data);
     bool complete = false;
-    REQUIRE(Schema::fieldPaths(1, d.lookup(), d.name("secret"), &complete).empty());
+    REQUIRE(root.fieldPaths(graph->dictionary().get("secret"), &complete).empty());
     REQUIRE(complete);
-    REQUIRE(Schema::fieldPaths(1, d.lookup(), d.name("context")).size() == 1);
-    REQUIRE(Schema::enumSymbolPaths(1, d.lookup(), d.name("CONTEXT_ONLY"), &complete).empty());
+    REQUIRE(root.fieldPaths(graph->dictionary().get("context")).size() == 1);
+    REQUIRE(root.enumSymbolPaths(graph->dictionary().get("CONTEXT_ONLY"), &complete).empty());
     REQUIRE(complete);
     std::vector<StringId> enumerable;
-    root.forEachEnumerableField([&](StringId field, auto) { enumerable.push_back(field); });
-    REQUIRE(enumerable == std::vector<StringId>{d.name("$payload")});
-    REQUIRE_FALSE(contains(d.complete("sec"), "secret"));
-    REQUIRE_FALSE(contains(d.complete("CONTEXT_"), "CONTEXT_ONLY"));
-    REQUIRE(contains(d.complete("context.sec"), "secret"));
-    REQUIRE(contains(d.complete("$feature.sec"), "secret"));
-    REQUIRE_FALSE(contains(d.complete("*.sec"), "secret"));
+    root.forEachField([&](SchemaField field) {
+        if (field.role() == SchemaType::FieldRole::Data)
+            enumerable.push_back(field.nameId());
+    });
+    REQUIRE(enumerable == std::vector<StringId>{graph->dictionary().get("$payload")});
+    REQUIRE_FALSE(contains(completeType(root, "sec"), "secret"));
+    REQUIRE_FALSE(contains(completeType(root, "CONTEXT_"), "CONTEXT_ONLY"));
+    REQUIRE(contains(completeType(root, "context.sec"), "secret"));
+    REQUIRE(contains(completeType(root, "$feature.sec"), "secret"));
+    REQUIRE_FALSE(contains(completeType(root, "*.sec"), "secret"));
 
-    auto descriptors = std::make_shared<SchemaModel>(d.strings, d.lookup());
-    auto edge = descriptors->root(1)->get(d.name("fields"))->get(d.name("context"));
-    REQUIRE(edge->get(d.name("role"))->value() == ScalarValueType{std::string("context")});
-    REQUIRE(edge->get(d.name("$ref"))->value() == ScalarValueType{int64_t{3}});
+    auto descriptors = root.modelNode();
+    auto edge = descriptors->get(graph->dictionary().get("fields"))->get(graph->dictionary().get("context"));
+    REQUIRE(edge->get(graph->dictionary().get("role"))->value() == ScalarValueType{std::string_view("context")});
+    REQUIRE(edge->get(graph->dictionary().get("$ref"))->value() == ScalarValueType{int64_t{3}});
 
-    auto model = std::make_shared<ModelPool>(d.strings);
-    auto binding = std::make_shared<SchemaBinding>("context-test", d.graph, d.lookup(), d.strings);
-    model->setSchemaBinding(binding);
+    auto model = std::make_shared<ModelPool>(graph->strings());
+    model->setSchemaPool(graph);
     auto payload = model->newObject();
     REQUIRE(payload->setSchema(1));
     REQUIRE(payload->addField("$payload", int64_t{7}));
@@ -965,12 +952,12 @@ TEST_CASE("Context edges support explicit access without implicit discovery", "[
     REQUIRE(hidden->setSchema(3));
     REQUIRE(hidden->addField("secret", int64_t{42}));
     auto overlay = model_ptr<OverlayNode>::make(Value::field(payload));
-    overlay->set(d.name("context"), Value::field(hidden));
-    overlay->set(d.name("$feature"), Value::field(hidden));
+    overlay->set(graph->dictionary().get("context"), Value::field(hidden));
+    overlay->set(graph->dictionary().get("$feature"), Value::field(hidden));
     for (bool planned : {false, true}) {
-        Environment env(d.strings);
+        Environment env(graph->strings());
         env.enableWildcardFieldPlans = planned;
-        env.querySchemaCallback = d.lookup();
+        env.setSchema(root);
         for (auto query : {"context.secret", "**.context.secret", "$feature.secret"}) {
             INFO(query);
             auto expression = compile(env, query, false);
@@ -991,22 +978,22 @@ TEST_CASE("Context edges support explicit access without implicit discovery", "[
 TEST_CASE("Wildcard array plans retain named lookup without traversing context", "[model.schema-pool][schema.context][schema.array-fields]")
 {
     auto graph = std::make_shared<SchemaPool>();
-    auto array = graph->addSchema(Schema::Kind::Array);
-    auto named = graph->addSchema(Schema::Kind::Array);
-    auto number = graph->addSchema(Schema::Kind::Int);
-    auto hidden = graph->addSchema(Schema::Kind::Object);
-    graph->addElementSchema(array, named);
-    graph->addElementSchema(named, number);
-    graph->addFieldSchema(named, "first", number);
-    graph->addFieldSchema(named, "context", hidden);
-    graph->setFieldRole(named, "first", Schema::FieldRole::Context);
-    graph->setFieldRole(named, "context", Schema::FieldRole::Context);
-    graph->addFieldAlias(named, "head", "first");
-    graph->addFieldSchema(hidden, "secret", number);
-    graph->setOpen(hidden, true);
+    auto array = graph->newArrayType();
+    auto named = graph->newArrayType();
+    auto number = graph->newScalarType(SchemaType::Kind::Int);
+    auto hidden = graph->newObjectType();
+    array.addElement(named);
+    named.addElement(number);
+    named.addField("first", number);
+    named.addField("context", hidden);
+    named.field("first").setRole(SchemaType::FieldRole::Context);
+    named.field("context").setRole(SchemaType::FieldRole::Context);
+    named.addAlias("head", "first");
+    hidden.addField("secret", number);
+    hidden.setOpen(true);
     graph->finalize();
-    REQUIRE(graph->type(array)->reachabilityComplete());
-    REQUIRE_FALSE(graph->type(array)->canHaveField(graph->strings()->get("secret")));
+    REQUIRE(graph->schemaType(array.id()).reachabilityComplete());
+    REQUIRE_FALSE(graph->schemaType(array.id()).canHaveField(graph->strings()->get("secret")));
 
     for (bool separateDictionary : {false, true}) {
         auto strings = separateDictionary ? std::make_shared<StringPool>() : graph->strings();
@@ -1020,18 +1007,18 @@ TEST_CASE("Wildcard array plans retain named lookup without traversing context",
             CAPTURE(separateDictionary, mode);
             auto model = std::make_shared<NamedArrayPool>(strings);
             if (std::string_view(mode) != "untyped")
-                model->setSchemaBinding(graph->binding("named-array"));
+                model->setSchemaPool(graph);
             auto context = model->newObject();
             REQUIRE(context->addField("secret", int64_t{42}));
-            REQUIRE(context->setSchema(hidden));
+            REQUIRE(context->setSchema(hidden.id()));
             model->context = context->addr();
             auto elements = model->newArray();
             elements->append(int64_t{7});
-            REQUIRE(elements->setSchema(named));
+            REQUIRE(elements->setSchema(named.id()));
             auto root = model->newArray();
             root->append(ModelNode::Ptr::make(model,
                 ModelNodeAddress{ModelPool::FirstCustomColumnId, elements->addr().index()}));
-            REQUIRE(root->setSchema(array));
+            REQUIRE(root->setSchema(array.id()));
 
             Environment env(strings);
             env.enableWildcardFieldPlans = std::string_view(mode) == "plans";
@@ -1059,30 +1046,39 @@ TEST_CASE("Wildcard array plans retain named lookup without traversing context",
 
 TEST_CASE("Context classification is conservative across repeated and alternative edges", "[model.schema-type][schema.context]")
 {
-    TypeGraph d;
-    auto field = d.name("parent");
-    auto& context = d.add<ObjectSchema>(1);
-    context.addField(field, {3}, {}, Schema::FieldRole::Context);
-    auto& data = d.add<ObjectSchema>(2);
-    data.addField(field, {3});
-    d.add<ValueSchema>(3, Schema::Kind::Int);
-    auto& allContext = d.add<CombinedSchema>(4, Schema::Composition::AnyOf);
-    allContext.addAlternative(1);
-    auto& mixed = d.add<CombinedSchema>(5, Schema::Composition::AnyOf);
-    mixed.addAlternative(1);
-    mixed.addAlternative(2);
-    auto& unknown = d.add<CombinedSchema>(6, Schema::Composition::AnyOf);
-    unknown.addAlternative(1);
-    unknown.addAlternative(NoTypeId);
-    d.finalize();
-    REQUIRE(allContext.fieldRole(field) == Schema::FieldRole::Context);
-    REQUIRE(mixed.fieldRole(field) == Schema::FieldRole::Data);
-    REQUIRE(unknown.fieldRole(field) == Schema::FieldRole::Data);
-    context.addField(field, {3});
-    REQUIRE(context.fieldRole(field) == Schema::FieldRole::Data);
-    std::vector<StringId> fields;
-    context.forEachEnumerableField([&](StringId name, auto) { fields.push_back(name); });
-    REQUIRE(fields.size() == 2);
+    auto graph = std::make_shared<SchemaPool>();
+    auto context = graph->newObjectType();
+    auto data = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    context.addField("parent", integer).setRole(SchemaType::FieldRole::Context);
+    data.addField("parent", integer);
+    auto allContext = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    allContext.addAlternative(context);
+    auto mixed = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    mixed.addAlternative(context);
+    mixed.addAlternative(data);
+    auto unknown = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    unknown.addAlternative(context);
+    unknown.addAlternative({});
+    // Repeated targets belong to one occurrence; its role is explicit edge metadata.
+    auto repeated = data.addField("parent", integer);
+    repeated.setMultimap(true);
+    graph->finalize();
+    auto field = graph->dictionary().get("parent");
+    REQUIRE(allContext.fieldRole(field) == SchemaType::FieldRole::Context);
+    REQUIRE(mixed.fieldRole(field) == SchemaType::FieldRole::Data);
+    REQUIRE(unknown.fieldRole(field) == SchemaType::FieldRole::Data);
+    REQUIRE(data.fieldRole(field) == SchemaType::FieldRole::Data);
+    REQUIRE(repeated.multimap());
+    REQUIRE(repeated.types().size() == 2);
+    REQUIRE_THROWS(context.field("parent").setRole(SchemaType::FieldRole::Data));
+    size_t fields = 0;
+    data.forEachField([&](SchemaField const& edge) {
+        REQUIRE(edge.nameId() == field);
+        REQUIRE(edge.role() == SchemaType::FieldRole::Data);
+        ++fields;
+    });
+    REQUIRE(fields == 1);
 }
 
 TEST_CASE("Static schema names agree across isolated pools", "[model.schema-type]")
@@ -1101,28 +1097,34 @@ TEST_CASE("Static schema names agree across isolated pools", "[model.schema-type
     REQUIRE(left->emplace("dynamic-type-name").value() >= StringPool::FirstDynamicId);
 }
 
-TEST_CASE("Registry adapters participate in sparse plans and retain incomplete metadata", "[model.schema-type]")
+TEST_CASE("Canonical schemas participate in sparse plans and retain incomplete metadata", "[model.schema-type]")
 {
-    TypeGraph d;
-    auto& foreign = d.add<ForeignSchema>(1);
-    d.add<ValueSchema>(2, Schema::Kind::Int);
-    d.add<ObjectSchema>(3).addField(d.name("target"), {2});
-    auto model = std::make_shared<ModelPool>(d.strings);
+    auto graph = std::make_shared<SchemaPool>();
+    auto rootType = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto branchType = graph->newObjectType();
+    auto parent = graph->newObjectType();
+    auto untypedItems = graph->newArrayType();
+    branchType.addField("target", integer);
+    rootType.addField("branch", branchType);
+    parent.addField("wrapped", rootType);
+    parent.addField("untypedItems", untypedItems);
+    auto model = std::make_shared<ModelPool>();
     auto root = model->newObject();
-    root->setSchema(1);
-    for (auto i = 0; i < 32; ++i) {
+    REQUIRE(root->setSchema(rootType.id()));
+    for (int i = 0; i < 32; ++i) {
         auto name = "noise" + std::to_string(i);
-        foreign.definition.addField(d.name(name), {2});
-        root->addField(name, int64_t(i));
+        rootType.addField(name, integer);
+        REQUIRE(root->addField(name, int64_t(i)));
     }
-    foreign.definition.addField(d.name("branch"), {3});
     auto branch = model->newObject();
-    branch->setSchema(3);
-    branch->addField("target", int64_t{42});
-    root->addField("branch", branch);
-    d.finalize();
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
+    REQUIRE(branch->setSchema(branchType.id()));
+    REQUIRE(branch->addField("target", int64_t{42}));
+    REQUIRE(root->addField("branch", branch));
+    auto ready = graph->strings()->emplace("READY").value();
+    graph->finalize();
+    Environment env(model->strings());
+    env.setSchema(rootType);
     auto ast = compile(env, "**.target", false);
     REQUIRE(ast);
     Diagnostics planned, basic;
@@ -1135,83 +1137,84 @@ TEST_CASE("Registry adapters participate in sparse plans and retain incomplete m
     REQUIRE(optimized->front().toString() == "42");
     REQUIRE(planned.fieldData_[0].evaluations < basic.fieldData_[0].evaluations);
 
-    foreign.indexed = false;
-    REQUIRE(contains(d.complete("tar"), "target"));
-    auto& parent = d.add<ObjectSchema>(4);
-    parent.addField(d.name("wrapped"), {1});
-    d.finalize();
+    REQUIRE(contains(completeType(rootType, "tar"), "target"));
     REQUIRE_FALSE(parent.reachabilityComplete());
-    REQUIRE(parent.canHaveField(d.name("target")));
-    REQUIRE(contains(d.complete("tar", 4), "target"));
-    d.add<ArraySchema>(5);
-    parent.addField(d.name("untypedItems"), {5});
-    d.finalize();
+    REQUIRE(parent.canHaveField(graph->dictionary().get("target")));
+    REQUIRE(contains(completeType(parent, "tar"), "target"));
     bool exhaustive = true;
-    (void)Schema::enumSymbolPaths(4, d.lookup(), d.name("READY"), &exhaustive);
+    (void)parent.enumSymbolPaths(ready, &exhaustive);
     REQUIRE_FALSE(exhaustive);
 }
 
 TEST_CASE("Lookup aliases resolve direct and recursive schema paths canonically", "[model.schema-type]")
 {
-    TypeGraph d;
-    auto& root = d.add<LookupAliasSchema>(1);
-    root.alias = d.name("publicName");
-    root.target = d.name("storedName");
-    root.addField(root.target, {2});
-    d.add<ObjectSchema>(2).addField(d.name("value"), {3});
-    d.add<ValueSchema>(3, Schema::Kind::Int);
-    d.add<ObjectSchema>(4).addField(d.name("wrapper"), {1});
-    d.finalize();
-    REQUIRE(Schema::fieldSchemas(1, d.lookup(), root.alias) == std::vector<TypeId>{2});
-    REQUIRE(Schema::fieldPaths(1, d.lookup(), root.alias).front().front().field == root.target);
-    REQUIRE(std::ranges::find(root.directFields(), root.alias) == root.directFields().end());
-    REQUIRE(contains(d.complete("publicName.va"), "value"));
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
+    auto graph = std::make_shared<SchemaPool>();
+    auto root = graph->newObjectType();
+    auto child = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto wrapper = graph->newObjectType();
+    root.addAlias("publicName", "storedName");
+    root.addField("storedName", child);
+    child.addField("value", integer);
+    wrapper.addField("wrapper", root);
+    auto shadow = graph->newObjectType();
+    shadow.setBase(root);
+    shadow.addField("publicName", integer);
+    graph->finalize();
+    auto alias = graph->dictionary().get("publicName");
+    auto target = graph->dictionary().get("storedName");
+    REQUIRE(std::ranges::equal(root.fieldTypes(alias), std::vector<TypeId>{child.id()}));
+    REQUIRE(root.fieldPaths(alias).front().front().field == target);
+    REQUIRE(std::ranges::none_of(root.directFields(), [alias](auto field) { return field == alias; }));
+    REQUIRE(contains(completeType(root, "publicName.va"), "value"));
+    Environment env(graph->strings());
+    env.setSchema(root);
     for (auto query : {"publicName.value", "**.publicName.value", "**.publicName.value == 'x'"}) {
         auto ast = compile(env, query, false);
         REQUIRE(ast);
-        auto refs = referencedSchemaPaths(env, **ast, 1);
+        auto refs = referencedSchemaPaths(env, **ast, root);
         REQUIRE(refs);
         REQUIRE_FALSE(refs->hasUnresolvedAccess);
         REQUIRE(refs->paths.size() == 1);
-        REQUIRE(refs->paths.front().path.front().field == root.target);
+        REQUIRE(refs->paths.front().path.front().field == target);
     }
     auto ast = compile(env, "**.publicName.value", false);
     REQUIRE(ast);
-    auto refs = referencedSchemaPaths(env, **ast, 4);
+    auto refs = referencedSchemaPaths(env, **ast, wrapper);
     REQUIRE(refs);
     REQUIRE_FALSE(refs->hasUnresolvedAccess);
-    REQUIRE(refs->paths.front().path[1].field == root.target);
-    root.addField(root.alias, {3});
-    d.finalize();
-    REQUIRE(Schema::fieldSchemas(1, d.lookup(), root.alias) == std::vector<TypeId>{3});
+    REQUIRE(refs->paths.front().path[1].field == target);
+    REQUIRE(std::ranges::equal(shadow.fieldTypes(alias), std::vector<TypeId>{integer.id()}));
+    REQUIRE_THROWS(root.addField("publicName", integer));
 }
 
 TEST_CASE("Type completion preserves alias scope and never executes custom functions", "[completion.type]")
 {
-    TypeGraph d;
-    auto& root = d.add<AliasSchema>(1);
-    root.alias = d.name("alias");
-    root.path = {{SchemaPathSegment::Kind::Field, d.name("child")}, {SchemaPathSegment::Kind::Field, d.name("mode")}};
-    root.addField(d.name("child"), {2});
-    root.addField(root.alias, {4});
-    d.add<ObjectSchema>(2).addField(d.name("mode"), {3});
-    d.add<ValueSchema>(3, Schema::Kind::String).addEnumSymbol(d.name("urban"));
-    d.add<ValueSchema>(4, Schema::Kind::String).addEnumSymbol(d.name("unrelated"));
-    d.finalize();
-    REQUIRE(contains(d.complete("alias == u"), "\"urban\""));
-    REQUIRE_FALSE(contains(d.complete("alias == u"), "\"unrelated\""));
-    REQUIRE_FALSE(contains(d.complete("_.alias == u"), "\"urban\""));
-    REQUIRE(contains(d.complete("_.alias == u"), "\"unrelated\""));
+    auto graph = std::make_shared<AliasPool>();
+    for (auto name : {"alias", "child", "mode", "urban", "unrelated"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto child = graph->newObjectType();
+    auto mode = graph->newScalarType(SchemaType::Kind::String);
+    auto other = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("child", child);
+    root.addField("alias", other);
+    child.addField("mode", mode);
+    mode.asEnum().addSymbol("urban");
+    other.asEnum().addSymbol("unrelated");
+    graph->finalize();
+    REQUIRE(contains(completeType(root, "alias == u"), "\"urban\""));
+    REQUIRE_FALSE(contains(completeType(root, "alias == u"), "\"unrelated\""));
+    REQUIRE_FALSE(contains(completeType(root, "_.alias == u"), "\"urban\""));
+    REQUIRE(contains(completeType(root, "_.alias == u"), "\"unrelated\""));
 
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
+    Environment env(graph->strings());
+    env.setSchema(root);
     InvocationProbe probe;
     env.functions["probe"] = &probe;
     for (auto query : {"probe() and child.mo", "probe(child.mo)", "probe().mo"}) {
         auto cursor = std::string_view(query).find("mo") + 2;
-        auto result = complete(env, query, cursor, TypeId{1});
+        auto result = complete(env, query, cursor, root);
         REQUIRE(result);
         if (std::string_view(query) != "probe().mo")
             REQUIRE(contains(*result, "mode"));
@@ -1221,34 +1224,41 @@ TEST_CASE("Type completion preserves alias scope and never executes custom funct
 
 TEST_CASE("String enum metadata has one path through descriptors completion and rewrites", "[model.schema-type]")
 {
-    TypeGraph d;
-    d.add<ObjectSchema>(1).addField(d.name("mode"), {2});
-    auto& value = d.add<ValueSchema>(2, Schema::Kind::String);
-    REQUIRE_THROWS_AS(value.addEnumValue(std::string("READY")), std::invalid_argument);
-    REQUIRE_THROWS_AS(value.addEnumValue(std::string_view("READY")), std::invalid_argument);
-    value.addEnumSymbol(d.name("READY"));
-    d.finalize();
-    auto descriptor = std::make_shared<SchemaModel>(d.strings, d.lookup());
-    REQUIRE(descriptor->root(1)->toJson()["fields"]["mode"]["enum"][0] == "READY");
-    REQUIRE(contains(d.complete("REA"), "\"READY\""));
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
-    auto ast = compile(env, "READY", CompileOptions{false, RewriteMode::Schema, 1});
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"mode", "READY"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto value = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("mode", value);
+    STATIC_REQUIRE_FALSE(std::is_constructible_v<SchemaType::EnumValue, std::string>);
+    STATIC_REQUIRE_FALSE(std::is_constructible_v<SchemaType::EnumValue, std::string_view>);
+    value.asEnum().addSymbol("READY");
+    graph->finalize();
+    auto descriptor = root.modelNode();
+    REQUIRE(descriptor->toJson()["fields"]["mode"]["enum"][0] == "READY");
+    REQUIRE(contains(completeType(root, "REA"), "\"READY\""));
+    Environment env(graph->strings());
+    env.setSchema(root);
+    auto ast = compile(env, "READY", CompileOptions{false, RewriteMode::Schema, root});
     REQUIRE(ast);
     REQUIRE((*ast)->expr().toString().find("mode") != std::string::npos);
 }
 
 TEST_CASE("Shared schema branches and repeated field names keep distinct enum paths", "[model.schema-type]")
 {
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("left"), {2});
-    root.addField(d.name("right"), {2});
-    d.add<ObjectSchema>(2).addField(d.name("left"), {3});
-    d.add<ValueSchema>(3, Schema::Kind::String).addEnumSymbol(d.name("READY"));
-    d.finalize();
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"left", "right", "READY"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto branch = graph->newObjectType();
+    auto enumeration = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("left", branch);
+    root.addField("right", branch);
+    branch.addField("left", enumeration);
+    enumeration.asEnum().addSymbol("READY");
+    graph->finalize();
     bool exhaustive = false;
-    auto paths = Schema::enumSymbolPaths(1, d.lookup(), d.name("READY"), &exhaustive);
+    auto paths = root.enumSymbolPaths(graph->dictionary().get("READY"), &exhaustive);
     REQUIRE(exhaustive);
     REQUIRE(paths.size() == 2);
     REQUIRE(paths[0].size() == 2);
@@ -1257,48 +1267,39 @@ TEST_CASE("Shared schema branches and repeated field names keep distinct enum pa
 
 TEST_CASE("Field paths prune unrelated shared graphs without dropping distinct owners", "[model.schema-type][schema.field-paths]")
 {
-    TypeGraph d;
-    auto left = d.name("left");
-    auto right = d.name("right");
-    auto target = d.name("target");
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("conditions"), {10});
-    root.addField(left, {2});
-    root.addField(right, {2});
-    d.add<ObjectSchema>(2).addField(target, {3});
-    d.add<ValueSchema>(3, Schema::Kind::Int);
-
-    // A tiny shared graph has over 30,000 paths, none relevant to this field.
-    for (TypeId id = 10; id < 24; ++id) {
-        auto& branch = d.add<ObjectSchema>(id);
-        branch.addField(left, {TypeId(id + 1)});
-        branch.addField(right, {TypeId(id + 1)});
+    auto graph = std::make_shared<SchemaPool>();
+    auto root = graph->newObjectType();
+    auto matched = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    std::vector<SchemaObjectType> branches;
+    for (size_t i = 0; i < 15; ++i)
+        branches.push_back(graph->newObjectType());
+    root.addField("conditions", branches.front());
+    root.addField("left", matched);
+    root.addField("right", matched);
+    matched.addField("target", integer);
+    // Over 30,000 irrelevant paths would exhaust the request budget without pruning.
+    for (size_t i = 0; i + 1 < branches.size(); ++i) {
+        branches[i].addField("left", branches[i + 1]);
+        branches[i].addField("right", branches[i + 1]);
     }
-    d.add<ValueSchema>(24, Schema::Kind::Int);
     SECTION("Acyclic shared graph") {}
-    SECTION("Unrelated recursive graph") {
-        d.add<ObjectSchema>(24).addField(left, {24});
-    }
-    d.finalize();
-
-    std::size_t lookups = 0;
-    auto lookup = [&](TypeId id) {
-        ++lookups;
-        return d.lookup()(id);
-    };
+    SECTION("Unrelated recursive graph") { branches.back().addField("left", branches.back()); }
+    graph->finalize();
+    auto left = graph->dictionary().get("left");
+    auto right = graph->dictionary().get("right");
+    auto target = graph->dictionary().get("target");
     bool exhaustive = false;
-    auto paths = Schema::fieldPaths(1, lookup, target, &exhaustive);
+    auto paths = root.fieldPaths(target, &exhaustive);
     REQUIRE(exhaustive);
     REQUIRE(paths == std::vector<SchemaPath>{
         {{SchemaPathSegment::Kind::Field, left}, {SchemaPathSegment::Kind::Field, target}},
         {{SchemaPathSegment::Kind::Field, right}, {SchemaPathSegment::Kind::Field, target}}});
-    REQUIRE(lookups < 16);
 
-    Environment env(d.strings);
-    env.querySchemaCallback = lookup;
+    Environment env(graph->strings());
     auto ast = compile(env, "**.target", false);
     REQUIRE(ast);
-    auto refs = referencedSchemaPaths(env, **ast, 1);
+    auto refs = referencedSchemaPaths(env, **ast, root);
     REQUIRE(refs);
     REQUIRE_FALSE(refs->hasUnresolvedAccess);
     REQUIRE(refs->paths.size() == 2);
@@ -1306,121 +1307,114 @@ TEST_CASE("Field paths prune unrelated shared graphs without dropping distinct o
 
 TEST_CASE("Field path analysis reports partial recursive and bounded results", "[model.schema-type][schema.field-paths]")
 {
-    TypeGraph d;
-    auto next = d.name("next");
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("group"), {2});
-    d.add<ObjectSchema>(2).addField(d.name("target"), {3});
-    d.add<ValueSchema>(3, Schema::Kind::String);
-
+    auto graph = std::make_shared<SchemaPool>();
+    auto root = graph->newObjectType();
+    auto group = graph->newObjectType();
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    root.addField("group", group);
+    group.addField("target", text);
     SECTION("A recursive branch can contain further matches") {
-        root.addField(next, {1});
+        root.addField("next", root);
     }
     SECTION("A depth-limited branch can contain further matches") {
-        root.addField(next, {10});
-        for (TypeId id = 10; id < 140; ++id)
-            d.add<ObjectSchema>(id).addField(next, {TypeId(id + 1)});
-        d.add<ObjectSchema>(140).addField(d.name("group"), {2});
+        auto previous = root;
+        for (size_t i = 0; i < 131; ++i) {
+            auto next = graph->newObjectType();
+            previous.addField("next", next);
+            previous = next;
+        }
+        previous.addField("group", group);
     }
-    SECTION("Open metadata cannot exclude further matches") {
-        root.setOpen(true);
-    }
-    d.finalize();
+    SECTION("Open metadata cannot exclude further matches") { root.setOpen(true); }
+    graph->finalize();
 
     bool exhaustive = true;
-    auto paths = Schema::fieldPaths(1, d.lookup(), d.name("target"), &exhaustive);
+    auto paths = root.fieldPaths(graph->dictionary().get("target"), &exhaustive);
     REQUIRE_FALSE(exhaustive);
     REQUIRE(paths.size() == 1);
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
+    Environment env(graph->strings());
     for (auto query : {"**.target", "**.group.target", "**.group.target == 'x'"}) {
         CAPTURE(query);
         auto ast = compile(env, query, false);
         REQUIRE(ast);
-        auto refs = referencedSchemaPaths(env, **ast, 1);
+        auto refs = referencedSchemaPaths(env, **ast, root);
         REQUIRE(refs);
         REQUIRE(refs->paths.size() == 1);
         REQUIRE(refs->hasUnresolvedAccess);
     }
 }
 
-TEST_CASE("Field path pruning preserves aliases and unindexed adapter fields", "[model.schema-type][schema.field-paths]")
+TEST_CASE("Field path pruning preserves canonical aliases and real-member shadows", "[model.schema-type][schema.field-paths]")
 {
-    TypeGraph d;
-    auto& foreign = d.add<ForeignSchema>(1);
-    foreign.definition.addField(d.name("branch"), {2});
-    auto& aliased = d.add<LookupAliasSchema>(2);
-    aliased.alias = d.name("alias");
-    aliased.target = d.name("target");
-    aliased.addField(aliased.target, {3});
-    d.add<ValueSchema>(3, Schema::Kind::Int);
-    d.finalize();
-    foreign.indexed = false;
-
+    auto graph = std::make_shared<SchemaPool>();
+    auto root = graph->newObjectType();
+    auto aliased = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    root.addField("branch", aliased);
+    aliased.addField("target", integer);
+    aliased.addAlias("alias", "target");
+    std::string_view expected = "target";
+    SECTION("Lookup-only alias") {}
+    SECTION("A real member wins over the alias") {
+        aliased.addField("alias", integer);
+        expected = "alias";
+    }
+    graph->finalize();
     bool exhaustive = false;
-    auto paths = Schema::fieldPaths(1, d.lookup(), aliased.alias, &exhaustive);
+    auto paths = root.fieldPaths(graph->dictionary().get("alias"), &exhaustive);
     REQUIRE(exhaustive);
     REQUIRE(paths.size() == 1);
-    REQUIRE(paths.front().back().field == aliased.target);
-
-    // A real member wins over the lookup-only alias, including after mutation.
-    aliased.addField(aliased.alias, {3});
-    paths = Schema::fieldPaths(1, d.lookup(), aliased.alias, &exhaustive);
-    REQUIRE(exhaustive);
-    REQUIRE(paths.size() == 1);
-    REQUIRE(paths.front().back().field == aliased.alias);
+    REQUIRE(paths.front().back().field == graph->dictionary().get(expected));
 }
 
 TEST_CASE("Field paths still bound shared graphs whose branches all match", "[model.schema-type][schema.field-paths]")
 {
-    TypeGraph d;
-    auto left = d.name("left");
-    auto right = d.name("right");
-    for (TypeId id = 1; id < 15; ++id) {
-        auto& branch = d.add<ObjectSchema>(id);
-        branch.addField(left, {TypeId(id + 1)});
-        branch.addField(right, {TypeId(id + 1)});
+    auto graph = std::make_shared<SchemaPool>();
+    std::vector<SchemaObjectType> branches;
+    for (size_t i = 0; i < 15; ++i)
+        branches.push_back(graph->newObjectType());
+    for (size_t i = 0; i + 1 < branches.size(); ++i) {
+        branches[i].addField("left", branches[i + 1]);
+        branches[i].addField("right", branches[i + 1]);
     }
-    d.add<ObjectSchema>(15).addField(d.name("target"), {16});
-    d.add<ValueSchema>(16, Schema::Kind::Int);
-    d.finalize();
-
-    std::size_t lookups = 0;
-    auto lookup = [&](TypeId id) {
-        ++lookups;
-        return d.lookup()(id);
-    };
+    branches.back().addField("target", graph->newScalarType(SchemaType::Kind::Int));
+    graph->finalize();
     bool exhaustive = true;
-    auto paths = Schema::fieldPaths(1, lookup, d.name("target"), &exhaustive);
+    auto paths = branches.front().fieldPaths(graph->dictionary().get("target"), &exhaustive);
     REQUIRE_FALSE(exhaustive);
     REQUIRE_FALSE(paths.empty());
     REQUIRE(paths.size() < 10000);
-    REQUIRE(lookups <= 10000);
 }
 
 TEST_CASE("Enum matches beyond the path enumeration depth limit remain queryable", "[model.schema-type]")
 {
-    TypeGraph d;
-    auto next = d.name("next");
-    for (TypeId id = 1; id <= 132; ++id)
-        d.add<ObjectSchema>(id).addField(next, {TypeId(id + 1)});
-    d.add<ValueSchema>(133, Schema::Kind::String).addEnumSymbol(d.name("READY"));
-    d.finalize();
+    auto graph = std::make_shared<SchemaPool>();
+    auto rootType = graph->newObjectType();
+    auto previous = rootType;
+    for (size_t i = 1; i < 132; ++i) {
+        auto next = graph->newObjectType();
+        previous.addField("next", next);
+        previous = next;
+    }
+    auto enumeration = graph->newEnumType();
+    enumeration.addSymbol("READY");
+    previous.addField("next", enumeration);
+    graph->finalize();
     bool exhaustive = true;
-    REQUIRE(Schema::enumSymbolPaths(1, d.lookup(), d.name("READY"), &exhaustive).empty());
+    REQUIRE(rootType.enumSymbolPaths(graph->dictionary().get("READY"), &exhaustive).empty());
     REQUIRE_FALSE(exhaustive);
-    auto model = std::make_shared<ModelPool>(d.strings);
+    auto model = std::make_shared<ModelPool>();
     auto root = model->newObject();
     auto current = root;
-    for (auto i = 1; i < 132; ++i) {
+    for (size_t i = 1; i < 132; ++i) {
         auto child = model->newObject();
         current->addField("next", child);
         current = child;
     }
     current->addField("next", "READY");
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
-    auto ast = compile(env, "READY", CompileOptions{false, RewriteMode::Schema, 1});
+    Environment env(model->strings());
+    env.setSchema(rootType);
+    auto ast = compile(env, "READY", CompileOptions{false, RewriteMode::Schema, rootType});
     REQUIRE(ast);
     auto result = eval(env, **ast, *root, nullptr);
     REQUIRE(result);
@@ -1431,36 +1425,41 @@ TEST_CASE("Type completion performance", "[perf.completion]")
 {
     if (RUNNING_ON_VALGRIND)
         SKIP("Skipping benchmarks when running under valgrind");
-    TypeGraph d;
-    auto& root = d.add<ObjectSchema>(1);
-    root.addField(d.name("items"), {2});
-    d.add<ArraySchema>(2).addElementSchemas({3, 4});
-    auto& item = d.add<ObjectSchema>(3);
-    auto& alternate = d.add<CombinedSchema>(4, Schema::Composition::AnyOf);
-    alternate.addAlternative(3);
-    alternate.addAlternative(5);
-    d.add<ValueSchema>(5, Schema::Kind::Int);
+    auto graph = std::make_shared<SchemaPool>();
+    for (auto name : {"items"})
+        REQUIRE(graph->strings()->emplace(name));
+    auto root = graph->newObjectType();
+    auto items = graph->newArrayType();
+    auto item = graph->newObjectType();
+    auto alternate = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    root.addField("items", items);
+    items.addElement(item);
+    items.addElement(alternate);
+    alternate.addAlternative(item);
+    alternate.addAlternative(integer);
     for (auto i = 0; i < 256; ++i)
-        item.addField(d.name("field" + std::to_string(i)), {5});
-    d.finalize();
-    auto model = std::make_shared<ModelPool>(d.strings);
+        item.addField("field" + std::to_string(i), integer);
+    graph->finalize();
+    auto model = std::make_shared<ModelPool>(graph->strings());
+    model->setSchemaPool(graph);
     auto node = model->newObject();
     node->setSchema(1);
-    Environment env(d.strings);
-    env.querySchemaCallback = d.lookup();
+    Environment env(graph->strings());
+    env.setSchema(root);
     CompletionOptions options;
     options.showWildcardHints = false;
     options.limit = 1000;
-    auto schemaResult = complete(env, "fi", 2, TypeId{1}, options);
+    auto schemaResult = complete(env, "fi", 2, root, options);
     auto modelResult = complete(env, "fi", 2, *node, options);
     REQUIRE(schemaResult);
     REQUIRE(modelResult);
     REQUIRE(schemaResult->size() == 256);
     REQUIRE(schemaResult->size() == modelResult->size());
-    auto nested = complete(env, "items[17].fi", 12, TypeId{1}, options);
+    auto nested = complete(env, "items[17].fi", 12, root, options);
     REQUIRE(nested);
     REQUIRE(nested->size() == 256);
     BENCHMARK("schema model root completion") { return complete(env, "fi", 2, *node, options); };
-    BENCHMARK("direct type root completion") { return complete(env, "fi", 2, TypeId{1}, options); };
-    BENCHMARK("direct nested array union completion") { return complete(env, "items[17].fi", 12, TypeId{1}, options); };
+    BENCHMARK("direct type root completion") { return complete(env, "fi", 2, root, options); };
+    BENCHMARK("direct nested array union completion") { return complete(env, "items[17].fi", 12, root, options); };
 }

@@ -1,5 +1,6 @@
 #include "simfil/value.h"
 #include "simfil/model/model.h"
+#include "simfil/model/schema-pool.h"
 #include <fmt/format.h>
 
 namespace simfil
@@ -13,27 +14,28 @@ auto impl::ValueToString::operator()(const Bitmask& value) const -> std::string
 #if defined(SIMFIL_WITH_MODEL_JSON)
 auto Bitmask::toJson() const -> nlohmann::json
 {
-    auto definition = type.definition();
-    if (!definition || !definition->isBitmask() || !definition->bitWidth() || definition->bitWidth() > 64 ||
-        (definition->bitWidth() < 64 && (bits >> definition->bitWidth())))
-        throw std::invalid_argument("Cannot serialize a bitmask without its type binding");
+    if (!type || !type.isBitmask() || !type.bitWidth() || type.bitWidth() > 64 ||
+        (type.bitWidth() < 64 && (bits >> type.bitWidth())))
+        throw std::invalid_argument("Cannot serialize a bitmask without a valid schema type");
+    if (type.pool()->identity().empty())
+        throw std::invalid_argument("Cannot serialize a bitmask with an anonymous schema pool");
     return {{"_bitmask", true}, {"bits", fmt::format("0x{:016x}", bits)},
-            {"schema", type.binding->identity()}, {"typeId", type.id}};
+            {"schema", type.pool()->identity()}, {"typeId", type.id()}};
 }
 #endif
 
-auto Value::schemaReference() const -> SchemaReference
+auto Value::schemaType() const -> SchemaType
 {
     if (auto scalar = std::get_if<QualifiedScalar>(&value))
         return scalar->type;
     if (auto mask = std::get_if<Bitmask>(&value))
         return mask->type;
     if (auto source = node())
-        return source->schemaReference();
+        return source->schemaType();
     return {};
 }
 
-auto Value::withSchema(SchemaReference typeRef) const -> Value
+auto Value::withSchemaType(SchemaType typeRef) const -> Value
 {
     // Flags are intrinsically typed, so annotation cannot change their interpretation.
     if (type == ValueType::Bitmask) {
@@ -49,22 +51,21 @@ auto Value::withSchema(SchemaReference typeRef) const -> Value
 
 auto Value::namedValue(std::string_view name) const -> tl::expected<Value, Error>
 {
-    auto typeRef = schemaReference();
-    auto definition = typeRef.definition();
-    if (!definition)
+    auto typeRef = schemaType();
+    if (!typeRef)
         return tl::unexpected(Error{Error::InvalidOperands, "Symbol requires an exact scalar type: " + std::string(name)});
-    auto named = definition->namedValue(name);
+    auto named = typeRef.namedValue(name);
     if (!named)
         return tl::unexpected(Error{Error::InvalidOperands, "Unknown symbol in scalar type: " + std::string(name)});
     return std::visit([&](auto raw) -> tl::expected<Value, Error> {
         using T = decltype(raw);
         if constexpr (std::is_same_v<T, std::uint64_t> || std::is_same_v<T, std::int64_t>) {
-            if (named->role == Schema::NamedValue::Role::Flag) {
+            if (named->role == SchemaType::NamedValue::Role::Flag) {
                 if constexpr (std::is_same_v<T, std::int64_t>)
                     if (raw < 0)
                         return tl::unexpected(Error{Error::InvalidOperands, "Negative flag declaration"});
-                if (!definition->isBitmask() || !definition->bitWidth() || definition->bitWidth() > 64 ||
-                    (definition->bitWidth() < 64 && (std::uint64_t(raw) >> definition->bitWidth())))
+                if (!typeRef.isBitmask() || !typeRef.bitWidth() || typeRef.bitWidth() > 64 ||
+                    (typeRef.bitWidth() < 64 && (std::uint64_t(raw) >> typeRef.bitWidth())))
                     return tl::unexpected(Error{Error::InvalidOperands, "Flag exceeds its type encoding"});
                 return Value::make(Bitmask{std::uint64_t(raw), typeRef});
             }
@@ -80,18 +81,17 @@ auto Value::namedValue(std::string_view name) const -> tl::expected<Value, Error
     }, named->value);
 }
 
-auto Value::fieldTypeReference(ModelNode const& parent, StringId field) -> SchemaReference
+auto Value::fieldType(ModelNode const& parent, StringId field) -> SchemaType
 {
-    auto parentType = parent.schemaReference();
+    auto parentType = parent.schemaType();
     if (parentType) {
         auto owner = parent.owningModel();
         auto name = owner ? owner->lookupStringId(field) : std::nullopt;
-        auto schema = parentType.definition();
-        if (name && schema) {
-            auto id = parentType.binding->strings()->get(*name);
+        if (name) {
+            auto id = parentType.pool()->dictionary().get(*name);
             // Missing names must not alias a declared empty field.
             if (id != StringPool::Empty || name->empty())
-                return {std::move(parentType.binding), schema->fieldSchema(id)};
+                return parentType.fieldType(id);
         }
     }
     return {};
@@ -102,10 +102,9 @@ auto Value::at(ModelNode const& parent, ModelNode const& child, std::int64_t ind
     // Object indexes have actual keys; avoid scalarizing the child twice.
     if (parent.type() == ValueType::Object)
         return field(parent, child, parent.keyAt(index));
-    return field(child, [&]() -> SchemaReference {
-        auto parentType = parent.schemaReference();
-        auto schema = parentType.definition();
-        return schema ? SchemaReference{std::move(parentType.binding), schema->itemSchema()} : SchemaReference{};
+    return field(child, [&]() -> SchemaType {
+        auto parentType = parent.schemaType();
+        return parentType.itemType();
     });
 }
 

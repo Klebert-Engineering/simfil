@@ -1,3 +1,4 @@
+#include "simfil/model/schema-pool.h"
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 
 #include "simfil/model/json.h"
@@ -109,11 +110,11 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
                 return tl::unexpected(Error{Error::ParserError, "Invalid tagged bitmask fields"});
             auto bits = Bitmask::parseBits(input["bits"].get_ref<const std::string&>());
             TRY_EXPECTED(bits);
-            auto binding = model.schemaBinding(input["schema"].get_ref<const std::string&>());
+            auto binding = model.schemaPool(input["schema"].get_ref<const std::string&>());
             if (!binding)
                 return tl::unexpected(Error{Error::ParserError, "Tagged bitmask requires its exact schema graph"});
             try {
-                return model.newBitmask(*bits, {std::move(binding), input["typeId"].get<TypeId>()});
+                return model.newBitmask(*bits, binding->schemaType(input["typeId"].get<TypeId>()));
             }
             catch (std::exception const& error) {
                 return tl::unexpected(Error{Error::ParserError, error.what()});

@@ -1,41 +1,11 @@
 #include "common.hpp"
+#include "simfil/model/schema-pool.h"
 
 #include <map>
 #include <tuple>
 
 namespace
 {
-/** Expose borrowed member metadata only during publication, not runtime reads. */
-class IndexedSchema : public Schema
-{
-public:
-    ObjectSchema fields;
-    bool published = false;
-
-    /** Model an object adapter with the base class's prepared member index. */
-    auto kind() const -> Kind override { return Kind::Object; }
-
-    /** Fail if runtime lookup regresses to enumeration of possible child types. */
-    void forEachDirectField(const std::function<void(StringId, std::span<const TypeId>)>& fn) const override
-    {
-        if (published)
-            throw std::logic_error("Runtime member lookup must not enumerate schema fields");
-        fields.forEachDirectField(fn);
-    }
-};
-
-/** Keep lookup-only aliases out of canonical member enumeration. */
-class AliasedSchema : public ObjectSchema
-{
-public:
-    StringId alias = 0, target = 0;
-    /** A real declaration takes precedence over the model's convenience alias. */
-    auto canonicalField(StringId field) const -> StringId override
-    {
-        return field == alias && std::ranges::find(directFields(), alias) == directFields().end() ? target : field;
-    }
-};
-
 /** Count wrapper resolution while retaining a custom column's virtual protocol. */
 class CountingPool : public ModelPool
 {
@@ -71,144 +41,141 @@ private:
 
 TEST_CASE("Member lookup reads declared edges without narrowing their types", "[model.schema-lookup]")
 {
-    AliasedSchema object;
-    object.alias = 10;
-    object.target = 11;
+    auto graph = std::make_shared<SchemaPool>();
+    auto object = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto text = graph->newScalarType(SchemaType::Kind::String);
     object.setOpen(true);
-    object.addField(11, {2});
-    object.addField(12, {3, 3});
-    object.addField(13);
-    object.addField(14, {2, 3});
-    object.addField(15, {0, 2});
-    object.addField(16, {2});
-    object.addField(16, {2});
-    CHECK(object.fieldSchema(10) == 2);
-    CHECK(object.fieldSchema(11) == 2);
-    CHECK(object.fieldSchema(12) == 3);
-    CHECK(object.fieldSchema(13) == NoTypeId);
-    CHECK(object.fieldSchema(14) == NoTypeId);
-    CHECK(object.fieldSchema(15) == NoTypeId);
-    CHECK(object.fieldSchema(16) == 2);
-    CHECK(object.fieldSchema(17) == NoTypeId);
-    object.addField(10, {3});
-    object.addField(16, {3});
-    CHECK(object.fieldSchema(10) == 3);
-    CHECK(object.fieldSchema(16) == NoTypeId);
+    object.addField("target", integer);
+    object.addAlias("alias", "target");
+    object.addField("repeated", text).addType(text);
+    object.addField("unknown");
+    object.addField("mixed", integer).addType(text);
+    object.addField("partial").addType(integer);
+    object.addField("same", integer);
+    object.addField("same", integer);
+    auto key = [&](std::string_view name) { return graph->dictionary().get(name); };
+    CHECK(object.fieldSchema(key("alias")) == integer.id());
+    CHECK(object.fieldSchema(key("target")) == integer.id());
+    CHECK(object.fieldSchema(key("repeated")) == text.id());
+    CHECK(object.fieldSchema(key("unknown")) == NoTypeId);
+    CHECK(object.fieldSchema(key("mixed")) == NoTypeId);
+    CHECK(object.fieldSchema(key("partial")) == NoTypeId);
+    CHECK(object.fieldSchema(key("same")) == integer.id());
+    CHECK_FALSE(object.field("absent"));
+    object.addField("alias", text);
+    object.addField("same", text);
+    CHECK(object.fieldSchema(key("alias")) == text.id());
+    CHECK(object.fieldSchema(key("same")) == NoTypeId);
 
-    ArraySchema array;
+    auto array = graph->newArrayType();
     CHECK(array.itemSchema() == NoTypeId);
-    array.addElementSchemas({2, 2});
-    CHECK(array.itemSchema() == 2);
-    array.addElementSchemas({3});
+    array.addElement(integer);
+    array.addElement(integer);
+    CHECK(array.itemSchema() == integer.id());
+    array.addElement(text);
     CHECK(array.itemSchema() == NoTypeId);
+    graph->finalize();
+    CHECK(object.fieldSchema(key("alias")) == text.id());
+    CHECK(object.fieldSchema(key("target")) == integer.id());
+    CHECK(object.fieldSchema(key("partial")) == NoTypeId);
 }
 
-TEST_CASE("Finalized union members use point lookup without revisiting the graph", "[model.schema-lookup]")
+TEST_CASE("Finalized union members use canonical point lookups", "[model.schema-lookup]")
 {
-    IndexedSchema left, right;
-    left.fields.addField(10, {4});
-    right.fields.addField(11, {5});
-    right.fields.addField(12, {1}); // A child union remains a declared union, not an inferred alternative.
-    CombinedSchema combined(Schema::Composition::OneOf);
-    combined.addAlternative(2);
-    combined.addAlternative(3);
-    ValueSchema integer(Schema::Kind::Int), text(Schema::Kind::String);
-    std::map<TypeId, Schema*> graph{{1, &combined}, {2, &left}, {3, &right}, {4, &integer}, {5, &text}};
-    bool published = false;
-    auto lookup = [&](TypeId id) -> Schema* {
-        if (published)
-            throw std::logic_error("Runtime member lookup must not traverse logical alternatives");
-        auto found = graph.find(id);
-        return found == graph.end() ? nullptr : found->second;
-    };
-    left.finalize(lookup);
-    right.finalize(lookup);
-    combined.finalize(lookup);
-    left.published = right.published = published = true;
-    for (int i = 0; i < 1000; ++i) {
-        CHECK(left.fieldSchema(10) == 4);
-        CHECK(combined.fieldSchema(10) == 4);
-        CHECK(combined.fieldSchema(11) == 5);
-        CHECK(combined.fieldSchema(12) == 1);
-        CHECK(combined.fieldSchema(13) == NoTypeId);
+    auto graph = std::make_shared<SchemaPool>();
+    auto combined = graph->newCompositionType(SchemaType::Composition::OneOf);
+    auto left = graph->newObjectType(), right = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    left.addField("left", integer);
+    right.addField("right", text);
+    right.addField("union", combined);
+    combined.addAlternative(left);
+    combined.addAlternative(right);
+    graph->finalize();
+    auto leftId = graph->dictionary().get("left");
+    auto rightId = graph->dictionary().get("right");
+    auto unionId = graph->dictionary().get("union");
+    auto before = graph->schemaMemoryUsage();
+    for (int i = 0; i < 1000; ++i)
+    {
+        CHECK(left.fieldSchema(leftId) == integer.id());
+        CHECK(combined.fieldSchema(leftId) == integer.id());
+        CHECK(combined.fieldSchema(rightId) == text.id());
+        CHECK(combined.fieldSchema(unionId) == combined.id());
+        CHECK(combined.fieldSchema(StringPool::Empty) == NoTypeId);
     }
-    CHECK(combined.composition() == Schema::Composition::OneOf);
+    CHECK(graph->schemaMemoryUsage().allocatedBytes == before.allocatedBytes);
+    CHECK(combined.composition() == SchemaType::Composition::OneOf);
     CHECK(combined.alternatives().size() == 2);
     CHECK(combined.directFields().empty());
 }
 
-TEST_CASE("Prepared member lookup agrees with analysis for incomplete and cyclic metadata", "[model.schema-lookup]")
+TEST_CASE("Prepared member lookup preserves incomplete and cyclic metadata", "[model.schema-lookup]")
 {
-    ObjectSchema left, right;
-    left.addField(10, {4});
-    right.addField(11, {5});
-    CombinedSchema combined(Schema::Composition::AnyOf);
-    combined.addAlternative(2);
-    combined.addAlternative(3);
-    ArraySchema array;
-    array.addElementSchemas({4});
-    ValueSchema scalar(Schema::Kind::Int);
-    Schema unknown;
-    CombinedSchema emptyAll(Schema::Composition::AllOf);
-    std::map<TypeId, Schema*> graph{{1, &combined}, {2, &left}, {3, &right}, {4, &scalar},
-                                    {5, &scalar}, {6, &array}, {7, &unknown}, {8, &emptyAll}};
+    auto graph = std::make_shared<SchemaPool>();
+    auto combined = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    auto left = graph->newObjectType(), right = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    auto array = graph->newArrayType();
+    auto unknown = graph->newType(SchemaType::Kind::Unknown);
+    auto emptyAll = graph->newCompositionType(SchemaType::Composition::AllOf);
+    left.addField("left", integer);
+    right.addField("right", text);
+    array.addElement(integer);
+    combined.addAlternative(left);
+    combined.addAlternative(right);
     SECTION("Closed branches") {}
     SECTION("Open branch without the other member") { right.setOpen(true); }
-    SECTION("Open branches retain shared known declarations") {
+    SECTION("Open branches retain shared declarations") {
         left.setOpen(true);
         right.setOpen(true);
-        right.addField(10, {4});
-        right.addField(10, {4});
+        right.addField("left", integer).addType(integer);
     }
-    SECTION("Conflicting declarations") { right.addField(10, {5}); }
-    SECTION("Unknown declared type") { right.addField(10); }
-    SECTION("Unresolved alternative") { combined.addAlternative(0); }
-    SECTION("Missing alternative") { combined.addAlternative(99); }
-    SECTION("Unrestricted alternative") { combined.addAlternative(7); }
-    SECTION("Empty intersection alternative") { combined.addAlternative(8); }
-    SECTION("Self-referential alternative") { combined.addAlternative(1); }
-    SECTION("Array alternative") { combined.addAlternative(6); }
-    auto lookup = [&](TypeId id) -> Schema* {
-        auto found = graph.find(id);
-        return found == graph.end() ? nullptr : found->second;
+    SECTION("Conflicting declarations") { right.addField("left", text); }
+    SECTION("Unknown declared type") { right.addField("left"); }
+    SECTION("Unresolved alternative") { combined.addAlternative({}); }
+    SECTION("Unrestricted alternative") { combined.addAlternative(unknown); }
+    SECTION("Empty intersection alternative") { combined.addAlternative(emptyAll); }
+    SECTION("Self-referential alternative") { combined.addAlternative(combined); }
+    SECTION("Array alternative") { combined.addAlternative(array); }
+    graph->finalize();
+    auto unique = [](auto types) {
+        if (types.empty())
+            return NoTypeId;
+        auto id = types.front();
+        return std::ranges::all_of(types, [id](auto other) { return id == other; }) ? id : NoTypeId;
     };
-    for (auto [id, schema] : graph)
-        schema->finalize(lookup);
-    for (StringId field : {10, 11, 12}) {
-        auto types = Schema::fieldSchemas(1, lookup, field);
-        CHECK(combined.fieldSchema(field) == (types.size() == 1 ? types.front() : NoTypeId));
+    for (auto name : {"left", "right", "missing"})
+    {
+        auto field = graph->dictionary().get(name);
+        CHECK(combined.fieldSchema(field) == unique(combined.fieldTypes(field)));
     }
-    auto types = Schema::itemSchemas(1, lookup);
-    CHECK(combined.itemSchema() == (types.size() == 1 ? types.front() : NoTypeId));
-    combined.addAlternative(0);
-    CHECK(combined.fieldSchema(10) == NoTypeId);
-    CHECK(combined.itemSchema() == NoTypeId);
+    CHECK(combined.itemSchema() == unique(combined.itemTypes()));
+    REQUIRE_THROWS_AS(combined.addAlternative({}), std::logic_error);
 }
 
-TEST_CASE("Scalar extraction uses the parent's point lookup rather than schema enumeration", "[model.schema-lookup]")
+TEST_CASE("Scalar extraction retains the parent's canonical point-lookup type", "[model.schema-lookup]")
 {
-    auto strings = std::make_shared<StringPool>();
-    auto field = strings->emplace("value").value();
-    auto objectSchema = std::make_shared<IndexedSchema>();
-    auto scalarSchema = std::make_shared<ValueSchema>(Schema::Kind::Int);
-    objectSchema->fields.addField(field, {2});
-    auto lookup = [objectSchema, scalarSchema](TypeId id) -> Schema* {
-        if (id == 1)
-            return objectSchema.get();
-        return id == 2 ? scalarSchema.get() : nullptr;
-    };
-    objectSchema->finalize(lookup);
-    objectSchema->published = true;
-    auto binding = std::make_shared<SchemaBinding>("point-lookup", objectSchema, lookup, strings);
-    auto model = std::make_shared<ModelPool>(strings);
-    model->setSchemaBinding(binding);
+    auto graph = std::make_shared<SchemaPool>();
+    auto objectType = graph->newObjectType();
+    auto integer = graph->newScalarType(SchemaType::Kind::Int);
+    objectType.addField("measurement", integer);
+    graph->finalize("point-lookup");
+    auto model = std::make_shared<ModelPool>();
+    REQUIRE(model->strings()->emplace("padding"));
+    model->setSchemaPool(graph);
     auto object = model->newObject();
-    REQUIRE(object->setSchema(1));
-    REQUIRE(object->addField("value", int64_t{42}));
+    REQUIRE(object->setSchema(objectType.id()));
+    REQUIRE(object->addField("measurement", int64_t{42}));
     auto child = object->at(0);
     REQUIRE(child);
-    CHECK(Value::field(*object, *child, field).schemaReference() == SchemaReference{binding, 2});
-    CHECK(Value::at(*object, *child, 0).schemaReference() == SchemaReference{binding, 2});
+    auto field = model->strings()->get("measurement");
+    REQUIRE(field != graph->dictionary().get("measurement"));
+    CHECK(Value::field(*object, *child, field).schemaType() == integer);
+    CHECK(Value::at(*object, *child, 0).schemaType() == integer);
 }
 
 TEST_CASE("Core node metadata avoids wrappers without bypassing custom or foreign owners", "[model.schema-lookup]")

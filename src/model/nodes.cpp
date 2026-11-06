@@ -11,9 +11,9 @@
 namespace simfil
 {
 
-auto ModelNode::schemaReference() const -> SchemaReference
+auto ModelNode::schemaType() const -> SchemaType
 {
-    return model_ ? model_->schemaReference(*this) : SchemaReference{};
+    return model_ ? model_->resolveSchemaType(*this) : SchemaType{};
 }
 
 /// Create a ModelNode from a model pool which serves as its
@@ -88,6 +88,21 @@ bool ModelNode::iterate(const IterCallback& cb) const {
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
 nlohmann::json ModelNode::toJson() const
+{
+    nlohmann::json result;
+    if (model_) {
+        // Like collection access, export must dispatch to the resolved node's
+        // protocol. ModelNodeBase supplies the non-dispatching default below.
+        auto status = model_->resolve(*this, Model::Lambda([&](auto const& resolved) {
+            result = resolved.toJson();
+        }));
+        if (!status)
+            throw std::runtime_error(status.error().message);
+    }
+    return result;
+}
+
+nlohmann::json ModelNodeBase::toJson() const
 {
     if (type() == ValueType::Undef) {
         // Output metadata only: an application object with this key is still an object on import.

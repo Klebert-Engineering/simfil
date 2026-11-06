@@ -5,25 +5,36 @@ target_compile_features(Catch2 PRIVATE cxx_std_20)
 target_compile_features(Catch2WithMain PRIVATE cxx_std_20)
 
 add_executable(test.simfil
-  common.hpp
-  common.cpp
   token.cpp
-  schema.cpp
-  schema-domain.cpp
-  schema-lookup.cpp
-  schema-value.cpp
-  evaluation.cpp
-  simfil.cpp
-  diagnostics.cpp
-  completion.cpp
-  complex.cpp
-  model-copy.cpp
+  schema-type.cpp
+  schema-runtime-type.cpp
+  schema-node.cpp
+  schema-append-checkpoint.cpp
   string-pool.cpp
-  performance.cpp
   arena.cpp
   error.cpp
   value.cpp
   operator.cpp)
+
+# Query/model fixtures use JSON ingestion to construct their data. Keep them
+# all in the default build; JSON-free builds still exercise independent native
+# storage, schemas, scalar values, tokenization and error behavior.
+if (SIMFIL_WITH_MODEL_JSON)
+  target_sources(test.simfil PRIVATE
+    common.hpp
+    common.cpp
+    schema.cpp
+    schema-domain.cpp
+    schema-lookup.cpp
+    schema-value.cpp
+    evaluation.cpp
+    simfil.cpp
+    diagnostics.cpp
+    completion.cpp
+    complex.cpp
+    model-copy.cpp
+    performance.cpp)
+endif()
 
 target_link_libraries(test.simfil
   PUBLIC
