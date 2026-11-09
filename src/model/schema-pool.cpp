@@ -22,6 +22,7 @@ SchemaPool::SchemaPool(std::shared_ptr<StringPool> strings)
       schema_(std::make_unique<Impl>(*this))
 {
 }
+
 SchemaPool::~SchemaPool() = default;
 
 
@@ -244,22 +245,26 @@ auto SchemaPool::finalized() const -> bool
 {
     return schema_->packed;
 }
+
 auto SchemaPool::typeCount() const -> size_t
 {
     if (schema_->packing && !schema_->packed)
         throw std::logic_error("Schema publication failed");
     return schema_->types.size() - 1;
 }
+
 auto SchemaPool::schemaStatistics() const -> Statistics
 {
     return schema_->statistics;
 }
+
 auto SchemaPool::typeNode(TypeId id) const -> ModelNode::Ptr
 {
     if (!finalized() || !schema_->valid(id))
         throw std::invalid_argument("Descriptor requested for an unknown type");
     return Model::resolve(ModelNodeAddress(SchemaTypeModelNode::Type, id));
 }
+
 auto SchemaPool::Impl::decodeNamed(NamedData const& row) const -> SchemaType::NamedValue
 {
     SchemaType::NamedValue value;
@@ -445,6 +450,10 @@ void SchemaPool::Impl::validate(size_t literalBudget) const
     std::set<uint32_t> numericOwners;
     std::vector<bool> usedFields(fieldRows.size()), usedNamed(namedRows.size()), usedIntervals(intervalRows.size());
     std::unordered_map<uint32_t, size_t> byteSizes;
+
+    // Validate each declaration and its owned collections before following any
+    // inherited or derived lookup. Shared targets are allowed; shared metadata
+    // rows/array handles would make mutation and byte accounting ambiguous.
     for (size_t id = 1; id < types.size(); ++id)
     {
         auto const& row = types[id];
@@ -525,6 +534,9 @@ void SchemaPool::Impl::validate(size_t literalBudget) const
             if (alias.alias == alias.canonical || !seenAliases.insert(alias.alias).second)
                 throw std::invalid_argument("Invalid or duplicate schema alias");
         }
+
+        // The packed width is meaningful only for a concrete bitmask. A union
+        // that can contain a mask does not itself define one physical encoding.
         auto affinity = SchemaType::affinities(SchemaType::Kind(row.kind));
         auto mask = valueTypeAffinity(ValueType::Bitmask);
         auto isMask = !(row.flags & 0x30u) && (affinity & mask) &&
@@ -556,6 +568,8 @@ void SchemaPool::Impl::validate(size_t literalBudget) const
             if (base >= types.size() || base == id || ++depth > 256)
                 throw std::invalid_argument("Cyclic or excessive schema inheritance");
     }
+    // Every numeric row has exactly one type owner. Check its interval payloads
+    // separately, since these live in stable descriptor-addressable columns.
     if (numericOwners.size() != numerics.size())
         throw std::invalid_argument("Unreferenced numeric domain storage");
     for (auto const& row : numerics)
@@ -579,6 +593,8 @@ void SchemaPool::Impl::validate(size_t literalBudget) const
             number(intervalRows[index].maximum);
         }
     }
+    // Replaced arrays may retain empty capacity, but unreachable live metadata
+    // must not survive publication or hide outside the validated graph.
     if (std::ranges::find(usedFields, false) != usedFields.end() ||
         std::ranges::find(usedNamed, false) != usedNamed.end())
         throw std::invalid_argument("Unreferenced schema record storage");
@@ -673,6 +689,9 @@ void SchemaPool::finalizeSchema()
         throw std::logic_error("Cannot reuse a failed schema publication");
     if (schema_->activeAppends)
         throw std::logic_error("Cannot finalize while a schema append is active");
+
+    // Mark publication before mutating derived state. A failed preparation leaves
+    // packing set, preventing later callers from using a partially indexed pool.
     schema_->packing = true;
     schema_->prepareAffinities();
     schema_->validate();
@@ -681,6 +700,7 @@ void SchemaPool::finalizeSchema()
         schema_->types[id].flags |= 8;
     schema_->packed = true;
 }
+
 void SchemaPool::finalize()
 {
     finalizeSchema();
@@ -884,6 +904,7 @@ void SchemaPool::Impl::string(S& archive, std::string& value, size_t limit, size
     }
     archive.text1b(value, limit);
 }
+
 template <class S> void SchemaPool::Impl::readWrite(S& archive, size_t budget)
 {
     uint32_t version = CodecVersion;
@@ -989,6 +1010,9 @@ void SchemaPool::readSchemaPayload(std::span<uint8_t const> bytes, size_t maxByt
     if (auto result = ModelPool::read(std::vector<uint8_t>(model.begin(), model.end())); !result)
         throw std::invalid_argument(result.error().message);
     schema_->validate(maxBytes);
+
+    // Rebuild indexes from validated canonical records; indexes are not trusted
+    // wire input and no descriptor can escape this unfinished owner yet.
     schema_->index();
     schema_->packed = true;
 }
@@ -997,6 +1021,7 @@ auto SchemaPool::write(std::ostream& output) -> tl::expected<void, Error>
 {
     return std::as_const(*this).write(output);
 }
+
 auto SchemaPool::write(std::ostream& output) const -> tl::expected<void, Error>
 {
     try
@@ -1009,6 +1034,7 @@ auto SchemaPool::write(std::ostream& output) const -> tl::expected<void, Error>
         return tl::unexpected(Error{Error::EncodeDecodeError, error.what()});
     }
 }
+
 auto SchemaPool::read(std::span<uint8_t const> input, size_t maxBytes) -> ConstPtr
 {
     auto result = std::make_shared<SchemaPool>();
@@ -1400,6 +1426,7 @@ auto SchemaType::sealed() const -> bool
 {
     return *this && ((pool_->schema_->types[id_].flags & 8) || pool_->finalized() || pool_->frozen());
 }
+
 void SchemaType::seal()
 {
     if (!*this || !writable_)
@@ -1410,6 +1437,7 @@ void SchemaType::seal()
     if (!(graph.types[id_].flags & 8))
         graph.mutableType(id_).flags |= 8;
 }
+
 void SchemaType::setTypeName(std::string_view name) { mutablePool().setTypeName(id_, name); }
 void SchemaType::addNamedValue(NamedValue const& value) { mutablePool().addNamedValue(id_, value); }
 void SchemaType::setComposition(Composition composition) { mutablePool().setComposition(id_, composition); }
@@ -1422,6 +1450,7 @@ void SchemaType::setKindName(StringId name)
     auto& row = pool.schema_->types[id_];
     row.kind = (uint32_t(name) << 16) | (row.kind & 0xffffu);
 }
+
 void SchemaType::setNullable(std::optional<bool> nullable) { mutablePool().setNullable(id_, nullable); }
 auto SchemaType::asObject() const -> SchemaObjectType { return SchemaObjectType(*this); }
 auto SchemaType::asArray() const -> SchemaArrayType { return SchemaArrayType(*this); }
@@ -1492,14 +1521,17 @@ void SchemaField::setRequired(std::optional<bool> required)
 {
     parent_.mutablePool().setFieldRequired(parent_.id_, name(), required);
 }
+
 void SchemaField::setRole(SchemaType::FieldRole role)
 {
     parent_.mutablePool().setFieldRole(parent_.id_, name(), role);
 }
+
 void SchemaField::setMultimap(bool multimap)
 {
     parent_.mutablePool().setFieldMultimap(parent_.id_, name(), multimap);
 }
+
 void SchemaField::addType(SchemaType child)
 {
     parent_.mutablePool().addFieldSchema(parent_.id_, name(), parent_.localId(child));
@@ -1510,20 +1542,24 @@ SchemaObjectType::SchemaObjectType(SchemaType type) : SchemaType(std::move(type)
     if (!*this || !hasAffinity(ValueType::Object))
         throw std::invalid_argument("SchemaObjectType requires object affinity");
 }
+
 auto SchemaObjectType::declareField(std::string_view name) -> SchemaField
 {
     mutablePool().declareField(id(), name);
     return field(name);
 }
+
 auto SchemaObjectType::addField(std::string_view name, SchemaType child) -> SchemaField
 {
     mutablePool().addFieldSchema(id(), name, localId(child));
     return field(name);
 }
+
 void SchemaObjectType::addAlias(std::string_view alias, std::string_view canonical)
 {
     mutablePool().addFieldAlias(id(), alias, canonical);
 }
+
 void SchemaObjectType::setBase(SchemaObjectType base) { mutablePool().setBaseSchema(id(), localId(base)); }
 void SchemaObjectType::setOpen(bool open) { mutablePool().setOpen(id(), open); }
 
@@ -1532,17 +1568,20 @@ SchemaArrayType::SchemaArrayType(SchemaType type) : SchemaType(std::move(type))
     if (!*this || !hasAffinity(ValueType::Array))
         throw std::invalid_argument("SchemaArrayType requires array affinity");
 }
+
 void SchemaArrayType::addElement(SchemaType child) { mutablePool().addElementSchema(id(), localId(child)); }
 auto SchemaArrayType::declareField(std::string_view name) -> SchemaField
 {
     mutablePool().declareField(id(), name);
     return field(name);
 }
+
 auto SchemaArrayType::addField(std::string_view name, SchemaType child) -> SchemaField
 {
     mutablePool().addFieldSchema(id(), name, localId(child));
     return field(name);
 }
+
 void SchemaArrayType::addAlias(std::string_view alias, std::string_view canonical)
 {
     mutablePool().addFieldAlias(id(), alias, canonical);
@@ -1553,6 +1592,7 @@ SchemaScalarType::SchemaScalarType(SchemaType type) : SchemaType(std::move(type)
     if (!*this || (SchemaType::affinities(kind()) & ~SchemaType::ScalarAffinities))
         throw std::invalid_argument("SchemaScalarType requires scalar affinity");
 }
+
 void SchemaScalarType::setNumericDomain(NumericDomain const& domain)
 {
     mutablePool().setTypeNumericDomain(id(), domain);
@@ -1563,6 +1603,7 @@ SchemaEnumType::SchemaEnumType(SchemaType type) : SchemaType(std::move(type))
     if (!*this || !(SchemaType::affinities(kind()) & SchemaType::ScalarAffinities))
         throw std::invalid_argument("SchemaEnumType requires a possible scalar affinity");
 }
+
 void SchemaEnumType::addSymbol(std::string_view symbol) { mutablePool().addEnumSymbol(id(), symbol); }
 void SchemaEnumType::addValue(EnumValue const& value) { mutablePool().addEnumValue(id(), value); }
 
@@ -1571,6 +1612,7 @@ SchemaBitmaskType::SchemaBitmaskType(SchemaType type) : SchemaScalarType(std::mo
     if (!isBitmask())
         throw std::invalid_argument("SchemaBitmaskType requires a concrete mask type");
 }
+
 void SchemaBitmaskType::setBitWidth(uint8_t width) { mutablePool().setBitWidth(id(), width); }
 void SchemaBitmaskType::addFlag(std::string_view name, uint64_t bits)
 {
@@ -1584,6 +1626,7 @@ SchemaCompositionType::SchemaCompositionType(SchemaType type) : SchemaType(std::
     if (!*this || composition() == Composition::None)
         throw std::invalid_argument("SchemaCompositionType requires a logical combiner");
 }
+
 void SchemaCompositionType::addAlternative(SchemaType alternative)
 {
     mutablePool().addAlternative(id(), localId(alternative));
@@ -1593,10 +1636,12 @@ auto SchemaPool::schemaType(TypeId id) const -> SchemaType
 {
     return schema_->valid(id) ? SchemaType(this, id, false) : SchemaType{};
 }
+
 auto SchemaPool::schemaType(TypeId id) -> SchemaType
 {
     return schema_->valid(id) ? SchemaType(this, id, true) : SchemaType{};
 }
+
 auto SchemaPool::newType(SchemaType::Kind kind) -> SchemaType { return schemaType(addSchema(kind)); }
 auto SchemaPool::newObjectType(SchemaType::Kind kind) -> SchemaObjectType
 {
@@ -1604,24 +1649,28 @@ auto SchemaPool::newObjectType(SchemaType::Kind kind) -> SchemaObjectType
         throw std::invalid_argument("Object factory requires object affinity");
     return SchemaObjectType(newType(kind));
 }
+
 auto SchemaPool::newArrayType(SchemaType::Kind kind) -> SchemaArrayType
 {
     if (!(SchemaType::affinities(kind) & valueTypeAffinity(ValueType::Array)))
         throw std::invalid_argument("Array factory requires array affinity");
     return SchemaArrayType(newType(kind));
 }
+
 auto SchemaPool::newScalarType(SchemaType::Kind kind) -> SchemaScalarType
 {
     if (SchemaType::affinities(kind) & ~SchemaType::ScalarAffinities)
         throw std::invalid_argument("Scalar factory requires scalar affinity");
     return SchemaScalarType(newType(kind));
 }
+
 auto SchemaPool::newEnumType(SchemaType::Kind kind) -> SchemaEnumType
 {
     if (!(SchemaType::affinities(kind) & SchemaType::ScalarAffinities))
         throw std::invalid_argument("Enum factory requires possible scalar affinity");
     return SchemaEnumType(newType(kind));
 }
+
 auto SchemaPool::newBitmaskType(uint8_t width, SchemaType::Kind kind) -> SchemaBitmaskType
 {
     auto bits = SchemaType::affinities(kind);
@@ -1633,6 +1682,7 @@ auto SchemaPool::newBitmaskType(uint8_t width, SchemaType::Kind kind) -> SchemaB
     result.setBitWidth(width);
     return result;
 }
+
 auto SchemaPool::newCompositionType(SchemaType::Composition composition) -> SchemaCompositionType
 {
     auto kind = SchemaType::Kind::Union;

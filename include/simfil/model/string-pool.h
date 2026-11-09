@@ -25,8 +25,10 @@ using StringId = uint16_t;
 static_assert(std::is_unsigned_v<StringId>, "StringId must be unsigned!");
 
 /**
- * Fast and efficient case-insensitive string interner,
- * used to store object keys.
+ * Case-sensitive string interner for field names and scalar strings. IDs belong
+ * to this dictionary; the same spelling can have another ID in a different pool.
+ * Ordinary lookup/insertion locks internally. Borrowed views remain valid while
+ * the pool lives, but iterating strings() requires a stable dictionary.
  */
 struct StringPool
 {
@@ -100,6 +102,7 @@ struct StringPool
 
     /** Seal the dictionary before sharing immutable schema metadata; existing lookups remain valid. */
     void freeze();
+
     /** A copied dictionary is mutable, even when its source has been frozen. */
     auto frozen() const -> bool;
 
@@ -117,7 +120,8 @@ struct StringPool
     /// additional StaticStringIds.
     virtual std::optional<std::string_view> resolve(StringId const& id) const;
 
-    /// Get highest stored field id
+    /// Return the highest allocated dynamic ID, or FirstDynamicId - 1 before allocation.
+    /// The caller must exclude concurrent insertion while reading this counter.
     StringId highest() const;
 
     /// Get stats
@@ -129,18 +133,24 @@ struct StringPool
     /** Return interned string payload and estimated retained container capacity. */
     [[nodiscard]] MemoryUsage memoryUsage() const;
 
-    /// Add a static key-string mapping - Warning: Not thread-safe.
+    /// Register a unique static ID/spelling during construction. This locks storage
+    /// but does not validate that the caller's ID and spelling are both unused.
     void addStaticKey(StringId id, std::string const& value);
 
-    /// Serialization - write to stream, starting from a specific
-    ///  id offset if necessary (for partial serialisation).
+    /// Write ID/string pairs at or above the inclusive StringId offset for incremental transport.
     virtual auto write(std::ostream& outputStream, StringId offset = {}) const -> tl::expected<void, Error>;  // NOLINT
+
+    /**
+     * Merge a complete serialized update starting at a byte offset in input.
+     * Malformed/truncated framing is rejected before publishing entries. Existing
+     * spellings keep their local IDs, so the sender must share this ID namespace.
+     */
     virtual auto read(const std::vector<uint8_t>& input, size_t offset = 0) -> tl::expected<void, Error>;
 
     /// Check if the content of the string pools is logically identical.
     bool operator== (StringPool const& other) const;
 
-    /// Get the stored strings
+    /// Borrow stored strings; hold the pool alive and exclude mutation throughout iteration.
     const std::deque<std::string>& strings() const;
 
 private:
@@ -157,6 +167,7 @@ private:
 
     /** No concurrent access, static-key insertion, read, or freeze while active. */
     [[nodiscard]] AppendCheckpoint appendCheckpoint() const;
+
     /** Erase both indexes before destroying their string views, including partial inserts. */
     void rollbackAppends(AppendCheckpoint const& checkpoint) noexcept;
 

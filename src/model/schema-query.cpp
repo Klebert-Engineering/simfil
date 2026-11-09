@@ -142,6 +142,9 @@ private:
             complete_ = false;
             return;
         }
+
+        // Cut only ancestors on this path. A shared child reached through two
+        // different members still contributes two distinct query paths.
         active_.push_back(type.id());
         if ((mode_ == Match::Named && type.namedValue(text_)) ||
             (mode_ == Match::Enum && std::ranges::count(type.directEnumSymbols(), name_) != 0))
@@ -164,6 +167,9 @@ private:
             }
             path_.pop_back();
         });
+
+        // Arrays add a wildcard path segment; composition alternatives describe
+        // the same value position and therefore add no segment of their own.
         auto elements = type.elements();
         for (auto child : elements)
         {
@@ -173,6 +179,7 @@ private:
         }
         for (auto child : type.alternatives())
             visit(root_.pool()->schemaType(child));
+
         auto name = kindNameId(type.kind());
         if (type.open() || name == StringPool::SchemaUnknown || name == StringPool::SchemaAny ||
             (type.hasAffinity(ValueType::Array) && elements.empty() && type.composition() == Composition::None) ||

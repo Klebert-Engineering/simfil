@@ -24,6 +24,9 @@ void SchemaPool::Impl::index()
     };
     std::vector<std::vector<TypeId>> children(types.size()), parents(types.size());
     std::vector<bool> localComplete(types.size(), true);
+
+    // Build data-reachability edges and record local unknowns. Completeness is
+    // propagated to parents later so a negative name lookup is used only when safe.
     for (size_t id = 1; id < types.size(); ++id)
     {
         auto const& row = types[id];
@@ -67,8 +70,9 @@ void SchemaPool::Impl::index()
         for (auto child : next)
             parents[child].push_back(TypeId(id));
     }
-    // Iterative SCC condensation computes cycle-correct reachability once and
-    // never spends runtime lookup work traversing descendant graphs.
+    // Group mutually reachable types into strongly connected components. Within
+    // a recursive cycle every type sees the same descendant fields and symbols.
+    // The first DFS records finishing order; the reverse-edge pass forms groups.
     std::vector<bool> seen(types.size());
     std::vector<TypeId> order;
     for (size_t root = 1; root < types.size(); ++root)
@@ -96,6 +100,7 @@ void SchemaPool::Impl::index()
             }
         }
     }
+
     std::vector<uint32_t> component(types.size(), UINT32_MAX);
     std::vector<std::vector<TypeId>> members;
     for (auto it = order.rbegin(); it != order.rend(); ++it)
@@ -119,6 +124,9 @@ void SchemaPool::Impl::index()
                 }
         }
     }
+
+    // Process child components before parents and share the resulting sorted
+    // name sets across every type in a component. Runtime queries need no DFS.
     for (size_t c = members.size(); c-- > 0;)
     {
         std::vector<StringId> allFields, allSymbols;
@@ -159,6 +167,9 @@ void SchemaPool::Impl::index()
             indexes[id].flags |= uint32_t(complete);
         }
     }
+
+    // Publish the remaining point-lookups together, then cache storage statistics
+    // so diagnostics need not walk the graph on every request.
     indexMembers();
     indexAliases();
     memberIndexesReady = true;

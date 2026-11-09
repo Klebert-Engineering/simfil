@@ -52,6 +52,11 @@ void serialize(S& s, simfil::StringId& v)
 namespace ext
 {
 
+/**
+ * Serialize logical arrays as dense slices without changing the live arena.
+ * Decoding replaces payload columns before validating heads; discard or clear
+ * the destination after an adapter error rather than using its old handles.
+ */
 struct ArrayArenaExt
 {
     template <typename S, typename ElementType, size_t PageSize, size_t ChunkPageSize, typename Fnc>

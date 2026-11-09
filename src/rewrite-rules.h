@@ -11,10 +11,13 @@
 namespace simfil
 {
 
+/** Return a replacement (taking children from expr if needed), or nullptr to keep expr intact. */
 using RewriteRule = std::function<ExprPtr(ExprPtr&)>;
 
 /**
- * Apply a list of rewrite-rules top-down to an expression (sub-)tree.
+ * Apply rules before descending into children, restarting after a replacement.
+ * Skip the immediately preceding rule to avoid direct self-recursion; rule sets
+ * must still terminate across different rules. Reenumerate the AST after rewriting.
  */
 inline auto rewriteTopDown(ExprPtr expr, std::span<const RewriteRule> rules, const RewriteRule* sourceRule = nullptr) -> ExprPtr
 {

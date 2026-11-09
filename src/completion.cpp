@@ -64,6 +64,7 @@ auto needsEscaping(std::string_view str)
     });
 }
 
+/** Encode a field name as a bracket lookup so punctuation does not become query syntax. */
 auto escapeKey(std::string_view str)
 {
     std::string escaped = "[\"";
@@ -215,7 +216,7 @@ auto completeSchemaEnumSymbols(
     return simfil::Result::Continue;
 }
 
-/// Complete a function name staritng with `prefix` at `loc`.
+/// Complete a function name starting with `prefix` at `loc`.
 auto completeFunctions(const simfil::Context& ctx, std::string_view prefix, simfil::Completion& comp, simfil::SourceLocation loc) -> simfil::Result
 {
     using simfil::Result;
@@ -350,6 +351,9 @@ void Completion::suggestType(Context& ctx, const std::vector<TypeId>& input,
             return schema && !schema.reachabilityComplete();
         }))
         types = expandTypes(ctx, input, true);
+
+    // Fields win spelling collisions with symbols. Reuse the candidates already
+    // collected for this source span instead of building another field-name index.
     auto isKnownField = [&](std::string_view text) {
         if (!expected.empty() || literalsOnly)
             return false;
@@ -382,6 +386,8 @@ void Completion::suggestType(Context& ctx, const std::vector<TypeId>& input,
     if (inPath)
         return;
 
+    // A comparison supplies expected operand types; a bare token instead sees
+    // symbols reachable from the current input. Quoted tokens stay literal values.
     auto enumTypes = expandTypes(ctx, expected.empty() ? input : expected, expected.empty());
     for (auto id : enumTypes) {
         auto schema = rootSchema_.pool()->schemaType(id);
@@ -499,7 +505,7 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
             for (auto id : expandTypes(ctx, types, false))
                 if (auto schema = rootSchema_.pool()->schemaType(id))
                     schema.forEachField([&](SchemaField const& occurrence) {
-                    auto field = occurrence.nameId();
+                        auto field = occurrence.nameId();
                         if (!visitType(ctx) || size() >= limit)
                             return;
                         auto name = rootSchema_.pool()->dictionary().resolve(field);
@@ -535,9 +541,9 @@ auto Completion::walkType(Context& ctx, const Expr& expression, const std::vecto
         for (auto id : expandTypes(ctx, input, false)) {
             if (auto schema = rootSchema_.pool()->schemaType(id)) {
                 schema.forEachField([&](SchemaField const& occurrence) {
-                if (occurrence.role() == SchemaType::FieldRole::Context)
-                    return;
-                auto children = occurrence.types();
+                    if (occurrence.role() == SchemaType::FieldRole::Context)
+                        return;
+                    auto children = occurrence.types();
                     for (auto child : children)
                         if (visitType(ctx))
                             result.push_back(child);
@@ -678,6 +684,7 @@ auto CompletionFieldOrWordExpr::accept(ExprVisitor& v) const -> void
 namespace
 {
 
+/** Union of nonempty source spans, used to discard boolean operands away from the cursor. */
 struct FindExpressionRange : ExprVisitor
 {
     size_t min = std::numeric_limits<size_t>::max();

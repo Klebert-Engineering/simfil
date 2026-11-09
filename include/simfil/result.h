@@ -8,8 +8,14 @@
 namespace simfil
 {
 
+/** Stream control returned by a consumer; Stop must propagate through upstream expressions. */
 enum Result { Continue = 1, Stop = 0 };
 
+/**
+ * Synchronous sink for one expression's values. References are valid only during
+ * the call; retain a Value copy/move when collecting results. Consumers report
+ * failures through expected<..., Error> because both overloads are noexcept.
+ */
 struct ResultFn
 {
     virtual ~ResultFn() = default;
@@ -18,6 +24,7 @@ struct ResultFn
     virtual auto operator()(Context ctx, Value&& value) const noexcept -> tl::expected<Result, Error> = 0;
 };
 
+/** Own a callback and adapt borrowed emissions to a copy when it accepts only rvalues. */
 template <class Lambda>
 struct LambdaResultFn final : ResultFn
 {

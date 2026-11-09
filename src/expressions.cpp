@@ -135,6 +135,9 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
 {
     if (ctx.phase == Context::Compilation)
         return result(ctx, Value::undef());
+
+    // Each pending value carries the schema namespace of its incoming edge.
+    // Push children in reverse order to preserve ordinary forward traversal.
     std::vector<std::tuple<Value, std::vector<TypeId>, std::size_t, SchemaType>> pending;
     pending.emplace_back(value, std::vector<TypeId>{root_.id()}, 0, root_);
     while (!pending.empty()) {
@@ -144,6 +147,7 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
         pending.pop_back();
         if (ctx.evaluation && !ctx.step(depth))
             return Result::Stop;
+
         auto concrete = nodeValue.schemaType();
         if (concrete) {
             types = {concrete.id()};
@@ -151,6 +155,9 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
         }
         // Candidate types retain their namespace even when the child has no unique provenance.
         auto lookup = [&](TypeId id) { return binding ? binding.pool()->schemaType(id) : SchemaType{}; };
+
+        // Only declared symbols can match; alternatives share this value's
+        // position rather than adding another runtime data level.
         if (named_ || (nodeValue.isa(ValueType::String) && nodeValue.as<ValueType::String>() == symbol_)) {
             std::vector<TypeId> alternatives = types, visited;
             while (!alternatives.empty()) {
@@ -169,19 +176,18 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
                     (binding && binding.pool()->identity() == schemaIdentity_ &&
                      id == symbolType_);
                 if (selectedType && named_ && schema.namedValue(symbol_)) {
-                  auto match =
-                      SchemaSymbolExpr::compare(nodeValue, symbol_, "member");
-                  TRY_EXPECTED(match);
-                  if (match->isa(ValueType::Bool) &&
-                      match->as<ValueType::Bool>())
-                    return result(ctx, Value::t());
+                    auto match = SchemaSymbolExpr::compare(nodeValue, symbol_, "member");
+                    TRY_EXPECTED(match);
+                    if (match->isa(ValueType::Bool) && match->as<ValueType::Bool>())
+                        return result(ctx, Value::t());
                 }
                 if (selectedType && !named_ &&
                     schema.hasDirectEnumSymbol(symbol_))
-                  return result(ctx, Value::t());
+                    return result(ctx, Value::t());
                 alternatives.insert(alternatives.end(), schema.alternatives().begin(), schema.alternatives().end());
             }
         }
+
         auto node = nodeValue.node();
         auto type = nodeValue.type;
         if (type != ValueType::Object && type != ValueType::Array)
@@ -217,9 +223,9 @@ auto SchemaEnumExpr::ieval(Context ctx, const Value& value, const ResultFn& resu
             // runtime overlay may itself be untyped while retaining typed
             // descendants; those declarations must remain discoverable.
             if (!children.empty() || !root_)
-              if (auto child = node->at(i))
-                pending.emplace_back(Value::at(*node, *child, i),
-                                     std::move(children), depth + 1, binding);
+                if (auto child = node->at(i))
+                    pending.emplace_back(Value::at(*node, *child, i),
+                                         std::move(children), depth + 1, binding);
         }
     }
     return result(ctx, Value::f());
@@ -1714,8 +1720,8 @@ auto WildcardFieldExpr::ieval(Context ctx, const Value& val, const ResultFn& ore
             diag->name = name_;
     }
 
-    // Querying a field not in the string-pool
-    // is a no-op here (not true for FieldExpr).
+    // An unknown dictionary name cannot match a runtime field. finish() still
+    // supplies the usual null result for this successful empty traversal.
     const auto nameId = ctx.runtime ?
         ctx.runtime->fieldId(id(), name_) :
         ctx.env->strings()->get(name_);

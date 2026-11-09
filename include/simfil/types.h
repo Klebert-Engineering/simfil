@@ -11,6 +11,7 @@
 namespace simfil
 {
 
+/** Inclusive endpoints with direction retained for unpacking; low()/high() support membership tests. */
 struct IRange
 {
     int64_t begin = 0;
@@ -27,6 +28,7 @@ struct IRange
     }
 };
 
+/** Range operators: numeric equality tests membership; unpack emits both endpoints in input order. */
 class IRangeType : public TypedMetaType<IRange>
 {
 public:
@@ -43,12 +45,17 @@ public:
     auto unpack(const IRange& , std::function<bool(Value)> res) const -> tl::expected<void, Error> override;
 };
 
+/** Retain the original pattern for display alongside its compiled std::regex. */
 struct Re
 {
     std::string str;
     std::regex re;
 };
 
+/**
+ * Full-string regex matching. Equality returns the matched input string or false;
+ * inequality returns the input string only when it does not match.
+ */
 class ReType : public TypedMetaType<Re>
 {
 public:

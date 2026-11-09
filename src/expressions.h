@@ -53,7 +53,9 @@ auto childAtOrThrow(std::size_t index, const Children&... children) -> const Exp
 }
 
 /**
- * Returns the current node and every child of it recursively.
+ * Emit non-null model nodes in preorder, including the current node. Models
+ * advertising recursive cycles suppress active-path back-edges, not repeated
+ * siblings. A successful traversal with no emissions produces null.
  */
 class WildcardExpr : public Expr
 {
@@ -67,7 +69,11 @@ public:
     auto toString() const -> std::string override;
 
 private:
-    /** Select graph ancestry handling once, keeping ordinary tree recursion unchanged. */
+    /**
+     * Recursive wildcard walk specialized for the model's cycle policy.
+     * TrackCycles records active ancestors for graph models such as SchemaPool;
+     * ordinary object/array trees use the specialization without that bookkeeping.
+     */
     template <bool TrackCycles> struct Traversal;
 };
 
@@ -75,19 +81,21 @@ private:
 class SchemaEnumExpr : public Expr
 {
 public:
-    /** Retain portable symbol text and the represented root identity, never pool-local field IDs. */
-  SchemaEnumExpr(SchemaType root, std::string symbol, SourceLocation location,
-                 bool named = false, std::string schemaIdentity = {},
-                 TypeId symbolType = NoTypeId);
-  /** A declared-position enum predicate produces one boolean value. */
-  auto type() const -> Type override { return Type::VALUE; }
-  /** Expose the original enum term to schema-independent static query analysis.
-   */
-  auto symbol() const -> std::string_view { return symbol_; }
-  auto ieval(Context ctx, const Value &value, const ResultFn &result) const
-      -> tl::expected<Result, Error> override;
-  void accept(ExprVisitor &visitor) const override;
-  auto toString() const -> std::string override;
+    /** Retain the symbol text and root type for schema-aware evaluation in each environment. */
+    SchemaEnumExpr(SchemaType root, std::string symbol, SourceLocation location,
+                   bool named = false, std::string schemaIdentity = {},
+                   TypeId symbolType = NoTypeId);
+
+    /** A declared-position enum predicate produces one boolean value. */
+    auto type() const -> Type override { return Type::VALUE; }
+
+    /** Expose the original enum term to schema-independent static query analysis. */
+    auto symbol() const -> std::string_view { return symbol_; }
+
+    auto ieval(Context ctx, const Value& value, const ResultFn& result) const
+        -> tl::expected<Result, Error> override;
+    void accept(ExprVisitor& visitor) const override;
+    auto toString() const -> std::string override;
 
 private:
     SchemaType root_;
@@ -104,20 +112,28 @@ public:
     /** Retain only portable expression/text state; numeric meanings are resolved per emitted value. */
     SchemaSymbolExpr(ExprPtr input, std::string symbol, std::string operation, bool symbolOnLeft,
                      SourceLocation location);
+
     /** Symbolic predicates construct booleans, never annotated numeric results. */
     auto type() const -> Type override { return Type::VALUE; }
+
     /** Evaluate the input once, retaining the selected value's concrete type through comparison. */
     auto ieval(Context, const Value&, const ResultFn&) const -> tl::expected<Result, Error> override;
+
     /** Expose the selected path to generic expression visitors. */
     void accept(ExprVisitor&) const override;
+
     /** One child selects values; the symbol is metadata, not another root-relative query. */
     auto numChildren() const -> std::size_t override { return 1; }
+
     /** Permit the ordinary rewrite engine to optimize the selected path. */
     auto childAt(std::size_t i) -> ExprPtr& override { return detail::childAtOrThrow(i, input_); }
+
     /** Inspect the selected path without changing immutable AST state. */
     auto childAt(std::size_t i) const -> const ExprPtr& override { return detail::childAtOrThrow(i, input_); }
+
     /** Describe symbolic meaning without pretending it is a globally fixed numeric literal. */
     auto toString() const -> std::string override;
+
     /** Shared runtime matching for finite paths and conservative recursive traversal. */
     static auto compare(Value const&, std::string_view symbol, std::string_view operation,
                         bool symbolOnLeft = false) -> tl::expected<Value, Error>;
@@ -142,6 +158,7 @@ public:
     auto toString() const -> std::string override;
 };
 
+/** Select a named field, or forward the current value for `_`; runtime misses yield null. */
 class FieldExpr : public Expr
 {
 public:
@@ -161,6 +178,7 @@ public:
     std::string name_;
 };
 
+/** Replay a retained value stream; Limit bounds optimizer collection, not constructor input. */
 class MultiConstExpr : public Expr
 {
 public:
@@ -179,6 +197,7 @@ public:
     const std::vector<Value> values_;
 };
 
+/** Emit one retained value independently of the current model input. */
 class ConstExpr : public Expr
 {
 public:
@@ -217,6 +236,7 @@ protected:
     const Value value_;
 };
 
+/** Evaluate container and index streams against the same input, selecting each resulting pair. */
 class SubscriptExpr : public Expr
 {
 public:
@@ -234,6 +254,11 @@ public:
     ExprPtr index_;
 };
 
+/**
+ * Filter each left value with a predicate evaluated relative to that value.
+ * Every truthy predicate emission forwards the left value, so duplicates are
+ * possible. Produce null only when the entire successful filter emits nothing.
+ */
 class SubExpr : public Expr
 {
 public:
@@ -251,6 +276,7 @@ public:
     ExprPtr left_, sub_;
 };
 
+/** Short-circuit argument streams at the first truthy value; an empty stream is false. */
 class AnyExpr : public Expr
 {
 public:
@@ -267,6 +293,7 @@ public:
     std::vector<ExprPtr> args_;
 };
 
+/** Short-circuit argument streams at the first falsey value; an empty stream is true. */
 class EachExpr : public Expr
 {
 public:
@@ -283,6 +310,7 @@ public:
     std::vector<ExprPtr> args_;
 };
 
+/** Resolve a registered function per execution and require at least one successful emission. */
 class CallExpression : public Expr
 {
 public:
@@ -301,6 +329,7 @@ public:
     std::vector<ExprPtr> args_;
 };
 
+/** Evaluate the right path relative to each left value, suppressing intermediate missing values. */
 class PathExpr : public Expr
 {
 public:
@@ -342,7 +371,7 @@ public:
     std::vector<ExprPtr> alternatives_;
 };
 
-/** Calls `unpack` onto values of type Object. Forwards the value(s) otherwise.
+/** Call a transient object's meta-type unpack operation; forward ordinary values unchanged.
  *
  * 1... => 1
  * range(1, 10)... => 1,2,3,4,5,6,7,8,9,10
@@ -418,7 +447,8 @@ public:
 };
 
 /**
- * Generic binary operator expression.
+ * Apply an operator to every left/right result pair. Both operands evaluate
+ * against the original input; the right stream is reevaluated for each left value.
  */
 template <class Operator>
 class BinaryExpr : public Expr
@@ -480,6 +510,7 @@ public:
     ExprPtr left_, right_;
 };
 
+/** Shared child ownership/navigation for comparisons with runtime type/result diagnostics. */
 class ComparisonExprBase : public Expr
 {
 public:
@@ -605,6 +636,7 @@ class BinaryExpr<OperatorGtEq> : public ComparisonExpr<OperatorGtEq, BinaryExpr<
     using ComparisonExpr::ComparisonExpr;
 };
 
+/** Dispatch a user-defined word operator through a transient value's meta-type. */
 class UnaryWordOpExpr : public Expr
 {
 public:
@@ -622,6 +654,7 @@ public:
     ExprPtr left_;
 };
 
+/** Pair operand streams and dispatch a word operator to the first transient operand's meta-type. */
 class BinaryWordOpExpr : public Expr
 {
 public:
@@ -639,6 +672,7 @@ public:
     ExprPtr left_, right_;
 };
 
+/** Preserve falsey left values; evaluate the right stream for each truthy left value. */
 class AndExpr : public Expr
 {
 public:
@@ -655,6 +689,7 @@ public:
     ExprPtr left_, right_;
 };
 
+/** Preserve truthy left values; evaluate the right stream for each falsey left value. */
 class OrExpr : public Expr
 {
 public:
@@ -697,8 +732,10 @@ private:
 
     /** Reuse one graph/type traversal plan in the expression's local runtime state. */
     auto schemaPlan(Context const& ctx, SchemaType const& schema) const -> SchemaPlan const*;
+
     /** Derive pruning without replacing the schema's ordered runtime traversal. */
     auto buildSchemaPlan(Context const& ctx, SchemaType const& schema, StringId field) const -> SchemaPlan;
+
     /** Translate selected object child names once into the execution dictionary. */
     auto buildObjectSchemaPlan(Context const& ctx, SchemaType const& schema, StringId field) const -> SchemaPlan;
 

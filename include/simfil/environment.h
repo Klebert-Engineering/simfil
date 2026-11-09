@@ -64,6 +64,12 @@ struct Trace
     }
 };
 
+/**
+ * Query dictionary, registered functions/constants and execution diagnostics.
+ * Configure registrations before evaluation and keep function objects alive while
+ * they are registered. warn()/trace() synchronize their own collections; the
+ * public configuration maps and schema binding require caller synchronization.
+ */
 struct Environment
 {
 public:
@@ -102,17 +108,20 @@ public:
      * Log a trace call.
      *
      * @param name  Trace identifier
-     * @param fn    IterCallback called thread-safe
+     * @param fn    Callback invoked while holding traceMtx. It must not call trace()
+     *              recursively or retain the mutable Trace reference after returning.
      */
     auto trace(const std::string& name, const std::function<void(Trace&)>& fn) -> void;
 
     /**
-     * Query function by name.
+     * Look up a case-insensitive function name, returning nullptr when unregistered.
+     * The returned function is borrowed from the caller-owned registration.
      */
     auto findFunction(const std::string& name) const -> const Function*;
 
     /**
-     * Query constant by name.
+     * Look up a case-insensitive constant name, returning nullptr when absent.
+     * The pointer borrows storage in constants and must not outlive that entry.
      */
     auto findConstant(const std::string& name) const -> const Value*;
 
@@ -125,6 +134,7 @@ public:
 
     /** Retain a published default root without mutating the model or query dictionary. */
     void setSchema(SchemaType root);
+
     /** Borrow the configured root; callers pass it explicitly to schema-aware compilation. */
     auto schema() const noexcept -> SchemaType { return rootSchema_.borrow(); }
 
@@ -159,7 +169,9 @@ public:
 };
 
 /**
- * Evaluation context.
+ * Non-owning state passed through a synchronous expression call. Copies keep the
+ * same environment, diagnostics and request budget, while nesting depth and phase
+ * are local to the copy. Owners must remain alive until evaluation returns.
  */
 struct Context
 {
@@ -230,7 +242,7 @@ struct CompletionOptions
     // Show hints about completing certain queries to a wildcard query.
     bool showWildcardHints = true;
 
-    // Limit of candidates.
+    // Candidate cap; zero selects the internal fallback of 1000, not an unlimited result.
     size_t limit = 15;
 
     // Timeout in milliseconds, 0 means no timeout.
@@ -244,6 +256,7 @@ struct CompletionOptions
 
     /** Bound schema-only traversal even when timeoutMs is disabled. */
     size_t maxSchemaVisits = 10000;
+
     /** Bound AST inference recursion; graph cycles are deduplicated by schema ID. */
     size_t maxSchemaDepth = 128;
 };

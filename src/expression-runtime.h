@@ -117,8 +117,10 @@ private:
     {
         /** Start an empty environment-local slot. */
         ExpressionState() = default;
+
         /** Transfer graph-owned entries when the expression slot vector grows. */
         ExpressionState(ExpressionState&&) = default;
+
         /** Transfer cache ownership when replacing a slot. */
         auto operator=(ExpressionState&&) -> ExpressionState& = default;
         // Explicit deletion prevents vector relocation from selecting a map copy

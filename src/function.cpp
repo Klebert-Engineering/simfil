@@ -21,6 +21,7 @@ namespace simfil
 namespace
 {
 
+/** Evaluate scalar builtin arguments in order, carrying undefined compilation inputs and errors. */
 struct ArgParser
 {
     const std::string functionName;
@@ -42,6 +43,7 @@ struct ArgParser
             error = Error(Error::InvalidArguments, fmt::format("too few arguments for function {}", this->functionName));
     }
 
+    /** Consume one argument expression, rejecting extra values or a mismatched concrete type. */
     auto arg(const char* name, ValueType type, Value& outValue) -> ArgParser&
     {
         if (args.size() <= idx) {
@@ -79,6 +81,7 @@ struct ArgParser
         return *this;
     }
 
+    /** Use the fallback only when the argument is absent, rather than when evaluation yields Undef. */
     auto opt(std::string_view name, ValueType type, Value& outValue, Value def) -> ArgParser&
     {
         if (args.size() <= idx) {
@@ -113,6 +116,7 @@ struct ArgParser
         return *this;
     }
 
+    /** Distinguish a concrete argument set, unresolved input, and an evaluation/type failure. */
     [[nodiscard]]
     auto ok() const -> tl::expected<bool, Error>
     {
@@ -543,6 +547,8 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
 
     auto argRes = args[0]->eval(ctx, val, LambdaResultFn([&, n = 0](Context ctx, Value&& vv) mutable -> tl::expected<Result, Error> {
         if (subexpr) {
+            // Lookup-only context fields make the accumulator available to the
+            // custom fold without changing the input's enumerable children.
             auto ov = model_ptr<OverlayNode>::make(vv);
             ov->set(StringPool::OverlaySum, sum);
             ov->set(StringPool::OverlayValue, vv);
@@ -576,75 +582,62 @@ auto SumFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args
 
 HasSymbolFn HasSymbolFn::Fn;
 
-auto HasSymbolFn::ident() const -> const FnInfo & {
-  static const FnInfo info{
-      "hasSymbol",
-      "Tests declared enum or named-value membership below a typed value.",
-      "hasSymbol(value, name[, schemaIdentity, typeId]) -> bool"};
-  return info;
+auto HasSymbolFn::ident() const -> const FnInfo&
+{
+    static const FnInfo info{"hasSymbol",
+                             "Tests declared enum or named-value membership below a typed value.",
+                             "hasSymbol(value, name[, schemaIdentity, typeId]) -> bool"};
+    return info;
 }
 
-auto HasSymbolFn::eval(Context ctx, const Value &val,
-                       const std::vector<ExprPtr> &args,
-                       const ResultFn &res) const
-    -> tl::expected<Result, Error> {
-  if (args.size() != 2 && args.size() != 4)
-    return tl::unexpected(Error{
-        Error::InvalidArguments,
-        "hasSymbol expects value, name and optional schema identity/type ID"});
-  if (ctx.phase == Context::Compilation)
-    return res(ctx, Value::undef());
-  // The name is literal data. Evaluate the input as a stream so wildcards do
-  // not accidentally discard all but their first value.
-  Value name = Value::undef();
-  auto parsed = ArgParser("hasSymbol", ctx, val, args, 1)
-                    .arg("name", ValueType::String, name)
-                    .ok();
-  TRY_EXPECTED(parsed);
-  if (!*parsed)
-    return res(ctx, Value::undef());
-  Value identity = Value::make(std::string()),
-        type = Value::make(std::int64_t{0});
-  if (args.size() == 4) {
-    auto qualified = ArgParser("hasSymbol", ctx, val, args, 2)
-                         .arg("schema", ValueType::String, identity)
-                         .arg("typeId", ValueType::Int, type)
-                         .ok();
-    TRY_EXPECTED(qualified);
-    if (!*qualified)
-      return res(ctx, Value::undef());
-    if (type.as<ValueType::Int>() <= 0 ||
-        type.as<ValueType::Int>() > std::numeric_limits<TypeId>::max())
-      return tl::unexpected(
-          Error{Error::InvalidArguments,
-                "hasSymbol typeId is outside the schema type range"});
-  }
-  bool matched = false;
-  auto evaluated = args[0]->eval(
-      ctx, val,
-      LambdaResultFn([&](Context child,
-                         Value &&input) -> tl::expected<Result, Error> {
-        for (bool named : {true, false}) {
-          SchemaEnumExpr predicate(
-              {}, std::string(name.stringView()), {}, named,
-              std::string(identity.stringView()),
-              static_cast<TypeId>(type.as<ValueType::Int>()));
-          auto checked = predicate.eval(
-              child, input,
-              LambdaResultFn(
-                  [&](Context, Value &&answer) -> tl::expected<Result, Error> {
-                    matched = answer.isa(ValueType::Bool) &&
-                              answer.as<ValueType::Bool>();
-                    return Result::Continue;
-                  }));
-          TRY_EXPECTED(checked);
-          if (matched)
-            return Result::Stop;
-        }
-        return Result::Continue;
-      }));
-  TRY_EXPECTED(evaluated);
-  return res(ctx, Value::make(matched));
+auto HasSymbolFn::eval(Context ctx, const Value& val, const std::vector<ExprPtr>& args,
+                       const ResultFn& res) const -> tl::expected<Result, Error>
+{
+    if (args.size() != 2 && args.size() != 4)
+        return tl::unexpected(Error{Error::InvalidArguments,
+                                    "hasSymbol expects value, name and optional schema identity/type ID"});
+    if (ctx.phase == Context::Compilation)
+        return res(ctx, Value::undef());
+    // The name is literal data. Evaluate the input as a stream so wildcards do
+    // not accidentally discard all but their first value.
+    Value name = Value::undef();
+    auto parsed = ArgParser("hasSymbol", ctx, val, args, 1).arg("name", ValueType::String, name).ok();
+    TRY_EXPECTED(parsed);
+    if (!*parsed)
+        return res(ctx, Value::undef());
+    Value identity = Value::make(std::string()), type = Value::make(std::int64_t{0});
+    if (args.size() == 4) {
+        auto qualified = ArgParser("hasSymbol", ctx, val, args, 2)
+                             .arg("schema", ValueType::String, identity)
+                             .arg("typeId", ValueType::Int, type)
+                             .ok();
+        TRY_EXPECTED(qualified);
+        if (!*qualified)
+            return res(ctx, Value::undef());
+        if (type.as<ValueType::Int>() <= 0 || type.as<ValueType::Int>() > std::numeric_limits<TypeId>::max())
+            return tl::unexpected(
+                Error{Error::InvalidArguments, "hasSymbol typeId is outside the schema type range"});
+    }
+    bool matched = false;
+    auto evaluated = args[0]->eval(
+        ctx, val, LambdaResultFn([&](Context child, Value&& input) -> tl::expected<Result, Error> {
+            for (bool named : {true, false}) {
+                SchemaEnumExpr predicate({}, std::string(name.stringView()), {}, named,
+                                         std::string(identity.stringView()),
+                                         static_cast<TypeId>(type.as<ValueType::Int>()));
+                auto checked = predicate.eval(
+                    child, input, LambdaResultFn([&](Context, Value&& answer) -> tl::expected<Result, Error> {
+                        matched = answer.isa(ValueType::Bool) && answer.as<ValueType::Bool>();
+                        return Result::Continue;
+                    }));
+                TRY_EXPECTED(checked);
+                if (matched)
+                    return Result::Stop;
+            }
+            return Result::Continue;
+        }));
+    TRY_EXPECTED(evaluated);
+    return res(ctx, Value::make(matched));
 }
 
 HasFlagFn HasFlagFn::Fn;

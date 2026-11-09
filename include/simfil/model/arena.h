@@ -49,9 +49,10 @@ constexpr static ArrayIndex SingletonArrayHandlePayloadMask = 0x007fffffu;
  * The ArrayArena is a wrapper around paged model columns. It keeps track of
  * forward-linked array chunks for regular growable arrays, optional singleton
  * handles for fixed-size 0-or-1 arrays, and an optional compact head
- * representation used during serialization. Without ARRAY_ARENA_THREAD_SAFE,
- * appending is lock-free. With it enabled, reads use shared locks while
- * mutations take a write lock.
+ * representation used during serialization. Access is unsynchronized by default.
+ * ARRAY_ARENA_THREAD_SAFE adds locks around individual checked access/allocation
+ * operations; borrowed references, iteration, serialization and several metadata
+ * queries still require the caller to exclude concurrent structural mutation.
  *
  * @tparam ElementType_ The type of elements stored in the arrays.
  * @tparam PageSize The number of elements that each storage page can store.
@@ -257,16 +258,16 @@ public:
     }
 
     /**
-     * Returns the number of arrays in the arena.
-     * @return The number of arrays.
+     * Number of regular head slots, including reserved slot zero.
+     * Singleton handles are counted separately by singleton_handle_count().
      */
     [[nodiscard]] size_t size() const {
     #ifdef ARRAY_ARENA_THREAD_SAFE
-            std::shared_lock guard(lock_);
+        std::shared_lock guard(lock_);
     #endif
-            if (heads_.empty() && compactHeads_)
-                return compactHeads_->size();
-            return heads_.size();
+        if (heads_.empty() && compactHeads_)
+            return compactHeads_->size();
+        return heads_.size();
     }
 
     [[nodiscard]] size_t singleton_handle_count() const
@@ -352,7 +353,7 @@ public:
     }
 
     /**
-     * @return The current size, in bytes, of the array arena if serialized.
+     * Logical compact payload size, excluding column length prefixes on the wire.
      */
     [[nodiscard]] size_t byte_size() const {
         auto singletonBytes =
@@ -407,11 +408,13 @@ public:
      * @param i The index of the element within the array.
      * @return A wrapped reference/proxy, or Error::IndexOutOfRange for an
      *         invalid array handle or element index.
+     * The result borrows storage and holds no lock after this call returns.
      */
     tl::expected<AtValue, Error>
     at(ArrayIndex a, size_t i) {
         return at_impl<ArrayArena, AtValue>(*this, a, i);
     }
+
     tl::expected<ConstAtValue, Error>
     at(ArrayIndex a, size_t i) const {
         return at_impl<ArrayArena const, ConstAtValue>(*this, a, i);
@@ -569,10 +572,9 @@ public:
     }
 
     /**
-     * Clears the ArrayArena by removing all its arrays and releasing their memory.
-     *
-     * This operation is not thread-safe and should be used with caution.
-     * Make sure no other threads are accessing the ArrayArena while calling this method.
+     * Remove all arrays and restore reserved head zero. Backing capacity is
+     * retained except for compact heads. All handles, ranges and references
+     * become invalid; callers must exclude concurrent use of borrowed storage.
      */
     void clear() {
         #ifdef ARRAY_ARENA_THREAD_SAFE
@@ -588,11 +590,9 @@ public:
     }
 
     /**
-     * Reduces the memory usage of the ArrayArena by minimizing the capacity of its internal
-     * containers to fit their current size.
-     *
-     * This operation is not thread-safe and should be used with caution.
-     * Make sure no other threads are accessing the ArrayArena while calling this method.
+     * Ask each column to release unused backing capacity. This does not repack
+     * holes left by truncation. It may invalidate borrowed references and
+     * iterators, so callers must exclude their concurrent use.
      */
     void shrink_to_fit() {
         #ifdef ARRAY_ARENA_THREAD_SAFE
@@ -976,10 +976,12 @@ public:
             : 0;
         return arena_iterator(*this, visibleRegularCount + singleton_handle_count());
     }
+
     const_arena_iterator begin() const
     {
         return const_arena_iterator(*this, 0);
     }
+
     const_arena_iterator end() const
     {
         const auto regularCount = size();
@@ -994,8 +996,12 @@ public:
     BasicArrayRange<false> range(ArrayIndex array) { return BasicArrayRange<false>(*this, array); }
     BasicArrayRange<true> range(ArrayIndex array) const { return BasicArrayRange<true>(*this, array); }
 
-    /// Support fast iteration via callback. The passed lambda needs to return true,
-    /// as long as the iteration is supposed to continue.
+    /**
+     * Synchronously visit values, optionally with their zero-based index.
+     * A bool-returning callback accepting only (value) stops on false; return
+     * values of (value, index) callbacks are ignored. No lock spans traversal:
+     * callbacks must not structurally mutate the arena.
+     */
     template <typename Func>
     void iterate(ArrayIndex a, Func&& lambda)
     {

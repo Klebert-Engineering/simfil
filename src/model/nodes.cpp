@@ -16,8 +16,7 @@ auto ModelNode::schemaType() const -> SchemaType
     return model_ ? model_->resolveSchemaType(*this) : SchemaType{};
 }
 
-/// Create a ModelNode from a model pool which serves as its
-/// VFT, and a TreeNodeAddress.
+// Resolution is delegated to the owning model rather than stored per address.
 ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key)
     // Address-only wrappers need the default null payload, not a moved scalar variant.
     : model_(std::move(pool)), addr_(addr)
@@ -287,12 +286,35 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a, detail
 
 /** Model Node impls for an array. */
 
-Array& Array::append(bool value) {appendInternal(model().newSmallValue(value)); return *this;}
-Array& Array::append(uint16_t value) {appendInternal(model().newSmallValue(value)); return *this;}
-Array& Array::append(int16_t value) {appendInternal(model().newSmallValue(value)); return *this;}
-Array& Array::append(int64_t const& value) {appendInternal(model().newValue(value)); return *this;}
-Array& Array::append(double const& value) {appendInternal(model().newValue(value)); return *this;}
-Array& Array::append(std::string_view const& value) {appendInternal(model().newValue(value)); return *this;}
+Array& Array::append(bool value) {
+    appendInternal(model().newSmallValue(value));
+    return *this;
+}
+
+Array& Array::append(uint16_t value) {
+    appendInternal(model().newSmallValue(value));
+    return *this;
+}
+
+Array& Array::append(int16_t value) {
+    appendInternal(model().newSmallValue(value));
+    return *this;
+}
+
+Array& Array::append(int64_t const& value) {
+    appendInternal(model().newValue(value));
+    return *this;
+}
+
+Array& Array::append(double const& value) {
+    appendInternal(model().newValue(value));
+    return *this;
+}
+
+Array& Array::append(std::string_view const& value) {
+    appendInternal(model().newValue(value));
+    return *this;
+}
 
 tl::expected<void, Error> Array::extend(model_ptr<Array> const& other) {
     if (model().frozen())

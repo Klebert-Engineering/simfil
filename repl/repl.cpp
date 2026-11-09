@@ -27,6 +27,7 @@
 using namespace std::string_literals;
 
 auto model = std::make_shared<simfil::ModelPool>();
+// Readline completion borrows the active input call's environment only.
 simfil::Environment* current_env = nullptr;
 
 struct
@@ -56,6 +57,7 @@ static auto make_env()
 }
 
 #ifdef WITH_READLINE
+// Readline requests one match per call and owns the returned malloc-allocated text.
 char* command_generator(const char* text, int state)
 {
     static std::vector<std::string> matches;
@@ -134,6 +136,8 @@ static std::string input(simfil::Environment& env, const char* prompt = "> ")
     return r;
 }
 
+// Distribute roots across workers while retaining root order in distinct result
+// slots. eval() merges per-invocation diagnostics into the shared collector.
 static auto eval_mt(simfil::Environment& env, const simfil::AST& ast, const std::shared_ptr<simfil::ModelPool>& model, simfil::Diagnostics& diag)
 {
     std::vector<std::vector<simfil::Value>> result;
@@ -246,6 +250,7 @@ int main(int argc, char *argv[])
         std::cerr << "Schema support is not implemented!\n";
     };
 
+    // Accept both -Dvalue and -D value, consuming the next argv entry only when needed.
     auto take_option_value = [&argv](std::string_view arg) -> std::string_view {
         arg.remove_prefix(2);
         if (!arg.empty() || argv[1] == nullptr)

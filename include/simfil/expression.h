@@ -18,6 +18,11 @@ class ExprVisitor;
 
 using ExprPtr = std::unique_ptr<Expr>;
 
+/**
+ * One AST operation producing a stream from an input Value. Concrete operations
+ * implement ieval(); eval() supplies cancellation, budgets and debug callbacks.
+ * Environment-dependent caches belong to Context, so a published AST can be shared.
+ */
 class Expr
 {
     friend class AST;
@@ -42,18 +47,22 @@ public:
         sourceLocation_.offset = token.begin;
         sourceLocation_.size = token.end - token.begin;
     }
+
     explicit Expr(SourceLocation location)
         : sourceLocation_(location)
     {}
 
     virtual ~Expr() = default;
 
-    /* Category */
+    /** AST-local identity used by runtime caches and diagnostic counters. */
     auto id() const -> ExprId
     {
         return id_;
     }
+
     virtual auto type() const -> Type = 0;
+
+    /** Whether this expression can be evaluated without a runtime input value. */
     virtual auto constant() const -> bool
     {
         return false;
@@ -82,6 +91,7 @@ public:
     /* Debug */
     virtual auto toString() const -> std::string = 0;
 
+    /** Evaluate synchronously, forwarding consumer Stop/errors without further emissions. */
     auto eval(Context ctx, const Value& val, const ResultFn& res) const -> tl::expected<Result, Error>
     {
         if (ctx.evaluation) [[unlikely]]
@@ -133,7 +143,7 @@ private:
     auto evalBoundedImpl(Context ctx, T&& value, const ResultFn& result) const -> tl::expected<Result, Error>;
     class BoundedResultFn;
 
-    /* Abstract evaluation implementation */
+    /** Implement the operation and propagate Stop/errors from every nested evaluation/sink. */
     virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> = 0;
     
     /* Move-optimized evaluation implementation */
@@ -146,6 +156,7 @@ private:
     SourceLocation sourceLocation_;
 };
 
+/** Own the source query and expression tree, assigning IDs for runtime and diagnostic lookup. */
 class AST
 {
 public:
@@ -159,6 +170,7 @@ public:
 
     ~AST();
 
+    /** Reassign IDs after rewriting children, before creating bindings or diagnostic indices. */
     auto reenumerate() -> void;
 
     auto expr() const -> const Expr&

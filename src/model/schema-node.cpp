@@ -52,6 +52,8 @@ auto SchemaTypeModelNode::type() const -> ValueType
 
 auto SchemaTypeModelNode::builtinKeys(std::span<StringId> output) const -> uint32_t
 {
+    // Count every visible key even when the caller only needs the count. The
+    // same order drives keyAt() and at(), including optional metadata fields.
     auto const& graph = *pool().schema_;
     uint32_t count = 0;
     auto key = [&](StringId name) {
@@ -213,6 +215,8 @@ auto SchemaTypeModelNode::scalar(ScalarValueType value) const -> ModelNode::Ptr
 template <class T>
 auto SchemaTypeModelNode::metadataScalar(T value, bool flag) const -> ModelNode::Ptr
 {
+    // Runtime integers are signed: preserve large unsigned metadata as decimal
+    // text, and flag values as fixed-width hex independent of their magnitude.
     if constexpr (std::is_same_v<T, uint64_t> || std::is_same_v<T, int64_t>)
     {
         if (flag)
@@ -386,6 +390,8 @@ auto SchemaPool::resolve(ModelNode const& node, ResolveFn const& callback) const
 
 auto SchemaPool::recursiveTraversalKey(ModelNode const& node) const noexcept -> ModelNodeAddress
 {
+    // A field occurrence and its sole represented type are the same recursive
+    // target, even though descriptor navigation exposes different addresses.
     auto address = node.addr();
     if (address.column() == SchemaTypeModelNode::Field && address.index() < schema_->fieldRows.size())
     {

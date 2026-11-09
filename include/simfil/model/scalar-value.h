@@ -23,12 +23,20 @@ struct Bitmask
     SchemaType type;
 
     Bitmask() = default;
+
     /** Retain borrowed type provenance at the independent scalar's construction boundary. */
     Bitmask(std::uint64_t bits, SchemaType type);
+
     /** Exact bits and pool/type equality, never flag membership or artifact-name equality. */
     bool operator==(Bitmask const&) const = default;
-    /** Parse unsigned decimal/hexadecimal bits with no lossy signed or floating conversion. */
+
+    /**
+     * Parse a whole unsigned decimal string or a 0x/0X-prefixed hex string.
+     * Reject signs, whitespace, trailing characters and uint64 overflow. Type
+     * width is checked separately by the operation constructing the typed mask.
+     */
     static auto parseBits(std::string_view text) -> tl::expected<std::uint64_t, Error>;
+
     /** Resolve a declared flag and test all its bits; a named zero means exactly zero. */
     auto hasFlag(std::string_view name) const -> tl::expected<bool, Error>;
 #if defined(SIMFIL_WITH_MODEL_JSON)

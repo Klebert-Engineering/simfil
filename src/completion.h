@@ -15,7 +15,8 @@ namespace simfil
 class ExprVisitor;
 
 /**
- * List of completion candidates.
+ * Request-local candidate set and schema-inference budget. Completion expressions
+ * borrow this object, which must outlive their parsing and synchronous evaluation.
  */
 struct Completion
 {
@@ -45,21 +46,30 @@ struct Completion
     CompletionOptions options;
 
 private:
-    /** Bounded type inference visits unknown expressions conservatively. */
+    /**
+     * Infer possible result TypeIds while collecting candidates at cursor nodes.
+     * input is the current value context; expected narrows comparison operands.
+     * NoTypeId marks unknown inference, while an empty expected vector permits
+     * root shorthand suggestions. No expression is executed by this traversal.
+     */
     auto walkType(Context& ctx, const Expr& expression, const std::vector<TypeId>& input,
                     const std::vector<TypeId>& expected, std::size_t depth, bool insidePath = false) -> std::vector<TypeId>;
+
     /** Expand logical alternatives, optionally including reachable descendant types. */
     auto expandTypes(Context& ctx, const std::vector<TypeId>& input, bool recursive) -> std::vector<TypeId>;
+
     /** Collect field/function/enum candidates in the current operand context. */
     void suggestType(Context& ctx, const std::vector<TypeId>& input,
                        const std::vector<TypeId>& expected, std::string_view prefix,
                        SourceLocation location, bool inPath, bool literalsOnly);
+
     /** Consume shared work allowance for AST and graph traversal. */
     auto visitType(Context& ctx) -> bool;
     std::size_t typeVisits_ = 0;
     SchemaType rootSchema_;
 };
 
+/** Cursor placeholder that gathers fields, plus functions/constants when outside an explicit path. */
 class CompletionFieldOrWordExpr : public Expr
 {
 public:
@@ -75,6 +85,7 @@ public:
     bool inPath_;
 };
 
+/** Keep only cursor-containing operands and visit both without boolean short-circuiting. */
 class CompletionAndExpr : public Expr
 {
 public:
@@ -88,6 +99,7 @@ public:
     ExprPtr left_, right_;
 };
 
+/** Completion counterpart of or; a matching left operand must not suppress right-side suggestions. */
 class CompletionOrExpr : public Expr
 {
 public:
@@ -101,6 +113,7 @@ public:
     ExprPtr left_, right_;
 };
 
+/** Cursor inside a quoted value, gathering literal candidates with the complete token replacement span. */
 class CompletionWordExpr : public Expr
 {
 public:

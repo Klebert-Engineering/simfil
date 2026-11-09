@@ -25,7 +25,12 @@ struct FnInfo
 };
 
 /**
- * Function interface.
+ * Registered query function receiving unevaluated argument expressions and a
+ * synchronous result sink. Implementations choose argument cardinality, propagate
+ * errors/Stop and return Undef during compilation when runtime input is needed.
+ * A successful call must emit at least one value; emit null for an empty result.
+ * CallExpression rejects successful returns that never invoked the sink.
+ * Long non-emitting loops must cooperate through Context::step().
  */
 class Function
 {
@@ -36,6 +41,7 @@ public:
     virtual auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> = 0;
 };
 
+/** Count truthy values across argument streams, preserving unknown compilation inputs. */
 class CountFn : public Function
 {
 public:
@@ -47,6 +53,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Pass through an expression's stream while recording execution time and retained sample values. */
 class TraceFn : public Function
 {
 public:
@@ -58,6 +65,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Construct an inclusive ascending or descending integer range; unpack it with `...`. */
 class RangeFn : public Function
 {
 public:
@@ -69,6 +77,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Compile each string argument value into a regex, or pass through an existing regex object. */
 class ReFn : public Function
 {
 public:
@@ -80,6 +89,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Concatenate argument result streams in order; zero arguments emit one null value. */
 class ArrFn : public Function
 {
 public:
@@ -91,6 +101,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Stream separated string pieces, optionally retaining empties; an empty input emits no values. */
 class SplitFn : public Function
 {
 public:
@@ -102,6 +113,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Select a zero-based window from an argument stream and stop upstream once the window is exhausted. */
 class SelectFn : public Function
 {
 public:
@@ -113,6 +125,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Fold an input stream with addition or a custom expression using $sum, $val and $idx. */
 class SumFn : public Function
 {
 public:
@@ -148,6 +161,7 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
+/** Stream names of enumerable members from each input node, using the environment's dictionary. */
 class KeysFn : public Function
 {
 public:
@@ -159,25 +173,29 @@ public:
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
 
-/** Explicit all-bits membership using the mask's exact type and declared flag name. */
 /**
  * Explicit schema-declared enum/named-value membership below a value. Unlike
  * shorthand, this predicate keeps its meaning inside generated boolean filters.
  */
-class HasSymbolFn : public Function {
+class HasSymbolFn : public Function
+{
 public:
-  static HasSymbolFn Fn;
-  auto ident() const -> const FnInfo & override;
-  auto eval(Context, const Value &, const std::vector<ExprPtr> &,
-            const ResultFn &) const -> tl::expected<Result, Error> override;
+    static HasSymbolFn Fn;
+
+    auto ident() const -> const FnInfo & override;
+    auto eval(Context, const Value &, const std::vector<ExprPtr> &,
+              const ResultFn &) const -> tl::expected<Result, Error> override;
 };
 
+/** Explicit all-bits membership using the mask's exact type and declared flag name. */
 class HasFlagFn : public Function
 {
 public:
     static HasFlagFn Fn;
+
     /** Describe the membership primitive for completion and help. */
     auto ident() const -> const FnInfo& override;
+
     /** Evaluate one typed mask and one declared flag name, propagating errors and undefined values. */
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
@@ -187,8 +205,10 @@ class BitmaskFn : public Function
 {
 public:
     static BitmaskFn Fn;
+
     /** Describe lossless string construction for completion and help. */
     auto ident() const -> const FnInfo& override;
+
     /** Parse one raw-bits string and validate the resulting mask against the selected type width. */
     auto eval(Context, const Value&, const std::vector<ExprPtr>&, const ResultFn&) const -> tl::expected<Result, Error> override;
 };
@@ -197,6 +217,11 @@ public:
 namespace util
 {
 
+/**
+ * Evaluate an argument and report whether exactly one value was observed, retaining
+ * the last value. This legacy convenience discards evaluation errors; use direct
+ * callback evaluation when failures must be distinguished from missing arguments.
+ */
 inline auto evalArg1Any(Context ctx, const Value& val, const ExprPtr& expr) -> std::tuple<bool, Value>
 {
     if (!expr)

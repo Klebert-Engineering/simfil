@@ -34,7 +34,8 @@ struct InvalidOperands {
         return str;                             \
     }
 
-/* Unary Operators */
+/* Unary operators below operate on concrete payloads. Dispatchers handle Undef,
+ * transient objects and typed bitmasks before entering these overloads. */
 
 #define DENY_OTHER()                                        \
     template <class Type>                                   \
@@ -120,6 +121,7 @@ struct OperatorBitInv
     NULL_AS_NULL()
 };
 
+/** Byte length for strings/bytes and immediate child count for model containers. */
 struct OperatorLen
 {
     NAME("#")
@@ -198,6 +200,10 @@ struct OperatorTypeof
     }
 };
 
+/**
+ * Compatibility conversion: text accepts a numeric prefix, invalid text/bytes
+ * becomes zero, and floating values truncate. This is not a checked input parser.
+ */
 struct OperatorAsInt
 {
     NAME("int")
@@ -240,6 +246,7 @@ struct OperatorAsInt
     NULL_AS((int64_t)0)
 };
 
+/** Parse a floating prefix from text; invalid text and model containers yield zero. */
 struct OperatorAsFloat
 {
     NAME("float")
@@ -318,6 +325,7 @@ struct OperatorAsString
     NULL_AS("null"s);
 };
 
+/** Preserve string bytes verbatim; encode integers in eight-byte big-endian form. */
 struct OperatorAsBytes
 {
     NAME("bytes")
@@ -536,6 +544,10 @@ struct OperatorMod
     }
 };
 
+/**
+ * Equality supports numeric promotion and ByteArray's integer compatibility
+ * decoding. Other mismatched types compare false; model nodes are not deep-compared.
+ */
 struct OperatorEq
 {
     NAME("==")
@@ -597,6 +609,7 @@ struct OperatorNeq
     }
 };
 
+/** Order bytes lexicographically as unsigned octets; mixed byte/numeric values use integer decoding. */
 struct OperatorLt
 {
     NAME("<")
@@ -712,6 +725,7 @@ struct OperatorGtEq
     }
 };
 
+/** Select one string byte by nonnegative index; out-of-range indices yield null. */
 struct OperatorSubscript
 {
     NAME("[]")
@@ -786,6 +800,7 @@ namespace impl
 
 /** Apply intrinsic flag semantics without widening ordinary signed integer operations. */
 auto bitmaskUnary(std::string_view operation, Bitmask const& value) -> tl::expected<Value, Error>;
+
 /** Preserve type identity for bitwise results and reject incompatible typed operands. */
 auto bitmaskBinary(std::string_view operation, Value const& left, Value const& right) -> tl::expected<Value, Error>;
 
@@ -817,6 +832,7 @@ inline auto makeOperatorResult(InvalidOperands) -> tl::expected<Value, Error>
 
 }
 
+/** Dispatch a runtime Value, preserving Undef and custom meta-type operator semantics. */
 template <class Operator_>
 struct UnaryOperatorDispatcher
 {
@@ -864,6 +880,12 @@ struct BinaryOperatorDispatcherRHS
     }
 };
 
+/**
+ * Dispatch both payload types and enrich invalid-operand errors with their names.
+ * Bitmask semantics take precedence; otherwise a transient left operand supplies
+ * the operator, then a transient right operand. Dispatcher instances borrow RHS
+ * values only for the synchronous visit.
+ */
 template <class Operator>
 struct BinaryOperatorDispatcher
 {

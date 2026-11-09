@@ -21,7 +21,11 @@ class AST;
 struct Environment;
 struct ModelNode;
 
-/** Query Diagnostics. */
+/**
+ * Field-hit and comparison counters for one AST. Use a separate instance per
+ * concurrent evaluation, then append results whose indices came from that AST.
+ * Counter updates through get() are unsynchronized; append/read/write lock storage.
+ */
 class Diagnostics
 {
     static constexpr std::uint32_t InvalidIndex = std::numeric_limits<std::uint32_t>::max();
@@ -62,13 +66,16 @@ public:
     ~Diagnostics();
 
     /**
-     * Get diagnostics data for a single Expr.
+     * Get mutable counters for an expression of the corresponding diagnostics type.
+     * Prepare indices first when instances will later be merged; this access may
+     * allocate and does not lock against another writer.
      */
     template <class DiagnosticsDataType>
     auto get(const Expr& expr) -> DiagnosticsDataType&;
 
     /**
-     * Append/merge another diagnostics object into this one.
+     * Merge counters from the same AST/index layout. The source remains unchanged;
+     * appending an instance to itself does nothing.
      */
     Diagnostics& append(const Diagnostics& other);
 
@@ -79,7 +86,8 @@ public:
     auto read(std::istream& stream) -> tl::expected<void, Error>;
 
     /**
-     * Build the exprIndex_ map for the AST.
+     * Assign stable per-kind storage indices before evaluating the AST. Preparing
+     * the same AST in each worker allows counters to be merged by array position.
      */
     auto prepareIndices(const Expr& ast) -> void;
 
@@ -96,7 +104,7 @@ private:
     friend auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Message>, Error>;
 
     /**
-     * Build messages from this objecst diagnostics data.
+     * Explain observed missing fields and comparisons whose operand types do not overlap.
      */
     auto buildMessages() const -> std::vector<Message>;
 

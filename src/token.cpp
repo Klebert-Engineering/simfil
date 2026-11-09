@@ -117,6 +117,7 @@ auto operator<<(std::ostream& o, const Token& t) -> std::ostream&
     return o << t.toString();
 }
 
+/** Borrow a query and advance by bytes, retaining scan failure context for tokenize(). */
 struct Scanner
 {
     static constexpr struct Skip_ {} Skip {};
@@ -201,6 +202,7 @@ void skipWhitespace(Scanner& s)
         s.skip();
 }
 
+/** Decode escaped identifiers, then recognize case-insensitive language keywords. */
 auto scanWord(Scanner& s) -> std::optional<Token>
 {
     if (s.hasError())
@@ -246,6 +248,7 @@ auto scanWord(Scanner& s) -> std::optional<Token>
     return {};
 }
 
+/** Decode text/raw/byte/regex literals; only completion text literals may omit their final quote. */
 std::optional<Token> scanStringLiteral(Scanner& s, bool allowUnfinishedString)
 {
     if (s.hasError())
@@ -345,6 +348,7 @@ std::optional<Token> scanStringLiteral(Scanner& s, bool allowUnfinishedString)
     return {};
 }
 
+/** Recognize numeric literals with checked integer accumulation and a parallel floating accumulator. */
 std::optional<Token> scanNumber(Scanner& s)
 {
     if (s.hasError())
@@ -453,6 +457,7 @@ std::optional<Token> scanNumber(Scanner& s)
     return {};
 }
 
+/** Match punctuation in table order; longer spellings must precede their prefixes. */
 std::optional<Token> scanSyntax(Scanner& s)
 {
     if (s.hasError())

@@ -277,6 +277,23 @@ inline constexpr std::size_t bitsery_max_column_payload_bytes = 0x3FFFFFFFU;
     return current <= maximum && added <= maximum - current;
 }
 
+/**
+ * Fixed-width storage for ModelPool columns and ArrayArena payloads.
+ * Mutators require a representable size (check_size/check_model_column_growth);
+ * this precondition is asserted in debug builds, not rechecked per record in
+ * release builds. Byte-input APIs validate payload lengths, not record semantics.
+ *
+ * Supported elements have a stable little-endian layout: fixed-width scalars,
+ * explicitly approved external types, or tagged trivially copyable records.
+ * The generic column stores one stream; TwoPart<A, B> stores two synchronized
+ * streams with pair-like proxy access. bytes() concatenates all first halves
+ * before all second halves, without padding or a record count.
+ *
+ * Storage is unsynchronized. References and proxies borrow their column;
+ * structural mutation can invalidate them according to the storage policy.
+ * Paged storage preserves element addresses during append, but iterators may
+ * retain a relocated page table. Vector storage may also relocate elements.
+ */
 template <
     typename T,
     std::size_t T_RecordsPerPage = 256,
@@ -284,18 +301,6 @@ template <
 class ModelColumn
 {
 public:
-    /**
-     * Fixed-width paged storage for `ModelPool` columns and `ArrayArena` payloads.
-     * Mutators require a representable size (check_size/check_model_column_growth);
-     * this precondition is asserted in debug builds, not rechecked per record in
-     * release builds. Byte-input APIs always validate untrusted payloads.
-     *
-     * Supported element types must have a stable little-endian wire layout:
-     * scalars with fixed width, explicitly tagged external types, or other
-     * approved trivially copyable standard-layout records. The generic column
-     * stores one record stream; the `TwoPart<A, B>` specialization stores two
-     * synchronized record streams while exposing pair-like access.
-     */
     using value_type = std::remove_cv_t<T>;
     using ref = value_type&;
     using const_ref = value_type const&;
@@ -358,7 +363,10 @@ public:
         }
     }
 
-    void resize(std::size_t count) { assert(check_size(count)); values_.resize(count); }
+    void resize(std::size_t count) {
+        assert(check_size(count));
+        values_.resize(count);
+    }
 
     void shrink_to_fit()
     {
@@ -462,6 +470,10 @@ public:
         return out;
     }
 
+    /**
+     * Replace records from non-aliasing raw wire bytes. Invalid length leaves
+     * the column unchanged; callers must validate record contents separately.
+     */
     tl::expected<void, model_column_io_error>
     assign_bytes(std::span<const std::byte> payload)
     {
@@ -474,7 +486,6 @@ public:
         return assign_bytes_impl(payload);
     }
 
-    template <typename T_BitseryInputAdapter>
     /**
      * Read a raw payload after the caller already consumed the size prefix.
      *
@@ -482,6 +493,7 @@ public:
      * Invalid input returns false and clears the column. The `readBuffer<1>` unit
      * remains one byte although the helper may read the entire payload in one call.
      */
+    template <typename T_BitseryInputAdapter>
     bool read_payload_from_bitsery(
         T_BitseryInputAdapter& adapter,
         std::size_t payload_size)
@@ -631,6 +643,7 @@ public:
         [[nodiscard]] first_ref first() const noexcept { return first_; }
         [[nodiscard]] second_ref second() const noexcept { return second_; }
         [[nodiscard]] value_type to_value() const { return value_type{first_, second_}; }
+
         /** Materialize the two-field value so proxy iterators satisfy indirectly_readable. */
         [[nodiscard]] operator value_type() const { return to_value(); }
 
