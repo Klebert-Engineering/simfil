@@ -427,7 +427,7 @@ evaluation overload remains unbounded and unchanged for existing callers.
 ## Native Result Materialization
 
 `CopyOptions::schemaRemap` optionally translates each known source type while
-copying into another exact graph. Unqualified leaves remain unqualified and do
+copying into another exact graph. Untyped leaves remain untyped and do
 not invoke the callback. Missing or physically incompatible target definitions
 are errors, not permission to drop provenance.
 
@@ -452,12 +452,12 @@ single-graph pool rejects foreign types; an unbound result pool can import
 several graphs. Unbound nonzero source schema IDs are errors, not silently erased.
 
 Copying an existing compound preserves its schema and ordinary scalar leaves.
-An independently selected scalar Value with provenance becomes a qualified node
+An independently selected scalar Value with provenance becomes a typed-scalar node
 holding a same-pool primitive address and local type ID. Unannotated values
 remain ordinary storage. There is no destination-schema inference, generated
 result schema, or per-result parallel metadata table. Bitmasks always use their
 dedicated column. Numeric/string JSON export remains plain and intentionally
-does not preserve qualification; native binary results do.
+does not preserve scalar schema annotations; native binary results do.
 
 Binary readers require every stored graph identity to resolve exactly before
 returning success. Install `setSchemaPool` or `setSchemaResolver` first.
@@ -486,7 +486,7 @@ Shared acyclic children are copied independently. Failed copies can leave bounde
 unreachable allocations in the append-only destination; no partial root is
 returned. Evaluator work/result limits remain a separate responsibility.
 
-The mask/qualifier columns and common graph bindings change the native ModelPool
+The bitmask/typed-scalar columns and common graph bindings change the native ModelPool
 wire layout and static dictionary assignments. Dependent binary protocols must
 version this break; there is no implicit legacy conversion.
 
@@ -502,13 +502,20 @@ callback errors, and streaming builtins. `test/model-copy.cpp` covers native
 undefined, sequence cardinality, ownership, dictionary remapping and copy limits.
 `test/schema-value.cpp` covers exact scalar provenance, named predicates, mask
 operators/roundtrips, mixed result graphs, freeze boundaries and malformed reads.
-Its constructor-time reader regression checks qualified scalar storage without
+Its constructor-time reader regression checks typed scalar storage without
 requiring `shared_from_this()` before a derived model has finished construction.
 `test/schema-lookup.cpp` covers direct members, named unions, aliases, duplicate
 declarations, incomplete/cyclic metadata and canonical member indexes.
 Existing language/model tests continue to cover the unbounded APIs. Descriptors,
 direct completion, bounded evaluation and native copying are also available with
 `SIMFIL_WITH_MODEL_JSON=OFF`; JSON serialization is not their storage backend.
+
+The JSON option controls the nlohmann dependency, JSON ingestion and the JSON
+export methods on model nodes, including schema descriptors. Keep it disabled
+for consumers that only need native models and binary transport. Descriptor
+navigation, compilation and schema-based completion remain available in that
+configuration; enabling descriptor JSON alone would require the base model's
+JSON API and dependency too.
 
 Run release benchmarks without other builds/tests consuming the machine:
 
@@ -525,323 +532,3 @@ have explicit scalar types: unknown child metadata does not mean scalar. Complet
 benchmarks compare real-model/schema root suggestions with direct root-type
 suggestions and a nested array/union index. Setup and finalization are outside
 timed loops. They are diagnostic measurements, not flaky wall-time assertions.
-
-### Historical Measurements
-
-The measurements below describe earlier implementations, including APIs and
-independent schema backends removed by the canonical typed-view refinement.
-They are retained as regression history, not evidence that the current code
-meets its performance gate. Use the paired runner in
-[performance/README.md](performance/README.md) for fresh original-reference
-comparisons, and report whole-owner retained/peak allocation separately from
-partial graph counters.
-
-#### Reference Measurements
-
-Paired local Release runs on 2026-09-29 (GCC 13, 40 samples, 2000 resamples),
-without concurrent builds, compare the preserved `626984e` executable with this
-implementation. Times are sample means, not performance guarantees. The baseline
-used the previous implicit-scalar schema leaves; the current fixture makes those
-same scalar types explicit without changing the model data or query topology.
-
-| Query | Before | After |
-| --- | ---: | ---: |
-| Sparse wide, no schema | 6.115 ms | 6.239 ms |
-| Sparse wide, basic pruning | 3.049 ms | 3.165 ms |
-| Sparse wide, field plans | 1.436 ms | 1.376 ms |
-| Sparse wide, exact path | 0.750 ms | 0.776 ms |
-| Nested field, no schema | 3.081 ms | 3.535 ms |
-| Missing field, no schema | 2.369 ms | 2.995 ms |
-| Nested field, schema pruning | 2.195 ms | 2.305 ms |
-| Missing field, schema pruning | 425 ns | 438 ns |
-
-Field plans remain about 2.30x faster than basic pruning and 1.77x the exact-path
-cost. This is not a blanket speedup: the unbounded deep traversal cases increased
-by roughly 15-26%. The added evaluation state/checks are potential contributors,
-but experimentally specializing the budgeted/unbounded wildcard traversal did
-not recover that difference and was not retained. Further profiling is needed
-to attribute the remaining cost; retain these no-schema controls rather than
-hiding that cost behind schema pruning.
-
-For 256 candidate fields, completion in the same run measured 48.9 us through a
-real model/schema root, 53.6 us directly through the root type, and 48.2 us
-through a nested array/union index. Those short samples have appreciable timing
-noise; they establish comparable latency, not a statistically significant ordering.
-The direct path needs no synthetic model construction. Removing duplicate field
-enumeration reduced its earlier nested-type measurement from about 83 us to
-about 50 us on this machine.
-
-#### Earlier Bound Type Measurements
-
-On 2026-10-30, a quiet Release run (GCC 13, 40 samples, 2000 resamples)
-measured the owning-binding/scalar-provenance implementation on the same
-sparse-wide fixture, before merging the subsequent `size-checks` optimizations
-through `77fe792`. In particular, that merge makes diagnostics collection
-optional on the evaluation hot path; the following numbers do not measure the
-merged implementation. The earlier same-day `e324358` baseline used 20 samples
-and 1000 resamples, with appreciable noise in its field-plan result. These are
-not freshly interleaved before/after runs or a statistical regression threshold.
-
-| Query | Earlier Baseline | Callback At That Revision | Bound Graph At That Revision |
-| --- | ---: | ---: | ---: |
-| No schema | 6.814 ms | 7.070 ms | - |
-| Basic pruning | 3.222 ms | 3.549 ms | 5.532 ms |
-| Field plans | 1.560 ms | 1.606 ms | 2.098 ms |
-| Exact path | 0.786 ms | 0.927 ms | 1.419 ms |
-
-Bound field plans are 2.64x faster than bound basic pruning, and take 1.48x
-the bound exact-path time. Binding/provenance is not free: relative to the
-callback cases at that revision, bound plans cost about 31% more and bound exact access
-about 53% more. Persisted scalar leaves remain compact in both variants; the
-bound queries derive and retain their type while emitting runtime values.
-This benchmark does not isolate binding lookup, dictionary translation and
-qualification costs, so attributing the difference requires profiling.
-
-Nor is the legacy path uniformly unchanged: its no-schema/basic/plan/exact
-means increased by approximately 4%/10%/3%/18% over the earlier baseline.
-Retain these controls when optimizing instead of reporting only the relative
-pruning speedup. In the same quiet run, model-root, direct-root and nested
-array/union completion measured 47.9, 50.0 and 50.6 us respectively, comparable
-to the earlier roughly 50 us measurements.
-
-#### Allocation-Free Member Lookup
-
-On 2026-11-02, paired Release measurements compared `a67e654` with direct
-`fieldSchema` / `itemSchema` lookup and cached wildcard dictionary translation.
-Both executables used GCC 13, `-O3 -DNDEBUG`, the same sparse-wide fixture
-(2,000 objects, 32 branches), and CPU affinity to one core of a Ryzen 7 PRO
-7840U. The following are medians of seven interleaved rounds, each evaluating
-150 queries after three warmups, with a retained `BoundExpression`. Setup,
-schema finalization and compilation are outside the measurements.
-
-| Query | Before | Point Lookup |
-| --- | ---: | ---: |
-| No schema | 6.948 ms | 7.042 ms |
-| Callback basic pruning | 3.628 ms | 3.490 ms |
-| Callback field plans | 1.624 ms | 1.594 ms |
-| Unbound exact path | 0.918 ms | 0.897 ms |
-| Bound basic pruning | 5.552 ms | 5.216 ms |
-| Bound field plans | 2.079 ms | 1.781 ms |
-| Bound exact path | 1.404 ms | 1.167 ms |
-
-Bound field-plan latency falls about 14%, and bound exact-path latency about
-17%. The unbound controls vary by -3.8% to +1.3%; these local timings are not
-regression thresholds. Separate Callgrind runs show approximately 11% fewer
-instructions for both bound cases, unchanged no-schema/exact-path instruction
-counts, and about 1% fewer callback field-plan instructions.
-
-Counting `operator new` calls only around warmed evaluation gives **8,001 to 1
-allocations per bound query**, for all three bound variants. The remaining
-allocation holds the final result vector; deriving the 2,000 numeric leaf
-types no longer allocates. This is not a promise that arbitrary queries or
-owning string results allocate nothing. Bound field plans also reduce successful
-schema-dictionary `get` calls from 8,001 to 2,000 per query. Exact graph ownership,
-scalar qualification and independent-dictionary translation still have a cost.
-
-The existing Catch2 schema/completion benchmarks were also rerun three times
-with 40 samples and 2,000 resamples. Median completion means were 47.5 us for
-model-root, 53.3 us for direct-root and 50.3 us for nested array/union completion.
-One run had substantial timing outliers; neither these measurements nor the
-earlier ones establish an end-to-end application speedup.
-
-#### Runtime Cost Recovery Against The Original Baseline
-
-The allocation-free lookup result above compared against an already regressed
-implementation. It did **not** meet the performance budget against `77fe792`.
-The subsequent runtime pass removes redundant work rather than dropping types:
-
-- `ModelPool::type` and `ModelPool::schema` read core column metadata directly;
-  custom columns still use virtual resolution, and typed nodes retain their
-  overrides. Generic nodes no longer construct owning wrappers just to read
-  these two properties.
-- Scalar extraction constructs the qualified `Value` once. Compound children
-  need no inferred scalar type, while intrinsic scalar provenance takes
-  precedence over the parent edge.
-- `ExpressionRuntime` binds static field names to each exact schema dictionary.
-  Successful translations and wildcard plans share a graph-owned cache, with a
-  last-graph fast path. Missing names remain retryable; definitions are looked
-  up again, so schema replacement does not leave dangling definition pointers.
-  Dynamic subscripts still resolve the actual key for each access.
-- Resolution reuses the node's existing strong owner instead of acquiring an
-  extra dispatch reference and locking `enable_shared_from_this` for each
-  temporary wrapper. Wrappers and independently retained results still own
-  their model/graph; no borrowed-value lifetime protocol was introduced.
-- Address-only node construction initializes its default null payload directly,
-  rather than moving and destroying an otherwise unused scalar variant.
-
-The final comparison uses the same explicit-leaf sparse-wide fixture and
-compiler settings as above, but both executables first start and join a thread.
-This activates the ordinary threaded-process shared-pointer synchronization
-path before timing, rather than benefiting from a single-threaded-process
-library shortcut. Evaluation itself remains single-worker, pinned to CPU 4.
-Seven interleaved rounds evaluate 200 queries each after three warmups, retaining
-the `BoundExpression`; setup, dictionary migration and compilation are excluded.
-The original `77fe792` executable is the reference, not `a67e654`.
-
-| Query | Original Median | Final Median | Latency Change |
-| --- | ---: | ---: | ---: |
-| No schema | 7.483 ms | 5.646 ms | -24.5% |
-| Callback basic pruning | 3.569 ms | 2.751 ms | -22.9% |
-| Callback field plans | 1.604 ms | 1.245 ms | -22.4% |
-| Unbound exact path | 0.814 ms | 0.564 ms | -30.7% |
-| Bound basic pruning | 3.559 ms | 3.282 ms | -7.8% |
-| Bound field plans | 1.607 ms | 1.305 ms | -18.8% |
-| Bound exact path | 0.826 ms | 0.641 ms | -22.4% |
-| Separate dictionaries, bound basic | 3.495 ms | 3.272 ms | -6.4% |
-| Separate dictionaries, bound plans | 1.624 ms | 1.306 ms | -19.6% |
-| Separate dictionaries, bound exact | 0.820 ms | 0.636 ms | -22.4% |
-
-Each bound variant is compared with the original corresponding callback/exact
-query, which did not preserve scalar provenance. The separate-dictionary
-candidate additionally pays translation into an independent runtime namespace;
-its reference still uses the original shared dictionary. Repeated reference
-medians differ because each variant has its own interleaved reference samples.
-
-All candidate sample ranges were below their respective reference ranges. For
-the narrowest margin, separate-dictionary basic pruning, the seven candidate
-means span 3.181--3.350 ms versus 3.460--3.661 ms for the reference. This fixture
-meets the at-most-1% regression budget without using a 5% exception; it is not
-an end-to-end MapViewer or cross-platform performance guarantee. Exact-type
-handling still has a measurable cost relative to the faster unbound candidate.
-Separate Callgrind runs count 3.8% more instructions for bound basic pruning,
-but 5.8% fewer for bound plans and 8.2% fewer for bound exact paths versus the
-original corresponding query. Instruction counts are not latency: the basic
-path still performs extra type bookkeeping while avoiding costlier ownership
-operations and wrapper construction.
-
-Warmed evaluation in every mode performs one 88-byte allocation for the result
-vector, with no successful dictionary `get` calls. `Value`, `ModelNode` and
-`ScalarValueType` remain 88, 72 and 40 bytes on this platform, respectively.
-`test/schema.cpp` now retains bindings, activates threaded-process refcounts,
-and benchmarks all three independent-dictionary variants. Focused tests cover
-core/custom/foreign metadata dispatch, graph-local ID collisions, dictionary
-translation, late declarations, replacement definitions, dynamic subscripts,
-and result ownership after both the environment and source models are gone.
-
-
-#### Parallel Ownership Follow-Up
-
-The single-worker result above did not establish parallel scalability. A
-four-worker diagnostic with distinct models sharing one binding exposed a 52%
-regression in basic pruning against `77fe792`: each transient schema reference
-contended on the same graph-wide atomic counter. Splitting ownership counters
-without copying the graph removed most of it. That alone was insufficient:
-`perf c2c` then identified false sharing between a model's stored binding handle
-and another model's reference counter. Isolating both the handle and the new
-counter fixes that allocator-placement effect; padding unrelated model nodes
-or Values is not part of the change.
-
-The following complete matrix uses GCC 13.3 Release on an AMD Ryzen 7 PRO 7840U.
-Each worker has its own model, environment and retained `BoundExpression`, but
-shares the same schema graph and AST. Seven interleaved rounds each time 200
-queries per worker after three warmups. The statistic is the median of the
-slowest worker's mean query latency in each round, not aggregate throughput.
-Construction and compilation are excluded. Models are either built on the main
-thread or by their querying worker to check allocator-placement sensitivity.
-CPUs 4/5 and 6/7 share cores; CPUs 4/6/8/10 are distinct physical cores. The
-reference is always the original corresponding callback/exact query at
-`77fe792`, not the regressed Schema 2 implementation. `separate-*` additionally
-pays for an independent runtime dictionary; its reference still shares the
-schema dictionary. Negative change means faster.
-
-| Workers / Placement | Construction | Query | Original | Local Owners | Change |
-| --- | --- | --- | ---: | ---: | ---: |
-| 1 | main | bound-basic | 3.654 ms | 3.255 ms | -10.90% |
-| 1 | main | bound-plans | 1.646 ms | 1.327 ms | -19.40% |
-| 1 | main | bound-exact | 0.871 ms | 0.681 ms | -21.80% |
-| 1 | main | separate-basic | 3.622 ms | 3.298 ms | -8.95% |
-| 1 | main | separate-plans | 1.628 ms | 1.321 ms | -18.86% |
-| 1 | main | separate-exact | 0.861 ms | 0.688 ms | -20.13% |
-| 4 / 2 cores (SMT) | main | bound-basic | 5.573 ms | 5.831 ms | +4.63% |
-| 4 / 2 cores (SMT) | main | bound-plans | 2.570 ms | 2.477 ms | -3.61% |
-| 4 / 2 cores (SMT) | main | bound-exact | 1.211 ms | 1.151 ms | -4.97% |
-| 4 / 2 cores (SMT) | main | separate-basic | 5.592 ms | 5.792 ms | +3.57% |
-| 4 / 2 cores (SMT) | main | separate-plans | 2.581 ms | 2.473 ms | -4.20% |
-| 4 / 2 cores (SMT) | main | separate-exact | 1.204 ms | 1.155 ms | -4.05% |
-| 4 / 4 cores | main | bound-basic | 3.863 ms | 3.594 ms | -6.98% |
-| 4 / 4 cores | main | bound-plans | 1.711 ms | 1.382 ms | -19.22% |
-| 4 / 4 cores | main | bound-exact | 0.912 ms | 0.721 ms | -20.97% |
-| 4 / 4 cores | main | separate-basic | 3.869 ms | 3.515 ms | -9.15% |
-| 4 / 4 cores | main | separate-plans | 1.723 ms | 1.412 ms | -18.06% |
-| 4 / 4 cores | main | separate-exact | 0.948 ms | 0.713 ms | -24.83% |
-| 4 / 2 cores (SMT) | worker | bound-basic | 5.635 ms | 5.920 ms | +5.05% |
-| 4 / 2 cores (SMT) | worker | bound-plans | 2.590 ms | 2.518 ms | -2.76% |
-| 4 / 2 cores (SMT) | worker | bound-exact | 1.218 ms | 1.182 ms | -2.97% |
-| 4 / 2 cores (SMT) | worker | separate-basic | 5.612 ms | 5.933 ms | +5.72% |
-| 4 / 2 cores (SMT) | worker | separate-plans | 2.593 ms | 2.485 ms | -4.17% |
-| 4 / 2 cores (SMT) | worker | separate-exact | 1.205 ms | 1.197 ms | -0.66% |
-| 4 / 4 cores | worker | bound-basic | 3.891 ms | 3.562 ms | -8.45% |
-| 4 / 4 cores | worker | bound-plans | 1.779 ms | 1.414 ms | -20.50% |
-| 4 / 4 cores | worker | bound-exact | 0.927 ms | 0.763 ms | -17.70% |
-| 4 / 4 cores | worker | separate-basic | 3.912 ms | 3.616 ms | -7.57% |
-| 4 / 4 cores | worker | separate-plans | 1.735 ms | 1.435 ms | -17.31% |
-| 4 / 4 cores | worker | separate-exact | 0.939 ms | 0.763 ms | -18.68% |
-
-All single-worker and four-distinct-core medians improve. The strict <=1%
-regression target is nevertheless **not fully met**: basic pruning with four
-workers sharing two physical cores remains 3.57--5.72% slower. That is not an
-approved 5% exception, and the remaining target stays open. Field plans and
-exact paths improve in those SMT runs too, but do not erase the basic-pruning
-result. This is a bounded fixture comparison, not an end-to-end MapViewer,
-same-model concurrent-query, or cross-platform performance guarantee.
-
-All per-worker samples, CPU placement and source identifiers are retained in
-[`performance/schema-runtime-2026-11-02.json`](performance/schema-runtime-2026-11-02.json).
-The repository's sparse-wide benchmark also runs four-model batches for basic
-pruning, plans and exact paths. Its batch timings include thread/binding setup
-amortized over 16 queries per worker; they are not the pinned steady-state
-measurements reported above and should not become noisy CI timing assertions.
-
-The same fixture now compares compact `SchemaPool` against the independent
-`ObjectSchema` registry for basic pruning, field plans and exact paths, with
-both shared and separate dictionaries. Payloads and container IDs are unchanged;
-native schema rebinding is outside timing. These additional benchmark variants
-are coverage for the extraction, not yet a new accepted baseline measurement.
-
-The persistent [paired runtime harness](performance/README.md) compiles the same
-fixture against the original revision and the candidate, records build identities
-and all worker samples, and includes compact-pool variants. Its smoke mode is
-strictly correctness coverage; it never reports performance acceptance. Retain
-the historical raw evidence rather than replacing it with an intermediate-base
-comparison or an unpinned one-sample benchmark.
-Both harness versions compile, and a 60-row tiny smoke matrix passes all 120
-reference/candidate subprocesses, including untimed exact-binding/leaf-type
-checks. Nine runner tests cover evidence preservation, paired ordering and
-rejection of mismatched builds/workloads. These are harness-correctness results,
-not a new latency comparison.
-
-Untimed capacity checks on the full 2,000-object/32-branch fixture report
-1,967,654 bytes of model-column backing capacity at `77fe792`, versus 1,973,457
-bytes with the candidate's registry binding (+5,803 bytes, +0.295%) and 1,973,456
-bytes with compact-pool binding. These exclude dictionaries and shared graph
-storage. The candidate schema dictionary reports 8,752 bytes; each separate
-runtime dictionary adds 8,832 bytes. Compact graph type/index storage reports
-25,746 bytes plus 1,088,538 bytes of primitive ModelPool capacity, shared across
-workers. These are existing API lower bounds, not allocator/RSS totals. The
-independent registry lacks a complete retained-size API, so **whole-schema memory
-comparison against the pre-cutover representation remains open**. Raw capacity
-evidence is retained in
-[`performance/schema-memory-2026-11-03.json`](performance/schema-memory-2026-11-03.json).
-Timings from this loaded-host capacity probe were discarded. The prepared paired
-runtime matrix has not been run; the historical SMT regression gate remains open.
-
-CTest in coverage builds runs every benchmark with one measured sample and no
-statistical analysis. Fixture setup, calibration, benchmark bodies and their assertions
-still execute; ordinary builds retain full sampling. Instrumented timings, especially
-with shared atomic gcov counters, are not performance evidence.
-
-A separate nine-round lifecycle probe installed one binding in each of 10,000
-empty models, then destroyed the models. Relative to `c217e0d` (which already
-supports bindings), median installation rises from 117 to 265 ns/model, and
-whole-model destruction from 7.713 to 8.031 us/model. Installation adds one heap
-allocation and 240 requested bytes per model/graph on this libstdc++ build
-(3 allocations / 68 bytes before, 4 / 308 after). The retained-capacity lower
-bound increases by 112 bytes; it deliberately does not claim the omitted
-control-block bookkeeping/padding. These are installation/teardown costs, not
-per-query allocations, and other standard libraries may use different layouts.
-
-Regression tests cover independent counters with unchanged graph pointers,
-direct/imported/read bindings, alias pointers differing from their owner,
-weak-reference release, detached scalar lifetimes, and concurrent workers
-using one schema with independent model dictionaries. No borrowed Value API,
-public node-layout change, or stream-format change is introduced.
