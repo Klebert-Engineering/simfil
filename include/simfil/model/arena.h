@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 #include <optional>
+#include <ranges>
 #include <shared_mutex>
 #include <mutex>
 #include <cmath>
@@ -796,9 +797,11 @@ public:
      * Constness follows the arena, not the range object, as with std::span.
      * Size is a snapshot; structural arena mutations invalidate the range.
      * Indexing/back walk chunks and are not constant-time random access.
+     * As a C++20 view, a temporary range can be owned by an adaptor pipeline;
+     * copying it retains only the cursor and size, not the arena or its storage.
      */
     template <bool T_IsConst>
-    class BasicArrayRange
+    class BasicArrayRange : public std::ranges::view_base
     {
         using Arena = std::conditional_t<T_IsConst, const ArrayArena, ArrayArena>;
         friend class ArrayArena;

@@ -503,6 +503,10 @@ TEST_CASE("ArrayArena ranges satisfy forward range contracts", "[ArrayArena][ran
     STATIC_REQUIRE(std::semiregular<Arena::const_iterator>);
     STATIC_REQUIRE(std::semiregular<Range>);
     STATIC_REQUIRE(std::semiregular<ConstRange>);
+    STATIC_REQUIRE(std::ranges::view<Range>);
+    STATIC_REQUIRE(std::ranges::view<ConstRange>);
+    STATIC_REQUIRE(std::ranges::viewable_range<Range>);
+    STATIC_REQUIRE(std::ranges::viewable_range<ConstRange>);
     STATIC_REQUIRE(std::ranges::forward_range<Range>);
     STATIC_REQUIRE(std::ranges::forward_range<ConstRange>);
     STATIC_REQUIRE(std::ranges::forward_range<Range const>);
@@ -531,6 +535,8 @@ TEST_CASE("ArrayArena ranges satisfy forward range contracts", "[ArrayArena][ran
     REQUIRE_FALSE(empty.at(0));
     REQUIRE(empty.at(0).error().type == Error::IndexOutOfRange);
     REQUIRE_FALSE(constEmpty.at(std::numeric_limits<size_t>::max()));
+    auto emptyView = Range{} | std::views::transform([](int32_t value) { return value + 1; });
+    REQUIRE(std::ranges::empty(emptyView));
 
     Arena::iterator defaultIterator;
     Arena::iterator assigned;
@@ -578,6 +584,9 @@ TEST_CASE("ArrayArena ranges satisfy forward range contracts", "[ArrayArena][ran
     REQUIRE(*cursor++ == 43);
     REQUIRE(cursor == singleton.end());
     REQUIRE_FALSE(singleton.at(1));
+    auto singleView = std::as_const(arena).range(emptySingleton) |
+        std::views::transform([](int32_t value) { return value * 2; });
+    REQUIRE(std::ranges::equal(singleView, std::array{86}));
     constEmpty = singleton;
     REQUIRE(constEmpty.front() == 43);
 
@@ -634,6 +643,18 @@ TEST_CASE("ArrayArena forward cursors cross fragmented chunks and pages", "[Arra
         REQUIRE(*std::ranges::lower_bound(range, expected[57]) == expected[57]);
         REQUIRE(std::ranges::find(range, -1) == range.end());
 
+        // Each pipeline owns the temporary view, while the arena owns the data.
+        // Keep using the pipeline after that temporary has left its full expression.
+        auto mutableView = arena.range(handles[j]) |
+            std::views::transform([](int32_t& value) -> int32_t& { return value; });
+        auto readOnlyView = std::as_const(arena).range(handles[j]) |
+            std::views::drop(3) | std::views::take(70) |
+            std::views::transform([](int32_t value) { return value * 2; });
+        REQUIRE(std::ranges::equal(mutableView, expected));
+        REQUIRE(std::ranges::equal(readOnlyView,
+            expected | std::views::drop(3) | std::views::take(70) |
+                std::views::transform([](int32_t value) { return value * 2; })));
+
         auto current = range.begin();
         for (size_t i = 0; i < count; ++i) {
             auto const stationary = current;
@@ -670,6 +691,8 @@ TEST_CASE("ArrayArena forward cursors cross fragmented chunks and pages", "[Arra
         std::ranges::for_each(range, [](int32_t& value) { ++value; });
         REQUIRE(readOnly.front() == expected.front() + 1);
         REQUIRE(readOnly.back() == expected.back() + 1);
+        REQUIRE(*mutableView.begin() == expected.front() + 1);
+        REQUIRE(*readOnlyView.begin() == (expected[3] + 1) * 2);
     }
     REQUIRE(arena.memory_usage().allocatedBytes == allocated);
 }
@@ -680,6 +703,8 @@ TEST_CASE("ArrayArena split proxies are const-correct forward references", "[Arr
     using Arena = ArrayArena<Pair, 4, 2>;
     using Range = Arena::BasicArrayRange<false>;
     using ConstRange = Arena::BasicArrayRange<true>;
+    STATIC_REQUIRE(std::ranges::view<Range>);
+    STATIC_REQUIRE(std::ranges::view<ConstRange>);
     STATIC_REQUIRE(std::forward_iterator<Arena::iterator>);
     STATIC_REQUIRE(std::forward_iterator<Arena::const_iterator>);
     STATIC_REQUIRE(std::ranges::forward_range<Range>);
@@ -712,6 +737,10 @@ TEST_CASE("ArrayArena split proxies are const-correct forward references", "[Arr
     std::array<Pair, count> copied{};
     REQUIRE(std::ranges::copy(readOnly, copied.begin()).out == copied.end());
     REQUIRE(copied == expected);
+    auto secondValues = std::as_const(arena).range(values) |
+        std::views::transform([](auto pair) { return pair.second(); });
+    REQUIRE(std::ranges::equal(secondValues,
+        expected | std::views::transform([](auto const& pair) { return pair.second(); })));
     // Forward iteration does not require the column proxies themselves to be
     // equality_comparable; compare their logical values through a projection.
     auto pairValue = [](auto const& pair) { return Pair{pair.first(), pair.second()}; };
