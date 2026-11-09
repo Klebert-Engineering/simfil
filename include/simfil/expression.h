@@ -143,7 +143,7 @@ private:
     auto evalBoundedImpl(Context ctx, T&& value, const ResultFn& result) const -> tl::expected<Result, Error>;
     class BoundedResultFn;
 
-    /** Implement the operation and propagate Stop/errors from every nested evaluation/sink. */
+    /** Abstract evaluation implementation. Propagate Stop/errors from every nested evaluation/sink. */
     virtual auto ieval(Context ctx, const Value& value, const ResultFn& result) const -> tl::expected<Result, Error> = 0;
     
     /* Move-optimized evaluation implementation */

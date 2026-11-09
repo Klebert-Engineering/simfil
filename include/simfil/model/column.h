@@ -284,7 +284,7 @@ inline constexpr std::size_t bitsery_max_column_payload_bytes = 0x3FFFFFFFU;
  * release builds. Byte-input APIs validate payload lengths, not record semantics.
  *
  * Supported elements have a stable little-endian layout: fixed-width scalars,
- * explicitly approved external types, or tagged trivially copyable records.
+ * explicitly approved external types, or tagged trivially copyable standard-layout records.
  * The generic column stores one stream; TwoPart<A, B> stores two synchronized
  * streams with pair-like proxy access. bytes() concatenates all first halves
  * before all second halves, without padding or a record count.

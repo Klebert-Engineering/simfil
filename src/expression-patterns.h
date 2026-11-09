@@ -56,6 +56,7 @@ inline auto isSingleValueOrFieldExpression(const Expr* expr) -> bool {
 /**
  * Recognize comparisons eligible for the optional wildcard completion hint:
  * a field or uppercase string on the left, and a constant expression on the right.
+ *   `<single-field or uppercase-string-constant> <comparison-operator> <constant-value>`
  * The spelling check is only a hint heuristic, not schema-based enum resolution.
  */
 inline auto isFieldComparison(const Expr* expr) -> bool {

@@ -16,6 +16,8 @@ auto ModelNode::schemaType() const -> SchemaType
     return model_ ? model_->resolveSchemaType(*this) : SchemaType{};
 }
 
+/// Create a ModelNode from a model pool which serves as its
+/// Virtual Function Table, and a ModelNodeAddress.
 // Resolution is delegated to the owning model rather than stored per address.
 ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key)
     // Address-only wrappers need the default null payload, not a moved scalar variant.

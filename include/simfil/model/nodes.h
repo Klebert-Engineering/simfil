@@ -235,6 +235,8 @@ decltype(auto) objectFieldNode(TField&& field)
 }
 
 /**
+ * Semantic view onto a particular node in a model.
+ *
  * Address wrapper retaining its owning model. Base accessors dispatch through
  * Model::resolve; concrete implementations derive from ModelNodeBase to stop
  * that dispatch. Missing children are empty pointers. Accessors without an
@@ -617,7 +619,8 @@ struct Array : public BaseArray<ModelPool, ModelNode>
     Array& append(std::string_view const& value);
 
     /**
-     * Append addresses from `other`, which must belong to the same model.
+     * Append all elements from `other` to this array.
+     * Both arrays must belong to the same model: this copies child addresses.
      * Children remain shared; an error may leave already appended elements.
      */
     tl::expected<void, Error> extend(model_ptr<Array> const& other);
@@ -716,6 +719,8 @@ protected:
 };
 
 /**
+ * Object with extra procedural fields.
+ *
  * Object whose computed fields precede its stored fields in lookup and traversal.
  * Getters run on every access and must return a nonempty node. MaxProceduralFields
  * is inline storage capacity, not a hard limit on the number of computed fields.

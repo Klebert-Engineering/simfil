@@ -891,6 +891,8 @@ static auto collectReferencedSchemaPaths(
 }
 
 /**
+ * RAII helper for calling a function at destruction.
+ *
  * Run a scope-exit callback, transferring responsibility when the guard is moved.
  */
 template <class Fun>

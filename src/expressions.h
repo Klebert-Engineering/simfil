@@ -81,7 +81,7 @@ private:
 class SchemaEnumExpr : public Expr
 {
 public:
-    /** Retain the symbol text and root type for schema-aware evaluation in each environment. */
+    /** Retain portable symbol text and the represented root identity, never pool-local field IDs. */
     SchemaEnumExpr(SchemaType root, std::string symbol, SourceLocation location,
                    bool named = false, std::string schemaIdentity = {},
                    TypeId symbolType = NoTypeId);
@@ -447,6 +447,8 @@ public:
 };
 
 /**
+ * Generic binary operator expression.
+ *
  * Apply an operator to every left/right result pair. Both operands evaluate
  * against the original input; the right stream is reevaluated for each left value.
  */

@@ -31,6 +31,8 @@ struct Bitmask
     bool operator==(Bitmask const&) const = default;
 
     /**
+     * Parse unsigned decimal/hexadecimal bits with no lossy signed or floating conversion.
+     *
      * Parse a whole unsigned decimal string or a 0x/0X-prefixed hex string.
      * Reject signs, whitespace, trailing characters and uint64 overflow. Type
      * width is checked separately by the operation constructing the typed mask.

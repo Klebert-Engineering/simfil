@@ -9,7 +9,10 @@ namespace simfil
 class SchemaTypeModelNode;
 
 /**
- * Own a type graph and the dictionary used by its field and symbol names.
+ * Own a canonical type graph and the dictionary used by its field and symbol names.
+ * Construction writes directly into columns and arenas; applications may extend
+ * the owner with metadata.
+ *
  * Factories return views that read and update the pool's records directly. Build
  * the graph, then finalize it before sharing it with query workers. For example:
  *

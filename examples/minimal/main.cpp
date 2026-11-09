@@ -7,14 +7,18 @@
 
 int main()
 {
+    // Shared string pool.
     // Model fields and expression evaluation must use the same string-ID namespace.
     auto strings = std::make_shared<simfil::StringPool>();
 
+    // Data model pool
     auto model = std::make_shared<simfil::ModelPool>(strings);
 
+    // Put object into the pool
     auto obj = model->newObject();
     obj->addField("name", "demo");
 
+    // Set object as root.
     // Allocating an object does not publish it as a root automatically.
     model->addRoot(obj);
 

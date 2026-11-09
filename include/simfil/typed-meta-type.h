@@ -11,6 +11,8 @@ namespace simfil
 {
 
 /**
+ * Helper class for implementing meta-types.
+ *
  * Implement MetaType storage with new/copy/delete of a concrete C++ type and
  * forward operators to typed overloads. See IRangeType for an example. Descriptor
  * identity, rather than just the C++ payload type, determines get() compatibility.

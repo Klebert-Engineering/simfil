@@ -213,7 +213,7 @@ public:
         return owner_.resolve(owner_.impl_->columns_.typedScalars_[addr().index()].first())->value();
     }
 
-    /** Schema annotations preserve the primitive type and its arithmetic behavior. */
+    /** Schema annotations never invent an Enum type or change numeric arithmetic. */
     auto type() const -> ValueType override
     {
         return addr().column() == Bitmask ? ValueType::Bitmask

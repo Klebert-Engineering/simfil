@@ -11,8 +11,10 @@ namespace simfil
  * Limits for one callback-based evaluation, checked at expression/stream steps.
  * A limit stops enumeration and preserves the results already delivered. Zero
  * means no allowance for that counter, rather than an unlimited budget.
- * Compilation, consumers, regex and blocking custom functions need their own
- * limits: these cooperative checks cannot interrupt them or bound value sizes.
+ *
+ * Cooperative streaming limits, not a CPU/memory sandbox. Compilation, JSON,
+ * consumer execution, regex, blocking custom functions and per-value byte size
+ * require separate policies/budgets; none can be preempted by these counters.
  */
 struct EvaluationOptions
 {

@@ -47,6 +47,8 @@ struct Completion
 
 private:
     /**
+     * Bounded type inference visits unknown expressions conservatively.
+     *
      * Infer possible result TypeIds while collecting candidates at cursor nodes.
      * input is the current value context; expected narrows comparison operands.
      * NoTypeId marks unknown inference, while an empty expected vector permits

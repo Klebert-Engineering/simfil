@@ -353,7 +353,7 @@ public:
     }
 
     /**
-     * Logical compact payload size, excluding column length prefixes on the wire.
+     * Logical compact payload size in bytes, excluding column length prefixes on the wire.
      */
     [[nodiscard]] size_t byte_size() const {
         auto singletonBytes =

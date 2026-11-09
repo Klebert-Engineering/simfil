@@ -22,6 +22,8 @@ struct Environment;
 struct ModelNode;
 
 /**
+ * Query diagnostics.
+ *
  * Field-hit and comparison counters for one AST. Use a separate instance per
  * concurrent evaluation, then append results whose indices came from that AST.
  * Counter updates through get() are unsynchronized; append/read/write lock storage.

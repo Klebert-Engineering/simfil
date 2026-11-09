@@ -93,6 +93,9 @@ public:
     virtual ~Model() = default;
 
     /**
+     * Get a callback with the actual class of the given node.
+     * This facilitates the Virtual Function Table role of the Model.
+     *
      * Decode the node's column/address and invoke cb synchronously with its
      * concrete wrapper. The wrapper reference expires when cb returns; copy a
      * model_ptr if the result must escape. Return an error for unsupported columns.
@@ -206,7 +209,7 @@ public:
      */
     virtual auto type(ModelNode const& node) const -> ValueType;
 
-    /** Read a node's stored type ID through its owner's storage/resolution protocol. */
+    /** Read a node's stored schema ID through its owner's storage/resolution protocol. */
     virtual auto schema(ModelNode const& node) const -> TypeId;
 
     /**
@@ -432,6 +435,8 @@ public:
     std::shared_ptr<StringPool> strings() const;
 
     /**
+     * Change the string pool of this model to a different one.
+     *
      * Rebind the dictionary and translate core object field names, inserting
      * missing names into the destination. Other dictionary references, including
      * pooled scalar strings and custom columns, need their own migration.

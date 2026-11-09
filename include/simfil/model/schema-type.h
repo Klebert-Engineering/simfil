@@ -53,6 +53,9 @@ class SchemaTypeModelNode;
 template <class T> struct model_ptr;
 
 /**
+ * A pool-qualified type view, borrowed by default and explicitly retainable.
+ * Borrowed copies do not acquire ownership.
+ *
  * View one type by its SchemaPool and graph-local TypeId.
  * Factory and lookup results borrow the pool. Use retain() when a view must
  * outlive the caller's reference to that pool, for example when saving a query's
@@ -72,6 +75,8 @@ public:
     };
 
     /**
+     * A named literal or mask, not an implicit exhaustive enum or a globally scoped constant.
+     *
      * A value named within one type, such as an UNKNOWN speed sentinel or a flag.
      * Its role/meaning describe how consumers should present it. Other ordinary
      * values remain possible unless the type also declares an exhaustive enum.
@@ -254,10 +259,16 @@ public:
     /** Read the inherited base without flattening its declarations into this type. */
     auto baseType() const -> SchemaType;
 
-    /** Return the sole effective member TypeId, or NoTypeId for absent, unknown or conflicting targets. */
+    /**
+     * Resolve one effective member type without allocation.
+     * Return NoTypeId for absent, unknown or conflicting targets.
+     */
     auto fieldSchema(StringId name) const -> TypeId;
 
-    /** Return the sole effective element TypeId, or NoTypeId for absent, unknown or conflicting targets. */
+    /**
+     * Resolve one effective element type without allocation.
+     * Return NoTypeId for absent, unknown or conflicting targets.
+     */
     auto itemSchema() const -> TypeId;
 
     /** Preserve this view's optional owner while resolving one unambiguous member. */
@@ -267,7 +278,8 @@ public:
     auto itemType() const -> SchemaType;
 
     /**
-     * Read effective targets at this member position, resolving inheritance and aliases.
+     * Read effective alternatives at this member position without allocation,
+     * resolving inheritance and aliases.
      * A NoTypeId entry means a possible target is unknown; an empty range means no
      * known target. Composition lookups require the pool's finalized member index.
      */
@@ -315,16 +327,25 @@ public:
     /** Read the concrete mask's physical encoding width. */
     auto bitWidth() const -> uint8_t;
 
-    /** Report whether the owning pool has completed graph validation and indexing. */
+    /**
+     * Report whether the owning pool has completed graph validation and indexing.
+     * Publication prevents mutation through every previously obtained view.
+     */
     auto finalized() const -> bool;
 
     /** Read whether this record is immutable, independently of whole-graph publication. */
     auto sealed() const -> bool;
 
-    /** Read finalized inherited member names in declaration order; empty before finalization. */
+    /**
+     * Read inherited member names in declaration order, without introducing alias duplicates.
+     * The index is empty before finalization.
+     */
     auto directFields() const -> NameIds;
 
-    /** Read finalized reachable names; this partial index needs reachabilityComplete() for absence proofs. */
+    /**
+     * Read sorted recursively reachable names from the finalized index.
+     * Unknown descendants remain conservative: check reachabilityComplete() for absence proofs.
+     */
     auto nestedFields() const -> NameIds;
 
     /** Read this type's declared enum symbols in source order. */
@@ -361,16 +382,23 @@ public:
      */
     auto fieldPaths(StringId name, bool* complete = nullptr) const -> std::vector<SchemaPath>;
 
-    /** Enumerate enum-declaring paths with the same limits/completeness contract as fieldPaths(). */
+    /**
+     * Enumerate enum-declaring paths in the schema dictionary's namespace,
+     * with the same limits/completeness contract as fieldPaths().
+     */
     auto enumSymbolPaths(StringId name, bool* complete = nullptr) const -> std::vector<SchemaPath>;
 
-    /** Enumerate named-value declarations with the same limits/completeness contract as fieldPaths(). */
+    /**
+     * Enumerate paths declaring a named value rather than a global constant,
+     * with the same limits/completeness contract as fieldPaths().
+     */
     auto namedValuePaths(std::string_view name, bool* complete = nullptr) const -> std::vector<SchemaPath>;
 
     /**
      * Return sorted declaring TypeIds, visiting each reachable type once. Excluded
      * types and Context fields stop traversal. A declaration on a composition
      * shadows its alternatives; independent field/element declarations still count.
+     * Excluded types are opaque boundaries, not a projected graph.
      */
     auto symbolTypes(std::string_view name, std::span<TypeId const> excluded = {}) const -> std::vector<TypeId>;
 

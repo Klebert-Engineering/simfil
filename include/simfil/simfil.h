@@ -166,6 +166,7 @@ auto compile(Environment& env, std::string_view query, CompileOptions options) -
 /**
  * Collect schema paths that are referenced by a compiled query.
  *
+ * This is static analysis over the AST, not runtime evaluation.
  * Used by consumers that choose a search scope from the fields a query touches.
  * Both sides of `and`/`or` are inspected, including paths introduced by schema
  * rewrites. Path field IDs belong to rootSchema's dictionary.
@@ -184,6 +185,9 @@ auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaType rootSche
  * and `kind == "ANIMALS"` return an empty optional. Consumers can use the name to
  * offer an application-specific interpretation before running the query.
  *
+ * This is intentionally AST-based: callers that need exact-query shorthand
+ * handling should not re-tokenize the source string with ad-hoc rules.
+ *
  * Compilation uses ordinary simplification, with schema rewrites and the automatic
  * any(...) wrapper disabled. The name is returned without checking whether a field
  * or enum symbol exists. A valid compound query returns an empty optional; invalid
@@ -193,7 +197,9 @@ auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaType rootSche
 auto standaloneQuerySymbol(Environment& env, std::string_view query) -> tl::expected<std::optional<std::string>, Error>;
 
 /**
- * One bare or quoted predicate name and its replacement span in the original query.
+ * A bare or quoted symbol used as a predicate, not as a comparison operand.
+ * Locations refer to the original, unsimplified input so a consumer can bind
+ * its meaning before any(...) or boolean composition changes its AST role.
  * Consumers use the span to substitute a chosen meaning before compilation.
  */
 struct QueryPredicateSymbol {
@@ -222,10 +228,12 @@ auto predicateQuerySymbols(Environment& env, std::string_view query)
 auto referencedQueryTerms(const AST& ast) -> ReferencedQueryTerms;
 
 /**
- * Collect every value produced by ast when evaluated from node. This convenience
- * overload has no result/work limit; use the callback overload for bounded work.
- * env must use the node model's field dictionary. Optional diag receives counters
- * merged from this evaluation; reuse it only for this same AST/index layout.
+ * Evaluate a compiled expression and collect every value produced from node.
+ * This convenience overload has no result/work limit; use the callback overload
+ * for bounded work.
+ * env provides the runtime functions, strings and schemas, and must use the node
+ * model's field dictionary. Optional diag receives counters merged from this
+ * evaluation; reuse it only for this same AST/index layout.
  */
 auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* diag) -> tl::expected<std::vector<Value>, Error>;
 
@@ -264,6 +272,7 @@ auto complete(Environment& env, std::string_view query, size_t point, ModelNode 
  * This overload follows schema fields, array elements and enum metadata. It can
  * run before sample data is loaded and does not execute custom functions. Names
  * are read from the schema's dictionary; returned candidates own their strings.
+ * This overload never mutates the datasource dictionary.
  *
  * CompletionOptions controls sorting, smart-case matching, candidate count,
  * timeout and schema visit/depth limits. The vector contains the candidates found

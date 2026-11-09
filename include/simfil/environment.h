@@ -169,6 +169,8 @@ public:
 };
 
 /**
+ * Evaluation context.
+ *
  * Non-owning state passed through a synchronous expression call. Copies keep the
  * same environment, diagnostics and request budget, while nesting depth and phase
  * are local to the copy. Owners must remain alive until evaluation returns.

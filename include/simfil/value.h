@@ -318,7 +318,11 @@ struct ValueAs<ValueType::Array>
 class Value
 {
 public:
-    /** A primitive payload with its exact schema; string payloads own their bytes. */
+    /**
+     * A primitive payload with its exact schema; string payloads own their bytes.
+     * Keep the annotation inside a variant alternative instead of adding a
+     * separate schema member to every Value.
+     */
     struct TypedScalar {
         ScalarValueType value;
         SchemaType type;
