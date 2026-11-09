@@ -62,8 +62,8 @@ public:
                 if (options_.maxDepth < 1 || nodes_ >= options_.maxNodes || !charge(sizeof(ModelNodeAddress)))
                     return failure("Node copy node/depth/byte budget exceeded");
                 ++nodes_;
-                // Qualification follows captured Value provenance, never destination-schema inference.
-                copied = copyQualified(value.getScalar(), typeRef);
+                // Scalar typing follows captured Value provenance, never destination-schema inference.
+                copied = copyTypedScalar(value.getScalar(), typeRef);
             }
             else {
                 auto scalar = model_ptr<ValueNode>::make(value.getScalar(), target_.shared_from_this());
@@ -100,7 +100,7 @@ private:
             return failure("Node copy byte budget exceeded");
         if (source.type() != ValueType::Object && source.type() != ValueType::Array)
             if (auto typeRef = source.schemaType())
-                return copyQualified(source.value(), typeRef);
+                return copyTypedScalar(source.value(), typeRef);
         switch (source.type()) {
         case ValueType::Undef: return target_.newUndefined();
         case ValueType::Null: return target_.resolve(ModelNodeAddress{Model::Null, 1});
@@ -141,7 +141,7 @@ private:
     }
 
     /** Persist one already-typed scalar; raw numeric leaves copied inside compounds stay compact. */
-    auto copyQualified(ScalarValueType const& value, SchemaType const& sourceType)
+    auto copyTypedScalar(ScalarValueType const& value, SchemaType const& sourceType)
         -> tl::expected<ModelNode::Ptr, Error>
     {
         if (!sourceType)
@@ -150,7 +150,7 @@ private:
         if (!mapped)
             return tl::unexpected(mapped.error());
         auto const& typeRef = *mapped;
-        // Charge conservatively for raw storage, qualifier and common schema-owner metadata.
+        // Charge conservatively for raw storage, typed-scalar row and common schema-owner metadata.
         size_t bytes = sizeof(std::uint64_t) + sizeof(TypeId) + sizeof(ModelNodeAddress);
         if (auto text = std::get_if<std::string>(&value))
             bytes += text->size() + 2 * sizeof(std::uint32_t);
@@ -163,7 +163,7 @@ private:
         try {
             if (auto mask = std::get_if<simfil::Bitmask>(&value))
                 return target_.newBitmask(mask->bits, typeRef);
-            return target_.newQualifiedValue(value, typeRef);
+            return target_.newTypedValue(value, typeRef);
         }
         catch (std::exception const& error) {
             return failure(error.what());

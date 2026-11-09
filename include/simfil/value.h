@@ -309,17 +309,24 @@ struct ValueAs<ValueType::Array>
     }
 };
 
+/**
+ * Query result payload with an explicit runtime category. Compound values retain
+ * their model; typed primitives retain their schema. Plain string_view payloads
+ * borrow external bytes, while field() copies scalar strings out of model storage.
+ * Keep type and value consistent when using the low-level constructors.
+ */
 class Value
 {
 public:
-    /** An annotated primitive fits inside the existing variant instead of enlarging every Value. */
-    struct QualifiedScalar {
+    /** A primitive payload with its exact schema; string payloads own their bytes. */
+    struct TypedScalar {
         ScalarValueType value;
         SchemaType type;
 
-        QualifiedScalar() = default;
+        TypedScalar() = default;
+
         /** Escaping scalar values retain the graph, preserving an existing local owner group. */
-        QualifiedScalar(ScalarValueType value, SchemaType type)
+        TypedScalar(ScalarValueType value, SchemaType type)
             : value(std::move(value)), type(type.ownsPool() ? std::move(type) : type.retain())
         {
             if (auto text = std::get_if<std::string_view>(&this->value))
@@ -329,15 +336,19 @@ public:
 
     /** Return this value's exact retained type, including intrinsic mask identity. */
     auto schemaType() const -> SchemaType;
+
     /** Resolve a symbolic literal from this value's exact type, never from its raw numeric code. */
     auto namedValue(std::string_view name) const -> tl::expected<Value, Error>;
+
     /** Attach known primitive provenance; null/undefined never inherit a caller's type. */
     auto withSchemaType(SchemaType typeRef) const -> Value;
+
     /** Extract a child using the actual parent's schema field edge before scalarization. */
     static auto field(ModelNode const& parent, ModelNode const& child, StringId field) -> Value
     {
         return Value::field(child, [&] { return fieldType(parent, field); });
     }
+
     /** Extract a child, inferring a type only for primitives without intrinsic provenance. */
     template <class TypeFn>
     static auto field(ModelNode const& child, TypeFn&& typeRef) -> Value
@@ -346,11 +357,12 @@ public:
         if (type == ValueType::Undef)
             return Value::undef();
         // Compound values already retain their model and its schema. No scalar
-        // qualification or owning type lookup is needed while following paths.
+        // annotation or owning type lookup is needed while following paths.
         if (type == ValueType::Object || type == ValueType::Array)
             return {type, model_ptr<ModelNode>(child)};
         return scalarNode(child, std::forward<TypeFn>(typeRef));
     }
+
     /** Extract an indexed child; object indexes use their actual key, arrays use the element type. */
     static auto at(ModelNode const& parent, ModelNode const& child, std::int64_t index) -> Value;
     static auto t() -> Value
@@ -378,6 +390,7 @@ public:
         return {ValueType::Object};
     }
 
+    /** Borrow text without copying; the caller keeps the backing bytes alive for every Value copy. */
     static auto strref(std::string_view sv) -> Value
     {
         return Value::make(sv);
@@ -449,18 +462,19 @@ public:
     }
     
     [[nodiscard]] bool asBool() const noexcept {
-        if (auto scalar = std::get_if<QualifiedScalar>(&value))
+        if (auto scalar = std::get_if<TypedScalar>(&value))
             return std::get<bool>(scalar->value);
         return std::get<bool>(value);
     }
     
+    /** Access the known payload category; this is not a checked cast or query-language conversion. */
     template <ValueType ArgType>
     [[nodiscard]] auto as() const -> decltype(auto)
     {
         if constexpr (ArgType == ValueType::Bool || ArgType == ValueType::Int ||
                       ArgType == ValueType::Float || ArgType == ValueType::String ||
                       ArgType == ValueType::Bytes || ArgType == ValueType::Bitmask) {
-            if (auto scalar = std::get_if<QualifiedScalar>(&value))
+            if (auto scalar = std::get_if<TypedScalar>(&value))
                 return ValueAs<ArgType>::get(scalar->value);
         }
         return ValueAs<ArgType>::get(value);
@@ -520,6 +534,7 @@ public:
         return visit(impl::ValueToString());
     }
 
+    /** Copy a primitive payload without its ordinary schema annotation; compound/undefined values yield monostate. */
     [[nodiscard]] auto getScalar() const noexcept
     {
         struct {
@@ -531,7 +546,7 @@ public:
             void operator() (std::string_view const& v) {result = v;}
             void operator() (ByteArray const& v) {result = v;}
             void operator() (Bitmask const& v) {result = v;}
-            void operator() (QualifiedScalar const& v) {result = v.value;}
+            void operator() (TypedScalar const& v) {result = v.value;}
             void operator() (TransientObject const&) {}
             void operator() (ModelNode::Ptr const&) {}
             ScalarValueType result;
@@ -542,12 +557,12 @@ public:
 
     std::string_view const* stringViewValue() noexcept
     {
-        if (auto scalar = std::get_if<QualifiedScalar>(&value))
+        if (auto scalar = std::get_if<TypedScalar>(&value))
             return std::get_if<std::string_view>(&scalar->value);
         return std::get_if<std::string_view>(&value);
     }
 
-    /** Borrow a string's bytes for bounded consumers without copying or discarding qualification. */
+    /** Borrow a string's bytes for bounded consumers without copying or discarding its schema. */
     auto stringView() const noexcept -> std::string_view
     {
         auto view = [](auto const& payload) -> std::string_view {
@@ -557,7 +572,7 @@ public:
                 return *string;
             return {};
         };
-        if (auto scalar = std::get_if<QualifiedScalar>(&value))
+        if (auto scalar = std::get_if<TypedScalar>(&value))
             return view(scalar->value);
         return view(value);
     }
@@ -586,7 +601,7 @@ public:
         Bitmask,
         TransientObject,
         ModelNode::Ptr,
-        QualifiedScalar> value;
+        TypedScalar> value;
 
 private:
     /** Construct a primitive once, retaining its type and any borrowed string bytes. */
@@ -604,7 +619,7 @@ private:
             auto type = std::visit([](auto const& raw) {
                 return ValueType4CType<std::decay_t<decltype(raw)>>::Type;
             }, scalar);
-            return {type, QualifiedScalar{std::move(scalar), std::move(typeRef)}};
+            return {type, TypedScalar{std::move(scalar), std::move(typeRef)}};
         }
         return Value{std::move(scalar)};
     }
@@ -626,6 +641,7 @@ private:
     static auto fieldType(ModelNode const& parent, StringId field) -> SchemaType;
 };
 
+/** Read int/float payloads using a C++ cast; false means nonnumeric, not an out-of-range conversion. */
 template <typename ResultT, typename ValueT>
 auto getNumeric(const ValueT& v) -> std::pair<bool, ResultT>
 {

@@ -54,7 +54,7 @@ struct RuntimeTypes
             pool->finalize(std::move(identity));
     }
 
-    /** Build unqualified inline leaves so field/element provenance must come from their parent. */
+    /** Build untyped inline leaves so field/element provenance must come from their parent. */
     auto model() const -> std::shared_ptr<ModelPool>
     {
         auto result = std::make_shared<ModelPool>();
@@ -205,7 +205,13 @@ TEST_CASE("Native copies retain the graph without chaining producer model counte
     auto source = types.model();
     std::weak_ptr<ModelPool> sourceLifetime = source;
     std::weak_ptr<SchemaPool const> localLifetime = source->schemaPool(types.pool->identity());
-    auto node = source->newQualifiedValue(int64_t{255}, types.pool->schemaType(types.speed));
+    auto node = source->newTypedValue(int64_t{255}, types.pool->schemaType(types.speed));
+    REQUIRE(node->addr().column() == ModelPool::TypedScalar);
+    REQUIRE(node->type() == ValueType::Int);
+    REQUIRE(node->value() == ScalarValueType{int64_t{255}});
+    REQUIRE(source->serializationSizeStats().typedScalarBytes ==
+            sizeof(ModelNodeAddress) + sizeof(TypeId));
+    REQUIRE(std::holds_alternative<Value::TypedScalar>(Value::field(*node).value));
     auto destination = std::make_shared<ModelPool>();
     auto copied = destination->copyNode(*node);
     REQUIRE(copied);
@@ -226,8 +232,8 @@ TEST_CASE("Artifact names do not collapse runtime pool identity", "[model.schema
     REQUIRE(one != two);
     REQUIRE(one == one.retain());
     auto target = std::make_shared<ModelPool>();
-    auto left = target->newQualifiedValue(int64_t{255}, one);
-    auto right = target->newQualifiedValue(int64_t{255}, two);
+    auto left = target->newTypedValue(int64_t{255}, one);
+    auto right = target->newTypedValue(int64_t{255}, two);
     REQUIRE(left->schema() != right->schema());
     REQUIRE(left->schemaType() == one);
     REQUIRE(right->schemaType() == two);
@@ -300,7 +306,7 @@ TEST_CASE("Multigraph transport resolves exact immutable pools before exposing t
     REQUIRE(constructor->root(0).value()->at(1)->schemaType() == second.pool->schemaType(second.flags));
 }
 
-TEST_CASE("Qualified string escapes own both text and schema pool", "[model.schema-type][model.schema-value]")
+TEST_CASE("Typed string escapes own both text and schema pool", "[model.schema-type][model.schema-value]")
 {
     auto pool = std::make_shared<SchemaPool>();
     auto type = pool->newScalarType(SchemaType::Kind::String);

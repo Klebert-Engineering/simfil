@@ -201,7 +201,7 @@ TEST_CASE("Retained expressions bind field types per graph and observe replaceme
     }
 }
 
-TEST_CASE("Native copies keep compact compounds and qualify detached occurrences", "[model.schema-value]")
+TEST_CASE("Native copies keep compact compounds and type detached occurrences", "[model.schema-value]")
 {
     TypedFixture a;
     TypedFixture b("test-graph-v2");
@@ -210,7 +210,7 @@ TEST_CASE("Native copies keep compact compounds and qualify detached occurrences
     REQUIRE(compound);
     REQUIRE((*compound)->schemaType() == a.pool->schemaType(1));
     REQUIRE((*compound)->at(0)->schema() == NoTypeId);
-    REQUIRE((*compound)->at(0)->addr().column() != ModelPool::QualifiedScalar);
+    REQUIRE((*compound)->at(0)->addr().column() != ModelPool::TypedScalar);
     auto values = std::vector<Value>{a.query("speed")->front(), a.query("count")->front(), b.query("speed")->front()};
     auto copied = destination->copySequence(values);
     REQUIRE(copied);
@@ -218,7 +218,7 @@ TEST_CASE("Native copies keep compact compounds and qualify detached occurrences
     REQUIRE((*copied)->at(0)->addr() != (*copied)->at(1)->addr());
     REQUIRE((*copied)->at(0)->schemaType() == values[0].schemaType());
     REQUIRE((*copied)->at(2)->schemaType() == values[2].schemaType());
-    REQUIRE(destination->serializationSizeStats().qualifiedScalarBytes == 3 * (sizeof(ModelNodeAddress) + sizeof(TypeId)));
+    REQUIRE(destination->serializationSizeStats().typedScalarBytes == 3 * (sizeof(ModelNodeAddress) + sizeof(TypeId)));
     auto bytes = TypedFixture::bytes(*destination);
     auto restored = std::make_shared<ModelPool>(destination->strings());
     REQUIRE_FALSE(restored->read(bytes));
@@ -277,7 +277,7 @@ TEST_CASE("Imported schema owners outlive their sources without retaining owners
         SECTION("Direct pool")
         {
             target->setSchemaPool(local);
-            target->addRoot(target->newQualifiedValue(std::int64_t{255}, localType));
+            target->addRoot(target->newTypedValue(std::int64_t{255}, localType));
         }
         SECTION("Copied scalar imports")
         {
@@ -290,7 +290,7 @@ TEST_CASE("Imported schema owners outlive their sources without retaining owners
         SECTION("Native reader resolver")
         {
             auto serialized = std::make_shared<ModelPool>();
-            serialized->addRoot(serialized->newQualifiedValue(std::int64_t{255}, localType));
+            serialized->addRoot(serialized->newTypedValue(std::int64_t{255}, localType));
             target->setSchemaResolver([local](auto) { return local; });
             REQUIRE(target->read(TypedFixture::bytes(*serialized)));
             // The resolver's explicit capture must not mask a retained import chain.
@@ -485,7 +485,7 @@ TEST_CASE("Bitmasks preserve high and unknown bits through query JSON and binary
     REQUIRE(restored->root(0).value()->at(2)->toJson() == mask->toJson());
     REQUIRE_THROWS(f.model->newBitmask(0, f.pool->schemaType(2)));
     auto other = TypedFixture("foreign");
-    REQUIRE_THROWS(f.model->newQualifiedValue(std::get<Bitmask>(mask->value()), other.pool->schemaType(4)));
+    REQUIRE_THROWS(f.model->newTypedValue(std::get<Bitmask>(mask->value()), other.pool->schemaType(4)));
 }
 
 TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", "[model.schema-value][model.freeze]")
@@ -510,7 +510,7 @@ TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", 
     REQUIRE_FALSE(f.model->tryNewValue(std::string_view("new-string")));
     REQUIRE_FALSE(f.model->tryNewValue(ByteArray{"new-bytes"}));
     REQUIRE_FALSE(f.model->tryNewValue(f.model->strings()->get("speed")));
-    REQUIRE_THROWS(f.model->newQualifiedValue(int64_t{3}, f.pool->schemaType(2)));
+    REQUIRE_THROWS(f.model->newTypedValue(int64_t{3}, f.pool->schemaType(2)));
     REQUIRE_THROWS(f.model->newBitmask(3, f.pool->schemaType(4)));
     REQUIRE_FALSE(f.model->copyNode(*f.root));
     REQUIRE_FALSE(json::buildModelNode(nlohmann::json(2.5), *f.model));
@@ -536,7 +536,7 @@ TEST_CASE("Frozen pools reject mutations through base APIs and retained nodes", 
     REQUIRE(completionStrings->emplace("completion-only"));
 }
 
-TEST_CASE("Qualified string copying preserves aliased storage and exact types", "[model.schema-value][model.growth]")
+TEST_CASE("Typed string copying preserves aliased storage and exact types", "[model.schema-value][model.growth]")
 {
     TypedFixture f("string-copy", 0, [](SchemaPool& pool) {
         REQUIRE(pool.newScalarType(SchemaType::Kind::String).id() == 6);
@@ -546,13 +546,13 @@ TEST_CASE("Qualified string copying preserves aliased storage and exact types", 
     text.back() = 'z';
     auto original = f.model->tryNewValue(std::string_view(text));
     REQUIRE(original);
-    // Qualification appends into the same byte buffer that owns this borrowed view.
-    auto qualified = f.model->newQualifiedValue(std::get<std::string_view>((*original)->value()), f.pool->schemaType(6));
-    auto copied = f.model->copyNode(*qualified);
+    // Creating a typed scalar appends into the byte buffer that owns this borrowed view.
+    auto typed = f.model->newTypedValue(std::get<std::string_view>((*original)->value()), f.pool->schemaType(6));
+    auto copied = f.model->copyNode(*typed);
     REQUIRE(copied);
     REQUIRE((*copied)->schemaType() == f.pool->schemaType(6));
     REQUIRE(std::get<std::string_view>((*original)->value()) == text);
-    REQUIRE(std::get<std::string_view>(qualified->value()) == text);
+    REQUIRE(std::get<std::string_view>(typed->value()) == text);
     REQUIRE(std::get<std::string_view>((*copied)->value()) == text);
 
     auto target = std::make_shared<ModelPool>();
@@ -567,8 +567,8 @@ TEST_CASE("Qualified string copying preserves aliased storage and exact types", 
     REQUIRE(restored->validate());
 
     auto before = TypedFixture::bytes(*target);
-    REQUIRE_THROWS_AS(target->newQualifiedValue(std::string_view(text), f.pool->schemaType(2)), std::invalid_argument);
-    REQUIRE_THROWS_AS(target->newQualifiedValue(ScalarValueType{}, f.pool->schemaType(6)), std::invalid_argument);
+    REQUIRE_THROWS_AS(target->newTypedValue(std::string_view(text), f.pool->schemaType(2)), std::invalid_argument);
+    REQUIRE_THROWS_AS(target->newTypedValue(ScalarValueType{}, f.pool->schemaType(6)), std::invalid_argument);
     REQUIRE_THROWS_AS(target->newBitmask(1, f.pool->schemaType(6)), std::invalid_argument);
     REQUIRE(TypedFixture::bytes(*target) == before);
 }
@@ -589,7 +589,7 @@ TEST_CASE("Unbound copied schemas and overflowing integer literals fail explicit
     REQUIRE(compile(env, "18446744073709551616.0", false));
 }
 
-TEST_CASE("Native copies explicitly remap exact types without qualifying ordinary leaves", "[model.copy][model.schema-value]")
+TEST_CASE("Native copies explicitly remap exact types without typing ordinary leaves", "[model.copy][model.schema-value]")
 {
     TypedFixture source;
     auto pool = std::make_shared<SchemaPool>();
@@ -643,7 +643,7 @@ TEST_CASE("Native copies explicitly remap exact types without qualifying ordinar
 
     SECTION("In-place remapping preserves payload addresses and detached old values") {
         auto address = source.root->addr();
-        auto scalar = source.model->newQualifiedValue(std::int64_t{255}, source.pool->schemaType(2));
+        auto scalar = source.model->newTypedValue(std::int64_t{255}, source.pool->schemaType(2));
         source.model->addRoot(scalar);
         mapped.clear();
         source.model->remapSchemas(pool, options.schemaRemap);
@@ -677,11 +677,11 @@ TEST_CASE("Native copies explicitly remap exact types without qualifying ordinar
                           std::invalid_argument);
         REQUIRE(TypedFixture::bytes(*source.model) == before);
     }
-    SECTION("An unqualified or empty pool still installs the effective artifact") {
+    SECTION("An untyped or empty pool still installs the effective artifact") {
         auto empty = std::make_shared<ModelPool>();
         empty->addRoot(empty->newValue(std::int64_t{42}));
         empty->remapSchemas(pool, [](auto const&) -> SchemaType {
-            FAIL("Unqualified leaves must not invoke schema remapping");
+            FAIL("Untyped leaves must not invoke schema remapping");
             return {};
         });
         REQUIRE(empty->hasDirectSchemaPool(pool->identity()));
@@ -812,7 +812,7 @@ TEST_CASE("Schema descriptors and completion expose borrowed named numeric metad
     REQUIRE(std::ranges::any_of(*candidates, [](auto const& candidate) { return candidate.text == "\"PAIR\""; }));
 }
 
-TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.schema-value][limits]")
+TEST_CASE("Typed scalar validation is safe in a model constructor", "[model.schema-value][limits]")
 {
     TypedFixture f("constructor-types", 0, [](SchemaPool& pool) {
         for (auto kind : {SchemaType::Kind::Bool, SchemaType::Kind::Float,
@@ -821,13 +821,13 @@ TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.
     });
     std::vector<std::pair<ScalarValueType, TypeId>> values{
         {std::int64_t{255}, 2}, {std::int64_t{-1}, 2}, {std::int64_t{65536}, 2},
-        {true, 6}, {2.5, 7}, {std::string("qualified text"), 8}, {ByteArray("raw bytes"), 9}};
+        {true, 6}, {2.5, 7}, {std::string("typed text"), 8}, {ByteArray("raw bytes"), 9}};
     for (auto direct : {false, true}) {
         auto source = std::make_shared<ModelPool>();
         if (direct)
             source->setSchemaPool(f.pool);
         for (auto const& [raw, typeRef] : values)
-            source->addRoot(source->newQualifiedValue(raw, f.pool->schemaType(typeRef)));
+            source->addRoot(source->newTypedValue(raw, f.pool->schemaType(typeRef)));
         auto restored = std::make_shared<ConstructorReadPool>(TypedFixture::bytes(*source), f.pool, source->strings());
         REQUIRE(restored->loaded);
         REQUIRE(restored->numRoots() == values.size());
@@ -840,7 +840,7 @@ TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.
     }
 
     auto source = std::make_shared<ModelPool>();
-    source->addRoot(source->newQualifiedValue(std::int64_t{255}, f.pool->schemaType(2)));
+    source->addRoot(source->newTypedValue(std::int64_t{255}, f.pool->schemaType(2)));
     auto original = TypedFixture::bytes(*source);
     std::array<std::uint8_t, 4> raw{Model::UInt16, 255, 0, 0};
     auto position = std::search(original.begin(), original.end(), raw.begin(), raw.end());
@@ -851,7 +851,7 @@ TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.
              ModelNodeAddress{ModelPool::Double, 0}, ModelNodeAddress{ModelPool::String, 0},
              ModelNodeAddress{ModelPool::ByteArray, 0}, ModelNodeAddress{ModelPool::PooledString, 65536},
              ModelNodeAddress{Model::Null, 1}, ModelNodeAddress{Model::Scalar, 0},
-             ModelNodeAddress{ModelPool::Objects, 0}, ModelNodeAddress{ModelPool::QualifiedScalar, 0},
+             ModelNodeAddress{ModelPool::Objects, 0}, ModelNodeAddress{ModelPool::TypedScalar, 0},
              ModelNodeAddress{ModelPool::Bitmask, 0}, ModelNodeAddress{Model::Bool, 1}}) {
         INFO("column=" << unsigned(address.column()) << " index=" << address.index());
         auto malformed = original;
@@ -862,7 +862,7 @@ TEST_CASE("Qualified scalar validation is safe in a model constructor", "[model.
     }
 }
 
-TEST_CASE("Native readers bound allocations and reject malformed qualified references", "[model.schema-value][limits]")
+TEST_CASE("Native readers bound allocations and reject malformed typed references", "[model.schema-value][limits]")
 {
     auto target = std::make_shared<ModelPool>();
     // Three empty fixed columns precede the variable-sized string buffer. The claimed payload is absent.
@@ -875,23 +875,23 @@ TEST_CASE("Native readers bound allocations and reject malformed qualified refer
     TypedFixture f;
     REQUIRE(f.model->hasDirectSchemaPool("test-graph-v1"));
     REQUIRE_FALSE(f.model->hasDirectSchemaPool("foreign"));
-    auto qualified = std::make_shared<ModelPool>();
-    auto node = qualified->newQualifiedValue(std::int64_t{255}, f.pool->schemaType(2));
-    qualified->addRoot(node);
-    REQUIRE_FALSE(qualified->hasDirectSchemaPool(f.pool->identity()));
-    auto bytes = TypedFixture::bytes(*qualified);
+    auto typed = std::make_shared<ModelPool>();
+    auto node = typed->newTypedValue(std::int64_t{255}, f.pool->schemaType(2));
+    typed->addRoot(node);
+    REQUIRE_FALSE(typed->hasDirectSchemaPool(f.pool->identity()));
+    auto bytes = TypedFixture::bytes(*typed);
     std::array<std::uint8_t, 4> raw{Model::UInt16, 255, 0, 0};
     auto position = std::search(bytes.begin(), bytes.end(), raw.begin(), raw.end());
     REQUIRE(position != bytes.end());
-    // A qualifier may only point directly to primitive storage, never itself or another qualifier.
-    *position = ModelPool::QualifiedScalar;
+    // A typed-scalar row must point directly to primitive storage, never another typed-scalar row.
+    *position = ModelPool::TypedScalar;
     *(position + 1) = 0;
     auto restored = std::make_shared<ModelPool>();
     restored->setSchemaResolver([pool = f.pool](auto) { return pool; });
     REQUIRE_FALSE(restored->read(bytes));
     restored = std::make_shared<ModelPool>();
     restored->setSchemaResolver([pool = TypedFixture("wrong-graph").pool](auto) { return pool; });
-    REQUIRE_FALSE(restored->read(TypedFixture::bytes(*qualified)));
+    REQUIRE_FALSE(restored->read(TypedFixture::bytes(*typed)));
 
     // A matching resolver key does not replace structural validation of the wire rows.
     auto incompatible = [&](TypeId changed, SchemaType::Kind replacement) {
@@ -911,7 +911,7 @@ TEST_CASE("Native readers bound allocations and reject malformed qualified refer
     for (auto kind : {SchemaType::Kind::Null, SchemaType::Kind::Bytes}) {
         restored = std::make_shared<ModelPool>();
         restored->setSchemaResolver([pool = incompatible(2, kind)](auto) { return pool; });
-        REQUIRE_FALSE(restored->read(TypedFixture::bytes(*qualified)));
+        REQUIRE_FALSE(restored->read(TypedFixture::bytes(*typed)));
     }
     for (auto id : {TypeId{1}, TypeId{5}}) {
         restored = std::make_shared<ModelPool>();

@@ -22,6 +22,8 @@ struct SchemaPool::Impl
     struct TypeData
     {
         MODEL_COLUMN_TYPE(48);
+        // flags: open (0), nullable-known/value (1/2), sealed (3),
+        // composition (4..5), physical bitmask width (8..15).
         uint32_t kind = uint32_t(SchemaType::Kind::Unknown), flags = 0;
         ModelNodeAddress typeName;
         uint32_t numeric = 0, base = 0;
@@ -36,6 +38,7 @@ struct SchemaPool::Impl
         ArrayIndex children = 0;
         StringId name = 0;
         TypeId owner = NoTypeId;
+        // required: 0 unknown, 1 optional, 2 required; flags: multimap (0), Context (1).
         uint8_t required = 0, flags = 0;
         uint16_t reserved = 0;
     };
@@ -241,6 +244,7 @@ struct SchemaPool::Impl
             throw std::length_error(result.error().message);
         return *result;
     }
+
     /** Deduplicate immutable metadata strings without widening the name dictionary. */
     auto text(std::string_view value) -> ModelNodeAddress
     {
@@ -251,6 +255,7 @@ struct SchemaPool::Impl
             entry->second = pool.newValue(value)->addr();
         return entry->second;
     }
+
     /** Only string columns may supply descriptor text. */
     auto text(ModelNodeAddress value) const -> std::string_view
     {
@@ -263,6 +268,7 @@ struct SchemaPool::Impl
             return *text;
         throw std::invalid_argument("Schema text is not a borrowed string-buffer value");
     }
+
     /** Decode primitive metadata, validating stored-node addresses through core resolution. */
     auto primitive(ModelNodeAddress address) const -> ScalarValueType
     {
@@ -281,7 +287,7 @@ struct SchemaPool::Impl
             break;
         default:
             throw std::invalid_argument(
-                "Schema metadata must reference core unqualified primitives");
+                "Schema metadata must reference core untyped primitives");
         }
         ScalarValueType value;
         auto node = pool.resolve(address);
@@ -291,6 +297,7 @@ struct SchemaPool::Impl
             throw std::invalid_argument(result.error().message);
         return value;
     }
+
     /** Preserve exact primitive bits while moving borrowed text into owner storage. */
     template <class T> auto scalar(T const& value) -> ScalarData
     {
@@ -324,6 +331,7 @@ struct SchemaPool::Impl
         }
         return result;
     }
+
     /** Decode numeric metadata without routing uint64 values through double. */
     static auto number(ScalarData const& value) -> SchemaType::NumericValue
     {
@@ -342,6 +350,7 @@ struct SchemaPool::Impl
         }
         throw std::invalid_argument("Invalid numeric schema metadata");
     }
+
     /** Reject runtime-only scalars rather than attaching another graph to enum metadata. */
     auto enumValue(ModelNodeAddress address) const -> SchemaType::EnumValue
     {
@@ -353,6 +362,7 @@ struct SchemaPool::Impl
                 throw std::invalid_argument("Invalid non-string schema literal");
         }, primitive(address));
     }
+
     /** Copy a primitive literal into common model storage. */
     auto literal(SchemaType::EnumValue const& value) -> ModelNodeAddress
     {
@@ -369,6 +379,7 @@ struct SchemaPool::Impl
             },
             value);
     }
+
     /** Coalesce declarations of one direct field without changing insertion order. */
     auto field(TypeId id, std::string_view name) -> FieldData&
     {
@@ -475,23 +486,37 @@ struct SchemaPool::Impl
 
     /** Test identity presence independently of publication state. */
     auto valid(TypeId id) const -> bool { return id && id < types.size(); }
+
     /** Copy direct records while reacquiring source positions after each arena mutation. */
     void copyDirectType(TypeId target, SchemaPool const& source, TypeId sourceId,
                         std::span<TypeId const> remap = {});
+
     /** Decode one named declaration without retaining a secondary metadata object. */
     auto decodeNamed(NamedData const& row) const -> SchemaType::NamedValue;
+
     /** Intern one named declaration and encode its exact primitive metadata. */
     auto encodeNamed(SchemaType::NamedValue const& value) -> NamedData;
+
     struct AppendRollback;
+
+    /** Resolve composition affinities to a conservative fixed point before graph validation. */
     void prepareAffinities();
+
+    /** Reject dangling/shared records and malformed metadata before preparing derived indexes. */
     void validate(size_t literalBudget = SIZE_MAX) const;
+
+    /** Build immutable reachability/member indexes and statistics from the validated graph. */
     void index();
+
     /** Prepare inherited descriptor membership without flattening canonical declarations. */
     void indexFieldOrder();
+
     /** Prepare effective composition members and sorted direct point lookups. */
     void indexMembers();
+
     /** Prepare a conservative alias reachability index without retaining a map. */
     void indexAliases();
+
     /** Append one fixed-size derived array; callers may share its handle. */
     template <class T, class Range>
     auto indexArray(ArrayArena<T>& arena, Range const& values) -> ArrayIndex
@@ -506,7 +531,11 @@ struct SchemaPool::Impl
             arena.push_back(handle, value);
         return handle;
     }
+
+    /** Encode canonical columns, or preflight their total bytes before allocating on decode. */
     template <class S> void readWrite(S& archive, size_t budget);
+
+    /** Charge length-prefixed text against the remaining decode budget before materializing it. */
     template <class S>
     static void string(S& archive, std::string& value, size_t limit, size_t& memory);
 };

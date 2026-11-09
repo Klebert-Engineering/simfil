@@ -76,6 +76,7 @@ tl::expected<void, Error> Model::resolve(const ModelNode& n, const ResolveFn& cb
     return {};
 }
 
+/** Core value columns plus one model-local mapping from stored TypeIds to exact schema owners. */
 struct ModelPool::Impl
 {
     explicit Impl(std::shared_ptr<StringPool> strings) :
@@ -136,7 +137,7 @@ struct ModelPool::Impl
         std::string stringData_;
         ModelColumn<StringRange, detail::ColumnPageSize> strings_;
         ModelColumn<StringRange, detail::ColumnPageSize> byteArrays_;
-        ModelColumn<TwoPart<ModelNodeAddress, TypeId>> qualifiedScalars_;
+        ModelColumn<TwoPart<ModelNodeAddress, TypeId>> typedScalars_;
         ModelColumn<TwoPart<std::uint64_t, TypeId>> bitmasks_;
 
         ModelColumn<TypeId, detail::ColumnPageSize> objectSchemas_;
@@ -161,6 +162,7 @@ struct ModelPool::Impl
         return maximum;
     }
 
+    /** Shared core wire order; schema graphs and the field dictionary travel separately. */
     template<typename S>
     void readWrite(S& s) {
         constexpr size_t maxColumnSize = std::numeric_limits<uint32_t>::max();
@@ -177,7 +179,7 @@ struct ModelPool::Impl
 
         s.ext(columns_.objectMemberArrays_, bitsery::ext::ArrayArenaExt{});
         s.ext(columns_.arrayMemberArrays_, bitsery::ext::ArrayArenaExt{});
-        s.object(columns_.qualifiedScalars_);
+        s.object(columns_.typedScalars_);
         s.object(columns_.bitmasks_);
         s.boolValue(directSchema_);
         s.container(schemaIdentities_, available(s, size_t(MaxTypeId)), [](auto& serializer, auto& identity) {
@@ -187,7 +189,7 @@ struct ModelPool::Impl
     }
 };
 
-/** A column-backed scalar view: qualifiers delegate primitive access, masks retain all raw bits. */
+/** A column-backed scalar view: typed scalars delegate primitive access, masks retain all raw bits. */
 class ModelPool::ScalarNode final : public ModelNodeBase
 {
 public:
@@ -199,7 +201,7 @@ public:
     auto schema() const -> TypeId override
     {
         return addr().column() == Bitmask ? owner_.impl_->columns_.bitmasks_[addr().index()].second()
-            : owner_.impl_->columns_.qualifiedScalars_[addr().index()].second();
+            : owner_.impl_->columns_.typedScalars_[addr().index()].second();
     }
 
     /** Owning mask values can outlive the model; ordinary scalar payloads retain their primitive form. */
@@ -208,14 +210,14 @@ public:
         if (addr().column() == Bitmask)
             return simfil::Bitmask{owner_.impl_->columns_.bitmasks_[addr().index()].first(),
                                   owner_.resolveSchemaType(schema())};
-        return owner_.resolve(owner_.impl_->columns_.qualifiedScalars_[addr().index()].first())->value();
+        return owner_.resolve(owner_.impl_->columns_.typedScalars_[addr().index()].first())->value();
     }
 
-    /** Qualification never invents an Enum type or changes numeric arithmetic. */
+    /** Schema annotations preserve the primitive type and its arithmetic behavior. */
     auto type() const -> ValueType override
     {
         return addr().column() == Bitmask ? ValueType::Bitmask
-            : owner_.resolve(owner_.impl_->columns_.qualifiedScalars_[addr().index()].first())->type();
+            : owner_.resolve(owner_.impl_->columns_.typedScalars_[addr().index()].first())->type();
     }
 
 private:
@@ -412,7 +414,7 @@ void ModelPool::clear()
     clear_and_shrink(columns.strings_);
     clear_and_shrink(columns.stringData_);
     clear_and_shrink(columns.byteArrays_);
-    clear_and_shrink(columns.qualifiedScalars_);
+    clear_and_shrink(columns.typedScalars_);
     clear_and_shrink(columns.bitmasks_);
     clear_and_shrink(impl_->importedSchemas_);
     impl_->schemaPools_.clear();
@@ -500,8 +502,8 @@ tl::expected<void, Error> ModelPool::resolve(ModelNode const& n, ResolveFn const
         cb(ValueNode(str.value_or(std::string_view{}), retainOwner(), mpKey_));
         break;
     }
-    case QualifiedScalar: {
-        if (auto error = checkBounds(impl_->columns_.qualifiedScalars_))
+    case TypedScalar: {
+        if (auto error = checkBounds(impl_->columns_.typedScalars_))
             return tl::unexpected(*error);
         cb(ScalarNode(*this, n));
         break;
@@ -681,10 +683,10 @@ void ModelPool::remapSchemas(std::shared_ptr<const SchemaPool> target,
         for (size_t i = 0; i < column->size(); ++i)
             validate((*column)[i], column == &columns.objectSchemas_ ||
                 column == &columns.objectSingletonSchemas_ ? ValueType::Object : ValueType::Array);
-    for (size_t i = 0; i < columns.qualifiedScalars_.size(); ++i) {
-        auto value = columns.qualifiedScalars_[i];
+    for (size_t i = 0; i < columns.typedScalars_.size(); ++i) {
+        auto value = columns.typedScalars_[i];
         if (!validate(value.second(), type(ModelNode(shared_from_this(), value.first(), mpKey_))))
-            throw std::invalid_argument("A qualified scalar must retain its type");
+            throw std::invalid_argument("A typed scalar must retain its type");
     }
     for (size_t i = 0; i < columns.bitmasks_.size(); ++i) {
         auto value = columns.bitmasks_[i];
@@ -702,8 +704,8 @@ void ModelPool::remapSchemas(std::shared_ptr<const SchemaPool> target,
                          &columns.arraySchemas_, &columns.arraySingletonSchemas_})
         for (size_t i = 0; i < column->size(); ++i)
             (*column)[i] = mapped[(*column)[i]];
-    for (size_t i = 0; i < columns.qualifiedScalars_.size(); ++i)
-        columns.qualifiedScalars_[i].second() = mapped[columns.qualifiedScalars_[i].second()];
+    for (size_t i = 0; i < columns.typedScalars_.size(); ++i)
+        columns.typedScalars_[i].second() = mapped[columns.typedScalars_[i].second()];
     for (size_t i = 0; i < columns.bitmasks_.size(); ++i)
         columns.bitmasks_[i].second() = mapped[columns.bitmasks_[i].second()];
     impl_->schemaIdentities_.swap(identities);
@@ -775,9 +777,9 @@ auto ModelPool::schema(ModelNode const& node) const -> TypeId
         return objectSchemaId(address.index());
     case Arrays:
         return arraySchemaId(address.index());
-    case QualifiedScalar:
-        return address.index() < impl_->columns_.qualifiedScalars_.size()
-            ? TypeId(impl_->columns_.qualifiedScalars_[address.index()].second()) : NoTypeId;
+    case TypedScalar:
+        return address.index() < impl_->columns_.typedScalars_.size()
+            ? TypeId(impl_->columns_.typedScalars_[address.index()].second()) : NoTypeId;
     case Bitmask:
         return address.index() < impl_->columns_.bitmasks_.size()
             ? TypeId(impl_->columns_.bitmasks_[address.index()].second()) : NoTypeId;
@@ -810,7 +812,7 @@ auto ModelPool::type(ModelNode const& node) const -> ValueType
     case ByteArray: return index < impl_->columns_.byteArrays_.size() ? ValueType::Bytes : ValueType::Null;
     case Bitmask: return index < impl_->columns_.bitmasks_.size() ? ValueType::Bitmask : ValueType::Null;
     default:
-        // Qualified values and custom columns can define their own primitive
+        // Typed scalars and custom columns can define their own primitive
         // representation; their node protocol remains the authority.
         return Model::type(node);
     }
@@ -882,11 +884,11 @@ auto ModelPool::newBitmask(std::uint64_t bits, SchemaType const& typeRef) -> Mod
     return resolve(ModelNodeAddress{Bitmask, index});
 }
 
-auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaType const& typeRef) -> ModelNode::Ptr
+auto ModelPool::newTypedValue(ScalarValueType value, SchemaType const& typeRef) -> ModelNode::Ptr
 {
     requireMutable();
     if (std::holds_alternative<std::monostate>(value))
-        throw std::invalid_argument("Null is not a schema-qualified primitive");
+        throw std::invalid_argument("Null is not a schema-typed primitive");
     if (auto mask = std::get_if<simfil::Bitmask>(&value)) {
         if (mask->type != typeRef)
             throw std::invalid_argument("Cannot rebind a bitmask to a different type");
@@ -896,10 +898,10 @@ auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaType const& typeR
         return ValueType4CType<std::decay_t<decltype(scalar)>>::Type;
     }, value);
     if (!typeRef || !typeRef.hasAffinity(type))
-        throw std::invalid_argument("Qualified scalar requires a compatible type");
-    auto index = impl_->columns_.qualifiedScalars_.size();
+        throw std::invalid_argument("Typed scalar requires a compatible type");
+    auto index = impl_->columns_.typedScalars_.size();
     if (!ModelNodeAddress::checkIndex(index))
-        throw std::length_error("Qualified scalar column exceeds its 24-bit index representation");
+        throw std::length_error("Typed scalar column exceeds its 24-bit index representation");
     auto imported = importSchema(typeRef);
     if (!imported)
         throw std::invalid_argument(imported.error().message);
@@ -918,8 +920,8 @@ auto ModelPool::newQualifiedValue(ScalarValueType value, SchemaType const& typeR
     }, value);
     if (!raw)
         throw std::length_error(raw.error().message);
-    impl_->columns_.qualifiedScalars_.emplace_back((*raw)->addr(), *imported);
-    return resolve(ModelNodeAddress{QualifiedScalar, index});
+    impl_->columns_.typedScalars_.emplace_back((*raw)->addr(), *imported);
+    return resolve(ModelNodeAddress{TypedScalar, index});
 }
 
 ModelNode::Ptr ModelPool::newValue(int64_t const& value)
@@ -1120,7 +1122,7 @@ ModelPool::SerializationSizeStats ModelPool::serializationSizeStats() const
     stats.arrayMemberBytes = impl_->columns_.arrayMemberArrays_.byte_size();
     stats.arraySchemaBytes = impl_->columns_.arraySchemas_.byte_size()
         + impl_->columns_.arraySingletonSchemas_.byte_size();
-    stats.qualifiedScalarBytes = impl_->columns_.qualifiedScalars_.byte_size();
+    stats.typedScalarBytes = impl_->columns_.typedScalars_.byte_size();
     stats.bitmaskBytes = impl_->columns_.bitmasks_.byte_size();
     stats.schemaBindingBytes = impl_->importedSchemas_.byte_size();
     for (auto const& identity : impl_->schemaIdentities_)
@@ -1149,7 +1151,7 @@ ModelPool::MemoryUsageStats ModelPool::memoryUsageStats() const
     stats.arraySchemas =
         impl_->columns_.arraySchemas_.memory_usage() +
         impl_->columns_.arraySingletonSchemas_.memory_usage();
-    stats.qualifiedScalars = impl_->columns_.qualifiedScalars_.memory_usage();
+    stats.typedScalars = impl_->columns_.typedScalars_.memory_usage();
     stats.bitmasks = impl_->columns_.bitmasks_.memory_usage();
     stats.schemaOwners = impl_->importedSchemas_.memory_usage();
     // Include padded handles/deleters, but not implementation-specific control-block bookkeeping.
@@ -1292,7 +1294,8 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
             static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
 
-    // Hydrate all identities before making any schema-bearing value available to callers.
+    // Resolve all serialized graph identities before accepting stored type IDs.
+    // A failed read leaves this construction-time pool unusable by its caller.
     if ((impl_->directSchema_ && (impl_->schemaIdentities_.size() != 1 || !impl_->importedSchemas_.empty())) ||
         impl_->importedSchemas_.size() > MaxTypeId)
         return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid model schema namespace"});
@@ -1313,6 +1316,8 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
             return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid imported schema type"});
     }
 
+    // A valid numeric ID must also describe the runtime column's value kind.
+    // This catches bindings that resolve successfully to an incompatible graph.
     auto validType = [&](TypeId id, ValueType type) {
         auto definition = resolveSchemaType(id);
         return id == NoTypeId || (definition && definition.hasAffinity(type));
@@ -1332,8 +1337,8 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
                 range.length_ > impl_->columns_.stringData_.size() - range.offset_)
                 return tl::unexpected(Error{Error::EncodeDecodeError, "Scalar string/byte range exceeds model storage"});
         }
-    for (size_t i = 0; i < impl_->columns_.qualifiedScalars_.size(); ++i) {
-        auto entry = impl_->columns_.qualifiedScalars_[i];
+    for (size_t i = 0; i < impl_->columns_.typedScalars_.size(); ++i) {
+        auto entry = impl_->columns_.typedScalars_[i];
         auto raw = entry.first();
         auto type = ValueType::Undef;
         bool inBounds = false;
@@ -1375,9 +1380,9 @@ tl::expected<void, Error> ModelPool::read(const std::vector<uint8_t>& input, con
         }
         auto definition = resolveSchemaType(entry.second());
         if (!inBounds || !definition)
-            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid qualified scalar reference"});
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Invalid typed scalar reference"});
         if (!definition.hasAffinity(type))
-            return tl::unexpected(Error{Error::EncodeDecodeError, "Qualified scalar has an incompatible type"});
+            return tl::unexpected(Error{Error::EncodeDecodeError, "Typed scalar has an incompatible type"});
     }
     for (size_t i = 0; i < impl_->columns_.bitmasks_.size(); ++i) {
         auto entry = impl_->columns_.bitmasks_[i];

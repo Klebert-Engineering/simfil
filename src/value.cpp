@@ -26,7 +26,7 @@ auto Bitmask::toJson() const -> nlohmann::json
 
 auto Value::schemaType() const -> SchemaType
 {
-    if (auto scalar = std::get_if<QualifiedScalar>(&value))
+    if (auto scalar = std::get_if<TypedScalar>(&value))
         return scalar->type;
     if (auto mask = std::get_if<Bitmask>(&value))
         return mask->type;
