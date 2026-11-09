@@ -399,7 +399,8 @@ TEST_CASE("Schema references expand recursive wildcard paths with a static suffi
     env.setSchema(rootSchema);
 
     for (auto query : {"**.numLanes.normalLanes", "**.numLanes[\"normalLanes\"]",
-                       "**.numLanes.normalLanes > 1", "**.numLanes.normalLanes == 2"}) {
+                       "**.numLanes.normalLanes > 1", "**.numLanes.normalLanes == 2",
+                       "**.numLanes.normalLanes == \"TWO\"", "\"TWO\" == **.numLanes.normalLanes"}) {
         CAPTURE(query);
         auto ast = compile(env, query, CompileOptions{
             .any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = rootSchema});

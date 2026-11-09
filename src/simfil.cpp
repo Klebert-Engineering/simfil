@@ -232,6 +232,7 @@ static auto expressionForSingleSchemaPath(
     return pathExpressionFromSchemaPath(rootSchema, path, location);
 }
 
+/** Preserve the union of exact operand paths; no alternatives means leave the original operand intact. */
 static auto expressionForSchemaPathAlternatives(
     SchemaType rootSchema,
     std::vector<SchemaPath> const& paths,
@@ -327,6 +328,11 @@ static auto rewriteStandaloneNameBySchema(
     return expr;
 }
 
+/**
+ * Resolve bare operands from schema metadata after whole-query shorthand. Explicit
+ * paths keep their member meaning; comparisons can bind named values to the other
+ * operand while domain hooks expand scalar aliases into exact path alternatives.
+ */
 static auto rewriteOperandShorthandBySchema(
     Environment& env,
     std::string_view query,
@@ -459,6 +465,7 @@ static auto addReferencedQueryLeafField(ReferencedQueryTerms& terms, std::string
 
 static auto collectReferencedQueryTermsFromExpr(const Expr& expr, ReferencedQueryTerms& terms) -> void;
 
+/** Inventory the terminal member of a path, rather than treating every parent name as a search term. */
 static auto collectReferencedQueryTermsFromPathLeaf(const Expr& expr, ReferencedQueryTerms& terms) -> void
 {
     if (auto const* field = dynamic_cast<const FieldExpr*>(&expr)) {
@@ -479,6 +486,7 @@ static auto collectReferencedQueryTermsFromPathLeaf(const Expr& expr, Referenced
     collectReferencedQueryTermsFromExpr(expr, terms);
 }
 
+/** Record a syntactic direct-field equality; parent boolean operators are not logical proof here. */
 static auto collectReferencedQueryComparison(
     ReferencedQueryTerms& terms,
     const Expr& lhs,
@@ -491,6 +499,7 @@ static auto collectReferencedQueryComparison(
     }
 }
 
+/** Collect static spellings for downstream discovery without consulting schema or runtime data. */
 static auto collectReferencedQueryTermsFromExpr(const Expr& expr, ReferencedQueryTerms& terms) -> void
 {
     if (auto predicate = dynamic_cast<const SchemaEnumExpr*>(&expr)) {
@@ -628,6 +637,7 @@ static auto hasLeadingRecursiveWildcard(const Expr& expr) -> bool
     return false;
 }
 
+/** Coalesce equivalent access evidence while keeping the first source span for that evidence. */
 static auto addReferencedPath(
     ReferencedSchemaPaths& result,
     SchemaPath path,
@@ -742,6 +752,7 @@ static auto schemaPathsMatchingSuffix(SchemaType rootSchema, const SchemaPath& s
     return possiblePaths;
 }
 
+/** Collect exact access evidence and flag every path shape that needs conservative scope selection. */
 static auto collectReferencedSchemaPaths(
     Environment& env,
     const Expr& expr,
@@ -767,7 +778,8 @@ static auto collectReferencedSchemaPaths(
             }
 
             auto pathValue = std::move(**path);
-            auto canonical = hasLeadingRecursiveWildcard(maybePath)
+            auto recursive = hasLeadingRecursiveWildcard(maybePath);
+            auto canonical = recursive
                 ? std::nullopt : canonicalReferencedPath(rootSchema, pathValue);
             if (canonical) {
                 addReferencedPath(result, std::move(*canonical),
@@ -781,8 +793,11 @@ static auto collectReferencedSchemaPaths(
                     result.hasUnresolvedAccess = true;
                 }
                 for (auto& expandedPath : expandedPaths) {
+                    // A comparison preserves its operand's recursive scope.
+                    // Consumers may use these paths for styling, but must not
+                    // mistake them for explicit root/owner restrictions.
                     addReferencedPath(result, std::move(expandedPath),
-                                      maybePath.sourceLocation(), false, *literal);
+                                      maybePath.sourceLocation(), recursive, *literal);
                 }
             }
             return true;
@@ -876,7 +891,7 @@ static auto collectReferencedSchemaPaths(
 }
 
 /**
- * RIIA Helper for calling function at destruction.
+ * Run a scope-exit callback, transferring responsibility when the guard is moved.
  */
 template <class Fun>
 struct scoped {
@@ -906,8 +921,9 @@ static auto scopedNotInPath(Parser& p) {
 }
 
 /**
- * Tries to evaluate the input expression on a stub context.
- * Returns the evaluated result on success, otherwise the original expression is returned.
+ * Evaluate against an undefined compilation input and fold a finite constant
+ * sequence. Undefined or excessive output keeps the expression for runtime;
+ * evaluation errors propagate. Then try the bottom-up structural rewrite rules.
  */
 static auto simplifyOrForward(const RewriteRule* currentRule, Environment* env, expected<ExprPtr, Error> expr) -> expected<ExprPtr, Error>
 {
@@ -1025,6 +1041,7 @@ public:
     }
 };
 
+/** Parse boolean syntax into cursor-aware operands so data truth values do not hide suggestions. */
 class CompletionAndOrParser : public InfixParselet
 {
 public:
@@ -1056,6 +1073,7 @@ public:
     const Completion* comp_;
 };
 
+/** Translate `as <type>` syntax into the corresponding scalar conversion operation. */
 class CastParser : public InfixParselet
 {
 public:
@@ -1515,6 +1533,7 @@ public:
     }
 };
 
+/** Supply an empty member placeholder when the cursor follows a dot, for example `road.`. */
 class CompletionPathParser : public PathParser
 {
 public:
@@ -1549,7 +1568,7 @@ public:
 
 namespace
 {
-// Static stateles parselets re-used by all parser instances
+// Stateless parselets are shared; cursor-specific completion parselets are request-local.
 const ScalarParser<int64_t> intParser;
 const ScalarParser<double> floatParser;
 const ScalarParser<std::string> stringParser;
@@ -1591,6 +1610,7 @@ const ConstParser falseParser{Value::f()};
 const ConstParser nullParser{Value::null()};
 }
 
+/** Register ordinary syntax; completion replaces only the handlers that must observe the cursor. */
 static auto setupParser(Parser& p)
 {
     /* Scalars */
@@ -1881,37 +1901,45 @@ auto standaloneQuerySymbol(Environment& env, std::string_view query) -> expected
     return std::nullopt;
 }
 
-auto predicateQuerySymbols(Environment &env, std::string_view query)
-    -> expected<std::vector<QueryPredicateSymbol>, Error> {
-  auto tokens = tokenize(query);
-  TRY_EXPECTED(tokens);
-  Parser parser(&env, *tokens, Parser::Mode::Strict);
-  setupParser(parser);
-  parser.simplify = false;
-  auto expression = parser.parse();
-  TRY_EXPECTED(expression);
-  if (!parser.match(Token::Type::NIL))
-    return unexpected<Error>(Error::ExpectedEOF,
-                             "Unexpected input after search predicate");
-  std::vector<QueryPredicateSymbol> result;
-  std::function<void(Expr const &)> visit = [&](Expr const &expr) {
-    if (auto name = schemaLookupName(expr); name && !name->starts_with("$")) {
-      result.push_back({*name, expr.sourceLocation()});
-      return;
-    }
-    if (dynamic_cast<AndExpr const *>(&expr) ||
-        dynamic_cast<OrExpr const *>(&expr) ||
-        dynamic_cast<AnyExpr const *>(&expr) ||
-        dynamic_cast<UnaryExpr<OperatorNot> const *>(&expr)) {
-      for (size_t i = 0; i < expr.numChildren(); ++i)
-        visit(*expr.childAt(i));
-    }
-  };
-  if (*expression)
-    visit(**expression);
-  return result;
+auto predicateQuerySymbols(Environment& env, std::string_view query)
+    -> expected<std::vector<QueryPredicateSymbol>, Error>
+{
+    auto tokens = tokenize(query);
+    TRY_EXPECTED(tokens);
+
+    // Preserve source spans and predicate structure for the caller's substitutions.
+    Parser parser(&env, *tokens, Parser::Mode::Strict);
+    setupParser(parser);
+    parser.simplify = false;
+    auto expression = parser.parse();
+    TRY_EXPECTED(expression);
+    if (!parser.match(Token::Type::NIL))
+        return unexpected<Error>(Error::ExpectedEOF,
+                                 "Unexpected input after search predicate");
+
+    std::vector<QueryPredicateSymbol> result;
+    std::function<void(Expr const&)> visit = [&](Expr const& expr) {
+        if (auto name = schemaLookupName(expr); name && !name->starts_with("$")) {
+            result.push_back({*name, expr.sourceLocation()});
+            return;
+        }
+        // Only these wrappers preserve a child's role as a predicate. In a
+        // comparison such as kind == "ANIMALS", the operands already have roles.
+        if (dynamic_cast<AndExpr const*>(&expr) ||
+            dynamic_cast<OrExpr const*>(&expr) ||
+            dynamic_cast<AnyExpr const*>(&expr) ||
+            dynamic_cast<UnaryExpr<OperatorNot> const*>(&expr)) {
+            for (size_t i = 0; i < expr.numChildren(); ++i)
+                visit(*expr.childAt(i));
+        }
+    };
+
+    if (*expression)
+        visit(**expression);
+    return result;
 }
 
+/** Evaluate with invocation-local diagnostic counters and the caller/binding's runtime caches. */
 static auto evaluate(
     Environment& env,
     const AST& ast,
