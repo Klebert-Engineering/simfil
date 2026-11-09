@@ -9,6 +9,7 @@ namespace simfil
 
 struct Token;
 
+/** Expected-operation failure with optional query byte range; a zero range may mean no source context. */
 struct Error
 {
     enum Type {

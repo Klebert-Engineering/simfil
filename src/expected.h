@@ -3,12 +3,12 @@
 #include <tl/expected.hpp>
 
 // Helper macro for bubbling-up tl::expected errors.
-#define TRY_EXPECTED(res)                                                      \
-  do {                                                                         \
-    if (!(res).has_value()) [[unlikely]] {                                     \
-      return tl::unexpected(std::move((res).error()));                         \
-    }                                                                          \
-  } while (false)
+#define TRY_EXPECTED(res)                                                   \
+    do {                                                                    \
+        if (!(res).has_value()) [[unlikely]] {                              \
+            return tl::unexpected(std::move((res).error()));                \
+        }                                                                   \
+    } while (false)
 
 namespace simfil
 {

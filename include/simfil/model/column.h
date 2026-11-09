@@ -33,6 +33,7 @@ static_assert(
 enum class model_column_io_error
 {
     payload_size_mismatch,
+    payload_too_large,
 };
 
 #ifndef MODEL_COLUMN_TYPE
@@ -198,6 +199,26 @@ void mark_bitsery_invalid_data(S& archive)
     }
 }
 
+/** Reject a truncated in-memory payload before allocating its declared column size. */
+template <typename Adapter>
+bool check_bitsery_payload_available(Adapter& adapter, size_t bytes)
+{
+    if (adapter.error() != bitsery::ReaderError::NoError) return false;
+    if constexpr (requires { adapter.currentReadEndPos(); adapter.currentReadPos(size_t{}); }) {
+        auto const position = adapter.currentReadPos();
+        if (bytes > std::numeric_limits<size_t>::max() - position) {
+            adapter.error(bitsery::ReaderError::InvalidData);
+            return false;
+        }
+        // The adapter's checked seek knows the buffer's real end even when
+        // currentReadEndPos() reports its default zero sentinel.
+        adapter.currentReadPos(position + bytes);
+        if (adapter.error() != bitsery::ReaderError::NoError) return false;
+        adapter.currentReadPos(position);
+    }
+    return true;
+}
+
 template <template <typename, std::size_t> typename T_StoragePolicy>
 concept vector_storage_policy =
     std::same_as<
@@ -247,6 +268,32 @@ using default_column_storage = segmented_column_storage<TValue, T_PageBytes>;
 
 inline constexpr std::size_t bitsery_max_column_payload_bytes = 0x3FFFFFFFU;
 
+/** Check the wire payload limit without adding or multiplying unchecked sizes. */
+[[nodiscard]] constexpr bool check_model_column_growth(
+    std::size_t current, std::size_t added, std::size_t recordSize) noexcept
+{
+    if (recordSize == 0) return false;
+    auto const maximum = bitsery_max_column_payload_bytes / recordSize;
+    return current <= maximum && added <= maximum - current;
+}
+
+/**
+ * Fixed-width storage for ModelPool columns and ArrayArena payloads.
+ * Mutators require a representable size (check_size/check_model_column_growth);
+ * this precondition is asserted in debug builds, not rechecked per record in
+ * release builds. Byte-input APIs validate payload lengths, not record semantics.
+ *
+ * Supported elements have a stable little-endian layout: fixed-width scalars,
+ * explicitly approved external types, or tagged trivially copyable standard-layout records.
+ * The generic column stores one stream; TwoPart<A, B> stores two synchronized
+ * streams with pair-like proxy access. bytes() concatenates all first halves
+ * before all second halves, without padding or a record count.
+ *
+ * Storage is unsynchronized. References and proxies borrow their column;
+ * structural mutation can invalidate them according to the storage policy.
+ * Paged storage preserves element addresses during append, but iterators may
+ * retain a relocated page table. Vector storage may also relocate elements.
+ */
 template <
     typename T,
     std::size_t T_RecordsPerPage = 256,
@@ -254,15 +301,6 @@ template <
 class ModelColumn
 {
 public:
-    /**
-     * Fixed-width paged storage for `ModelPool` columns and `ArrayArena` payloads.
-     *
-     * Supported element types must have a stable little-endian wire layout:
-     * scalars with fixed width, explicitly tagged external types, or other
-     * approved trivially copyable standard-layout records. The generic column
-     * stores one record stream; the `TwoPart<A, B>` specialization stores two
-     * synchronized record streams while exposing pair-like access.
-     */
     using value_type = std::remove_cv_t<T>;
     using ref = value_type&;
     using const_ref = value_type const&;
@@ -310,15 +348,25 @@ public:
 
     void clear() { values_.clear(); }
 
+    /** Validate a record count at an input/allocation boundary, without allocating. */
+    [[nodiscard]] static constexpr bool check_size(std::size_t count) noexcept
+    {
+        return check_model_column_growth(0, count, record_size);
+    }
+
     void reserve(std::size_t count)
     {
+        assert(check_size(count));
         if constexpr (
             requires(storage_type& storage, std::size_t n) { storage.reserve(n); }) {
             values_.reserve(count);
         }
     }
 
-    void resize(std::size_t count) { values_.resize(count); }
+    void resize(std::size_t count) {
+        assert(check_size(count));
+        values_.resize(count);
+    }
 
     void shrink_to_fit()
     {
@@ -329,6 +377,7 @@ public:
 
     ref emplace_back()
     {
+        assert(check_model_column_growth(size(), 1, record_size));
         values_.emplace_back();
         return values_.back();
     }
@@ -337,6 +386,7 @@ public:
         requires (sizeof...(Args) > 0)
     ref emplace_back(Args&&... args)
     {
+        assert(check_model_column_growth(size(), 1, record_size));
         values_.emplace_back(std::forward<Args>(args)...);
         return values_.back();
     }
@@ -344,12 +394,13 @@ public:
     template <typename... Args>
     ref emplace(Args&&... args)
     {
+        assert(check_model_column_growth(size(), 1, record_size));
         values_.emplace_back(std::forward<Args>(args)...);
         return values_.back();
     }
 
-    void push_back(value_type const& value) { values_.push_back(value); }
-    void push_back(value_type&& value) { values_.push_back(std::move(value)); }
+    void push_back(value_type const& value) { emplace_back(value); }
+    void push_back(value_type&& value) { emplace_back(std::move(value)); }
 
     ref operator[](std::size_t index) { return values_[index]; }
     const_ref operator[](std::size_t index) const { return values_[index]; }
@@ -371,6 +422,13 @@ public:
     template <typename InputIt>
     iterator insert(const_iterator pos, InputIt first, InputIt last)
     {
+#ifndef NDEBUG
+        if constexpr (std::forward_iterator<InputIt>) {
+            auto const count = std::distance(first, last);
+            assert(count >= 0);
+            assert(check_model_column_growth(size(), static_cast<std::size_t>(count), record_size));
+        }
+#endif
         return values_.insert(pos, first, last);
     }
 
@@ -388,6 +446,7 @@ public:
 
     std::vector<std::byte> bytes() const
     {
+        assert(check_size(size()));
         std::vector<std::byte> out(byte_size());
         if (out.empty()) {
             return out;
@@ -411,6 +470,10 @@ public:
         return out;
     }
 
+    /**
+     * Replace records from non-aliasing raw wire bytes. Invalid length leaves
+     * the column unchanged; callers must validate record contents separately.
+     */
     tl::expected<void, model_column_io_error>
     assign_bytes(std::span<const std::byte> payload)
     {
@@ -423,24 +486,28 @@ public:
         return assign_bytes_impl(payload);
     }
 
-    template <typename T_BitseryInputAdapter>
     /**
      * Read a raw payload after the caller already consumed the size prefix.
      *
-     * The surrounding bitsery serializer validates the payload length. This
-     * helper only transfers payload bytes into the underlying storage and
-     * clears the column on adapter errors. The `readBuffer<1>` unit remains one
-     * byte although the helper may read the entire payload in one call.
+     * Validate length, alignment and available in-memory input before allocation.
+     * Invalid input returns false and clears the column. The `readBuffer<1>` unit
+     * remains one byte although the helper may read the entire payload in one call.
      */
+    template <typename T_BitseryInputAdapter>
     bool read_payload_from_bitsery(
         T_BitseryInputAdapter& adapter,
         std::size_t payload_size)
     {
-        if ((payload_size % sizeof(value_type)) != 0U) {
-            values_.clear();
+        if (payload_size > bitsery_max_column_payload_bytes ||
+            (payload_size % record_size) != 0U) {
+            adapter.error(bitsery::ReaderError::InvalidData);
+            clear();
             return false;
         }
-
+        if (!detail::check_bitsery_payload_available(adapter, payload_size)) {
+            clear();
+            return false;
+        }
         const std::size_t record_count = payload_size / sizeof(value_type);
         values_.resize(record_count);
         if (payload_size == 0) {
@@ -497,6 +564,9 @@ private:
             sizeof(ByteType) == 1,
             "assign_bytes expects 1-byte payload elements");
 
+        if (payload.size() > bitsery_max_column_payload_bytes) {
+            return tl::make_unexpected(model_column_io_error::payload_too_large);
+        }
         if ((payload.size() % sizeof(value_type)) != 0U) {
             return tl::make_unexpected(model_column_io_error::payload_size_mismatch);
         }
@@ -573,7 +643,9 @@ public:
         [[nodiscard]] first_ref first() const noexcept { return first_; }
         [[nodiscard]] second_ref second() const noexcept { return second_; }
         [[nodiscard]] value_type to_value() const { return value_type{first_, second_}; }
-        [[nodiscard]] explicit operator value_type() const { return to_value(); }
+
+        /** Materialize the two-field value so proxy iterators satisfy indirectly_readable. */
+        [[nodiscard]] operator value_type() const { return to_value(); }
 
         [[nodiscard]] bool operator==(value_type const& other) const
         {
@@ -685,16 +757,30 @@ public:
         second_values_.clear();
     }
 
+    /** Validate a record count at an input/allocation boundary, without allocating. */
+    [[nodiscard]] static constexpr bool check_size(std::size_t count) noexcept
+    {
+        return check_model_column_growth(0, count, record_size);
+    }
+
     void reserve(std::size_t count)
     {
+        assert(check_size(count));
         first_values_.reserve(count);
         second_values_.reserve(count);
     }
 
     void resize(std::size_t count)
     {
+        assert(check_size(count));
+        auto const oldSize = size();
         first_values_.resize(count);
-        second_values_.resize(count);
+        try {
+            second_values_.resize(count);
+        } catch (...) {
+            first_values_.resize(oldSize);
+            throw;
+        }
     }
 
     void shrink_to_fit()
@@ -707,8 +793,14 @@ public:
     ref emplace_back(Args&&... args)
     {
         value_type value(std::forward<Args>(args)...);
+        assert(check_model_column_growth(size(), 1, record_size));
         first_values_.push_back(value.first_);
-        second_values_.push_back(value.second_);
+        try {
+            second_values_.push_back(value.second_);
+        } catch (...) {
+            first_values_.resize(first_values_.size() - 1);
+            throw;
+        }
         return back();
     }
 
@@ -720,14 +812,19 @@ public:
 
     void push_back(value_type const& value)
     {
+        assert(check_model_column_growth(size(), 1, record_size));
         first_values_.push_back(value.first_);
-        second_values_.push_back(value.second_);
+        try {
+            second_values_.push_back(value.second_);
+        } catch (...) {
+            first_values_.resize(first_values_.size() - 1);
+            throw;
+        }
     }
 
     void push_back(value_type&& value)
     {
-        first_values_.push_back(std::move(value.first_));
-        second_values_.push_back(std::move(value.second_));
+        emplace_back(std::move(value));
     }
 
     ref operator[](std::size_t index)
@@ -775,11 +872,14 @@ public:
         std::vector<first_type> first_parts;
         std::vector<second_type> second_parts;
         for (auto it = first; it != last; ++it) {
+            assert(check_model_column_growth(size(), first_parts.size() + 1, record_size));
             value_type value(*it);
             first_parts.push_back(value.first_);
             second_parts.push_back(value.second_);
         }
 
+        // Reserve both halves before mutating either logical stream.
+        reserve(size() + first_parts.size());
         auto first_pos = first_values_.begin();
         auto second_pos = second_values_.begin();
         std::advance(first_pos, static_cast<std::ptrdiff_t>(insert_index));
@@ -791,6 +891,7 @@ public:
 
     std::vector<std::byte> bytes() const
     {
+        assert(check_size(size()));
         const auto first_payload = first_values_.bytes();
         const auto second_payload = second_values_.bytes();
 
@@ -824,6 +925,16 @@ public:
         T_BitseryInputAdapter& adapter,
         std::size_t payload_size)
     {
+        if (payload_size > bitsery_max_column_payload_bytes ||
+            (payload_size % record_size) != 0U) {
+            adapter.error(bitsery::ReaderError::InvalidData);
+            clear();
+            return false;
+        }
+        if (!detail::check_bitsery_payload_available(adapter, payload_size)) {
+            clear();
+            return false;
+        }
         std::vector<std::uint8_t> payload(payload_size);
         if (payload_size > 0) {
             adapter.template readBuffer<1>(payload.data(), payload_size);
@@ -849,6 +960,9 @@ private:
             sizeof(ByteType) == 1,
             "assign_bytes expects 1-byte payload elements");
 
+        if (payload.size() > bitsery_max_column_payload_bytes) {
+            return tl::make_unexpected(model_column_io_error::payload_too_large);
+        }
         if ((payload.size() % record_size) != 0U) {
             return tl::make_unexpected(model_column_io_error::payload_size_mismatch);
         }
@@ -917,8 +1031,8 @@ void serialize(S& s, simfil::ModelColumn<T, T_RecordsPerPage, T_StoragePolicy>& 
             return;
         }
     } else {
+        assert(Column::check_size(buffer.size()));
         auto payload = buffer.bytes();
-        assert(payload.size() <= simfil::bitsery_max_column_payload_bytes);
 
         std::uint64_t payload_size_wire = payload.size();
         s.value8b(payload_size_wire);

@@ -16,7 +16,7 @@
 #include "simfil/diagnostics.h"
 #include "simfil/value.h"
 #include "simfil/error.h"
-#include "simfil/model/schema.h"
+#include "simfil/model/schema-type.h"
 
 namespace simfil
 {
@@ -63,7 +63,8 @@ private:
 };
 
 /**
- * Rewrite families available during compilation.
+ * Select schema-driven shorthand rewriting. Ordinary constant folding and
+ * syntax-preserving AST optimizations still run with None.
  */
 enum class RewriteMode {
     None,
@@ -75,9 +76,9 @@ enum class RewriteMode {
  */
 struct CompileOptions
 {
-    bool any = true;
+    bool any = true; ///< Wrap the result in any(...) to produce a predicate.
     RewriteMode rewriteMode = RewriteMode::None;
-    SchemaId rootSchema = NoSchemaId;
+    SchemaType rootSchema;
 };
 
 /**
@@ -93,6 +94,13 @@ struct ReferencedSchemaPath
     SourceLocation location;
     bool viaWildcard = false;
     std::optional<std::string> equalsStringLiteral;
+    /**
+     * False only when this positive string equality cannot match the declared
+     * value type. Keep the reference for diagnostics, but consumers selecting
+     * search owners/styles can ignore it. Unknown types, negated comparisons
+     * and comparisons used as values remain possible; this is not a query rewrite.
+     */
+    bool predicateCanMatch = true;
 };
 
 /**
@@ -115,8 +123,9 @@ struct ReferencedSchemaPaths
 /**
  * One static `field == "value"` comparison discovered in a compiled query.
  *
- * Only direct positive equality comparisons are reported. The field name is
- * the exact AST field node text and is not interpreted by simfil.
+ * Only a direct FieldExpr/constant equality node is reported; paths and `!=`
+ * are excluded. This is syntactic evidence, not a proof that the equality must
+ * hold: its parent may be `not` or `or`. The field spelling is not interpreted.
  */
 struct FieldStringComparison
 {
@@ -139,43 +148,82 @@ struct ReferencedQueryTerms
 };
 
 /**
- * Compile expression `src`.
- * Param:
- *   env   Environment used for compilation. Register custom functions there.
- * Param:
- *   query Source code to compile into an expression-tree.
- * Param:
- *   any   If true, wrap expression with call to `any(...)`.
- * Param:
- *   autoWildcard  Deprecated compatibility switch. Ignored; use CompileOptions
- *                 with RewriteMode::Schema and a root schema for rewrites.
+ * Parse and compile `query` using the functions registered in `env`.
+ *
+ * By default, wrap the expression in `any(...)` to produce a predicate. Set
+ * `any` to false to preserve the expression's result sequence. Parse and
+ * compilation failures are returned as Error values.
+ *
+ * `autoWildcard` is a deprecated, ignored compatibility argument. Schema-based
+ * shorthand uses the CompileOptions overload with RewriteMode::Schema.
  */
 auto compile(Environment& env, std::string_view query, bool any = true, bool autoWildcard = false) -> tl::expected<ASTPtr, Error>;
 
 /**
- * Compile expression `src` with explicit options.
+ * Parse and compile `query`, applying the selected rewrites before evaluation.
  *
- * If rootSchema is set and schema rewrites are enabled, shorthand field/enum
- * queries are classified through the schema instead of lexical heuristics.
+ * With RewriteMode::Schema and a nonempty rootSchema, shorthand fields and enum
+ * symbols are resolved against that schema. For example, a bare field name may
+ * become a recursive field lookup. An empty rootSchema selects schema-free
+ * compilation. Set options.any to false for value-producing queries; its default
+ * wraps the result in `any(...)`.
  */
 auto compile(Environment& env, std::string_view query, CompileOptions options) -> tl::expected<ASTPtr, Error>;
 
 /**
  * Collect schema paths that are referenced by a compiled query.
  *
- * This is static analysis over the AST, not runtime evaluation: both sides of
- * `and`/`or` are inspected, and schema-aware rewrites are resolved to the exact
- * paths they can touch.
+ * This is static analysis over the AST, not runtime evaluation.
+ * Used by consumers that choose a search scope from the fields a query touches.
+ * Both sides of `and`/`or` are inspected, including paths introduced by schema
+ * rewrites. Path field IDs belong to rootSchema's dictionary.
+ *
+ * Check the returned flags before treating paths as exhaustive. Dynamic access,
+ * broad wildcards and incomplete schema traversal can leave potential accesses
+ * unresolved even when some concrete paths were found. An empty rootSchema sets
+ * hasUnresolvedAccess; an empty path list alone cannot prove that no fields are used.
  */
-auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaId rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
+auto referencedSchemaPaths(Environment& env, const AST& ast, SchemaType rootSchema) -> tl::expected<ReferencedSchemaPaths, Error>;
 
 /**
- * Return the symbol represented by a whole-query bare field or string literal.
+ * Extract one shorthand name from a query whose compiled root is a field or string.
+ *
+ * For example, `ANIMALS` and `"ANIMALS"` return the string "ANIMALS"; `road.kind`
+ * and `kind == "ANIMALS"` return an empty optional. Consumers can use the name to
+ * offer an application-specific interpretation before running the query.
  *
  * This is intentionally AST-based: callers that need exact-query shorthand
  * handling should not re-tokenize the source string with ad-hoc rules.
+ *
+ * Compilation uses ordinary simplification, with schema rewrites and the automatic
+ * any(...) wrapper disabled. The name is returned without checking whether a field
+ * or enum symbol exists. A valid compound query returns an empty optional; invalid
+ * syntax returns a compilation Error. Use predicateQuerySymbols to inspect names
+ * inside boolean predicates while preserving their original source locations.
  */
 auto standaloneQuerySymbol(Environment& env, std::string_view query) -> tl::expected<std::optional<std::string>, Error>;
+
+/**
+ * A bare or quoted symbol used as a predicate, not as a comparison operand.
+ * Locations refer to the original, unsimplified input so a consumer can bind
+ * its meaning before any(...) or boolean composition changes its AST role.
+ * Consumers use the span to substitute a chosen meaning before compilation.
+ */
+struct QueryPredicateSymbol {
+    std::string name;
+    SourceLocation location;
+};
+
+/**
+ * Collect shorthand names through `and`, `or`, `not` and `any(...)` predicates.
+ *
+ * `any(ANIMALS) and "SPEED_UNLIMITED"` yields those two names with their original
+ * source spans. `kind == "ANIMALS"` yields none: comparison operands already have
+ * an explicit role. Names beginning with `$` are excluded. Parsing preserves the
+ * unsimplified expression, and malformed input returns an Error.
+ */
+auto predicateQuerySymbols(Environment& env, std::string_view query)
+    -> tl::expected<std::vector<QueryPredicateSymbol>, Error>;
 
 /**
  * Collect schema-independent terms referenced by a compiled query AST.
@@ -187,15 +235,12 @@ auto standaloneQuerySymbol(Environment& env, std::string_view query) -> tl::expe
 auto referencedQueryTerms(const AST& ast) -> ReferencedQueryTerms;
 
 /**
- * Evaluate compiled expression.
- * Param:
- *   env    Environment providing the runtime functions, strings, and schemas.
- * Param:
- *   ast    Expression-Tree generated by prior call to `compile(...)`
- * Param:
- *   node   Root node of the data model to query in
- * Param:
- *   diag   Optional pointer to a diagnostics object to merge results into.
+ * Evaluate a compiled expression and collect every value produced from node.
+ * This convenience overload has no result/work limit; use the callback overload
+ * for bounded work.
+ * env provides the runtime functions, strings and schemas, and must use the node
+ * model's field dictionary. Optional diag receives counters merged from this
+ * evaluation; reuse it only for this same AST/index layout.
  */
 auto eval(Environment& env, const AST& ast, ModelNode const& node, Diagnostics* diag) -> tl::expected<std::vector<Value>, Error>;
 
@@ -210,35 +255,38 @@ auto eval(Environment& env, const AST& ast, const ModelNode& node, const ResultF
     -> tl::expected<EvaluationSummary, Error>;
 
 /**
- * Build messages for diagnostics collected by `eval`.
- * Param:
- *   env    Environment (must be the same as the one passed to compile and eval)
- * Param:
- *   ast    The AST
- * Param:
- *   diag   Diagnostics data filled by eval.
+ * Build messages from collected field/comparison counters. Finish concurrent
+ * evaluation/merging before reading diag: message construction does not lock it.
  */
 auto diagnostics(const Diagnostics& diag) -> tl::expected<std::vector<Diagnostics::Message>, Error>;
 
 /**
- * Find completion candidates for an expression.
- * Param:
- *   env   Environment used for compilation & evaluation.
- * Param:
- *   query Source code to complete.
- * Param:
- *   point Index to complete at.
- * Param:
- *   node   Root node of the data model to query in
+ * Suggest source-span replacements at byte offset point using actual model data
+ * and its attached schema. This overload evaluates the relaxed query and may run
+ * registered functions; its timeout is cooperative. Use the same field dictionary
+ * in env and node. Results may be partial, and appended wildcard hints may exceed
+ * options.limit. The SchemaType overload supports completion without executing data.
  */
 auto complete(Environment& env, std::string_view query, size_t point, ModelNode const& node, CompletionOptions const& options) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 /**
- * Complete a represented domain directly, without evaluating dummy model values.
- * The environment must bind the schema and its field/enum StringIds to one local
- * string namespace. Custom functions are never executed by this overload.
+ * Suggest replacements at byte offset `point` in `query` using rootSchema.
+ *
+ * For example, a schema declaring `road.speed` can suggest `speed` for the `sp`
+ * span in `road.sp`. Each candidate supplies its replacement text and source span;
+ * the caller replaces that span rather than appending the whole candidate.
+ *
+ * This overload follows schema fields, array elements and enum metadata. It can
+ * run before sample data is loaded and does not execute custom functions. Names
+ * are read from the schema's dictionary; returned candidates own their strings.
+ * This overload never mutates the datasource dictionary.
+ *
+ * CompletionOptions controls sorting, smart-case matching, candidate count,
+ * timeout and schema visit/depth limits. The vector contains the candidates found
+ * within those limits and carries no separate completeness indicator. An empty
+ * result therefore does not establish that the schema has no matching fields.
  */
-auto complete(Environment& env, std::string_view query, size_t point, SchemaId rootSchema,
+auto complete(Environment& env, std::string_view query, size_t point, SchemaType rootSchema,
               CompletionOptions const& options = {}) -> tl::expected<std::vector<CompletionCandidate>, Error>;
 
 }

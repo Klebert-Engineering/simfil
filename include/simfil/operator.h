@@ -34,7 +34,8 @@ struct InvalidOperands {
         return str;                             \
     }
 
-/* Unary Operators */
+/* Unary operators below operate on concrete payloads. Dispatchers handle Undef,
+ * transient objects and typed bitmasks before entering these overloads. */
 
 #define DENY_OTHER()                                        \
     template <class Type>                                   \
@@ -120,6 +121,7 @@ struct OperatorBitInv
     NULL_AS_NULL()
 };
 
+/** Byte length for strings/bytes and immediate child count for model containers. */
 struct OperatorLen
 {
     NAME("#")
@@ -146,6 +148,8 @@ struct OperatorLen
 struct OperatorTypeof
 {
     NAME("typeof")
+
+    auto operator()(const Bitmask&) const -> std::string_view { return "bitmask"sv; }
 
     auto operator()(NullType) const -> std::string_view
     {
@@ -196,6 +200,10 @@ struct OperatorTypeof
     }
 };
 
+/**
+ * Compatibility conversion: text accepts a numeric prefix, invalid text/bytes
+ * becomes zero, and floating values truncate. This is not a checked input parser.
+ */
 struct OperatorAsInt
 {
     NAME("int")
@@ -238,6 +246,7 @@ struct OperatorAsInt
     NULL_AS((int64_t)0)
 };
 
+/** Parse a floating prefix from text; invalid text and model containers yield zero. */
 struct OperatorAsFloat
 {
     NAME("float")
@@ -277,6 +286,8 @@ struct OperatorAsString
 {
     NAME("string")
 
+    auto operator()(const Bitmask& value) const -> std::string { return impl::ValueToString{}(value); }
+
     auto operator()(bool v) const -> const std::string&
     {
         static auto tn = "true"s;
@@ -314,6 +325,7 @@ struct OperatorAsString
     NULL_AS("null"s);
 };
 
+/** Preserve string bytes verbatim; encode integers in eight-byte big-endian form. */
 struct OperatorAsBytes
 {
     NAME("bytes")
@@ -532,6 +544,10 @@ struct OperatorMod
     }
 };
 
+/**
+ * Equality supports numeric promotion and ByteArray's integer compatibility
+ * decoding. Other mismatched types compare false; model nodes are not deep-compared.
+ */
 struct OperatorEq
 {
     NAME("==")
@@ -593,6 +609,7 @@ struct OperatorNeq
     }
 };
 
+/** Order bytes lexicographically as unsigned octets; mixed byte/numeric values use integer decoding. */
 struct OperatorLt
 {
     NAME("<")
@@ -708,6 +725,7 @@ struct OperatorGtEq
     }
 };
 
+/** Select one string byte by nonnegative index; out-of-range indices yield null. */
 struct OperatorSubscript
 {
     NAME("[]")
@@ -780,6 +798,12 @@ struct OperatorShr
 namespace impl
 {
 
+/** Apply intrinsic flag semantics without widening ordinary signed integer operations. */
+auto bitmaskUnary(std::string_view operation, Bitmask const& value) -> tl::expected<Value, Error>;
+
+/** Preserve type identity for bitwise results and reject incompatible typed operands. */
+auto bitmaskBinary(std::string_view operation, Value const& left, Value const& right) -> tl::expected<Value, Error>;
+
 template <class Operator_, class CType_>
 inline auto makeOperatorResult(CType_&& value) -> tl::expected<Value, Error>
 {
@@ -808,11 +832,14 @@ inline auto makeOperatorResult(InvalidOperands) -> tl::expected<Value, Error>
 
 }
 
+/** Dispatch a runtime Value, preserving Undef and custom meta-type operator semantics. */
 template <class Operator_>
 struct UnaryOperatorDispatcher
 {
     static auto dispatch(const Value& value) -> tl::expected<Value, Error>
     {
+        if (value.isa(ValueType::Bitmask))
+            return impl::bitmaskUnary(Operator_::name(), value.as<ValueType::Bitmask>());
         if (value.isa(ValueType::TransientObject)) {
             const auto& obj = value.as<ValueType::TransientObject>();
             return obj.meta->unaryOp(Operator_::name(), obj);
@@ -853,6 +880,12 @@ struct BinaryOperatorDispatcherRHS
     }
 };
 
+/**
+ * Dispatch both payload types and enrich invalid-operand errors with their names.
+ * Bitmask semantics take precedence; otherwise a transient left operand supplies
+ * the operator, then a transient right operand. Dispatcher instances borrow RHS
+ * values only for the synchronous visit.
+ */
 template <class Operator>
 struct BinaryOperatorDispatcher
 {
@@ -861,6 +894,8 @@ struct BinaryOperatorDispatcher
     static auto dispatch(const Value& lhs, const Value& rhs) -> tl::expected<Value, Error>
     {
         auto result = ([&]() -> tl::expected<Value, Error> {
+            if (lhs.isa(ValueType::Bitmask) || rhs.isa(ValueType::Bitmask))
+                return impl::bitmaskBinary(Operator::name(), lhs, rhs);
             if (lhs.isa(ValueType::TransientObject)) {
                 if (rhs.isa(ValueType::Undef)) {
                     return Value::undef();

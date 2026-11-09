@@ -11,6 +11,7 @@
 namespace simfil
 {
 
+/** Recognize literal-shaped roots for the optional recursive-search completion hint. */
 inline auto isSingleValueExpression(const Expr* expr) -> bool {
     if (!expr)
         return false;
@@ -25,8 +26,8 @@ inline auto isSingleValueExpression(const Expr* expr) -> bool {
 }
 
 /**
- * Checks if the root expression is a single (constant) value
- * or a field.
+ * Recognize a field or uppercase string shape for a wildcard completion hint.
+ * This presentation heuristic does not establish enum membership or rewrite a query.
  */
 inline auto isSingleValueOrFieldExpression(const Expr* expr) -> bool {
     if (!expr)
@@ -53,8 +54,10 @@ inline auto isSingleValueOrFieldExpression(const Expr* expr) -> bool {
 }
 
 /**
- * Checks if the root expression is a comparison of the following form:
- *   `<single-field or enum-string-constant> <comparison-operator> <constant-value>`
+ * Recognize comparisons eligible for the optional wildcard completion hint:
+ * a field or uppercase string on the left, and a constant expression on the right.
+ *   `<single-field or uppercase-string-constant> <comparison-operator> <constant-value>`
+ * The spelling check is only a hint heuristic, not schema-based enum resolution.
  */
 inline auto isFieldComparison(const Expr* expr) -> bool {
     if (!expr)
@@ -68,8 +71,7 @@ inline auto isFieldComparison(const Expr* expr) -> bool {
         if (const auto* left = dynamic_cast<const FieldExpr*>(compExpr->left_.get())) {
             leftIsFieldOrEnum = true;
         } else if (const auto* left = dynamic_cast<const ConstExpr*>(compExpr->left_.get())) {
-            // Test if the value is a WORD.
-            // This is not optimal
+            // Keep the legacy uppercase-string hint consistent with the standalone hint.
             const auto& value = left->value();
             if (value.isa(ValueType::String)) {
                 auto str = value.as<ValueType::String>();

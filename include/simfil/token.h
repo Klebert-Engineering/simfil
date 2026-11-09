@@ -15,6 +15,7 @@
 namespace simfil
 {
 
+/** Parsed token payload with byte offsets into the original query; end is exclusive. */
 struct Token
 {
     enum Type {
@@ -97,6 +98,7 @@ struct Token
     static auto toString(Type) -> std::string;
     auto toString() const -> std::string;
 
+    /** Include the end cursor position so completion still selects a token just typed. */
     auto containsPoint(size_t point) const -> bool;
 };
 

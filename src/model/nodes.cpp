@@ -11,10 +11,17 @@
 namespace simfil
 {
 
+auto ModelNode::schemaType() const -> SchemaType
+{
+    return model_ ? model_->resolveSchemaType(*this) : SchemaType{};
+}
+
 /// Create a ModelNode from a model pool which serves as its
-/// VFT, and a TreeNodeAddress.
-ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key key)
-    : ModelNode(std::move(pool), addr, ScalarValueType{}, key)
+/// Virtual Function Table, and a ModelNodeAddress.
+// Resolution is delegated to the owning model rather than stored per address.
+ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, detail::mp_key)
+    // Address-only wrappers need the default null payload, not a moved scalar variant.
+    : model_(std::move(pool)), addr_(addr)
 {}
 
 ModelNode::ModelNode(ModelConstPtr pool, ModelNodeAddress addr, ScalarValueType data, detail::mp_key)
@@ -31,10 +38,7 @@ ScalarValueType ModelNode::value() const {
 
 /// Get the node's abstract model type
 ValueType ModelNode::type() const {
-    ValueType result = ValueType::Null;
-    if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.type(); }));
-    return result;
+    return model_ ? model_->type(*this) : ValueType::Null;
 }
 
 /// Get a child by name
@@ -63,11 +67,8 @@ StringId ModelNode::keyAt(int64_t i) const {
     return result;
 }
 
-SchemaId ModelNode::schema() const {
-    SchemaId result = NoSchemaId;
-    if (model_)
-        model_->resolve(*this, Model::Lambda([&](auto&& resolved) { result = resolved.schema(); }));
-    return result;
+TypeId ModelNode::schema() const {
+    return model_ ? model_->schema(*this) : NoTypeId;
 }
 
 /// Get the number of children
@@ -88,6 +89,21 @@ bool ModelNode::iterate(const IterCallback& cb) const {
 
 #if defined(SIMFIL_WITH_MODEL_JSON)
 nlohmann::json ModelNode::toJson() const
+{
+    nlohmann::json result;
+    if (model_) {
+        // Like collection access, export must dispatch to the resolved node's
+        // protocol. ModelNodeBase supplies the non-dispatching default below.
+        auto status = model_->resolve(*this, Model::Lambda([&](auto const& resolved) {
+            result = resolved.toJson();
+        }));
+        if (!status)
+            throw std::runtime_error(status.error().message);
+    }
+    return result;
+}
+
+nlohmann::json ModelNodeBase::toJson() const
 {
     if (type() == ValueType::Undef) {
         // Output metadata only: an application object with this key is still an object on import.
@@ -135,7 +151,9 @@ nlohmann::json ModelNode::toJson() const
             [&j](auto&& v)
             {
                 using T = decltype(v);
-                if constexpr (std::is_same_v<std::decay_t<T>, ByteArray>) {
+                if constexpr (std::is_same_v<std::decay_t<T>, Bitmask>) {
+                    j = v.toJson();
+                } else if constexpr (std::is_same_v<std::decay_t<T>, ByteArray>) {
                     auto bytes = nlohmann::json::object();
                     bytes["_bytes"] = true;
                     if (auto decoded = v.decodeBigEndianI64())
@@ -197,9 +215,9 @@ StringId ModelNodeBase::keyAt(int64_t) const
     return 0;
 }
 
-SchemaId ModelNodeBase::schema() const
+TypeId ModelNodeBase::schema() const
 {
-    return NoSchemaId;
+    return NoTypeId;
 }
 
 uint32_t ModelNodeBase::size() const
@@ -270,14 +288,39 @@ SmallValueNode<bool>::SmallValueNode(ModelConstPtr p, ModelNodeAddress a, detail
 
 /** Model Node impls for an array. */
 
-Array& Array::append(bool value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(uint16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(int16_t value) {storage_->push_back(members_, model().newSmallValue(value)->addr()); return *this;}
-Array& Array::append(int64_t const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
-Array& Array::append(double const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
-Array& Array::append(std::string_view const& value) {storage_->push_back(members_, model().newValue(value)->addr()); return *this;}
+Array& Array::append(bool value) {
+    appendInternal(model().newSmallValue(value));
+    return *this;
+}
+
+Array& Array::append(uint16_t value) {
+    appendInternal(model().newSmallValue(value));
+    return *this;
+}
+
+Array& Array::append(int16_t value) {
+    appendInternal(model().newSmallValue(value));
+    return *this;
+}
+
+Array& Array::append(int64_t const& value) {
+    appendInternal(model().newValue(value));
+    return *this;
+}
+
+Array& Array::append(double const& value) {
+    appendInternal(model().newValue(value));
+    return *this;
+}
+
+Array& Array::append(std::string_view const& value) {
+    appendInternal(model().newValue(value));
+    return *this;
+}
 
 tl::expected<void, Error> Array::extend(model_ptr<Array> const& other) {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot extend a frozen array"});
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
         auto value = storage_->at(other->members_, i);
@@ -290,15 +333,16 @@ tl::expected<void, Error> Array::extend(model_ptr<Array> const& other) {
 /** Model Node impls for an object. */
 
 tl::expected<ModelNode::Ptr, Error> Object::get(std::string_view const& fieldName) const {
-    auto fieldId = model().strings()->emplace(fieldName);
-    TRY_EXPECTED(fieldId);
-    auto field = get(*fieldId);
+    auto fieldId = model().strings()->get(fieldName);
+    auto field = fieldId != StringPool::Empty || fieldName.empty() ? get(fieldId) : ModelNode::Ptr{};
     if (!field)
         return tl::unexpected<Error>(Error::FieldNotFound, fmt::format("No such field {}", fieldName));
     return field;
 }
 
 tl::expected<void, Error> Object::addBool(std::string_view const& name, bool value) {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     TRY_EXPECTED(fieldId);
     storage_->emplace_back(members_, *fieldId, model().newSmallValue(value)->addr());
@@ -306,6 +350,8 @@ tl::expected<void, Error> Object::addBool(std::string_view const& name, bool val
 }
 
 tl::expected<void, Error> Object::addField(std::string_view const& name, uint16_t value) {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     TRY_EXPECTED(fieldId);
     storage_->emplace_back(members_, *fieldId, model().newSmallValue(value)->addr());
@@ -313,6 +359,8 @@ tl::expected<void, Error> Object::addField(std::string_view const& name, uint16_
 }
 
 tl::expected<void, Error> Object::addField(std::string_view const& name, int16_t value) {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     TRY_EXPECTED(fieldId);
     storage_->emplace_back(members_, *fieldId, model().newSmallValue(value)->addr());
@@ -320,6 +368,8 @@ tl::expected<void, Error> Object::addField(std::string_view const& name, int16_t
 }
 
 tl::expected<void, Error> Object::addField(std::string_view const& name, int64_t const& value) {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     TRY_EXPECTED(fieldId);
     storage_->emplace_back(members_, *fieldId, model().newValue(value)->addr());
@@ -327,6 +377,8 @@ tl::expected<void, Error> Object::addField(std::string_view const& name, int64_t
 }
 
 tl::expected<void, Error> Object::addField(std::string_view const& name, double const& value) {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     TRY_EXPECTED(fieldId);
     storage_->emplace_back(members_, *fieldId, model().newValue(value)->addr());
@@ -334,6 +386,8 @@ tl::expected<void, Error> Object::addField(std::string_view const& name, double 
 }
 
 tl::expected<void, Error> Object::addField(std::string_view const& name, std::string_view const& value) {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot add a field to a frozen object"});
     auto fieldId = model().strings()->emplace(name);
     TRY_EXPECTED(fieldId);
     storage_->emplace_back(members_, *fieldId, model().newValue(value)->addr());
@@ -342,6 +396,8 @@ tl::expected<void, Error> Object::addField(std::string_view const& name, std::st
 
 tl::expected<void, Error> Object::extend(model_ptr<Object> const& other)
 {
+    if (model().frozen())
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot extend a frozen object"});
     auto otherSize = other->size();
     for (auto i = 0u; i < otherSize; ++i) {
         auto value = storage_->at(other->members_, i);

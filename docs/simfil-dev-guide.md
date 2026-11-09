@@ -31,7 +31,7 @@ flowchart LR
 | Meta types | `typed-meta-type.h`, `types.*` | Custom operator/unpack implementations on transient values; not part of the environment. | `MetaType`, `TypedMetaType`, `TransientObject`, `IRangeType`, `ReType` |
 | Parser | `parser.cpp`, `expression-patterns.h`, `token.cpp` | Pratt parser building `Expr` trees from tokens. | `Token`, `AST` |
 | Completion | `completion.cpp` | Partial parser that offers path/function suggestions. | `CompletionOptions`, `CompletionCandidate` |
-| Schema domains | `model/schema.h`, `model/schema-model.h` | Typed domain graph, conservative indexes, and lazy metadata query views. | `Schema`, `CombinedSchema`, `SchemaModel` |
+| Schema types | `model/schema-type.h`, `model/schema-pool.h`, `model/schema-node.h` | Canonical column/arena graph, typed borrowed/owning views, conservative indexes, native codec and direct metadata nodes. | `SchemaType`, `SchemaPool`, `SchemaCompositionType`, `SchemaTypeModelNode` |
 | Diagnostics | `diagnostics.*`, `error.*` | Parser/runtime errors with source spans. | `Diagnostics`, `Error`, `SourceLocation` |
 | Extensibility | `function.*`, `typed-meta-type.h`, `overlay.*` | Register new functions/meta types or overlay nodes. | `Function`, `TypedMetaType`, `OverlayNode` |
 
@@ -63,6 +63,11 @@ Objects and arrays do not embed child nodes directly. Instead, they maintain `Mo
 
 `StringPool` maintains the mapping between strings and the `StringId` integers stored in object fields. The base `Model` interface exposes `lookupStringId` so that serialization code such as `ModelNode::toJson` can recover human-readable field names. `ModelPool::setStrings` allows a pool to adopt a different `StringPool`, populating any missing field names along the way. This operation is used by higher-level components that need to merge data from several pools into a unified string namespace.
 
+Serialized dictionary updates are decoded completely before any entries are
+published. Malformed or truncated input leaves the existing IDs, highest offset
+and stored strings unchanged, allowing a transport to retry from its last valid
+offset without acknowledging part of a rejected update.
+
 ### ModelColumn
 
 The primitive storage building block below `ModelPool` and `ArrayArena` is `ModelColumn<T, RecordsPerPage, StoragePolicy>`. A model column stores a single fixed-width record stream and exposes bulk byte operations for serialization and deserialization. The generic implementation accepts three families of types:
@@ -72,6 +77,16 @@ The primitive storage building block below `ModelPool` and `ArrayArena` is `Mode
 - other approved native POD records that are trivially copyable and standard-layout
 
 The column implementation assumes little-endian hosts and treats the in-memory representation as the wire representation. `bytes()` returns the canonical payload bytes for the current record stream; `assign_bytes()` and `read_payload_from_bitsery()` perform the inverse operation. For vector-backed columns this is one contiguous bulk copy; for segmented storage the same payload is copied chunk-by-chunk while preserving the same wire layout.
+
+Column builders (`reserve`, `resize`, append, insert) and `bytes()` require counts that fit the column payload limit of `0x3fffffff` bytes. Validate externally supplied counts with the non-throwing boolean predicates `ModelColumn::check_size(count)` or `check_model_column_growth(current, added, recordSize)` before building. Builders assert these preconditions in debug builds; release builds do not repeat the size checks for every record. This is a caller-validated contract, not automatic rejection of oversized mutations.
+
+Byte-input APIs always validate their input, including in release builds. `assign_bytes()` returns `tl::expected` with `payload_too_large` or `payload_size_mismatch` without modifying the column. `read_payload_from_bitsery()` rejects oversized, misaligned or truncated in-memory payloads before allocating their declared size, sets the adapter's reader error, clears the column and returns `false`. The existing payload ceiling is an implementation compatibility limit, not a configurable memory allowance. Stream adapters cannot preflight the remaining input length; their read errors are checked during transfer.
+
+`ModelNodeAddress::checkIndex(index)` is also a boolean predicate: an index must fit 24 bits. The address constructor packs an already validated index and asserts that precondition in debug builds. Check once where a column grows instead of checking again whenever an existing address is packed. These size-validation helpers do not throw; older unrelated exceptions and standard allocation-failure propagation remain unchanged.
+
+For untrusted model construction, use `ModelPool::tryNewValue`, `tryNewObject`, and `tryNewArray`. These return `tl::expected` and check the pool's private column indices and cumulative storage before mutation. JSON ingestion and model copying use these checked entry points; tagged multimaps reserve their expanded member count. The original `newValue`, `newObject`, and `newArray` remain trusted builders. Container checks cover the initial reservation; callers must validate any subsequent growth beyond it.
+
+The schema-aware `newTypedValue` and `newBitmask` factories always check their scalar-column bounds and type compatibility. Typed scalars also use checked storage creation. These factories throw on invalid input; native copying and tagged JSON ingestion translate these failures to `tl::expected` errors. Checked primitive/container factories return errors on frozen pools rather than throwing from the trusted builder.
 
 `RecordsPerPage` defines the number of records stored per page, not the page size in bytes. The effective page size is `RecordsPerPage * sizeof(T)`, and segmented storage requires that value to be a multiple of the record size. This keeps page boundaries aligned with record boundaries and lets callers reason about capacity in record counts instead of byte counts.
 
@@ -162,6 +177,8 @@ The `ArrayArena` template implements the append-only sequences used by arrays an
 Regular arrays behave like the historical arena implementation. Each logical array is identified by an `ArrayIndex` and starts with a head `Chunk` in `heads_`. If the array grows beyond the head’s capacity, the arena allocates continuation chunks in `continuations_`. Each chunk records an `offset` into `data_`, a `capacity`, and a `size`. For a head chunk, `size` also tracks the total logical length of the array; for continuation chunks, `size` is local to that chunk. The `next` and `last` indices form a singly-linked list from the head to the tail chunk.
 
 `new_array(initialCapacity, fixedSize)` controls which representation is chosen. If `fixedSize` is `false`, even `initialCapacity == 1` creates a regular growable array. If `fixedSize` is `true` and `initialCapacity == 1`, the arena instead returns a singleton handle. That handle represents a 0-or-1 element logical array with no head chunk allocation. This is useful for storage patterns where one-element arrays are common and known not to grow later.
+
+For bulk allocations, `check_capacity(added, fixedSize)` validates the applicable regular or singleton pool, including handle availability and the payload ceiling. It defaults to a regular allocation, matching `new_array`. It does not allocate or change the arena. `check_data_growth(current, added)` exposes regular payload/offset arithmetic as a static predicate. Callers validate untrusted capacities before `new_array`; subsequent builder operations require representable sizes and assert them in debug builds. A preflight is not a reservation: externally synchronize a check followed by allocation if there are concurrent writers.
 
 When a caller appends an element to a regular array via `push_back` or `emplace_back`, the arena calls `ensure_capacity_and_get_last_chunk_unlocked`. This function locates the current tail chunk (either the head or a continuation). If the tail still has spare capacity, it is returned directly; otherwise, the function allocates a new continuation chunk with capacity doubled relative to the previous tail, extends `data_`, links the new chunk into `continuations_`, and updates the head’s `last` pointer. Singleton handles do not use this growth path; they allow at most one element and reject further appends.
 
@@ -287,10 +304,12 @@ env.functions.emplace("myfn", new MyFn());
 
 Use this in UIs (e.g., erdblick feature search) to propose valid paths and functions while a user types; operators are not completed.
 
-For metadata-only completion, use `complete(env, query, caret, rootSchemaId, options)`.
-It walks the typed domain graph directly, without synthetic sample nodes or
-function execution. `SchemaModel` is the separate lazy descriptor view for
-ordinary schema queries. See [Schema Domains And Query Views](schema-domains.md)
+For metadata-only completion, use `complete(env, query, caret, rootType, options)`
+with a `SchemaType`. It walks canonical schema records directly, without sample
+nodes or function execution. Use a temporary completion dictionary; returned
+candidates own their strings. `SchemaTypeModelNode` provides ordinary metadata
+queries over the same pool, not another graph or owner. See
+[Schema Types And Query Views](schema-domains.md)
 for ownership, packed kinds, extension contracts, recursion, and the bounded
 callback evaluation overloads.
 

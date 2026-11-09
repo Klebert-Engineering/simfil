@@ -8,8 +8,7 @@
 #include <utility>
 
 #include "arena.h"
-#include "schema.h"
-#include "value-type.h"
+#include "scalar-value.h"
 #include "string-pool.h"
 #include "simfil/byte-array.h"
 #include "simfil/error.h"
@@ -148,7 +147,7 @@ private:
 /**
  * Unique address of a ModelNode within a Pool.
  * Consists of an 8b column id and 24b index within a column.
- * No column may grow beyond 2^25-1 (33.5M) entries.
+ * An addressed column supports at most 2^24 (16.8M) entries.
  *
  * Some special cases apply for small scalar types:
  * - String: The index is interpreted directly as a string ID.
@@ -163,8 +162,18 @@ struct ModelNodeAddress
 
     uint32_t value_ = 0;
 
-    ModelNodeAddress(uint8_t const& col, uint32_t const& idx = 0) {  // NOLINT
-        value_ = (idx << 8) | col;
+    /** Compare full column/index identity, not the implicit presence conversion. */
+    bool operator==(ModelNodeAddress const&) const = default;
+
+    /** Validate once at the owning column's allocation boundary. */
+    [[nodiscard]] static constexpr bool checkIndex(size_t idx) noexcept {
+        return idx <= 0xffffffU;
+    }
+
+    /** Pack an already validated index; the precondition is asserted in debug builds. */
+    ModelNodeAddress(uint8_t const& col, size_t idx = 0) {  // NOLINT
+        assert(checkIndex(idx));
+        value_ = (static_cast<uint32_t>(idx) << 8) | col;
     }
 
     [[nodiscard]] uint8_t column() const {
@@ -225,7 +234,14 @@ decltype(auto) objectFieldNode(TField&& field)
 }
 }
 
-/** Semantic view onto a particular node in a ModelPool. */
+/**
+ * Semantic view onto a particular node in a model.
+ *
+ * Address wrapper retaining its owning model. Base accessors dispatch through
+ * Model::resolve; concrete implementations derive from ModelNodeBase to stop
+ * that dispatch. Missing children are empty pointers. Accessors without an
+ * error result retain their default result if resolution fails.
+ */
 struct ModelNode
 {
     using Ptr = model_ptr<ModelNode>;
@@ -242,17 +258,23 @@ struct ModelNode
     /// Get the node's abstract model type
     [[nodiscard]] virtual ValueType type() const;
 
-    /// Get a child by name
+    /// Get the first child with this dictionary-local field ID, or an empty pointer.
     [[nodiscard]] virtual Ptr get(StringId const& f) const;
 
-    /// Get a child by index
+    /// Get a child by zero-based index, or an empty pointer when out of range.
     [[nodiscard]] virtual Ptr at(int64_t i) const;
 
     /// Get an Object model's field names
     [[nodiscard]] virtual StringId keyAt(int64_t i) const;
 
-    /// Get the schema id for schema-aware container nodes, or NoSchemaId otherwise.
-    [[nodiscard]] virtual SchemaId schema() const;
+    /// Get the schema id for a bound container or explicitly typed scalar.
+    [[nodiscard]] virtual TypeId schema() const;
+
+    /**
+     * Retain this node's explicit schema. A plain leaf has none; its inherited
+     * type must be obtained separately from its parent's schema edge.
+     */
+    [[nodiscard]] auto schemaType() const -> SchemaType;
 
     /// Get the number of children
     [[nodiscard]] virtual uint32_t size() const;
@@ -263,16 +285,23 @@ struct ModelNode
     /// Get raw runtime payload attached to this node without triggering resolution.
     [[nodiscard]] inline ScalarValueType const& runtimeData() const {return data_;}
 
-    /// True if the node points at a valid model and address.
+    /// True if an owner and nonzero address are present; does not validate stored indices.
     [[nodiscard]] inline bool isResolved() const {return model_ && addr_;}
 
     /// Return the model that owns this node address.
     [[nodiscard]] inline ModelConstPtr owningModel() const {return model_;}
 
+    /** Borrow the owner already retained by this node, without touching its ownership counter. */
+    [[nodiscard]] auto borrowedModel() const noexcept -> Model const* { return model_.get(); }
+
     /// Virtual destructor to allow polymorphism
     virtual ~ModelNode() = default;
 
-    /// Fast iterator support
+    /**
+     * Synchronous traversal of resolved children. Return false to stop; the
+     * referenced wrapper is valid only during the callback. Retain a model_ptr
+     * copy when a child must outlive that call.
+     */
     struct IterCallback
     {
         virtual ~IterCallback() = default;
@@ -285,12 +314,16 @@ struct ModelNode
         bool operator() (ModelNode const& resolved) const override {return fn_(resolved);};
         T fn_;
     };
+
+    /** Return true on complete traversal, false when a callback requests a stop. */
     virtual bool iterate(IterCallback const& cb) const; // NOLINT (allow discard)
 
     /// Iterator Support
     /// * `fieldNames()`: Returns range object which supports `for(StringId const& f: node.fieldNames())`
     /// * `fields()`: Returns range object which supports `for(auto const& [fieldId, value] : node.fields())`
     /// * Normal `begin()`/`end()`: Supports `for(ModelNode::Ptr child : node)`
+    /// Ranges and iterators borrow this wrapper; keep it alive and do not mutate
+    /// its collection during traversal. Compare iterators from the same range.
 
     // Implement fieldNames() by creating an iterator for StringId
     class StringIdIterator
@@ -412,9 +445,14 @@ struct ModelNodeBase : public ModelNode
     [[nodiscard]] ModelNode::Ptr get(const StringId&) const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
     [[nodiscard]] StringId keyAt(int64_t) const override;
-    [[nodiscard]] SchemaId schema() const override;
+    [[nodiscard]] TypeId schema() const override;
     [[nodiscard]] uint32_t size() const override;
     bool iterate(IterCallback const&) const override {return true;}  // NOLINT (allow discard)
+
+#if defined(SIMFIL_WITH_MODEL_JSON)
+    /** Default structural/scalar export after resolution; special nodes may override it. */
+    [[nodiscard]] nlohmann::json toJson() const override;
+#endif
 
 public:
     explicit ModelNodeBase(detail::mp_key key) : ModelNode(key) {}
@@ -432,6 +470,7 @@ struct UndefinedNode final : public ModelNodeBase
     /** Bind the trivial column address to its owning model. */
     UndefinedNode(ModelConstPtr model, ModelNodeAddress address, detail::mp_key key)
         : ModelNodeBase(std::move(model), address, key) {}
+
     /** Preserve undefined through the ordinary runtime node protocol. */
     [[nodiscard]] ValueType type() const override { return ValueType::Undef; }
 };
@@ -448,7 +487,7 @@ struct ValueNode final : public ModelNodeBase
 };
 
 /**
- * ModelNode base class which provides a pool() method that returns
+ * ModelNode base class which provides a model() method that returns
  * a reference to a Model-derived pool type.
  * @tparam ModelType Model-derived type.
  */
@@ -468,8 +507,10 @@ protected:
     explicit MandatoryDerivedModelNodeBase(detail::mp_key key) : ModelNodeBase(key) {}
     MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a, detail::mp_key key)  // NOLINT
         : ModelNodeBase(std::move(p), a, key) {}
+
     MandatoryDerivedModelNodeBase(ModelConstPtr p, ModelNodeAddress a, ScalarValueType data, detail::mp_key key)  // NOLINT
         : ModelNodeBase(std::move(p), a, std::move(data), key) {}
+
     MandatoryDerivedModelNodeBase(ModelNode const& n, detail::mp_key key) : ModelNodeBase(n, key) {}  // NOLINT
     MandatoryDerivedModelNodeBase() = delete;
 };
@@ -488,7 +529,7 @@ namespace detail
 
 /**
  * Model Node for a UInt16/Int16/Bool.
- * The value is stored in the TreeNodeAddress.
+ * The value is stored directly in the ModelNodeAddress index bits.
  */
 template<typename T>
 struct SmallValueNode final : public ModelNodeBase
@@ -531,16 +572,20 @@ public:
     explicit BaseArray(detail::mp_key key) : MandatoryDerivedModelNodeBase<ModelType>(key) {}
     BaseArray(ModelConstPtr pool, ModelNodeAddress, detail::mp_key key);
 
+    /** Append an existing, nonempty node from this model; does not copy foreign storage. */
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
     BaseArray& append(model_ptr<OtherModelNodeType> const& value) {
         return appendInternal(static_cast<ModelNode::Ptr>(value));
     }
 
+    /** Typed synchronous iteration with the same lifetime and stop contract as iterate(). */
     bool forEach(std::function<bool(ModelNodeType const&)> const& callback) const;
 
-    [[nodiscard]] SchemaId schema() const override;
-    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId schema() const override;
+
+    /** Attach a model-local schema ID; does not validate elements against the schema. */
+    auto setSchema(TypeId schemaId) -> tl::expected<void, Error>;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -575,6 +620,8 @@ struct Array : public BaseArray<ModelPool, ModelNode>
 
     /**
      * Append all elements from `other` to this array.
+     * Both arrays must belong to the same model: this copies child addresses.
+     * Children remain shared; an error may leave already appended elements.
      */
     tl::expected<void, Error> extend(model_ptr<Array> const& other);
 
@@ -598,6 +645,10 @@ public:
     BaseObject(ModelConstPtr pool, ModelNodeAddress, detail::mp_key key);
     BaseObject(ArrayIndex members, ModelConstPtr pool, ModelNodeAddress, detail::mp_key key);
 
+    /**
+     * Append a named reference to an existing, nonempty node from this model.
+     * Duplicate names remain separate entries; get() returns the first one.
+     */
     template<class OtherModelNodeType>
     requires std::derived_from<OtherModelNodeType, ModelNodeType>
     tl::expected<std::reference_wrapper<BaseObject<ModelType, ModelNodeType>>, Error>
@@ -605,8 +656,10 @@ public:
         return addFieldInternal(name, static_cast<ModelNode::Ptr>(value));
     }
 
-    [[nodiscard]] SchemaId schema() const override;
-    auto setSchema(SchemaId schemaId) -> tl::expected<void, Error>;
+    [[nodiscard]] TypeId schema() const override;
+
+    /** Attach a model-local schema ID; does not validate fields against the schema. */
+    auto setSchema(TypeId schemaId) -> tl::expected<void, Error>;
 
     [[nodiscard]] ValueType type() const override;
     [[nodiscard]] ModelNode::Ptr at(int64_t) const override;
@@ -652,7 +705,9 @@ struct Object : public BaseObject<ModelPool, ModelNode>
     [[nodiscard]] tl::expected<ModelNode::Ptr, Error> get(std::string_view const& fieldName) const;
 
     /**
-     * Adopt all fields from the `other` object into this one.
+     * Append fields from `other`, which must belong to the same model.
+     * Preserve duplicate names and share child addresses. An error may leave
+     * fields already appended; this operation does not deep-copy values.
      */
     tl::expected<void, Error> extend(model_ptr<Object> const& other);
 
@@ -663,7 +718,13 @@ public:
 protected:
 };
 
-/** Object with extra procedural fields */
+/**
+ * Object with extra procedural fields.
+ *
+ * Object whose computed fields precede its stored fields in lookup and traversal.
+ * Getters run on every access and must return a nonempty node. MaxProceduralFields
+ * is inline storage capacity, not a hard limit on the number of computed fields.
+ */
 
 template<uint16_t MaxProceduralFields, class LambdaThisType=Object, class ModelPoolDerivedModel=ModelPool>
 class ProceduralObject : public Object
@@ -717,6 +778,7 @@ public:
     explicit ProceduralObject(detail::mp_key key) : Object(key) {}
     ProceduralObject(ArrayIndex i, ModelConstPtr pool, ModelNodeAddress a, detail::mp_key key)
         : Object(i, std::move(pool), a, key) {}
+
     ProceduralObject(ModelConstPtr pool, ModelNodeAddress a, detail::mp_key key)
         : Object(InvalidArrayIndex, std::move(pool), a, key) {}
 

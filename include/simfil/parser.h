@@ -45,16 +45,22 @@ class InfixParselet
 public:
     virtual ~InfixParselet() = default;
 
+    /** Take ownership of the left operand and consume any operands following the supplied operator. */
     virtual auto parse(Parser&, std::unique_ptr<Expr> left, Token) const -> tl::expected<ExprPtr, Error> = 0;
     virtual int precedence() const = 0;
 };
 
 
+/**
+ * Pratt parser with caller-registered prefix/infix handlers. The parser owns its
+ * token sequence and borrows its environment and parselets for the parse lifetime.
+ * Relaxed mode is used for incomplete completion queries; it can still return errors.
+ */
 class Parser
 {
 public:
     enum class Mode {
-        Strict,  // Panic on errors
+        Strict,  // Report syntax errors rather than recover missing input.
         Relaxed, // Try to recover from errors, if possible
     };
 
@@ -67,19 +73,26 @@ public:
     auto eof() const -> bool;
 
     /**
-     * Parsing entry point(s).
+     * Parse one expression from the current token. The caller checks eof() when
+     * the entire query must be consumed, rather than an enclosing subexpression.
      */
     auto parse() -> tl::expected<ExprPtr, Error>;
+
+    /** Extend left while the next operator binds more tightly than prec. */
     auto parseInfix(tl::expected<ExprPtr, Error> left, int prec) -> tl::expected<ExprPtr, Error>;
+
+    /** Parse above this binding power; optional returns a null ExprPtr when no prefix matches. */
     auto parsePrecedence(int precedence, bool optional = false) -> tl::expected<ExprPtr, Error>;
 
     /**
-     * Parse expression and match next token against given token type.
+     * Parse an expression and consume the requested delimiter. Relaxed mode may
+     * accept a missing delimiter so completion can inspect an unfinished query.
      */
     auto parseTo(Token::Type type) -> tl::expected<ExprPtr, Error>;
 
     /**
-     * Helper for parsing comma separated expressions.
+     * Parse comma-separated expressions through the closing token, consuming it.
+     * An immediate closing token produces an empty list.
      */
     auto parseList(Token::Type stop) -> tl::expected<std::vector<ExprPtr>, Error>;
 
@@ -87,9 +100,14 @@ public:
      * Returns token at offset relative to current position.
      */
     auto lookahead(std::size_t offset = 0) const -> const Token*;
+
+    /** Test the next token without consuming it; relaxed EOF also counts as a match. */
     auto match(Token::Type t) const -> bool;
 
+    /** Advance when a token is available; otherwise return a shared NIL sentinel. */
     auto consume() -> const Token&;
+
+    /** Borrow the next token without advancing, or a shared NIL sentinel at EOF. */
     auto current() const -> const Token&;
 
     /**
@@ -104,6 +122,7 @@ public:
     auto relaxed() const -> bool;
 
     Context ctx;
+
     /** Schema completion parses structure without executing constant/custom functions. */
     bool simplify = true;
     Environment* const env;

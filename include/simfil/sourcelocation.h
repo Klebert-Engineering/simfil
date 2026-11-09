@@ -5,6 +5,7 @@
 namespace simfil
 {
 
+/** Half-open byte range [offset, offset + size) in the original query, not a Unicode character range. */
 struct SourceLocation
 {
     std::uint32_t offset = 0u;

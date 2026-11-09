@@ -9,6 +9,7 @@
 #include <bitsery/traits/vector.h>
 #include <fmt/core.h>
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -60,6 +61,7 @@ StringPool::StringPool()
     addStaticKey(SchemaFloat, "float");
     addStaticKey(SchemaString, "string");
     addStaticKey(SchemaBytes, "bytes");
+    addStaticKey(SchemaBitmask, "bitmask");
     addStaticKey(SchemaObject, "object");
     addStaticKey(SchemaArray, "array");
     addStaticKey(SchemaUnion, "union");
@@ -76,6 +78,26 @@ StringPool::StringPool()
     addStaticKey(SchemaNullable, "nullable");
     addStaticKey(SchemaRef, "$ref");
     addStaticKey(SchemaTruncated, "truncated");
+    addStaticKey(SchemaNamedValues, "namedValues");
+    addStaticKey(SchemaNumericDomain, "numericDomain");
+    addStaticKey(SchemaBitWidth, "bitWidth");
+    addStaticKey(SchemaName, "name");
+    addStaticKey(SchemaRole, "role");
+    addStaticKey(SchemaMeaning, "meaning");
+    addStaticKey(SchemaDeprecated, "deprecated");
+    addStaticKey(SchemaRemoved, "removed");
+    addStaticKey(SchemaRawValue, "rawValue");
+    addStaticKey(SchemaMultimap, "multimap");
+    addStaticKey(SchemaEncoding, "encoding");
+    addStaticKey(SchemaUnit, "unit");
+    addStaticKey(SchemaMinimum, "minimum");
+    addStaticKey(SchemaMaximum, "maximum");
+    addStaticKey(SchemaOrdinaryRanges, "ordinaryRanges");
+    addStaticKey(SchemaMin, "min");
+    addStaticKey(SchemaMax, "max");
+    addStaticKey(SchemaScale, "scale");
+    addStaticKey(SchemaOffset, "offset");
+    addStaticKey(SchemaComplete, "complete");
 }
 
 StringPool::StringPool(const StringPool& other)
@@ -143,22 +165,67 @@ auto StringPool::emplace(std::string_view const& str) -> tl::expected<StringId, 
             return it->second;
         }
 
-        // Store the string to maintain ownership.
-        auto& storedString = storedStrings_.emplace_back(str);
-        StringId id = nextId_++;
-        if (nextId_ < id) {
+        if (frozen_)
+            return tl::unexpected(Error{Error::RuntimeError, "Cannot insert into a frozen StringPool"});
+        // Exhaustion must leave both the dictionary and next-id counter unchanged.
+        if (nextId_ > std::numeric_limits<StringId>::max()) {
             return tl::unexpected<Error>(Error::StringPoolOverflow, "StringPool id overflow!");
         }
-        idForString_.emplace(storedString, id);
-        stringForId_.emplace(id, storedString);
-        byteSize_ += static_cast<int64_t>(storedString.size());
-        ++cacheMisses_;
-
-        return id;
+        auto const checkpoint = appendCheckpoint();
+        try {
+            auto& storedString = storedStrings_.emplace_back(str);
+            auto const id = static_cast<StringId>(nextId_);
+            idForString_.emplace(storedString, id);
+            stringForId_.emplace(id, storedString);
+            // Publish the next ID only after both indexes exist. Either map
+            // allocation can fail after the owned string has been appended.
+            ++nextId_;
+            byteSize_ += static_cast<int64_t>(storedString.size());
+            ++cacheMisses_;
+            return id;
+        } catch (...) {
+            rollbackAppends(checkpoint);
+            throw;
+        }
     }
 }
 
-StringId StringPool::get(std::string_view const& str)
+auto StringPool::appendCheckpoint() const -> AppendCheckpoint
+{
+    if (frozen_) {
+        throw std::logic_error("Cannot checkpoint appends to a frozen StringPool");
+    }
+    return {this, nextId_, storedStrings_.size(), byteSize_.load()};
+}
+
+void StringPool::rollbackAppends(AppendCheckpoint const& checkpoint) noexcept
+{
+    assert(checkpoint.owner == this && !frozen_);
+    assert(checkpoint.nextId <= nextId_);
+    assert(checkpoint.storedStrings <= storedStrings_.size());
+
+    // emplace publishes the name index first. Its reverse entry may be absent
+    // if the second allocation failed, and nextId_ may not have advanced yet.
+    while (storedStrings_.size() > checkpoint.storedStrings) {
+        auto const& string = storedStrings_.back();
+        auto name = idForString_.find(string);
+        if (name != idForString_.end() && name->first.data() == string.data()) {
+            auto id = stringForId_.find(name->second);
+            // Match the owned view, not just the numeric ID: pre-existing
+            // static mappings must survive even if their ID lies above nextId_.
+            if (id != stringForId_.end() && id->second.data() == string.data()) {
+                stringForId_.erase(id);
+            }
+            idForString_.erase(name);
+        }
+        storedStrings_.pop_back();
+    }
+    nextId_ = checkpoint.nextId;
+    byteSize_ = checkpoint.byteSize;
+    // Hit/miss counters remain observational statistics, not dictionary state.
+}
+
+StringId StringPool::get(std::string_view const& str) const
 {
     std::shared_lock stringStoreReadAccess_(stringStoreMutex_);
     auto it = idForString_.find(str);
@@ -167,6 +234,18 @@ StringId StringPool::get(std::string_view const& str)
         return it->second;
     }
     return StringPool::Empty;
+}
+
+void StringPool::freeze()
+{
+    std::unique_lock lock(stringStoreMutex_);
+    frozen_ = true;
+}
+
+auto StringPool::frozen() const -> bool
+{
+    std::shared_lock lock(stringStoreMutex_);
+    return frozen_;
 }
 
 std::optional<std::string_view> StringPool::resolve(const StringId& id) const
@@ -180,7 +259,7 @@ std::optional<std::string_view> StringPool::resolve(const StringId& id) const
 
 StringId StringPool::highest() const
 {
-    return nextId_ - 1;
+    return static_cast<StringId>(nextId_ - 1);
 }
 
 size_t StringPool::size() const
@@ -238,6 +317,8 @@ MemoryUsage StringPool::memoryUsage() const
 void StringPool::addStaticKey(StringId id, const std::string& value)
 {
     std::unique_lock lock(stringStoreMutex_);
+    if (frozen_)
+        throw std::logic_error("Cannot add a static key to a frozen StringPool");
     auto& storedString = storedStrings_.emplace_back(value);
     idForString_.emplace(storedString, id);
     stringForId_.emplace(id, storedString);
@@ -249,20 +330,24 @@ auto StringPool::write(std::ostream& outputStream, const StringId offset) const 
     bitsery::Serializer<bitsery::OutputStreamAdapter> s(outputStream);
 
     // Calculate how many strings will be sent
-    StringId sendStrCount = 0;
+    std::uint32_t sendStrCount = 0;
     const auto high = highest();
-    for (auto strId = offset; strId <= high; ++strId) {
-        auto it = stringForId_.find(strId);
+    for (std::uint32_t strId = offset; strId <= high; ++strId) {
+        auto it = stringForId_.find(static_cast<StringId>(strId));
         if (it != stringForId_.end())
             ++sendStrCount;
     }
-    s.value2b(sendStrCount);
+    if (sendStrCount > std::numeric_limits<StringId>::max())
+        return tl::unexpected<Error>(Error::StringPoolOverflow, "StringPool stream count overflow");
+    auto count = static_cast<StringId>(sendStrCount);
+    s.value2b(count);
 
     // Send the pool's key-string pairs
-    for (auto strId = offset; strId <= high; ++strId) {
-        auto it = stringForId_.find(strId);
+    for (std::uint32_t strId = offset; strId <= high; ++strId) {
+        auto id = static_cast<StringId>(strId);
+        auto it = stringForId_.find(id);
         if (it != stringForId_.end()) {
-            s.value2b(strId);
+            s.value2b(id);
             // Don't support strings longer than 64kB.
             s.text1b(it->second, std::numeric_limits<uint16_t>::max());
         }
@@ -278,6 +363,8 @@ auto StringPool::read(const std::vector<uint8_t>& input, size_t offset) -> tl::e
     }
 
     std::unique_lock stringStoreWriteAccess_(stringStoreMutex_);
+    if (frozen_)
+        return tl::unexpected(Error{Error::RuntimeError, "Cannot read into a frozen StringPool"});
     using Adapter = bitsery::InputBufferAdapter<std::vector<uint8_t>>;
     bitsery::Deserializer<Adapter> s(Adapter(input.begin() + static_cast<std::ptrdiff_t>(offset), input.end()));
 
@@ -285,30 +372,32 @@ auto StringPool::read(const std::vector<uint8_t>& input, size_t offset) -> tl::e
     StringId rcvStringCount{};
     s.value2b(rcvStringCount);
 
-    // Read strings
+    // Validate the complete update before publishing any new IDs. A truncated
+    // transport frame must not advance the offset acknowledged on reconnect.
+    std::vector<std::pair<StringId, std::string>> entries;
+    entries.reserve(rcvStringCount);
     for (auto i = 0; i < rcvStringCount; ++i) {
-        // Read string key
-        StringId stringId{};
+        auto& [stringId, value] = entries.emplace_back();
         s.value2b(stringId);
+        s.text1b(value, std::numeric_limits<uint16_t>::max());
+        if (s.adapter().error() != bitsery::ReaderError::NoError)
+            break;
+    }
+    if (s.adapter().error() != bitsery::ReaderError::NoError) {
+        return tl::unexpected<Error>(
+            Error::EncodeDecodeError,
+            fmt::format("Failed to read StringPool: Error {}",
+                        static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
+    }
 
-        // Don't support strings longer than 64kB.
-        auto& stringValue = storedStrings_.emplace_back();
-        s.text1b(stringValue, std::numeric_limits<uint16_t>::max());
-
-        // Insert string into the pool
+    for (auto& [stringId, value] : entries) {
+        auto& stringValue = storedStrings_.emplace_back(std::move(value));
         auto [it, insertionTookPlace] = idForString_.try_emplace(stringValue, stringId);
         if (insertionTookPlace) {
             stringForId_.try_emplace(stringId, stringValue);
             byteSize_ += static_cast<int64_t>(stringValue.size());
-            nextId_ = std::max<StringId>(nextId_, stringId + 1);
+            nextId_ = std::max(nextId_, std::uint32_t(stringId) + 1);
         }
-    }
-
-    if (s.adapter().error() != bitsery::ReaderError::NoError) {
-      return tl::unexpected<Error>(
-          Error::EncodeDecodeError,
-          fmt::format("Failed to read StringPool: Error {}",
-                      static_cast<std::underlying_type_t<bitsery::ReaderError>>(s.adapter().error())));
     }
 
     return {};

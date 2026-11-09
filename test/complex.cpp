@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <limits>
 
 #include "simfil/model/model.h"
 #include "simfil/model/string-pool.h"
@@ -140,6 +141,69 @@ TEST_CASE("Tagged bytes JSON", "[bytes.serialization]") {
     auto invalidHex = json::parse(R"([{"raw":{"_bytes":true,"hex":"abc"}}])");
     REQUIRE_FALSE(invalidHex);
     REQUIRE(invalidHex.error().message == "Invalid tagged bytes object: hex decode failed");
+}
+
+TEST_CASE("Checked model creation returns errors without changing the pool", "[model][limits]")
+{
+    auto model = std::make_shared<ModelPool>();
+    REQUIRE_FALSE(model->tryNewObject(std::numeric_limits<size_t>::max(), true));
+    REQUIRE_FALSE(model->tryNewArray(std::numeric_limits<size_t>::max(), true));
+    auto object = model->tryNewObject(1, true);
+    auto array = model->tryNewArray(1, true);
+    REQUIRE(object);
+    REQUIRE(array);
+    REQUIRE(object.value()->size() == 0);
+    REQUIRE(array.value()->size() == 0);
+    auto integer = model->tryNewValue(int64_t{INT64_MAX});
+    auto small = model->tryNewValue(int64_t{-7});
+    auto number = model->tryNewValue(1.5);
+    auto string = model->tryNewValue(std::string_view("value"));
+    auto bytes = model->tryNewValue(ByteArray{"bytes"});
+    REQUIRE(integer);
+    REQUIRE(small);
+    REQUIRE(number);
+    REQUIRE(string);
+    REQUIRE(bytes);
+    REQUIRE(integer.value()->value() == ScalarValueType(int64_t{INT64_MAX}));
+    REQUIRE(small.value()->value() == ScalarValueType(int64_t{-7}));
+    REQUIRE(number.value()->value() == ScalarValueType(1.5));
+    REQUIRE(string.value()->toJson() == "value");
+    REQUIRE(object.value()->addField("value", *integer));
+    array.value()->append(*number);
+    REQUIRE(object.value()->size() == 1);
+    REQUIRE(array.value()->size() == 1);
+}
+
+TEST_CASE("Model string growth preserves source views and mixed bytes", "[model][model.growth]")
+{
+    auto model = std::make_shared<ModelPool>();
+    std::string const text(65536, 'x');
+    auto original = model->newValue(std::string_view(text));
+    auto view = std::get<std::string_view>(original->value());
+    auto copy = model->tryNewValue(view);
+    REQUIRE(copy);
+    CHECK(std::get<std::string_view>((*copy)->value()) == text);
+
+    ByteArray const bytes{std::string(262144, '\0')};
+    auto binary = model->tryNewValue(bytes);
+    REQUIRE(binary);
+    CHECK(std::get<ByteArray>((*binary)->value()) == bytes);
+    CHECK(std::get<std::string_view>(original->value()) == text);
+    CHECK(std::get<std::string_view>((*copy)->value()) == text);
+}
+
+TEST_CASE("Multimap ingestion reserves the expanded member count", "[json.serialization][limits]")
+{
+    auto model = std::make_shared<ModelPool>();
+    auto source = nlohmann::json::parse(R"({"_multimap":true,"key":[1,2,3,4,5],"empty":[]})");
+    auto node = json::buildModelNode(source, *model);
+    REQUIRE(node);
+    REQUIRE(node.value()->size() == 5);
+    for (size_t i = 0; i < 5; ++i)
+        REQUIRE(node.value()->at(i)->value() == ScalarValueType(int64_t(i + 1)));
+    auto invalid = json::buildModelNode(nlohmann::json{{"_multimap", true}, {"key", 5}}, *model);
+    REQUIRE_FALSE(invalid);
+    REQUIRE(invalid.error().type == Error::ParserError);
 }
 
 TEST_CASE("Serialization", "[complex.serialization]") {
