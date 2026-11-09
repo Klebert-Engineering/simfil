@@ -433,6 +433,103 @@ TEST_CASE("Schema references expand recursive wildcard paths with a static suffi
     }
 }
 
+TEST_CASE("String equality references distinguish possible search owners", "[model.schema]")
+{
+    auto graph = std::make_shared<SchemaPool>();
+    auto root = graph->newObjectType();
+    auto number = graph->newScalarType(SchemaType::Kind::Int);
+    auto text = graph->newScalarType(SchemaType::Kind::String);
+    auto sign = graph->newEnumType();
+    sign.addSymbol("SPEED_LIMIT");
+    auto other = graph->newEnumType();
+    other.addSymbol("ANIMALS");
+    auto choice = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    choice.addAlternative(number);
+    choice.addAlternative(other);
+    auto possibleChoice = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    possibleChoice.addAlternative(choice);
+    possibleChoice.addAlternative(sign);
+    auto recursive = graph->newCompositionType(SchemaType::Composition::AnyOf);
+    recursive.addAlternative(recursive);
+    for (auto const& [name, type] : std::vector<std::pair<std::string, SchemaType>>{
+            {"number", number}, {"other", other}, {"choice", choice},
+            {"sign", sign}, {"text", text}, {"possibleChoice", possibleChoice},
+            {"unknown", {}}, {"recursive", recursive}}) {
+        auto owner = graph->newObjectType();
+        owner.addField("value", type);
+        root.addField(name, owner);
+    }
+    graph->finalize();
+    auto strings = std::make_shared<StringPool>(graph->dictionary());
+    Environment env(strings);
+    env.setSchema(root);
+
+    for (auto query : {"**.value == \"SPEED_LIMIT\"", "\"SPEED_LIMIT\" == **.value",
+                       "(**.value == \"SPEED_LIMIT\") or false",
+                       "any(**.value == \"SPEED_LIMIT\")"}) {
+        CAPTURE(query);
+        auto ast = compile(env, query, {.any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = root});
+        REQUIRE(ast);
+        auto refs = referencedSchemaPaths(env, **ast, root);
+        REQUIRE(refs);
+        REQUIRE(refs->paths.size() == 8);
+        for (auto const& reference : refs->paths) {
+            auto owner = graph->dictionary().resolve(reference.path.front().field).value();
+            CAPTURE(owner);
+            CHECK(reference.predicateCanMatch ==
+                  (owner != "number" && owner != "other" && owner != "choice"));
+            CHECK(reference.viaWildcard);
+            CHECK(reference.equalsStringLiteral == "SPEED_LIMIT");
+        }
+    }
+
+    // False comparisons are relevant under negation and when used as values.
+    // Preserve their owner evidence instead of interpreting every equality as
+    // an affirmative filter. Ordinary field access also keeps every owner.
+    for (auto query : {"not (**.value == \"SPEED_LIMIT\")",
+                       "(**.value == \"SPEED_LIMIT\") == false", "**.value"}) {
+        CAPTURE(query);
+        auto ast = compile(env, query, {.any = false, .rewriteMode = RewriteMode::Schema, .rootSchema = root});
+        REQUIRE(ast);
+        auto refs = referencedSchemaPaths(env, **ast, root);
+        REQUIRE(refs);
+        CHECK(std::ranges::all_of(refs->paths, [](auto const& ref) {return ref.predicateCanMatch;}));
+    }
+}
+
+TEST_CASE("Missing members in closed alternatives do not imply unknown string values", "[model.schema]")
+{
+    auto graph = std::make_shared<SchemaPool>();
+    auto root = graph->newObjectType();
+    auto number = graph->newScalarType(SchemaType::Kind::Int);
+    auto reference = graph->newObjectType();
+    reference.addField("value", number);
+    auto closed = graph->newObjectType();
+    closed.addField("unrelated", number);
+    auto open = graph->newObjectType();
+    open.setOpen(true);
+    for (auto const& [name, alternative] : std::vector<std::pair<std::string, SchemaType>>{
+            {"closed", closed}, {"open", open}, {"unknown", {}}}) {
+        auto array = graph->newArrayType();
+        array.addElement(reference);
+        array.addElement(alternative);
+        root.addField(name, array);
+    }
+    graph->finalize();
+    auto strings = std::make_shared<StringPool>(graph->dictionary());
+    Environment env(strings);
+    auto ast = compile(env, "**.value == \"SPEED_LIMIT\"", {.any = false});
+    REQUIRE(ast);
+    auto refs = referencedSchemaPaths(env, **ast, root);
+    REQUIRE(refs);
+    REQUIRE(refs->paths.size() == 3);
+    for (auto const& referencePath : refs->paths) {
+        auto owner = graph->dictionary().resolve(referencePath.path.front().field).value();
+        CAPTURE(owner);
+        CHECK(referencePath.predicateCanMatch == (owner != "closed"));
+    }
+}
+
 TEST_CASE("Schema operand shorthand rewrites only source tokens", "[model.schema]")
 {
     auto model = json::parse(R"json(

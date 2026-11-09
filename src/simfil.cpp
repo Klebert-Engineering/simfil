@@ -643,7 +643,8 @@ static auto addReferencedPath(
     SchemaPath path,
     SourceLocation location,
     bool viaWildcard,
-    std::optional<std::string> equalsStringLiteral = std::nullopt) -> void
+    std::optional<std::string> equalsStringLiteral = std::nullopt,
+    bool predicateCanMatch = true) -> void
 {
     if (path.empty()) {
         return;
@@ -651,11 +652,82 @@ static auto addReferencedPath(
     if (std::ranges::any_of(result.paths, [&](auto const& existing) {
         return existing.path == path
             && existing.viaWildcard == viaWildcard
-            && existing.equalsStringLiteral == equalsStringLiteral;
+            && existing.equalsStringLiteral == equalsStringLiteral
+            && existing.predicateCanMatch == predicateCanMatch;
     })) {
         return;
     }
-    result.paths.push_back({std::move(path), location, viaWildcard, std::move(equalsStringLiteral)});
+    result.paths.push_back({std::move(path), location, viaWildcard,
+                            std::move(equalsStringLiteral), predicateCanMatch});
+}
+
+/**
+ * Test only proven incompatibility with a string equality. A recursive `value`
+ * selector can reach numeric attributes and unrelated enums as well as the
+ * requested symbol. Those paths remain references, but do not identify useful
+ * owners of a positive search predicate. Open strings and incomplete metadata
+ * remain possible; named numeric values do not make an exhaustive enum.
+ */
+static auto schemaPathCanEqualString(
+    SchemaType root, const SchemaPath& path, std::string_view literal) -> bool
+{
+    if (!root.finalized())
+        return true;
+    std::vector<TypeId> types{root.id()};
+    std::size_t visits = 0;
+    for (auto const& segment : path) {
+        std::vector<TypeId> next;
+        for (auto id : types) {
+            if (id == NoTypeId || ++visits > 10000)
+                return true;
+            auto type = root.pool()->schemaType(id);
+            auto children = segment.kind == SchemaPathSegment::Kind::Field
+                ? type.fieldTypes(segment.field) : type.itemTypes();
+            // On a published graph, unknown/open targets are explicit zero
+            // entries. An empty lookup means this alternative has no such
+            // member, not that the member could have an arbitrary type. A
+            // heterogeneous reference array must not turn its numeric IDs
+            // into possible string matches because another variant lacks one.
+            next.insert(next.end(), children.begin(), children.end());
+        }
+        std::ranges::sort(next);
+        next.erase(std::unique(next.begin(), next.end()), next.end());
+        types = std::move(next);
+    }
+
+    // Composition alternatives describe the same value position. Any possible
+    // string branch is sufficient; cycles or unknown alternatives cannot prove
+    // absence. Intersections are deliberately conservative here as well.
+    std::vector<TypeId> active, impossible;
+    auto canMatch = [&](auto&& self, TypeId id) -> bool {
+        if (id == NoTypeId || ++visits > 10000 || active.size() >= 128)
+            return true;
+        if (std::ranges::find(active, id) != active.end())
+            return true;
+        if (std::ranges::find(impossible, id) != impossible.end())
+            return false;
+        auto type = root.pool()->schemaType(id);
+        if (!type)
+            return true;
+        if (!type.hasAffinity(ValueType::String) &&
+            !type.hasAffinity(ValueType::TransientObject))
+            return false;
+        if (!type.directEnumSymbols().empty() || type.enumValueCount()) {
+            return type.hasDirectEnumSymbol(literal);
+        }
+        auto alternatives = type.alternatives();
+        if (alternatives.empty())
+            return true;
+        active.push_back(id);
+        auto possible = std::ranges::any_of(alternatives,
+            [&](auto child) { return self(self, child); });
+        active.pop_back();
+        if (possible)
+            return true;
+        impossible.push_back(id);
+        return false;
+    };
+    return std::ranges::any_of(types, [&](auto id) { return canMatch(canMatch, id); });
 }
 
 /** Walk a concrete path, retaining canonical aliases and avoiding whole-graph
@@ -757,7 +829,8 @@ static auto collectReferencedSchemaPaths(
     Environment& env,
     const Expr& expr,
     SchemaType rootSchema,
-    ReferencedSchemaPaths& result) -> expected<void, Error>
+    ReferencedSchemaPaths& result,
+    bool positivePredicate = true) -> expected<void, Error>
 {
     if (dynamic_cast<const SchemaEnumExpr*>(&expr)) {
         // A recursive type predicate cannot be summarized by a finite path set.
@@ -782,9 +855,11 @@ static auto collectReferencedSchemaPaths(
             auto canonical = recursive
                 ? std::nullopt : canonicalReferencedPath(rootSchema, pathValue);
             if (canonical) {
+                auto canMatch = !positivePredicate ||
+                    schemaPathCanEqualString(rootSchema, *canonical, *literal);
                 addReferencedPath(result, std::move(*canonical),
                                   maybePath.sourceLocation(), false,
-                                  std::move(*literal));
+                                  std::move(*literal), canMatch);
             } else {
                 bool complete = true;
                 auto expandedPaths =
@@ -796,8 +871,10 @@ static auto collectReferencedSchemaPaths(
                     // A comparison preserves its operand's recursive scope.
                     // Consumers may use these paths for styling, but must not
                     // mistake them for explicit root/owner restrictions.
+                    auto canMatch = !positivePredicate ||
+                        schemaPathCanEqualString(rootSchema, expandedPath, *literal);
                     addReferencedPath(result, std::move(expandedPath),
-                                      maybePath.sourceLocation(), recursive, *literal);
+                                      maybePath.sourceLocation(), recursive, *literal, canMatch);
                 }
             }
             return true;
@@ -883,8 +960,15 @@ static auto collectReferencedSchemaPaths(
         }
     }
 
+    // Only boolean conjunction/disjunction and any(...) preserve the need for
+    // a positive match. In `not(value == "X")`, a proven nonmatch is relevant;
+    // arbitrary functions may also inspect or invert the comparison's value.
+    auto childrenArePredicates = positivePredicate &&
+        (dynamic_cast<const AndExpr*>(&expr) || dynamic_cast<const OrExpr*>(&expr) ||
+         dynamic_cast<const AnyExpr*>(&expr));
     for (auto i = 0u; i < expr.numChildren(); ++i) {
-        auto childResult = collectReferencedSchemaPaths(env, *expr.childAt(i), rootSchema, result);
+        auto childResult = collectReferencedSchemaPaths(
+            env, *expr.childAt(i), rootSchema, result, childrenArePredicates);
         TRY_EXPECTED(childResult);
     }
     return {};

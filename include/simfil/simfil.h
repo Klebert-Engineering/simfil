@@ -94,6 +94,13 @@ struct ReferencedSchemaPath
     SourceLocation location;
     bool viaWildcard = false;
     std::optional<std::string> equalsStringLiteral;
+    /**
+     * False only when this positive string equality cannot match the declared
+     * value type. Keep the reference for diagnostics, but consumers selecting
+     * search owners/styles can ignore it. Unknown types, negated comparisons
+     * and comparisons used as values remain possible; this is not a query rewrite.
+     */
+    bool predicateCanMatch = true;
 };
 
 /**

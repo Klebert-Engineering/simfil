@@ -258,6 +258,14 @@ well as canonical names, including aliases reachable through descendants.
 `hasUnresolvedAccess` when enumeration is incomplete; a partial path list is
 not an exhaustive ownership or scope proof.
 
+References also carry `predicateCanMatch`. For a positive string equality such
+as `**.value == "SPEED_LIMIT"`, it is false when the referenced value is provably
+numeric or a closed enum without that label. Search/style discovery can ignore
+these owners without changing the user's query. The reference remains available
+for diagnostics. Free strings, unknown metadata and recursive compositions stay
+conservative, as do comparisons under negation or used as values rather than
+positive predicates.
+
 `hasDirectEnumSymbol(text)` checks the canonical dictionary by spelling even when
 that symbol does not exist in the runtime dictionary. Recursive/open schema enum
 predicates never intern datasource metadata or reuse compilation-pool IDs in
