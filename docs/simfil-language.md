@@ -30,7 +30,7 @@ node, the right one (`b`), resulting in the value of node “b” of node “a�
 A wildcard expression `a.**.b` does the same but `b` must not be a direct sub-node
 of `a` but can occur anywhere bellow `a`. Note that this can match multiple nodes!
 The result of wildcard expressions depends on the current execution mode they are
-executed under (see [Modes](#Modes) ).
+executed under (see [Modes][simfil-modes]).
 
 The path `_` (underscore) represents the current node.
 The path `*` (asterisk) represents any direct child node.
@@ -230,7 +230,7 @@ distinguishes missing/`null` numeric speed from an explicit numeric zero, while 
 also matches an explicit `false` flag. Use an explicit `null` comparison when `false` must
 count as present data. Direct missing-field access returns `null`.
 
-Functions can return values of types other than the ones mentioned. See [Functions](#Functions) for details.
+Functions can return values of types other than the ones mentioned. See [Functions][simfil-functions] for details.
 
 ### Named Values And Bitmasks
 
@@ -284,7 +284,7 @@ keywords: [operators, comparisons, length, arithmetic, boolean]
 | `. b` or `a . b`    | Direct field access; returns the value of field `b` or `null`.                                          |
 | `a as b`            | Cast a to type b (one of `bool`, `int`, `float`, `string` or `bytes`).                                  |
 | `a ?`               | Get boolean value of `a` (see ##Types).                                                                 |
-| `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions](#Functions) for example)        |
+| `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions][simfil-functions] for example)        |
 | `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"`, `"string"` or `"bytes"`). |
 | `not a`             | Boolean not.                                                                                            |
 | `# a`               | Returns the length of a string, bytes, or array value.                                                  |
@@ -501,3 +501,6 @@ a.b != re("prefix.*")
 ```
 
 <!-- --8<-- [end:functions] -->
+
+[simfil-modes]: #modes
+[simfil-functions]: #functions
