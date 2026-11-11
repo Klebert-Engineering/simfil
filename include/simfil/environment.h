@@ -22,12 +22,12 @@ namespace simfil
 namespace detail
 {
 class ExpressionRuntime;
+class EvaluationControl;
 }
 
 class Expr;
 class Function;
 class Diagnostics;
-class Schema;
 struct ResultFn;
 struct Debug;
 
@@ -64,10 +64,15 @@ struct Trace
     }
 };
 
+/**
+ * Query dictionary, registered functions/constants and execution diagnostics.
+ * Configure registrations before evaluation and keep function objects alive while
+ * they are registered. warn()/trace() synchronize their own collections; the
+ * public configuration maps and schema binding require caller synchronization.
+ */
 struct Environment
 {
 public:
-    using QuerySchemaCallback = std::function<const Schema*(SchemaId)>;
 
     /**
      * Construct a SIMFIL execution environment with a string cache,
@@ -103,17 +108,20 @@ public:
      * Log a trace call.
      *
      * @param name  Trace identifier
-     * @param fn    IterCallback called thread-safe
+     * @param fn    Callback invoked while holding traceMtx. It must not call trace()
+     *              recursively or retain the mutable Trace reference after returning.
      */
     auto trace(const std::string& name, const std::function<void(Trace&)>& fn) -> void;
 
     /**
-     * Query function by name.
+     * Look up a case-insensitive function name, returning nullptr when unregistered.
+     * The returned function is borrowed from the caller-owned registration.
      */
     auto findFunction(const std::string& name) const -> const Function*;
 
     /**
-     * Query constant by name.
+     * Look up a case-insensitive constant name, returning nullptr when absent.
+     * The pointer borrows storage in constants and must not outlive that entry.
      */
     auto findConstant(const std::string& name) const -> const Value*;
 
@@ -124,11 +132,11 @@ public:
     [[nodiscard]]
     auto strings() const -> std::shared_ptr<StringPool>;
 
-    /**
-     * Query an object schema by its schema id.
-     * Returns nullptr if no callback is configured or the schema is unknown.
-     */
-    auto querySchema(SchemaId schemaId) const -> const Schema*;
+    /** Retain a published default root without mutating the model or query dictionary. */
+    void setSchema(SchemaType root);
+
+    /** Borrow the configured root; callers pass it explicitly to schema-aware compilation. */
+    auto schema() const noexcept -> SchemaType { return rootSchema_.borrow(); }
 
 public:
     std::unique_ptr<std::mutex> warnMtx;
@@ -143,7 +151,10 @@ public:
     /* constant ident -> value */
     std::map<std::string, Value, CaseInsensitiveCompare> constants;
 
-    QuerySchemaCallback querySchemaCallback;
+private:
+    SchemaType rootSchema_;
+
+public:
 
     /**
      * Enable cached schema-guided wildcard field traversal plans.
@@ -159,6 +170,10 @@ public:
 
 /**
  * Evaluation context.
+ *
+ * Non-owning state passed through a synchronous expression call. Copies keep the
+ * same environment, diagnostics and request budget, while nesting depth and phase
+ * are local to the copy. Owners must remain alive until evaluation returns.
  */
 struct Context
 {
@@ -174,6 +189,9 @@ struct Context
      */
     detail::ExpressionRuntime* runtime = nullptr;
 
+    /** Optional request-local cooperative budget; never retained by an expression binding. */
+    detail::EvaluationControl* evaluation = nullptr;
+
     /* Current phase under which the evaluation
      * takes place. */
     enum Phase
@@ -183,6 +201,9 @@ struct Context
     };
     Phase phase = Evaluation;
 
+    // Keep nesting beside the phase tag to avoid padding in frequently copied contexts.
+    std::uint32_t evaluationDepth = 0;
+
     /* Timeout after which the evaluation should be canceled. */
     std::optional<std::chrono::time_point<std::chrono::steady_clock>> timeout;
 
@@ -191,10 +212,19 @@ struct Context
 
     auto canceled() const -> bool
     {
+        if (evaluation && !evaluationRunning())
+            return true;
         if (phase != Phase::Compilation && timeout)
             return *timeout < std::chrono::steady_clock::now();
         return false;
     }
+
+    /** Charge cooperative work; custom functions should call this in long non-emitting loops. */
+    auto step(std::size_t depth = 0) const -> bool;
+
+private:
+    /** Keep the execution-budget implementation out of public model headers. */
+    auto evaluationRunning() const -> bool;
 };
 
 /**
@@ -214,7 +244,7 @@ struct CompletionOptions
     // Show hints about completing certain queries to a wildcard query.
     bool showWildcardHints = true;
 
-    // Limit of candidates.
+    // Candidate cap; zero selects the internal fallback of 1000, not an unlimited result.
     size_t limit = 15;
 
     // Timeout in milliseconds, 0 means no timeout.
@@ -225,6 +255,12 @@ struct CompletionOptions
 
     // Sort candidates
     bool sorted = true;
+
+    /** Bound schema-only traversal even when timeoutMs is disabled. */
+    size_t maxSchemaVisits = 10000;
+
+    /** Bound AST inference recursion; graph cycles are deduplicated by schema ID. */
+    size_t maxSchemaDepth = 128;
 };
 
 /**

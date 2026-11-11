@@ -1,3 +1,4 @@
+#include "simfil/model/schema-pool.h"
 // Copyright (c) Navigation Data Standard e.V. - See "LICENSE" file.
 
 #include "simfil/model/json.h"
@@ -75,7 +76,7 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
     case json::value_t::boolean:
         return model.newSmallValue(input.get<bool>());
     case json::value_t::number_float:
-        return model.newValue(input.get<double>());
+        return model.tryNewValue(input.get<double>());
     case json::value_t::number_unsigned:
         if (input.get<uint64_t>() > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
             // simfil stores JSON integers as signed int64_t, so reject lossy unsigned values.
@@ -83,9 +84,9 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
                 Error::ParserError,
                 "Unsigned integer does not fit into simfil's signed JSON number storage");
         }
-        return model.newValue(static_cast<int64_t>(input.get<uint64_t>()));
+        return model.tryNewValue(static_cast<int64_t>(input.get<uint64_t>()));
     case json::value_t::number_integer:
-        return model.newValue(input.get<int64_t>());
+        return model.tryNewValue(input.get<int64_t>());
     case json::value_t::string:
         {
             // JSON strings participate in pooled-string facilities such as
@@ -94,13 +95,31 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
             if (!stringId) {
                 return tl::unexpected<Error>(stringId.error());
             }
-            return model.newValue(static_cast<StringId>(*stringId));
+            return model.tryNewValue(static_cast<StringId>(*stringId));
         }
     default:
         break;
     }
 
     if (input.is_object()) {
+        if (input.size() == 4 && input.contains("_bitmask") && input["_bitmask"] == true &&
+            input.contains("bits") && input.contains("schema") && input.contains("typeId")) {
+            // Only the complete reserved shape is a tag; application objects with extra keys remain objects.
+            if (!input["bits"].is_string() || !input["schema"].is_string() || !input["typeId"].is_number_integer() ||
+                input["typeId"] < 1 || input["typeId"] > std::numeric_limits<TypeId>::max())
+                return tl::unexpected(Error{Error::ParserError, "Invalid tagged bitmask fields"});
+            auto bits = Bitmask::parseBits(input["bits"].get_ref<const std::string&>());
+            TRY_EXPECTED(bits);
+            auto binding = model.schemaPool(input["schema"].get_ref<const std::string&>());
+            if (!binding)
+                return tl::unexpected(Error{Error::ParserError, "Tagged bitmask requires its exact schema graph"});
+            try {
+                return model.newBitmask(*bits, binding->schemaType(input["typeId"].get<TypeId>()));
+            }
+            catch (std::exception const& error) {
+                return tl::unexpected(Error{Error::ParserError, error.what()});
+            }
+        }
         if (auto it = input.find("_bytes"); it != input.end() && it->is_boolean() && it->get<bool>()) {
             // `_bytes` is the tagged JSON form emitted by ModelNode::toJson() for byte arrays.
             auto hex = input.find("hex");
@@ -117,12 +136,28 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
                     "Invalid tagged bytes object: hex decode failed");
             }
 
-            return model.newValue(std::move(*decoded));
+            return model.tryNewValue(std::move(*decoded));
         }
 
-        auto object = model.newObject(input.size(), true);
         auto multimap = input.find("_multimap");
-        if (multimap != input.end() && multimap->is_boolean() && multimap->get<bool>()) {
+        bool const isMultimap = multimap != input.end() && multimap->is_boolean() && multimap->get<bool>();
+        size_t capacity = isMultimap ? 0 : input.size();
+        if (isMultimap) {
+            for (auto const& [key, values] : input.items()) {
+                if (key == "_multimap") continue;
+                if (!values.is_array())
+                    return tl::unexpected<Error>(Error::ParserError,
+                        "Invalid multimap object: expected array values for every field");
+                if (values.size() > std::numeric_limits<size_t>::max() - capacity)
+                    return tl::unexpected<Error>(Error::IndexOutOfRange,
+                        "Multimap capacity exceeds model storage representation");
+                capacity += values.size();
+            }
+        }
+        auto created = model.tryNewObject(capacity, true);
+        TRY_EXPECTED(created);
+        auto object = *created;
+        if (isMultimap) {
             // Repeated object keys are reconstructed only for explicitly tagged multimaps.
             auto result = buildMultimapObject(input, object, model);
             TRY_EXPECTED(result);
@@ -137,7 +172,9 @@ auto buildModelNode(const json& input, ModelPool& model) -> tl::expected<ModelNo
     }
 
     if (input.is_array()) {
-        auto array = model.newArray(input.size(), true);
+        auto created = model.tryNewArray(input.size(), true);
+        TRY_EXPECTED(created);
+        auto array = *created;
         for (const auto& value : input) {
             auto child = buildModelNode(value, model);
             TRY_EXPECTED(child);

@@ -23,6 +23,22 @@ namespace
 class AliasedContainerPool : public ModelPool
 {
 public:
+    /** Allocate shared arena storage for custom columns without a core schema sidecar. */
+    ModelNode::Ptr newArenaContainer(bool object, bool singleton, ModelNodeAddress child)
+    {
+        ArrayIndex members;
+        if (object) {
+            members = objectMemberStorage().new_array(1, singleton);
+            objectMemberStorage().push_back(members, {strings()->emplace("member").value(), child});
+        }
+        else {
+            members = arrayMemberStorage().new_array(1, singleton);
+            arrayMemberStorage().push_back(members, child);
+        }
+        return ModelNode::Ptr::make(shared_from_this(),
+            ModelNodeAddress{uint8_t(FirstCustomColumnId + (object ? 1 : 2)), members});
+    }
+
     /** Register a custom root whose address deliberately exceeds the core schema columns. */
     void addAlias(ModelNode::Ptr const& target)
     {
@@ -35,11 +51,54 @@ public:
     {
         if (node.addr().column() == FirstCustomColumnId)
             return ModelPool::resolve(*ModelNode::Ptr::make(shared_from_this(), target_), cb);
+        if (node.addr().column() == FirstCustomColumnId + 1 || node.addr().column() == FirstCustomColumnId + 2) {
+            auto column = node.addr().column() == FirstCustomColumnId + 1 ? Objects : Arrays;
+            return ModelPool::resolve(*ModelNode::Ptr::make(shared_from_this(),
+                ModelNodeAddress{column, node.addr().index()}), cb);
+        }
         return ModelPool::resolve(node, cb);
     }
 
 private:
     ModelNodeAddress target_;
+};
+
+/** Exercise subscript bounds against a custom container whose accessor rejects invalid indices. */
+class CheckedArrayPool : public ModelPool
+{
+public:
+    /** Resolve the test column; its address index is the array length, not a storage offset. */
+    tl::expected<void, Error> resolve(ModelNode const& node, ResolveFn const& cb) const override
+    {
+        if (node.addr().column() == FirstCustomColumnId) {
+            cb(*model_ptr<CheckedArray>::make(node));
+            return {};
+        }
+        return ModelPool::resolve(node, cb);
+    }
+
+private:
+    /** An array with inline integer values and throwing bounds checks, like external adapters. */
+    class CheckedArray : public ModelNodeBase
+    {
+    public:
+        /** Bind the generic address to the strict array protocol. */
+        CheckedArray(ModelNode const& node, detail::mp_key key) : ModelNodeBase(node, key) {}
+
+        /** Advertise a collection rather than scalar subscript semantics. */
+        ValueType type() const override { return ValueType::Array; }
+
+        /** Allow empty and populated arrays without allocating element storage. */
+        uint32_t size() const override { return addr_.index(); }
+
+        /** Make invalid delegation observable instead of silently returning a null node. */
+        Ptr at(int64_t index) const override
+        {
+            if (index < 0 || static_cast<uint64_t>(index) >= size())
+                throw std::out_of_range("CheckedArray index");
+            return Ptr::make(model_, ModelNodeAddress{Model::UInt16, static_cast<uint32_t>(10 + index)});
+        }
+    };
 };
 
 class EnvironmentValueFn final : public Function
@@ -269,15 +328,18 @@ TEST_CASE(
     const auto results = RunConcurrentWorkers<8>(
         [ast](std::size_t worker)
         {
-            auto model = simfil::json::parse(
-                fmt::format(R"({{"padding{}": 0, "target": {}}})", worker, worker));
-            if (!model)
+            // Keep concurrent evaluation independent of localeconv() in JSON fixture parsing.
+            auto model = std::make_shared<ModelPool>();
+            auto root = model->newObject();
+            if (!root->addField(fmt::format("padding{}", worker), int64_t{0}) ||
+                !root->addField("target", static_cast<int64_t>(worker)))
                 return false;
+            model->addRoot(root);
 
-            Environment env(model.value()->strings());
+            Environment env(model->strings());
             BoundExpression expression(ast, env);
             for (auto iteration = 0; iteration < 100; ++iteration) {
-                auto result = expression.eval(**model.value()->root(0));
+                auto result = expression.eval(*root);
                 if (!result || result->size() != 1 ||
                     result->front().toString() != std::to_string(worker))
                     return false;
@@ -680,6 +742,54 @@ TEST_CASE("Array Access", "[yaml.array-access]") {
     REQUIRE_RESULT("c.* != 'a'",             "false|true|true");
 }
 
+TEST_CASE("Subscripts never delegate invalid indices to custom arrays", "[yaml.array-access]")
+{
+    auto model = std::make_shared<CheckedArrayPool>();
+    Environment env(model->strings());
+    for (uint32_t size : {0, 2}) {
+        auto root = ModelNode::Ptr::make(model, ModelNodeAddress{ModelPool::FirstCustomColumnId, size});
+        REQUIRE(root->size() == size);
+        REQUIRE_THROWS_AS(root->at(-1), std::out_of_range);
+        REQUIRE_THROWS_AS(root->at(size), std::out_of_range);
+
+        for (auto query : {"_[-1]", "_[-9223372036854775807]", "_[2]", "_[2147483648]", "_[9223372036854775807]"}) {
+            INFO(query);
+            auto ast = compile(env, query, false);
+            REQUIRE(ast);
+            auto values = eval(env, **ast, *root, nullptr);
+            REQUIRE(values);
+            REQUIRE(values->size() == 1);
+            CHECK(values->front().isa(ValueType::Null));
+
+            // Streaming evaluation must also stay out of the throwing accessor.
+            size_t emitted = 0;
+            auto result = eval(env, **ast, *root, LambdaResultFn([&](Context, const Value& value) {
+                ++emitted;
+                CHECK(value.isa(ValueType::Null));
+                return Result::Continue;
+            }));
+            REQUIRE(result);
+            CHECK(result->reason == EvaluationSummary::Reason::Complete);
+            CHECK(emitted == 1);
+        }
+
+        // An invalid index must not stop the following valid indices in the same stream.
+        auto ast = compile(env, "_[arr(-1, 0, 2, 1)]", false);
+        REQUIRE(ast);
+        auto values = eval(env, **ast, *root, nullptr);
+        REQUIRE(values);
+        if (size == 0) {
+            REQUIRE(values->size() == 1);
+            CHECK(values->front().isa(ValueType::Null));
+        }
+        else {
+            REQUIRE(values->size() == 2);
+            CHECK(values->at(0).as<ValueType::Int>() == 10);
+            CHECK(values->at(1).as<ValueType::Int>() == 11);
+        }
+    }
+}
+
 TEST_CASE("Single Values", "[yaml.single-values]") {
 
     auto json = R"({"__long__name__":true,"a":1,"abc def":true,"b":2,"c":["a","b","c"],"d":[0,1,2],"geoLineString":{"geometry":{"coordinates":[[1,2],[3,4]],"type":"LineString"}},"geoPoint":{"geometry":{"coordinates":[1,2],"type":"Point"}},"geoPolygon":{"geometry":{"coordinates":[[[1,2],[3,4],[5,6]]],"type":"Polygon"}},"number":123,"string":"TEXT","sub":{"a":"sub a","b":"sub b","sub":{"a":"sub sub a","b":"sub sub b"}}})";
@@ -872,6 +982,85 @@ TEST_CASE("Custom containers do not use core schema indices", "[model.validation
     // Accepting the custom root must not suppress validation of its ordinary children.
     object->addField("bad", ModelNode::Ptr::make(pool, ModelNodeAddress{ModelPool::Objects, 666}));
     REQUIRE_FALSE(pool->validate());
+}
+
+TEST_CASE("Custom columns may own shared arena slots without core schemas", "[model.validation][model.schema-value]")
+{
+    for (bool object : {false, true}) for (bool singleton : {false, true}) {
+        CAPTURE(object, singleton);
+        auto pool = std::make_shared<AliasedContainerPool>();
+        auto node = pool->newArenaContainer(object, singleton, ModelNodeAddress{Model::UInt16, 7});
+        pool->addRoot(node);
+        REQUIRE(pool->validate());
+        REQUIRE(node->size() == 1);
+        REQUIRE(node->at(0)->value() == ScalarValueType(int64_t{7}));
+
+        std::stringstream stream;
+        REQUIRE(pool->write(stream));
+        auto bytes = stream.str();
+        auto restored = std::make_shared<AliasedContainerPool>();
+        REQUIRE(restored->setStrings(pool->strings()));
+        REQUIRE(restored->read(std::vector<uint8_t>(bytes.begin(), bytes.end())));
+        REQUIRE(restored->validate());
+        REQUIRE(restored->root(0).value()->at(0)->value() == ScalarValueType(int64_t{7}));
+
+        // Reinterpreting a custom slot as a real core root still requires its schema sidecar.
+        restored->addRoot(ModelNode::Ptr::make(restored,
+            ModelNodeAddress{object ? ModelPool::Objects : ModelPool::Arrays, node->addr().index()}));
+        auto errors = restored->checkForErrors();
+        REQUIRE(std::ranges::any_of(errors, [&](auto const& error) {
+            return error.starts_with(object ? "Missing object schema index" : "Missing array schema index");
+        }));
+    }
+}
+
+TEST_CASE("Real core children still require schema sidecars", "[model.validation][model.schema-value]")
+{
+    for (bool object : {false, true}) for (bool singleton : {false, true}) {
+        CAPTURE(object, singleton);
+        auto pool = std::make_shared<AliasedContainerPool>();
+        auto raw = pool->newArenaContainer(object, singleton, ModelNodeAddress{Model::UInt16, 7});
+        auto core = ModelNode::Ptr::make(pool,
+            ModelNodeAddress{object ? ModelPool::Objects : ModelPool::Arrays, raw->addr().index()});
+        // An opposite-kind parent cannot accidentally extend the missing child's schema column.
+        if (object)
+            pool->newArray()->append(core);
+        else
+            REQUIRE(pool->newObject()->addField("child", core));
+        auto errors = pool->checkForErrors();
+        REQUIRE(std::ranges::any_of(errors, [&](auto const& error) {
+            return error.starts_with(object ? "Missing object schema index" : "Missing array schema index");
+        }));
+    }
+}
+
+TEST_CASE("Unrooted custom arena slots still validate their members", "[model.validation][model.schema-value]")
+{
+    for (bool object : {false, true}) for (bool singleton : {false, true}) {
+        for (auto child : {ModelNodeAddress{ModelPool::Objects, 666}, ModelNodeAddress{ModelPool::Arrays, 666},
+                           ModelNodeAddress{ModelPool::PooledString, 65535}}) {
+            CAPTURE(object, singleton, child.value_);
+            auto pool = std::make_shared<AliasedContainerPool>();
+            pool->newArenaContainer(object, singleton, child);
+            REQUIRE_FALSE(pool->validate());
+        }
+    }
+}
+
+TEST_CASE("Missing core schema metadata is checked before following a cycle", "[model.validation][model.schema-value]")
+{
+    for (bool object : {false, true}) for (bool singleton : {false, true}) {
+        CAPTURE(object, singleton);
+        auto pool = std::make_shared<AliasedContainerPool>();
+        auto members = singleton ? SingletonArrayHandleMask : FirstRegularArrayIndex;
+        auto node = pool->newArenaContainer(object, singleton,
+            ModelNodeAddress{object ? ModelPool::Objects : ModelPool::Arrays, members});
+        REQUIRE(node->addr().index() == members);
+        auto errors = pool->checkForErrors();
+        REQUIRE(std::ranges::any_of(errors, [&](auto const& error) {
+            return error.starts_with(object ? "Missing object schema index" : "Missing array schema index");
+        }));
+    }
 }
 
 TEST_CASE("Procedural Object Node", "[model.procedural]") {

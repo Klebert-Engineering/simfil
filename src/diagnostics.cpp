@@ -51,6 +51,7 @@ void mergeComparisonData(
     ours.falseResults += theirs.falseResults;
 }
 
+/** Merge the per-kind arrays prepared from the same AST, including unevaluated trailing entries. */
 template <typename Entry, typename MergeFn>
 void mergeIndexedData(
     std::vector<Entry>& ours,
@@ -74,6 +75,7 @@ void mergeIndexedData(
     }
 }
 
+/** Integer/float promotion makes these types comparable, so diagnostics treat them as overlapping. */
 void normalizeNumericTypes(TypeFlags& flags)
 {
     if (flags.test(ValueType::Int) || flags.test(ValueType::Float)) {

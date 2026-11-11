@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <ostream>
+#include <limits>
 
 namespace
 {
@@ -116,6 +117,7 @@ auto operator<<(std::ostream& o, const Token& t) -> std::ostream&
     return o << t.toString();
 }
 
+/** Borrow a query and advance by bytes, retaining scan failure context for tokenize(). */
 struct Scanner
 {
     static constexpr struct Skip_ {} Skip {};
@@ -200,6 +202,7 @@ void skipWhitespace(Scanner& s)
         s.skip();
 }
 
+/** Decode escaped identifiers, then recognize case-insensitive language keywords. */
 auto scanWord(Scanner& s) -> std::optional<Token>
 {
     if (s.hasError())
@@ -245,7 +248,8 @@ auto scanWord(Scanner& s) -> std::optional<Token>
     return {};
 }
 
-std::optional<Token> scanStringLiteral(Scanner& s)
+/** Decode text/raw/byte/regex literals; only completion text literals may omit their final quote. */
+std::optional<Token> scanStringLiteral(Scanner& s, bool allowUnfinishedString)
 {
     if (s.hasError())
         return {};
@@ -284,6 +288,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
 
             if (s.match("\\", Scanner::Skip)) {
                 if (!s) {
+                    if (allowUnfinishedString && !bytes && !regexp)
+                        break;
                     s.fail("Unfinished escape sequence");
                     return {};
                 }
@@ -325,6 +331,8 @@ std::optional<Token> scanStringLiteral(Scanner& s)
             text.push_back(s.pop());
         }
 
+        if (!s && allowUnfinishedString && !bytes && !regexp)
+            return Token(Token::STRING, text, begin, s.pos());
         if (!s || s.pop() != quote) {
             s.fail("Quote mismatch");
             return {};
@@ -340,6 +348,7 @@ std::optional<Token> scanStringLiteral(Scanner& s)
     return {};
 }
 
+/** Recognize numeric literals with checked integer accumulation and a parallel floating accumulator. */
 std::optional<Token> scanNumber(Scanner& s)
 {
     if (s.hasError())
@@ -398,9 +407,16 @@ std::optional<Token> scanNumber(Scanner& s)
 
     if (isdigit(s.at(0)) || (s.at(0) == '.' && isdigit(s.at(1))) || base > 10) {
         int64_t n = 0;
+        double floating = 0;
+        bool overflow = false;
         while (isdigit(s.at(0)) || (base > 10 && isxdigit(s.at(0)))) {
-            n *= base;
-            n += chr2digit(s, base, s.pop());
+            auto digit = chr2digit(s, base, s.pop());
+            floating = floating * base + digit;
+            // Keep scanning so large floating literals remain valid, but never overflow signed arithmetic.
+            if (n > (std::numeric_limits<int64_t>::max() - digit) / base)
+                overflow = true;
+            if (!overflow)
+                n = n * base + digit;
         }
 
         if (s.match(".", Scanner::Skip)) {
@@ -409,7 +425,7 @@ std::optional<Token> scanNumber(Scanner& s)
                 return {};
             }
 
-            auto f = static_cast<double>(n);
+            auto f = overflow ? floating : static_cast<double>(n);
             for (auto i = 1; isdigit(s.at(0)); ++i) {
                 f += (s.pop() - '0') / std::pow(10, i);
             }
@@ -425,18 +441,23 @@ std::optional<Token> scanNumber(Scanner& s)
 
         /* SCI notation results in float if exponent != 0 (=1) */
         if (auto sci = parseSciSuffix(s); sci != 1)
-            return Token(Token::FLOAT, static_cast<double>(n) * sci, begin, s.pos());
+            return Token(Token::FLOAT, (overflow ? floating : static_cast<double>(n)) * sci, begin, s.pos());
         if (isalpha(s.at(0)) || s.at(0) == '.') {
             s.fail("Unexpected non-digit character");
             return {};
         }
 
+        if (overflow) {
+            s.fail("Integer literal exceeds signed 64-bit range; use bitmask(value, '0x...') for full-width masks");
+            return {};
+        }
         return Token(Token::INT, n, begin, s.pos());
     }
 
     return {};
 }
 
+/** Match punctuation in table order; longer spellings must precede their prefixes. */
 std::optional<Token> scanSyntax(Scanner& s)
 {
     if (s.hasError())
@@ -484,7 +505,7 @@ std::optional<Token> scanSyntax(Scanner& s)
     return {};
 }
 
-auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
+auto tokenize(std::string_view expr, bool allowUnfinishedString) -> expected<std::vector<Token>, Error>
 {
     std::vector<Token> tokens;
 
@@ -493,7 +514,7 @@ auto tokenize(std::string_view expr) -> expected<std::vector<Token>, Error>
         skipWhitespace(s);
         if (auto t = scanNumber(s))
             tokens.push_back(std::move(*t));
-        else if (auto t = scanStringLiteral(s))
+        else if (auto t = scanStringLiteral(s, allowUnfinishedString))
             tokens.push_back(std::move(*t));
         else if (auto t = scanWord(s))
             tokens.push_back(std::move(*t));

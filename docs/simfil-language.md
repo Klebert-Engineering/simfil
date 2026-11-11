@@ -5,6 +5,10 @@ structured data.
 
 ## Language Basics
 
+<!-- mcp:
+title: "Simfil syntax and case"
+keywords: ["syntax", "case sensitive", "identifier", "expression"]
+-->
 ### Syntax
 
 <!-- --8<-- [start:basics] -->
@@ -12,6 +16,9 @@ structured data.
 The syntax of simfil is case-insensitive in all cases but for symbols. This means that `any(...)`, `ANY(...)` and `Any(...)` all compile
 to the same function.
 
+<!-- mcp:
+keywords: [field paths, nested objects, recursive traversal, wildcard]
+-->
 ### Paths
 
 To traverse objects and evaluate nested nodes, simfil provides the
@@ -23,7 +30,7 @@ node, the right one (`b`), resulting in the value of node “b” of node “a�
 A wildcard expression `a.**.b` does the same but `b` must not be a direct sub-node
 of `a` but can occur anywhere bellow `a`. Note that this can match multiple nodes!
 The result of wildcard expressions depends on the current execution mode they are
-executed under (see [Modes](#Modes) ).
+executed under (see [Modes][simfil-modes]).
 
 The path `_` (underscore) represents the current node.
 The path `*` (asterisk) represents any direct child node.
@@ -32,6 +39,10 @@ The path `**` (double asterisk) represents any child (recursive) plus the curren
 If you need to access field names dynamically, you can use the subscript operator `[<expression>]`.
 Example: `*.["field name with spaces"]`.
 
+<!-- mcp:
+title: "Simfil fields and symbols"
+keywords: ["quoted string", "field name", "enum symbol", "identifier"]
+-->
 ### Symbols
 
 Simfil parses unquoted identifiers as field names. String values should be
@@ -41,6 +52,9 @@ When schema metadata is available, the compiler may reinterpret an unquoted
 standalone token as a schema symbol. This is a schema rewrite, not a parser
 rule: without schema metadata, `ABC` is the field `ABC`.
 
+<!-- mcp:
+keywords: [schema, enums, completion, bitmask, unknown fields]
+-->
 ### Schema-Aware Field and Enum Resolution
 
 When the caller supplies a schema for the current model, simfil can use that schema while compiling, completing, and evaluating path expressions. This keeps short queries practical without changing the core path syntax.
@@ -49,7 +63,7 @@ Schema-aware behavior is conservative:
 
 - A standalone scalar field name can resolve to the concrete schema path that owns that field.
 - A recursive wildcard such as `**.speedLimitKmh` can skip schema branches that cannot contain `speedLimitKmh`, which avoids scanning arbitrary object branches when the schema is precise.
-- An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum domain.
+- An unquoted operand can resolve to a string constant when the schema proves it belongs to an enum type.
 - A standalone enum-like string literal can resolve to an equality comparison against the schema path that owns that enum value.
 - If the same token can mean both a field and an enum-like value, field access wins. This keeps schema shorthand aligned with normal unquoted identifiers.
 
@@ -65,7 +79,7 @@ can be compiled against a schema as the concrete path that owns `speedLimitKmh`,
 SPEED_LIMIT_END
 ```
 
-can be compiled as a comparison against schema paths whose enum domain contains `SPEED_LIMIT_END`.
+can be compiled as a comparison against schema paths whose enum type contains `SPEED_LIMIT_END`.
 
 Other common schema-aware patterns:
 
@@ -95,6 +109,10 @@ or:
 ["WARNING_SIGN"]
 ```
 
+<!-- mcp:
+title: "Simfil subqueries"
+keywords: ["subquery", "braces", "nested predicate", "current node"]
+-->
 ### Sub-Queries
 
 Sub-queries can be written as a brace-enclosed expression. Path modifications inside
@@ -123,6 +141,9 @@ value.
 
 Note that the current node in and after the sub-query is the same (`b` in the examples given).
 
+<!-- mcp:
+keywords: [array, collection, cardinality, length, indexing]
+-->
 ### Arrays
 
 To check the existence of the string `"hello"` inside an array `b` you could write (note: `*` returns every direct child):
@@ -137,7 +158,9 @@ Specific array elements can be accessed using the subscript `[<expression>]` ope
 
 ### Any
 
-The default mode `any` returns the first non-false nodes value.
+`any` returns a boolean indicating whether at least one evaluated value is truthy.
+It does not return the first matching string or object. To select a value, use
+`select(values, 0)`; use `or` for a truthy fallback.
 ```
 any(a.**.b{c})
 ```
@@ -172,6 +195,10 @@ Considering the following document, the function will return `true`.
 
 `all` is an alias for `each`.
 
+<!-- mcp:
+keywords: [count, cardinality, number of matches]
+hint: Counting non-false expression results differs from measuring one array with the length operator.
+-->
 ### Count
 
 Count can be used to count matching nodes. The function evaluates to the number
@@ -186,15 +213,49 @@ To count the items of a list you can use the following code:
 count(mylist.*)
 ```
 
+<!-- mcp:
+title: "Simfil value types"
+keywords: ["null", "missing value", "undefined", "boolean", "integer", "string"]
+-->
 ## Types
 
-Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes` and `re`.
+Simfil supports the following scalar types: `null`, `bool`, `int`, `float` (double precision), `string`, `bytes`, `bitmask` and `re`.
 Additionally, the `model` type represents compound object/array container nodes.
 All values but `null` and `false` are considered `true`, implicit boolean conversion takes place for operators
 `and` and `or` only.
 
-Functions can return values of types other than the ones mentioned. See [Functions](#Functions) for details.
+SIMFIL truthiness differs from JavaScript: only `null` and `false` are `false`; numeric zero
+and empty strings are true. The postfix ? operator converts to boolean. Thus `not speed?`
+distinguishes missing/`null` numeric speed from an explicit numeric zero, while `not flag?`
+also matches an explicit `false` flag. Use an explicit `null` comparison when `false` must
+count as present data. Direct missing-field access returns `null`.
 
+Functions can return values of types other than the ones mentioned. See [Functions][simfil-functions] for details.
+
+### Named Values And Bitmasks
+
+With schema mode enabled, `speed = SPEED_UNLIMITED` compares against the named
+value in that particular speed type. The same name may mean different raw
+numbers in different types. Quoted `'SPEED_UNLIMITED'` stays a string, and an
+unknown numeric code stays numeric. Standalone numeric symbols search declared
+positions; standalone flag symbols search for membership, not exact equality.
+
+`hasFlag(flags, 'TRUCK')` checks all bits of the declared flag. Composite flags,
+overlaps, aliases and unknown active bits are supported. A named zero flag matches
+exactly zero; an unknown flag name is an error. `flags = 3` tests exact bits,
+whereas `flags & 3` returns another bitmask. Zero masks, like integer zero, are
+truthy: do not use bitwise-result truthiness as a membership test.
+
+Use `bitmask(flags, '0x8000000000000000')` to construct full-width bits in an
+existing mask's type. Decimal strings also work. Bitwise `&`, `|`, `^`, `~`,
+`<<`, and `>>` preserve the mask type; complement and shifts honor its declared
+width. Mixing incompatible types, negative integers or floats is rejected.
+Arithmetic and numeric casts are not implicit mask conversions.
+
+<!-- mcp:
+title: "Simfil type conversion"
+keywords: ["cast", "integer", "float", "number", "string", "conversion"]
+-->
 ## Type Casting
 
 Types values can be cast/interpreted to a different type using the `as` operator.
@@ -209,6 +270,9 @@ Byte literals are written using the `b` prefix, e.g. `b"hello"` or `b'hello'`.
 Escape sequences `\n`, `\r`, `\t`, `\\`, `\"`, and `\'` are supported.
 Bytes can also be written explicitly using `\xNN` (hex), e.g. `b"\x41\x00"`.
 
+<!-- mcp:
+keywords: [operators, comparisons, length, arithmetic, boolean]
+-->
 ## Operators
 
 <!-- --8<-- [start:operators] -->
@@ -220,7 +284,7 @@ Bytes can also be written explicitly using `\xNN` (hex), e.g. `b"\x41\x00"`.
 | `. b` or `a . b`    | Direct field access; returns the value of field `b` or `null`.                                          |
 | `a as b`            | Cast a to type b (one of `bool`, `int`, `float`, `string` or `bytes`).                                  |
 | `a ?`               | Get boolean value of `a` (see ##Types).                                                                 |
-| `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions](#Functions) for example)        |
+| `a ...`             | Unpacks `a` to a list of values (see function `range` under [Functions][simfil-functions] for example)        |
 | `typeof a`          | Returns the type of the value of its expression (`"null"`, `"bool"`, `"int"`, `"float"`, `"string"` or `"bytes"`). |
 | `not a`             | Boolean not.                                                                                            |
 | `# a`               | Returns the length of a string, bytes, or array value.                                                  |
@@ -263,10 +327,19 @@ The `!=` operator will always return `true` in such cases.
 
 <!-- --8<-- [end:operators] -->
 
+## Explicit schema-symbol membership
+
+`hasSymbol(value, 'ANIMALS')` tests whether the value or its descendants contain a matching enum or named value declared by their schemas. Equal untyped strings or numbers do not count as declared symbols. The result is one boolean and remains the same when composed with `any(...)`, `and`, or `or`.
+
+Prepared searches may use `hasSymbol(value, name, schemaIdentity, typeId)` to select one exact declaring type. The type ID belongs to that immutable schema artifact. An identically named symbol from another type or artifact does not match. This qualified form lets a search client resolve ambiguity before dispatch without expanding recursive schemas into incomplete lists of paths.
+
 ## Functions
 
 <!-- --8<-- [start:functions] -->
 
+<!-- mcp:
+keywords: [trace, diagnostics, debug expression]
+-->
 #### `trace(expr, limit=<...>, name=<...>)`
 
 Counts and measures all calls to its expression under the identifier `name` or the string
@@ -342,6 +415,10 @@ select(arr('a', 'b', 'c'), 1, 2) => 'b', 'c'
 select(arr('a', 'b', 'c'), 0, 0) => 'a', 'b', 'c'
 ```
 
+<!-- mcp:
+title: "Simfil sum and reduction"
+keywords: ["sum", "aggregate", "total", "reduce", "accumulator"]
+-->
 #### `sum(values..., expr=$sum + $val, init=0)`
 
 Returns the sum of all values `values`. Uses the expression `expr` if given.
@@ -392,6 +469,10 @@ max(8, 3, 5) => 8
 max(optional.rank, 0) => 0  # when optional.rank is absent
 ```
 
+<!-- mcp:
+title: "Simfil object keys"
+keywords: ["keys", "field names", "object properties"]
+-->
 #### `keys(object)`
 
 Returns all sub-element keys of object `object`
@@ -401,6 +482,10 @@ Returns all sub-element keys of object `object`
 keys(a.b) => 'c', 'd', ...
 ```
 
+<!-- mcp:
+title: "Simfil regular expressions"
+keywords: ["regex", "regular expression", "text matching", "string pattern"]
+-->
 #### `re(str)`
 
 Compiles a regular expression string to an `re` object, which holds a compiled regular expression.
@@ -416,3 +501,6 @@ a.b != re("prefix.*")
 ```
 
 <!-- --8<-- [end:functions] -->
+
+[simfil-modes]: #modes
+[simfil-functions]: #functions

@@ -17,6 +17,9 @@ using CustomThrowHandlerType = std::function<void(const std::string&, const std:
 
 /**
  * Singleton class to store a custom exception handling callback.
+ *
+ * Process-wide observer called by raise() before throwing. Configure it before
+ * concurrent work starts: set()/get() do not synchronize callback replacement.
  */
 class ThrowHandler
 {

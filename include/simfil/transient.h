@@ -16,13 +16,13 @@ using namespace std::string_literals;
 class Value;
 struct TransientObject;
 
+/**
+ * Allocation and operator protocol for runtime-only values. The descriptor is
+ * borrowed by every TransientObject and must outlive all its copies. Transient
+ * objects expose operators/unpacking; model-field navigation uses ModelNode.
+ */
 struct MetaType
 {
-    /* NOTE: If you want to implement fields for objects:
-     *       - Remove the checks from the parser (Path, Subscript & Subexpr)
-     *       - Make Value::node optionally owning its ptr
-     *       - Set ModelNode instance for objects you create */
-
     explicit MetaType(std::string ident)
         : ident(std::move(ident))
     {}
@@ -39,13 +39,14 @@ struct MetaType
     virtual auto binaryOp(std::string_view op, const TransientObject&, const Value&) const -> tl::expected<Value, Error> = 0;
     virtual auto binaryOp(std::string_view op, const Value&, const TransientObject&) const -> tl::expected<Value, Error> = 0;
 
-    /* Unpack */
-    virtual auto unpack(const TransientObject&, std::function<bool(Value)>) const -> tl::expected<void, Error> = 0; /* cb return false to stop! */
+    /** Emit values synchronously and stop immediately when the callback returns false. */
+    virtual auto unpack(const TransientObject&, std::function<bool(Value)>) const -> tl::expected<void, Error> = 0;
 };
 
 /**
  * Transient object, which may be created during the execution
- * of a simfil statement, for example to represent geometry.
+ * of a simfil statement, for example to represent geometry. Copies clone the
+ * payload through meta; moves transfer it. The MetaType itself is never owned.
  */
 struct TransientObject
 {

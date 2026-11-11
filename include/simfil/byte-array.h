@@ -14,6 +14,7 @@
 namespace simfil
 {
 
+/** Owned binary bytes, distinct from a text string even when every byte is printable. */
 struct ByteArray
 {
     std::string bytes;
@@ -34,6 +35,7 @@ struct ByteArray
 
     auto operator==(const ByteArray&) const -> bool = default;
 
+    /** Decode pairs of hex digits without a prefix/separators; odd length or invalid digits return nullopt. */
     [[nodiscard]] static std::optional<ByteArray> fromHex(std::string_view hex)
     {
         if (hex.size() % 2 != 0)
@@ -52,6 +54,11 @@ struct ByteArray
         return ByteArray{std::move(decoded)};
     }
 
+    /**
+     * Decode up to the first eight bytes, then reinterpret the 64-bit pattern as
+     * signed. Short inputs are zero-extended (FF -> 255); any bytes after the first
+     * eight must be zero. An empty input represents zero.
+     */
     [[nodiscard]] std::optional<int64_t> decodeBigEndianI64() const
     {
         if (bytes.size() > 8) {
@@ -72,6 +79,7 @@ struct ByteArray
         return signedValue;
     }
 
+    /** Emit exactly two hex digits per byte, preserving leading zeros and omitting a prefix. */
     [[nodiscard]] std::string toHex(bool uppercase = true) const
     {
         std::string out;
@@ -88,6 +96,7 @@ struct ByteArray
         return out;
     }
 
+    /** Encode a parseable simfil byte literal, escaping control and non-ASCII bytes. */
     [[nodiscard]] std::string toLiteral() const
     {
         std::string out;

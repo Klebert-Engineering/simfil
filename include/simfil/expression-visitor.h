@@ -36,7 +36,9 @@ template <class> class UnaryExpr;
 template <class> class BinaryExpr;
 
 /**
- * Visitor base for visiting expressions recursively.
+ * Depth-first expression visitor. Default typed overloads dispatch to visit(Expr),
+ * which visits each child in order. An override must call the base implementation
+ * when it wants traversal to continue below the current expression.
  */
 class ExprVisitor
 {
@@ -71,7 +73,7 @@ public:
     virtual void visit(const BinaryExpr<OperatorGtEq>& expr);
 
 protected:
-    /* Returns the index of the current expression */
+    /** Number of entries into the base visit(Expr); independent of the AST's ExprId values. */
     std::size_t index() const;
 
 private:

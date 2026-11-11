@@ -70,10 +70,17 @@ add_library(simfil ${LIBRARY_TYPE}
   src/expressions.cpp
   src/simfil.cpp
   src/value.cpp
+  src/bitmask.cpp
   src/overlay.cpp
   src/exception-handler.cpp
   src/expression-visitor.cpp
   src/model/model.cpp
+  src/model/copy.cpp
+  src/evaluation.cpp
+  src/model/schema-pool.cpp
+  src/model/schema-index.cpp
+  src/model/schema-query.cpp
+  src/model/schema-node.cpp
   src/model/nodes.cpp
   src/model/string-pool.cpp)
 
@@ -102,6 +109,12 @@ target_sources(simfil PUBLIC
       include/simfil/model/column.h
       include/simfil/model/memory.h
       include/simfil/model/string-pool.h
+      include/simfil/model/value-type.h
+      include/simfil/model/scalar-value.h
+      include/simfil/model/schema-type.h
+      include/simfil/model/schema-node.h
+      include/simfil/model/schema-pool.h
+      include/simfil/evaluation.h
       include/simfil/model/model.h
       include/simfil/model/nodes.h
       include/simfil/model/bitsery-traits.h)

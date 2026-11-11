@@ -15,6 +15,7 @@
 namespace simfil
 {
 
+/** Parsed token payload with byte offsets into the original query; end is exclusive. */
 struct Token
 {
     enum Type {
@@ -97,14 +98,16 @@ struct Token
     static auto toString(Type) -> std::string;
     auto toString() const -> std::string;
 
+    /** Include the end cursor position so completion still selects a token just typed. */
     auto containsPoint(size_t point) const -> bool;
 };
 
 std::ostream& operator<<(std::ostream&, const Token&);
 
 /**
- * Split a SIMFIL expression `expr` into parser tokens
+ * Split an expression into tokens. Completion may accept an unfinished final
+ * string literal; normal compilation keeps strict quote/escape validation.
  */
-auto tokenize(std::string_view expr) -> tl::expected<std::vector<Token>, Error>;
+auto tokenize(std::string_view expr, bool allowUnfinishedString = false) -> tl::expected<std::vector<Token>, Error>;
 
 }

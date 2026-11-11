@@ -16,6 +16,7 @@ namespace simfil
 namespace
 {
 
+/** Placeholder for recoverable missing syntax; completion can inspect it without emitting values. */
 class NOOPExpr : public Expr
 {
 public:
@@ -145,9 +146,9 @@ auto Parser::parsePrecedence(int precedence, bool optional) -> expected<ExprPtr,
     auto parser = findPrefixParser(token);
     if (!parser) {
         if (!optional)
-          return unexpected<Error>(
-              Error::ParserError,
-              fmt::format("Unexpected input '{}'", token.toString()), token);
+            return unexpected<Error>(
+                Error::ParserError,
+                fmt::format("Unexpected input '{}'", token.toString()), token);
 
         return nullptr;
     }
@@ -216,11 +217,11 @@ auto Parser::parseList(Token::Type stop) -> expected<std::vector<ExprPtr>, Error
                 // break.
                 break;
             } else {
-              return unexpected<Error>(Error::ParserError,
-                                       fmt::format("Expected '{}' but got '{}'",
-                                                   Token::toString(stop),
-                                                   current().toString()),
-                                       current());
+                return unexpected<Error>(Error::ParserError,
+                                         fmt::format("Expected '{}' but got '{}'",
+                                                     Token::toString(stop),
+                                                     current().toString()),
+                                         current());
             }
         } else {
             consume();
